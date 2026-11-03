@@ -1,0 +1,28 @@
+diff --git a/src/bsd.c b/src/bsd.c
+--- a/src/bsd.c
++++ b/src/bsd.c
+@@ -139,7 +139,10 @@ kore_platform_event_wait(u_int64_t timer)
+ 		if (events[i].filter == EVFILT_WRITE)
+ 			evt->flags |= KORE_EVENT_WRITE;
+ 
+-		if (events[i].flags & EV_EOF || events[i].flags & EV_ERROR)
++		if ((events[i].flags & EV_ERROR) ||
++		    ((events[i].flags & EV_EOF) &&
++		    !(events[i].filter == EVFILT_READ &&
++		    events[i].data > 0 && events[i].fflags == 0)))
+ 			r = 1;
+ 
+ 		evt->handle(evt, r);
+diff --git a/src/linux.c b/src/linux.c
+--- a/src/linux.c
++++ b/src/linux.c
+@@ -127,7 +127,8 @@ kore_platform_event_wait(u_int64_t timer)
+ 
+ 		if (events[i].events & EPOLLERR ||
+ 		    events[i].events & EPOLLHUP ||
+-		    events[i].events & EPOLLRDHUP)
++		    ((events[i].events & EPOLLRDHUP) &&
++		    !(events[i].events & EPOLLIN)))
+ 			r = 1;
+ 
+ 		evt->handle(events[i].data.ptr, r);

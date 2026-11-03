@@ -1,0 +1,8 @@
+diff --git a/src/tls_openssl.c b/src/tls_openssl.c
+--- a/src/tls_openssl.c
++++ b/src/tls_openssl.c
+@@ -873,2 +873,3 @@ tls_sni_cb(SSL *ssl, int *ad, void *arg)
+-	return (SSL_TLSEXT_ERR_NOACK);
++	*ad = SSL_AD_UNRECOGNIZED_NAME;
++	return (SSL_TLSEXT_ERR_ALERT_FATAL);
+ }

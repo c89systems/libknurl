@@ -1,0 +1,42 @@
+diff --git a/src/net.c b/src/net.c
+--- a/src/net.c
++++ b/src/net.c
+@@ -42,6 +42,9 @@ net_init(void)
+ 
+ 	/* Add some overhead so we don't roll over for internal items. */
+ 	elm = worker_max_connections + 10;
++	/* A replacement worker inherits the parent's initialized static pool. */
++	free(nb_pool.name);
++	nb_pool.name = NULL;
+ 	kore_pool_init(&nb_pool, "nb_pool", sizeof(struct netbuf), elm);
+ }
+ 
+@@ -49,6 +52,7 @@ void
+ net_cleanup(void)
+ {
+ 	kore_pool_cleanup(&nb_pool);
++	nb_pool.name = NULL;
+ }
+ 
+ struct netbuf *
+diff --git a/src/connection.c b/src/connection.c
+--- a/src/connection.c
++++ b/src/connection.c
+@@ -50,6 +50,9 @@ kore_connection_init(void)
+ 	/* Add some overhead so we don't rollover for internal items. */
+ 	elm = worker_max_connections + 10;
+ 
++	/* Only this static owner is known to be zero-initialized or initialized. */
++	free(connection_pool.name);
++	connection_pool.name = NULL;
+ 	kore_pool_init(&connection_pool, "connection_pool",
+ 	    sizeof(struct connection), elm);
+ }
+@@ -60,6 +63,7 @@ kore_connection_cleanup(void)
+ 	/* Drop all connections */
+ 	kore_connection_prune(KORE_CONNECTION_PRUNE_ALL);
+ 	kore_pool_cleanup(&connection_pool);
++	connection_pool.name = NULL;
+ }
+ 
+ struct connection *

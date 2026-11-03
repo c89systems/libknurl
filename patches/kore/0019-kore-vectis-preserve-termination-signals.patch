@@ -1,0 +1,18 @@
+diff --git a/src/kore.c b/src/kore.c
+index 25b5072..d80d6f1 100644
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -754,5 +754,12 @@ kore_server_cleanup(void)
+ void
+ kore_signal(int sig)
+ {
+-	sig_recv = sig;
++	if (sig_recv == SIGINT || sig_recv == SIGQUIT || sig_recv == SIGTERM)
++		return;
++
++	if (sig != SIGINT && sig != SIGQUIT && sig != SIGTERM &&
++	    sig_recv != 0)
++		return;
++
++	sig_recv = sig;
+ }

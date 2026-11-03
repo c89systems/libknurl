@@ -1,0 +1,15 @@
+diff --git a/src/kore.c b/src/kore.c
+index 2c1d5bb..8e430e4 100644
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -959,4 +959,10 @@ kore_server_start(void)
+ 	kore_timer_init();
+ 
++#if defined(KORE_VECTIS_EMBEDDED_RUNTIME)
++	extern void	vectis_kore_parent_timers(void);
++
++	vectis_kore_parent_timers();
++#endif
++
+ #if !defined(KORE_NO_HTTP)
+ 	alog = 0;

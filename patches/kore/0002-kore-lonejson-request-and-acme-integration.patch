@@ -1,0 +1,1100 @@
+diff --git a/include/kore/ljson.h b/include/kore/ljson.h
+new file mode 100644
+index 0000000..32c19aa
+--- /dev/null
++++ b/include/kore/ljson.h
+@@ -0,0 +1,27 @@
++/*
++ * vectis lonejson helpers for Kore HTTP handlers.
++ */
++
++#if !defined(KORE_NO_HTTP)
++
++#ifndef __H_KORE_LJSON_H
++#define __H_KORE_LJSON_H
++
++#include <lonejson.h>
++
++#if defined(__cplusplus)
++extern "C" {
++#endif
++
++lonejson_status	kore_ljson_validate_request(struct http_request *,
++		    lonejson_error *);
++lonejson_status	kore_ljson_parse_request(struct http_request *,
++		    const lonejson_map *, void *, lonejson_error *);
++
++#if defined(__cplusplus)
++}
++#endif
++
++#endif
++
++#endif
+diff --git a/src/acme.c b/src/acme.c
+index d8fcf0d..0e86d07 100644
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -37,6 +37,10 @@
+ #include "acme.h"
+ #include "curl.h"
+ 
++#if defined(KORE_USE_LONEJSON)
++#include <lonejson.h>
++#endif
++
+ #define ACME_CREATE_ACCOUNT	0
+ #define ACME_RESOLVE_ACCOUNT	1
+ 
+@@ -215,7 +219,9 @@ static char	*acme_protected_component(const char *, const char *);
+ static void	acme_keymgr_key_req(const char *, const void *, size_t, int);
+ 
+ static void	acme_parse_directory(void);
++#if !defined(KORE_USE_LONEJSON)
+ static void	acme_directory_set(struct kore_json *, const char *, char **);
++#endif
+ 
+ static void	acme_sign_expire(void *, u_int64_t);
+ static void	acme_sign_result(struct kore_msg *, const void *);
+@@ -279,6 +285,124 @@ char			*acme_email = NULL;
+ char			*acme_provider = NULL;
+ u_int32_t		acme_request_timeout = 8;
+ 
++#if defined(KORE_USE_LONEJSON)
++struct acme_directory_doc {
++	char				*new_nonce;
++	char				*new_order;
++	char				*new_account;
++	char				*revoke_cert;
++};
++
++struct acme_error_doc {
++	char				*type;
++	char				*detail;
++};
++
++struct acme_order_doc {
++	char				*status;
++	char				*finalize;
++	lonejson_string_array		authorizations;
++	char				*certificate;
++};
++
++struct acme_challenge_doc {
++	char				*type;
++	char				*url;
++	char				*token;
++	char				*status;
++	struct acme_error_doc		error;
++};
++
++struct acme_auth_doc {
++	char				*status;
++	lonejson_object_array		challenges;
++};
++
++struct acme_badreq_doc {
++	char				*detail;
++};
++
++static const lonejson_field acme_directory_fields[] = {
++	LONEJSON_FIELD_STRING_ALLOC_REQ(struct acme_directory_doc,
++	    new_nonce, "newNonce"),
++	LONEJSON_FIELD_STRING_ALLOC_REQ(struct acme_directory_doc,
++	    new_order, "newOrder"),
++	LONEJSON_FIELD_STRING_ALLOC_REQ(struct acme_directory_doc,
++	    new_account, "newAccount"),
++	LONEJSON_FIELD_STRING_ALLOC_REQ(struct acme_directory_doc,
++	    revoke_cert, "revokeCert")
++};
++LONEJSON_MAP_DEFINE(acme_directory_map, struct acme_directory_doc,
++    acme_directory_fields);
++
++static const lonejson_field acme_error_fields[] = {
++	LONEJSON_FIELD_STRING_ALLOC(struct acme_error_doc, type, "type"),
++	LONEJSON_FIELD_STRING_ALLOC(struct acme_error_doc, detail, "detail")
++};
++LONEJSON_MAP_DEFINE(acme_error_map, struct acme_error_doc, acme_error_fields);
++
++static const lonejson_field acme_order_fields[] = {
++	LONEJSON_FIELD_STRING_ALLOC_REQ(struct acme_order_doc, status, "status"),
++	LONEJSON_FIELD_STRING_ALLOC(struct acme_order_doc, finalize, "finalize"),
++	LONEJSON_FIELD_STRING_ARRAY(struct acme_order_doc, authorizations,
++	    "authorizations", LONEJSON_OVERFLOW_FAIL),
++	LONEJSON_FIELD_STRING_ALLOC(struct acme_order_doc, certificate,
++	    "certificate")
++};
++LONEJSON_MAP_DEFINE(acme_order_map, struct acme_order_doc, acme_order_fields);
++
++static const lonejson_field acme_challenge_fields[] = {
++	LONEJSON_FIELD_STRING_ALLOC(struct acme_challenge_doc, type, "type"),
++	LONEJSON_FIELD_STRING_ALLOC(struct acme_challenge_doc, url, "url"),
++	LONEJSON_FIELD_STRING_ALLOC(struct acme_challenge_doc, token, "token"),
++	LONEJSON_FIELD_STRING_ALLOC(struct acme_challenge_doc, status, "status"),
++	LONEJSON_FIELD_OBJECT(struct acme_challenge_doc, error, "error",
++	    &acme_error_map)
++};
++LONEJSON_MAP_DEFINE(acme_challenge_map, struct acme_challenge_doc,
++    acme_challenge_fields);
++
++static const lonejson_field acme_auth_fields[] = {
++	LONEJSON_FIELD_STRING_ALLOC_REQ(struct acme_auth_doc, status, "status"),
++	LONEJSON_FIELD_OBJECT_ARRAY(struct acme_auth_doc, challenges,
++	    "challenges", struct acme_challenge_doc, &acme_challenge_map,
++	    LONEJSON_OVERFLOW_FAIL)
++};
++LONEJSON_MAP_DEFINE(acme_auth_map, struct acme_auth_doc, acme_auth_fields);
++
++static const lonejson_field acme_badreq_fields[] = {
++	LONEJSON_FIELD_STRING_ALLOC(struct acme_badreq_doc, detail, "detail")
++};
++LONEJSON_MAP_DEFINE(acme_badreq_map, struct acme_badreq_doc, acme_badreq_fields);
++
++static int
++acme_ljson_parse(const lonejson_map *map, void *dst, const u_int8_t *body,
++    size_t len, const char *what)
++{
++	lonejson_error		error;
++	lonejson_status		status;
++	lonejson		*runtime;
++
++	memset(dst, 0, map->struct_size);
++	runtime = lonejson_new(NULL, &error);
++	if (runtime == NULL) {
++		kore_log(LOG_NOTICE, "%s: lonejson runtime init failed (%s)",
++		    what, error.message);
++		return (KORE_RESULT_ERROR);
++	}
++	status = lonejson_parse_buffer(runtime, map, dst, body, len, &error);
++	lonejson_free(runtime);
++	if (status != LONEJSON_STATUS_OK) {
++		kore_log(LOG_NOTICE, "%s: lonejson parse failed at %zu:%zu (%s)",
++		    what, error.line, error.column, error.message);
++		lonejson_cleanup(map, dst);
++		return (KORE_RESULT_ERROR);
++	}
++
++	return (KORE_RESULT_OK);
++}
++#endif
++
+ void
+ kore_acme_init(void)
+ {
+@@ -392,7 +516,6 @@ acme_parse_directory(void)
+ {
+ 	struct acme_request	req;
+ 	size_t			len;
+-	struct kore_json	json;
+ 	const u_int8_t		*body;
+ 
+ 	acme_request_prepare(&req, HTTP_METHOD_GET, acme_provider, NULL, 0);
+@@ -412,6 +535,28 @@ acme_parse_directory(void)
+ 
+ 	kore_curl_response_as_bytes(&req.curl, &body, &len);
+ 
++#if defined(KORE_USE_LONEJSON)
++	{
++		struct acme_directory_doc	doc;
++
++		if (!acme_ljson_parse(&acme_directory_map, &doc, body, len,
++		    "acme directory payload"))
++			goto cleanup;
++
++		kore_free(nonce_url);
++		kore_free(order_url);
++		kore_free(account_url);
++		kore_free(revoke_url);
++
++		nonce_url = kore_strdup(doc.new_nonce);
++		order_url = kore_strdup(doc.new_order);
++		account_url = kore_strdup(doc.new_account);
++		revoke_url = kore_strdup(doc.revoke_cert);
++		lonejson_cleanup(&acme_directory_map, &doc);
++	}
++#else
++	struct kore_json	json;
++
+ 	kore_json_init(&json, body, len);
+ 
+ 	if (!kore_json_parse(&json)) {
+@@ -425,9 +570,10 @@ acme_parse_directory(void)
+ 	acme_directory_set(&json, "newOrder", &order_url);
+ 	acme_directory_set(&json, "newAccount", &account_url);
+ 	acme_directory_set(&json, "revokeCert", &revoke_url);
++	kore_json_cleanup(&json);
++#endif
+ 
+ cleanup:
+-	kore_json_cleanup(&json);
+ 	acme_request_cleanup(&req);
+ }
+ 
+@@ -578,14 +724,13 @@ acme_order_create_submit(struct acme_sign_op *op, struct kore_buf *payload)
+ {
+ 	struct acme_request		req;
+ 	size_t				len;
+-	struct kore_json		json;
+ 	int				stval;
+ 	const u_int8_t			*body;
+ 	struct acme_auth		*auth;
+ 	struct acme_order		*order;
+ 	const char			*header;
+ 	const char			*domain;
+-	struct kore_json_item		*item, *array, *final, *status;
++	size_t				i;
+ 
+ 	order = NULL;
+ 	domain = op->udata;
+@@ -617,79 +762,138 @@ acme_order_create_submit(struct acme_sign_op *op, struct kore_buf *payload)
+ 	}
+ 
+ 	kore_curl_response_as_bytes(&req.curl, &body, &len);
+-	kore_json_init(&json, body, len);
++#if defined(KORE_USE_LONEJSON)
++	{
++		struct acme_order_doc	doc;
+ 
+-	if (!kore_json_parse(&json)) {
+-		kore_log(LOG_NOTICE,
+-		    "[%s] failed to parse order payload from ACME server (%s)",
+-		    domain, kore_json_strerror());
+-		goto cleanup;
+-	}
++		if (!acme_ljson_parse(&acme_order_map, &doc, body, len,
++		    "acme order create payload"))
++			goto cleanup;
+ 
+-	array = kore_json_find_array(json.root, "authorizations");
+-	if (array == NULL) {
+-		kore_log(LOG_NOTICE, "[%s] body has no 'authorizations' array",
+-		    domain);
+-		goto cleanup;
+-	}
++		if (doc.authorizations.count == 0) {
++			kore_log(LOG_NOTICE, "[%s] no authorization URLs in payload",
++			    domain);
++			lonejson_cleanup(&acme_order_map, &doc);
++			goto cleanup;
++		}
+ 
+-	if (TAILQ_EMPTY(&array->data.items)) {
+-		kore_log(LOG_NOTICE, "[%s] no authoritization URLs in payload",
+-		    domain);
+-		goto cleanup;
+-	}
++		if (doc.finalize == NULL) {
++			kore_log(LOG_NOTICE, "[%s] order has no 'finalize' string",
++			    domain);
++			lonejson_cleanup(&acme_order_map, &doc);
++			goto cleanup;
++		}
+ 
+-	if ((status = kore_json_find_string(json.root, "status")) == NULL) {
+-		kore_log(LOG_NOTICE, "[%s] order has no 'status' string",
+-		    domain);
+-		goto cleanup;
+-	}
++		if ((stval = acme_status_type(doc.status)) == -1) {
++			kore_log(LOG_NOTICE, "[%s] order has invalid status",
++			    domain);
++			lonejson_cleanup(&acme_order_map, &doc);
++			goto cleanup;
++		}
+ 
+-	if ((final = kore_json_find_string(json.root, "finalize")) == NULL) {
+-		kore_log(LOG_NOTICE, "[%s] order has no 'finalize' string",
+-		    domain);
+-		goto cleanup;
+-	}
++		order = kore_calloc(1, sizeof(*order));
++		LIST_INSERT_HEAD(&orders, order, list);
+ 
+-	if ((stval = acme_status_type(status->data.string)) == -1) {
+-		kore_log(LOG_NOTICE, "[%s] order has invalid status",
+-		    domain);
+-		goto cleanup;
++		LIST_INIT(&order->auth);
++
++		order->status = stval;
++		order->start = kore_time_ms();
++		order->id = kore_strdup(header);
++		order->domain = kore_strdup(domain);
++		order->state = ACME_ORDER_STATE_UPDATE;
++		order->final = kore_strdup(doc.finalize);
++
++		kore_timer_add(acme_order_process, ACME_ORDER_TICK,
++		    order, KORE_TIMER_ONESHOT);
++
++		for (i = 0; i < doc.authorizations.count; i++) {
++			auth = kore_calloc(1, sizeof(*auth));
++			auth->order = order;
++			auth->url = kore_strdup(doc.authorizations.items[i]);
++			LIST_INSERT_HEAD(&order->auth, auth, list);
++		}
++
++		order->curauth = LIST_FIRST(&order->auth);
++		kore_log(LOG_INFO, "[%s] order_id =  %s", order->domain, order->id);
++		lonejson_cleanup(&acme_order_map, &doc);
+ 	}
++#else
++	{
++		struct kore_json		json;
++		struct kore_json_item		*item, *array, *final, *status;
+ 
+-	order = kore_calloc(1, sizeof(*order));
+-	LIST_INSERT_HEAD(&orders, order, list);
++		kore_json_init(&json, body, len);
+ 
+-	LIST_INIT(&order->auth);
++		if (!kore_json_parse(&json)) {
++			kore_log(LOG_NOTICE,
++			    "[%s] failed to parse order payload from ACME server (%s)",
++			    domain, kore_json_strerror());
++			goto cleanup_json_order_create;
++		}
+ 
+-	order->status = stval;
+-	order->start = kore_time_ms();
+-	order->id = kore_strdup(header);
+-	order->domain = kore_strdup(domain);
+-	order->state = ACME_ORDER_STATE_UPDATE;
+-	order->final = kore_strdup(final->data.string);
++		array = kore_json_find_array(json.root, "authorizations");
++		if (array == NULL) {
++			kore_log(LOG_NOTICE, "[%s] body has no 'authorizations' array",
++			    domain);
++			goto cleanup_json_order_create;
++		}
+ 
+-	kore_timer_add(acme_order_process, ACME_ORDER_TICK,
+-	    order, KORE_TIMER_ONESHOT);
++		if (TAILQ_EMPTY(&array->data.items)) {
++			kore_log(LOG_NOTICE, "[%s] no authoritization URLs in payload",
++			    domain);
++			goto cleanup_json_order_create;
++		}
+ 
+-	TAILQ_FOREACH(item, &array->data.items, list) {
+-		if (item->type != KORE_JSON_TYPE_STRING)
+-			continue;
++		if ((status = kore_json_find_string(json.root, "status")) == NULL) {
++			kore_log(LOG_NOTICE, "[%s] order has no 'status' string",
++			    domain);
++			goto cleanup_json_order_create;
++		}
+ 
+-		auth = kore_calloc(1, sizeof(*auth));
+-		auth->order = order;
+-		auth->url = kore_strdup(item->data.string);
+-		LIST_INSERT_HEAD(&order->auth, auth, list);
+-	}
++		if ((final = kore_json_find_string(json.root, "finalize")) == NULL) {
++			kore_log(LOG_NOTICE, "[%s] order has no 'finalize' string",
++			    domain);
++			goto cleanup_json_order_create;
++		}
++
++		if ((stval = acme_status_type(status->data.string)) == -1) {
++			kore_log(LOG_NOTICE, "[%s] order has invalid status",
++			    domain);
++			goto cleanup_json_order_create;
++		}
++
++		order = kore_calloc(1, sizeof(*order));
++		LIST_INSERT_HEAD(&orders, order, list);
++		LIST_INIT(&order->auth);
++		order->status = stval;
++		order->start = kore_time_ms();
++		order->id = kore_strdup(header);
++		order->domain = kore_strdup(domain);
++		order->state = ACME_ORDER_STATE_UPDATE;
++		order->final = kore_strdup(final->data.string);
++		kore_timer_add(acme_order_process, ACME_ORDER_TICK,
++		    order, KORE_TIMER_ONESHOT);
+ 
+-	order->curauth = LIST_FIRST(&order->auth);
+-	kore_log(LOG_INFO, "[%s] order_id =  %s", order->domain, order->id);
++		TAILQ_FOREACH(item, &array->data.items, list) {
++			if (item->type != KORE_JSON_TYPE_STRING)
++				continue;
++			auth = kore_calloc(1, sizeof(*auth));
++			auth->order = order;
++			auth->url = kore_strdup(item->data.string);
++			LIST_INSERT_HEAD(&order->auth, auth, list);
++		}
+ 
++		order->curauth = LIST_FIRST(&order->auth);
++		kore_log(LOG_INFO, "[%s] order_id =  %s", order->domain, order->id);
++
++cleanup_json_order_create:
++		kore_json_cleanup(&json);
++	}
++#endif
+ cleanup:
+ 	if (order == NULL)
+ 		acme_order_retry(domain);
+ 
+-	kore_json_cleanup(&json);
+ 	acme_request_cleanup(&req);
+ }
+ 
+@@ -704,11 +908,9 @@ acme_order_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
+ {
+ 	struct acme_request		req;
+ 	size_t				len;
+-	struct kore_json		json;
+ 	struct acme_order		*order;
+ 	const u_int8_t			*body;
+ 	int				stval, ret;
+-	struct kore_json_item		*status, *cert;
+ 
+ 	order = op->udata;
+ 	op->udata = NULL;
+@@ -734,41 +936,81 @@ acme_order_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
+ 
+ 	ret = KORE_RESULT_ERROR;
+ 	kore_curl_response_as_bytes(&req.curl, &body, &len);
++#if defined(KORE_USE_LONEJSON)
++	{
++		struct acme_order_doc	doc;
+ 
+-	kore_json_init(&json, body, len);
++		if (!acme_ljson_parse(&acme_order_map, &doc, body, len,
++		    "acme order update payload"))
++			goto cleanup;
+ 
+-	if (!kore_json_parse(&json)) {
+-		kore_log(LOG_NOTICE,
+-		    "[%s] failed to parse order payload from ACME server (%s)",
+-		    order->domain, kore_json_strerror());
+-		goto cleanup;
+-	}
++		if ((stval = acme_status_type(doc.status)) == -1) {
++			kore_log(LOG_NOTICE, "[%s] order has invalid status",
++			    order->domain);
++			lonejson_cleanup(&acme_order_map, &doc);
++			goto cleanup;
++		}
+ 
+-	if ((status = kore_json_find_string(json.root, "status")) == NULL) {
+-		kore_log(LOG_NOTICE, "[%s] order has no 'status' string",
+-		    order->domain);
+-		goto cleanup;
+-	}
++		order->status = stval;
++		if (order->status == ACME_STATUS_VALID) {
++			if (doc.certificate == NULL) {
++				kore_log(LOG_NOTICE,
++				    "[%s] order missing 'certificate' member",
++				    order->domain);
++				lonejson_cleanup(&acme_order_map, &doc);
++				goto cleanup;
++			}
+ 
+-	if ((stval = acme_status_type(status->data.string)) == -1) {
+-		kore_log(LOG_NOTICE, "[%s] order has invalid status",
+-		    order->domain);
+-		goto cleanup;
++			kore_free(order->certloc);
++			order->certloc = kore_strdup(doc.certificate);
++		}
++
++		lonejson_cleanup(&acme_order_map, &doc);
+ 	}
++#else
++	{
++		struct kore_json		json;
++		struct kore_json_item		*status, *cert;
+ 
+-	order->status = stval;
++		kore_json_init(&json, body, len);
+ 
+-	if (order->status == ACME_STATUS_VALID) {
+-		cert = kore_json_find_string(json.root, "certificate");
+-		if (cert == NULL) {
++		if (!kore_json_parse(&json)) {
+ 			kore_log(LOG_NOTICE,
+-			    "[%s] order has 'certificate' member",
++			    "[%s] failed to parse order payload from ACME server (%s)",
++			    order->domain, kore_json_strerror());
++			goto cleanup_json_order_update;
++		}
++
++		if ((status = kore_json_find_string(json.root, "status")) == NULL) {
++			kore_log(LOG_NOTICE, "[%s] order has no 'status' string",
+ 			    order->domain);
+-			goto cleanup;
++			goto cleanup_json_order_update;
++		}
++
++		if ((stval = acme_status_type(status->data.string)) == -1) {
++			kore_log(LOG_NOTICE, "[%s] order has invalid status",
++			    order->domain);
++			goto cleanup_json_order_update;
++		}
++
++		order->status = stval;
++
++		if (order->status == ACME_STATUS_VALID) {
++			cert = kore_json_find_string(json.root, "certificate");
++			if (cert == NULL) {
++				kore_log(LOG_NOTICE,
++				    "[%s] order has 'certificate' member",
++				    order->domain);
++				goto cleanup_json_order_update;
++			}
++
++			order->certloc = kore_strdup(cert->data.string);
+ 		}
+ 
+-		order->certloc = kore_strdup(cert->data.string);
++cleanup_json_order_update:
++		kore_json_cleanup(&json);
+ 	}
++#endif
+ 
+ 	ret = KORE_RESULT_OK;
+ 
+@@ -778,7 +1020,6 @@ cleanup:
+ 	else
+ 		order->state = ACME_ORDER_STATE_UPDATE_AUTH;
+ 
+-	kore_json_cleanup(&json);
+ 	acme_request_cleanup(&req);
+ }
+ 
+@@ -1121,17 +1362,13 @@ acme_order_auth_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
+ 	const char			*p;
+ 	struct acme_request		req;
+ 	size_t				len;
+-	struct kore_json		json;
+ 	const u_int8_t			*body;
+ 	struct acme_auth		*auth;
+ 	struct acme_order		*order;
+ 	struct acme_challenge		*challenge;
+ 	int				ret, stval;
+-	struct kore_json_item		*status, *type, *url, *token;
+-	struct kore_json_item		*array, *object, *err, *detail;
+ 
+ 	ret = KORE_RESULT_ERROR;
+-	memset(&json, 0, sizeof(json));
+ 
+ 	auth = op->udata;
+ 	order = auth->order;
+@@ -1152,139 +1389,217 @@ acme_order_auth_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
+ 	}
+ 
+ 	kore_curl_response_as_bytes(&req.curl, &body, &len);
++#if defined(KORE_USE_LONEJSON)
++	{
++		struct acme_auth_doc		doc;
++		struct acme_challenge_doc	*docs;
++		size_t				i;
++
++		if (!acme_ljson_parse(&acme_auth_map, &doc, body, len,
++		    "acme authorization payload"))
++			goto cleanup;
+ 
+-	kore_json_init(&json, body, len);
+-
+-	if (!kore_json_parse(&json)) {
+-		kore_log(LOG_NOTICE,
+-		    "[%s:auth] failed to parse payload from ACME server (%s)",
+-		    order->domain, kore_json_strerror());
+-		goto cleanup;
+-	}
+-
+-	kore_log(LOG_INFO, "[%s:auth] %s updated", order->domain, auth->url);
++		kore_log(LOG_INFO, "[%s:auth] %s updated", order->domain, auth->url);
+ 
+-	if ((status = kore_json_find_string(json.root, "status")) == NULL) {
+-		kore_log(LOG_NOTICE, "[%s:auth] payload has no 'status' string",
+-		    order->domain);
+-		goto cleanup;
+-	}
++		if ((stval = acme_status_type(doc.status)) == -1) {
++			kore_log(LOG_NOTICE, "[%s] auth has invalid status",
++			    order->domain);
++			lonejson_cleanup(&acme_auth_map, &doc);
++			goto cleanup;
++		}
+ 
+-	if ((array = kore_json_find_array(json.root, "challenges")) == NULL) {
+-		kore_log(LOG_NOTICE,
+-		    "[%s:auth] payload has no 'challenges' array",
+-		    order->domain);
+-		goto cleanup;
+-	}
++		auth->status = stval;
++		docs = (struct acme_challenge_doc *)doc.challenges.items;
+ 
+-	if (TAILQ_EMPTY(&array->data.items)) {
+-		kore_log(LOG_NOTICE,
+-		    "[%s:auth] no challenges URLs in challenge array",
+-		    order->domain);
+-		goto cleanup;
+-	}
++		for (i = 0; i < doc.challenges.count; i++) {
++			if (docs[i].type == NULL) {
++				kore_log(LOG_NOTICE,
++				    "[%s:auth:challenge] no type", order->domain);
++				continue;
++			}
++			if (strcmp(docs[i].type, "tls-alpn-01"))
++				continue;
++			if (docs[i].url == NULL || docs[i].token == NULL ||
++			    docs[i].status == NULL) {
++				kore_log(LOG_NOTICE,
++				    "[%s:auth:challenge] missing members",
++				    order->domain);
++				continue;
++			}
++			if (strlen(docs[i].token) > ACME_CHALLENGE_TOKEN_MAXLEN) {
++				kore_log(LOG_NOTICE,
++				    "[%s:auth:challenge] invalid token length",
++				    order->domain);
++				continue;
++			}
++			for (p = docs[i].token; *p != '\0'; p++) {
++				if ((*p >= 'a' && *p <= 'z') ||
++				    (*p >= 'A' && *p <= 'Z') ||
++				    (*p >= '0' && *p <= '9') || *p == '_' ||
++				    *p == '-')
++					continue;
++				break;
++			}
++			if (*p != '\0') {
++				kore_log(LOG_NOTICE,
++				    "[%s:auth:challenge] invalid token",
++				    order->domain);
++				continue;
++			}
++			if ((stval = acme_status_type(docs[i].status)) == -1) {
++				kore_log(LOG_NOTICE,
++				    "[%s:auth:challenge] invalid challenge status",
++				    order->domain);
++				continue;
++			}
++			if (auth->challenge == NULL) {
++				challenge = kore_calloc(1, sizeof(*challenge));
++				challenge->url = kore_strdup(docs[i].url);
++				challenge->process = acme_challenge_tls_alpn_01;
++				challenge->token = kore_strdup(docs[i].token);
++				challenge->type = kore_strdup(docs[i].type);
++				auth->challenge = challenge;
++			} else {
++				challenge = auth->challenge;
++			}
++			challenge->status = stval;
++			if (challenge->status == ACME_STATUS_INVALID &&
++			    docs[i].error.type != NULL &&
++			    docs[i].error.detail != NULL) {
++				kore_free(challenge->error_type);
++				kore_free(challenge->error_detail);
++				challenge->error_type =
++				    kore_strdup(docs[i].error.type);
++				challenge->error_detail =
++				    kore_strdup(docs[i].error.detail);
++			}
++			break;
++		}
+ 
+-	if ((stval = acme_status_type(status->data.string)) == -1) {
+-		kore_log(LOG_NOTICE, "[%s] auth has invalid status",
+-		    order->domain);
+-		goto cleanup;
++		lonejson_cleanup(&acme_auth_map, &doc);
+ 	}
++#else
++	{
++		struct kore_json		json;
++		struct kore_json_item		*status, *type, *url, *token;
++		struct kore_json_item		*array, *object, *err, *detail;
+ 
+-	auth->status = stval;
+-
+-	TAILQ_FOREACH(object, &array->data.items, list) {
+-		if (object->type != KORE_JSON_TYPE_OBJECT)
+-			continue;
++		memset(&json, 0, sizeof(json));
++		kore_json_init(&json, body, len);
+ 
+-		if ((type = kore_json_find_string(object, "type")) == NULL) {
++		if (!kore_json_parse(&json)) {
+ 			kore_log(LOG_NOTICE,
+-			    "[%s:auth:challenge] no type", order->domain);
+-			continue;
++			    "[%s:auth] failed to parse payload from ACME server (%s)",
++			    order->domain, kore_json_strerror());
++			goto cleanup_json_auth_update;
+ 		}
+ 
+-		/*
+-		 * We only support tls-alpn-01 for now, we ignore the rest.
+-		 */
+-		if (strcmp(type->data.string, "tls-alpn-01"))
+-			continue;
++		kore_log(LOG_INFO, "[%s:auth] %s updated", order->domain, auth->url);
+ 
+-		url = kore_json_find_string(object, "url");
+-		token = kore_json_find_string(object, "token");
+-		status = kore_json_find_string(object, "status");
+-
+-		if (url == NULL || token == NULL || status == NULL) {
+-			kore_log(LOG_NOTICE,
+-			    "[%s:auth:challenge] missing members",
++		if ((status = kore_json_find_string(json.root, "status")) == NULL) {
++			kore_log(LOG_NOTICE, "[%s:auth] payload has no 'status' string",
+ 			    order->domain);
+-			continue;
++			goto cleanup_json_auth_update;
+ 		}
+ 
+-		if (strlen(token->data.string) > ACME_CHALLENGE_TOKEN_MAXLEN) {
++		if ((array = kore_json_find_array(json.root, "challenges")) == NULL) {
+ 			kore_log(LOG_NOTICE,
+-			    "[%s:auth:challenge] invalid token length",
++			    "[%s:auth] payload has no 'challenges' array",
+ 			    order->domain);
+-			continue;
++			goto cleanup_json_auth_update;
+ 		}
+ 
+-		for (p = token->data.string; *p != '\0'; p++) {
+-			if ((*p >= 'a' && *p <= 'z') ||
+-			    (*p >= 'A' && *p <= 'Z') ||
+-			    (*p >= '0' && *p <= '9') || *p == '_' || *p == '-')
+-				continue;
+-			break;
+-		}
+-
+-		if (*p != '\0') {
++		if (TAILQ_EMPTY(&array->data.items)) {
+ 			kore_log(LOG_NOTICE,
+-			    "[%s:auth:challenge] invalid token",
++			    "[%s:auth] no challenges URLs in challenge array",
+ 			    order->domain);
+-			continue;
++			goto cleanup_json_auth_update;
+ 		}
+ 
+ 		if ((stval = acme_status_type(status->data.string)) == -1) {
+-			kore_log(LOG_NOTICE,
+-			    "[%s:auth:challenge] invalid challenge status",
++			kore_log(LOG_NOTICE, "[%s] auth has invalid status",
+ 			    order->domain);
+-			continue;
+-		}
+-
+-		if (auth->challenge == NULL) {
+-			challenge = kore_calloc(1, sizeof(*challenge));
+-
+-			challenge->url = kore_strdup(url->data.string);
+-			challenge->process = acme_challenge_tls_alpn_01;
+-			challenge->token = kore_strdup(token->data.string);
+-			challenge->type = kore_strdup(type->data.string);
+-
+-			auth->challenge = challenge;
+-		} else {
+-			challenge = auth->challenge;
++			goto cleanup_json_auth_update;
+ 		}
+ 
+-		challenge->status = stval;
+-
+-		if (challenge->status == ACME_STATUS_INVALID &&
+-		    (err = kore_json_find_object(object, "error")) != NULL) {
+-			type = kore_json_find_string(err, "type");
+-			detail = kore_json_find_string(err, "detail");
++		auth->status = stval;
+ 
+-			if (type == NULL || detail == NULL) {
++		TAILQ_FOREACH(object, &array->data.items, list) {
++			if (object->type != KORE_JSON_TYPE_OBJECT)
++				continue;
++			if ((type = kore_json_find_string(object, "type")) == NULL) {
++				kore_log(LOG_NOTICE,
++				    "[%s:auth:challenge] no type", order->domain);
++				continue;
++			}
++			if (strcmp(type->data.string, "tls-alpn-01"))
++				continue;
++			url = kore_json_find_string(object, "url");
++			token = kore_json_find_string(object, "token");
++			status = kore_json_find_string(object, "status");
++			if (url == NULL || token == NULL || status == NULL) {
++				kore_log(LOG_NOTICE,
++				    "[%s:auth:challenge] missing members",
++				    order->domain);
++				continue;
++			}
++			if (strlen(token->data.string) > ACME_CHALLENGE_TOKEN_MAXLEN) {
++				kore_log(LOG_NOTICE,
++				    "[%s:auth:challenge] invalid token length",
++				    order->domain);
++				continue;
++			}
++			for (p = token->data.string; *p != '\0'; p++) {
++				if ((*p >= 'a' && *p <= 'z') ||
++				    (*p >= 'A' && *p <= 'Z') ||
++				    (*p >= '0' && *p <= '9') || *p == '_' ||
++				    *p == '-')
++					continue;
++				break;
++			}
++			if (*p != '\0') {
+ 				kore_log(LOG_NOTICE,
+-				    "[%s:auth:challenge] error missing fields",
++				    "[%s:auth:challenge] invalid token",
+ 				    order->domain);
++				continue;
++			}
++			if ((stval = acme_status_type(status->data.string)) == -1) {
++				kore_log(LOG_NOTICE,
++				    "[%s:auth:challenge] invalid challenge status",
++				    order->domain);
++				continue;
++			}
++			if (auth->challenge == NULL) {
++				challenge = kore_calloc(1, sizeof(*challenge));
++				challenge->url = kore_strdup(url->data.string);
++				challenge->process = acme_challenge_tls_alpn_01;
++				challenge->token = kore_strdup(token->data.string);
++				challenge->type = kore_strdup(type->data.string);
++				auth->challenge = challenge;
+ 			} else {
+-				kore_free(challenge->error_type);
+-				kore_free(challenge->error_detail);
+-
+-				challenge->error_type =
+-				    kore_strdup(type->data.string);
+-				challenge->error_detail =
+-				    kore_strdup(detail->data.string);
++				challenge = auth->challenge;
+ 			}
++			challenge->status = stval;
++			if (challenge->status == ACME_STATUS_INVALID &&
++			    (err = kore_json_find_object(object, "error")) != NULL) {
++				type = kore_json_find_string(err, "type");
++				detail = kore_json_find_string(err, "detail");
++				if (type != NULL && detail != NULL) {
++					kore_free(challenge->error_type);
++					kore_free(challenge->error_detail);
++					challenge->error_type =
++					    kore_strdup(type->data.string);
++					challenge->error_detail =
++					    kore_strdup(detail->data.string);
++				}
++			}
++			break;
+ 		}
+ 
+-		break;
++cleanup_json_auth_update:
++		kore_json_cleanup(&json);
+ 	}
++#endif
+ 
+ 	if (auth->challenge == NULL) {
+ 		kore_log(LOG_NOTICE,
+@@ -1306,7 +1621,6 @@ cleanup:
+ 		}
+ 	}
+ 
+-	kore_json_cleanup(&json);
+ 	acme_request_cleanup(&req);
+ }
+ 
+@@ -1435,7 +1749,7 @@ acme_request_prepare(struct acme_request *req, int method,
+ 
+ 	/* Override default timeout. */
+ 	curl_easy_setopt(req->curl.handle,
+-	    CURLOPT_TIMEOUT, acme_request_timeout);
++	    CURLOPT_TIMEOUT, (long)acme_request_timeout);
+ 
+ 	kore_curl_http_setup(&req->curl, method, data, len);
+ 	kore_curl_http_set_header(&req->curl, "content-type",
+@@ -1462,9 +1776,7 @@ static int
+ acme_request_run(struct acme_request *req)
+ {
+ 	size_t				len;
+-	struct kore_json		json;
+ 	const u_int8_t			*body;
+-	struct kore_json_item		*detail;
+ 
+ 	kore_curl_run(&req->curl);
+ 
+@@ -1476,25 +1788,47 @@ acme_request_run(struct acme_request *req)
+ 
+ 	if (req->curl.http.status == HTTP_STATUS_BAD_REQUEST) {
+ 		kore_curl_response_as_bytes(&req->curl, &body, &len);
+-		kore_json_init(&json, body, len);
+-
+-		if (!kore_json_parse(&json)) {
+-			detail = NULL;
+-		} else {
+-			detail = kore_json_find_string(json.root, "detail");
+-		}
++#if defined(KORE_USE_LONEJSON)
++		struct acme_badreq_doc	doc;
+ 
+-		if (detail != NULL) {
++		memset(&doc, 0, sizeof(doc));
++		if (acme_ljson_parse(&acme_badreq_map, &doc, body, len,
++		    "acme bad request payload") == KORE_RESULT_OK &&
++		    doc.detail != NULL) {
+ 			kore_log(LOG_NOTICE,
+ 			    "request to '%s' failed with 400 - detail: %s",
+-			    req->curl.url, detail->data.string);
++			    req->curl.url, doc.detail);
+ 		} else {
+ 			kore_log(LOG_NOTICE,
+ 			    "request to '%s' failed with 400 - body: %.*s",
+ 			    req->curl.url, (int)len, (const char *)body);
+ 		}
++		lonejson_cleanup(&acme_badreq_map, &doc);
++#else
++		{
++			struct kore_json		json;
++			struct kore_json_item		*detail;
++
++			kore_json_init(&json, body, len);
++			if (!kore_json_parse(&json)) {
++				detail = NULL;
++			} else {
++				detail = kore_json_find_string(json.root, "detail");
++			}
+ 
+-		kore_json_cleanup(&json);
++			if (detail != NULL) {
++				kore_log(LOG_NOTICE,
++				    "request to '%s' failed with 400 - detail: %s",
++				    req->curl.url, detail->data.string);
++			} else {
++				kore_log(LOG_NOTICE,
++				    "request to '%s' failed with 400 - body: %.*s",
++				    req->curl.url, (int)len, (const char *)body);
++			}
++
++			kore_json_cleanup(&json);
++		}
++#endif
+ 		return (KORE_RESULT_ERROR);
+ 	}
+ 
+@@ -1507,6 +1841,7 @@ acme_request_cleanup(struct acme_request *req)
+ 	kore_curl_cleanup(&req->curl);
+ }
+ 
++#if !defined(KORE_USE_LONEJSON)
+ static void
+ acme_directory_set(struct kore_json *json, const char *name, char **out)
+ {
+@@ -1519,6 +1854,7 @@ acme_directory_set(struct kore_json *json, const char *name, char **out)
+ 
+ 	*out = kore_strdup(item->data.string);
+ }
++#endif
+ 
+ static void
+ acme_sign_submit(struct kore_json_item *json, const char *url, void *udata,
+diff --git a/src/ljson.c b/src/ljson.c
+new file mode 100644
+index 0000000..053e8c9
+--- /dev/null
++++ b/src/ljson.c
+@@ -0,0 +1,93 @@
++/*
++ * vectis lonejson helpers for Kore request bodies.
++ */
++
++#include "kore.h"
++#include "http.h"
++#include "ljson.h"
++
++struct kore_ljson_reader {
++	struct http_request	*req;
++};
++
++static lonejson_read_result
++kore_ljson_http_reader(void *user, unsigned char *buffer, size_t capacity)
++{
++	struct kore_ljson_reader	*reader = user;
++	lonejson_read_result		result;
++	ssize_t				ret;
++
++	memset(&result, 0, sizeof(result));
++
++	ret = http_body_read(reader->req, buffer, capacity);
++	if (ret < 0) {
++		result.error_code = errno != 0 ? errno : EIO;
++		return (result);
++	}
++
++	result.bytes_read = (size_t)ret;
++	result.eof = (ret == 0);
++	return (result);
++}
++
++lonejson_status
++kore_ljson_validate_request(struct http_request *req, lonejson_error *error)
++{
++	struct kore_ljson_reader	reader;
++	lonejson		*runtime;
++	lonejson_status		status;
++
++	if (req == NULL) {
++		if (error != NULL) {
++			memset(error, 0, sizeof(*error));
++			error->code = LONEJSON_STATUS_INVALID_ARGUMENT;
++			kore_strlcpy(error->message, "request is required",
++			    sizeof(error->message));
++		}
++		return (LONEJSON_STATUS_INVALID_ARGUMENT);
++	}
++
++	if (!http_body_rewind(req))
++		return (LONEJSON_STATUS_IO_ERROR);
++
++	reader.req = req;
++	runtime = lonejson_new(NULL, error);
++	if (runtime == NULL)
++		return (LONEJSON_STATUS_ALLOCATION_FAILED);
++	status = lonejson_validate_reader(runtime, kore_ljson_http_reader,
++	    &reader, error);
++	lonejson_free(runtime);
++	return (status);
++}
++
++lonejson_status
++kore_ljson_parse_request(struct http_request *req, const lonejson_map *map,
++    void *dst, lonejson_error *error)
++{
++	struct kore_ljson_reader	reader;
++	lonejson		*runtime;
++	lonejson_status		status;
++
++	if (req == NULL || map == NULL || dst == NULL) {
++		if (error != NULL) {
++			memset(error, 0, sizeof(*error));
++			error->code = LONEJSON_STATUS_INVALID_ARGUMENT;
++			kore_strlcpy(error->message,
++			    "request, map, and destination are required",
++			    sizeof(error->message));
++		}
++		return (LONEJSON_STATUS_INVALID_ARGUMENT);
++	}
++
++	if (!http_body_rewind(req))
++		return (LONEJSON_STATUS_IO_ERROR);
++
++	reader.req = req;
++	runtime = lonejson_new(NULL, error);
++	if (runtime == NULL)
++		return (LONEJSON_STATUS_ALLOCATION_FAILED);
++	status = lonejson_parse_reader(runtime, map, dst, kore_ljson_http_reader,
++	    &reader, error);
++	lonejson_free(runtime);
++	return (status);
++}

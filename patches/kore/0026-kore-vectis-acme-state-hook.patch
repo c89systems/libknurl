@@ -1,0 +1,25 @@
+diff --git a/src/keymgr_openssl.c b/src/keymgr_openssl.c
+--- a/src/keymgr_openssl.c
++++ b/src/keymgr_openssl.c
+@@ -251,5 +251,9 @@ static void	keymgr_acme_order_failed(const void *, size_t, struct key *);
+ static void	keymgr_acme_challenge_cert(const void *, size_t, struct key *);
+ 
++#if defined(KORE_VECTIS_ACME_STATE_HOOK)
++int	vectis_kore_acme_state_persist(const char *);
++#endif
++
+ static int	keymgr_x509_not_after(X509 *, time_t *);
+ static int	keymgr_asn1_convert_utctime(const ASN1_TIME *, time_t *);
+ static int	keymgr_asn1_convert_generalizedtime(const void *,
+@@ -1061,6 +1065,11 @@ keymgr_acme_install_cert(const void *data, size_t len, struct key *key)
+ 		    "close error on '%s' (%s)", key->dom->certfile, errno_s);
+ 	}
+ 
++#if defined(KORE_VECTIS_ACME_STATE_HOOK)
++	if (!vectis_kore_acme_state_persist(key->dom->domain))
++		fatalx("failed to persist ACME state for %s", key->dom->domain);
++#endif
++
+ 	keymgr_submit_certificates(key->dom, KORE_MSG_WORKER_ALL);
+ 
+ 	keymgr_x509_msg(key->dom->domain, NULL, 0,

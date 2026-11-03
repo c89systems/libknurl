@@ -1,0 +1,35 @@
+diff --git a/src/tls_openssl.c b/src/tls_openssl.c
+--- a/src/tls_openssl.c
++++ b/src/tls_openssl.c
+@@ -221,6 +221,7 @@ kore_tls_domain_setup(struct kore_domain *dom, int type,
+ {
+ 	const u_int8_t		*ptr;
+ 	EVP_PKEY		*pkey;
++	EVP_PKEY		*pubkey;
+ 	X509			*x509;
+ 	STACK_OF(X509_NAME)	*certs;
+ 	const SSL_METHOD	*method;
+@@ -294,18 +295,20 @@ kore_tls_domain_setup(struct kore_domain *dom, int type,
+ 		return;
+ 	}
+ 
+-	if ((pkey = X509_get_pubkey(x509)) == NULL)
++	if ((pubkey = X509_get_pubkey(x509)) == NULL)
+ 		fatalx("certificate has no public key");
+ 
+-	switch (EVP_PKEY_id(pkey)) {
++	switch (EVP_PKEY_id(pubkey)) {
+ 	case EVP_PKEY_RSA:
+-		pkey = tls_privsep_private_key(pkey, dom);
++		pkey = tls_privsep_private_key(pubkey, dom);
+ 		break;
+ 	default:
+ 		fatalx("unknown public key in certificate");
+ 	}
++	EVP_PKEY_free(pubkey);
+ 
+ 	if (!SSL_CTX_use_PrivateKey(dom->tls_ctx, pkey))
+ 		fatalx("SSL_CTX_use_PrivateKey(): %s", ssl_errno_s);
++	EVP_PKEY_free(pkey);
+ 
+ 	if (!SSL_CTX_check_private_key(dom->tls_ctx)) {

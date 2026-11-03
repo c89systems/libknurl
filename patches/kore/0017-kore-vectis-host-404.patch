@@ -1,0 +1,28 @@
+diff --git a/src/http.c b/src/http.c
+index 9a7f3f34..d0752c1 100644
+--- a/src/http.c
++++ b/src/http.c
+@@ -858,12 +858,12 @@ http_header_recv(struct netbuf *nb)
+ 			continue;
+ 
+ 		if ((host = http_validate_header(headers[i])) == NULL) {
+-			http_error_response(c, HTTP_STATUS_BAD_REQUEST);
++			http_error_response(c, HTTP_STATUS_NOT_FOUND);
+ 			return (KORE_RESULT_OK);
+ 		}
+ 
+ 		if (*host == '\0') {
+-			http_error_response(c, HTTP_STATUS_BAD_REQUEST);
++			http_error_response(c, HTTP_STATUS_NOT_FOUND);
+ 			return (KORE_RESULT_OK);
+ 		}
+ 
+@@ -872,6 +872,6 @@ http_header_recv(struct netbuf *nb)
+ 	}
+ 
+ 	if (host == NULL) {
+-		http_error_response(c, HTTP_STATUS_BAD_REQUEST);
++		http_error_response(c, HTTP_STATUS_NOT_FOUND);
+ 		return (KORE_RESULT_OK);
+ 	}
+ 

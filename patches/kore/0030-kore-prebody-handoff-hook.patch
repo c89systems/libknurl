@@ -1,0 +1,46 @@
+diff --git a/include/kore/kore.h b/include/kore/kore.h
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -356,6 +356,8 @@
+ 	struct kore_runtime_call		*rcall;
+ 	struct kore_runtime_call		*on_free;
+ 	struct kore_runtime_call		*on_headers;
++	int					(*on_prebody)(struct http_request *,
++					    const void *, size_t);
+ 	struct kore_runtime_call		*on_body_chunk;
+ 
+ 	TAILQ_HEAD(, kore_route_params)		params;
+diff --git a/src/http.c b/src/http.c
+--- a/src/http.c
++++ b/src/http.c
+@@ -840,6 +840,7 @@
+ 	size_t			len;
+ 	struct http_header	*hdr;
+ 	struct http_request	*req;
++	int			decision;
+ 	u_int8_t		*end_headers;
+ 	int			h, i, v, skip, l;
+ 	char			*headers[HTTP_REQ_HEADER_MAX];
+@@ -949,6 +950,22 @@
+ 		if (req->referer == NULL &&
+ 		    !strcasecmp(hdr->header, "referer"))
+ 			req->referer = hdr->value;
++	}
++
++	if (req->rt->on_prebody != NULL) {
++		decision = req->rt->on_prebody(req, end_headers,
++		    nb->s_off - len);
++		if (decision == KORE_RESULT_RETRY)
++			return (KORE_RESULT_OK);
++		if (decision != KORE_RESULT_OK) {
++			req->flags |= HTTP_REQUEST_DELETE;
++			if (TAILQ_EMPTY(&(c->send_queue)))
++				http_error_response(c,
++				    HTTP_STATUS_BAD_REQUEST);
++			else
++				c->flags |= CONN_CLOSE_EMPTY;
++			return (KORE_RESULT_OK);
++		}
+ 	}
+ 
+ 	if (req->flags & HTTP_REQUEST_EXPECT_BODY) {

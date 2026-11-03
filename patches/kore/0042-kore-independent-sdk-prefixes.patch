@@ -1,0 +1,31 @@
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -37,11 +37,11 @@ CFLAGS+=-D_FORTIFY_SOURCE=2
+ CFLAGS+=-DPREFIX='"$(PREFIX)"' -fstack-protector-all
+ 
+ ifneq ("$(KORE_BUNDLE_ROOT)", "")
+-	OPENSSL_PATH?=$(KORE_BUNDLE_ROOT)
+-	PSLOG_PATH?=$(KORE_BUNDLE_ROOT)
+-	LONEJSON_PATH?=$(KORE_BUNDLE_ROOT)
+-	KORE_CURL_INC?=-I$(KORE_BUNDLE_ROOT)/include
+-	KORE_CURL_LIB?=-L$(KORE_BUNDLE_ROOT)/lib -lcurl -lnghttp2 -lssl -lcrypto
++	OPENSSL_PATH?=$(KORE_BUNDLE_ROOT)/cpkt
++	PSLOG_PATH?=$(KORE_BUNDLE_ROOT)/pslog
++	LONEJSON_PATH?=$(KORE_BUNDLE_ROOT)/lonejson
++	KORE_CURL_INC?=-I$(KORE_BUNDLE_ROOT)/cpkt/include
++	KORE_CURL_LIB?=-L$(KORE_BUNDLE_ROOT)/cpkt/lib -lcurl -lnghttp2 -lssl -lcrypto
+ endif
+ 
+ LDFLAGS+=-rdynamic
+diff --git a/kodev/Makefile b/kodev/Makefile
+--- a/kodev/Makefile
++++ b/kodev/Makefile
+@@ -14,6 +14,6 @@ CFLAGS+=-Wmissing-declarations -Wshadow -Wpointer-arith -Wcast-qual
+ CFLAGS+=-Wsign-compare -Iincludes -std=c99 -pedantic
+ CFLAGS+=-DPREFIX='"$(PREFIX)"'
+-LDFLAGS=-lcrypto
++LDFLAGS+=-lcrypto
+ 
+ ifneq ("$(NOOPT)", "")
+ 	CFLAGS+=-O0

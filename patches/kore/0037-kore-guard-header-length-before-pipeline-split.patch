@@ -1,0 +1,29 @@
+diff --git a/src/http.c b/src/http.c
+--- a/src/http.c
++++ b/src/http.c
+@@ -886,6 +886,12 @@ http_header_recv(struct netbuf *nb)
+ 	*end_headers = '\0';
+ 	end_headers += skip;
+ 	len = end_headers - nb->buf;
++	/* Check before any subtraction or prebody/pipeline handoff. */
++	if (len > nb->s_off) {
++		http_error_response(c, HTTP_STATUS_BAD_REQUEST);
++		return (KORE_RESULT_OK);
++	}
++
+ 	hbuf = (char *)nb->buf;
+ 
+ 	/* Do not silently truncate at the split array limit. */
+@@ -1027,8 +1033,10 @@ http_header_recv(struct netbuf *nb)
+ 			return (KORE_RESULT_OK);
+ 		}
+ 
+-		if (((nb->s_off - len) > req->content_length) ||
+-		    (req->content_length > http_body_max)) {
++		/* Surplus bytes belong to the next pipelined request. The header
++		 * length checks prevent subtraction underflow. */
++		if ((len > nb->s_off) ||
++		    (req->content_length > http_body_max)) {
+ 			req->flags |= HTTP_REQUEST_DELETE;
+ 			http_error_response(req->owner,
+ 			    HTTP_STATUS_REQUEST_ENTITY_TOO_LARGE);

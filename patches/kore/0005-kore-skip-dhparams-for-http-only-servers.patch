@@ -1,0 +1,47 @@
+diff --git a/src/config.c b/src/config.c
+--- a/src/config.c
++++ b/src/config.c
+@@ -108,6 +108,9 @@ static int		configure_tls_cipher(char *);
+ static int		configure_tls_dhparam(char *);
+ static int		configure_client_verify(char *);
+ static int		configure_client_verify_depth(char *);
++#if !defined(KORE_VECTIS_DIRECT_TLS)
++static int		configured_server_uses_tls(void);
++#endif
+ 
+ #if !defined(KORE_NO_HTTP)
+ static int		configure_route(char *);
+@@ -333,7 +336,10 @@ kore_parse_config(void)
+ 		(void)fclose(fp);
+ 	}
+ 
+-	kore_tls_dh_check();
++#if !defined(KORE_VECTIS_DIRECT_TLS)
++	if (configured_server_uses_tls())
++		kore_tls_dh_check();
++#endif
+ 
+ 	if (!kore_module_loaded())
+ 		fatal("no application module was loaded");
+@@ -831,6 +837,21 @@ configure_tls_cipher(char *cipherlist)
+ 	return (kore_tls_ciphersuite_set(cipherlist));
+ }
+ 
++#if !defined(KORE_VECTIS_DIRECT_TLS)
++static int
++configured_server_uses_tls(void)
++{
++	struct kore_server	*server;
++
++	LIST_FOREACH(server, &kore_servers, list) {
++		if (server->tls)
++			return (1);
++	}
++
++	return (0);
++}
++#endif
++
+ static int
+ configure_tls_dhparam(char *path)
+ {

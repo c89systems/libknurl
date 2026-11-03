@@ -1,0 +1,38 @@
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -721,6 +721,9 @@
+ 		kore_connection_prune(KORE_CONNECTION_PRUNE_DISCONNECT);
+ 	}
+ 
++	/* A clean worker exit must release intake before closing its IPC link. */
++	if (worker->no_accept == 0)
++		kore_worker_make_busy();
+ 	worker_runtime_teardown();
+ 	kore_server_cleanup();
+ 
+@@ -1162,12 +1165,24 @@
+ static void
+ worker_unlock(void)
+ {
+-	if (worker->no_accept)
++	u_int16_t idx;
++	struct kore_worker *kw;
++
++	/* The parent also releases a dead worker's lock from worker_reaper(). */
++	if (worker != NULL && worker->no_accept)
+ 		fatal("%s called with no_accept set", __func__);
+ 
+ 	accept_lock->current = 0;
+ 	if (!__sync_bool_compare_and_swap(&(accept_lock->lock), 1, 0))
+ 		kore_log(LOG_NOTICE, "worker_unlock(): wasn't locked");
++	if (worker == NULL) {
++		for (idx = 0; idx < worker_count; idx++) {
++			kw = WORKER(idx);
++			if (kw->running && kw->pid > 0 && !kw->no_accept)
++				kore_msg_send(kw->id, KORE_MSG_ACCEPT_AVAILABLE,
++				    NULL, 0);
++		}
++	}
+ }
+ 
+ static void

@@ -1,0 +1,10 @@
+--- a/src/msg.c
++++ b/src/msg.c
+@@ -176,6 +176,7 @@
+ 	struct connection	*c;
+ 	struct kore_worker	*kw;
+ 
++	memset(&m, 0, sizeof(m));
+ 	m.id = id;
+ 	m.dst = dst;
+ 	m.length = len;
