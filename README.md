@@ -1,80 +1,87 @@
 # librotmos
 
-librotmos is being extracted from Vectis's enhanced Kore HTTP runtime. Its intended
-public surface is a librotmos C API, with Kore as the backend and an explicit
-backend escape hatch. The planned toolkit includes routing, static serving,
-JSON/XML routes, reverse proxy and WebDAV, plus a shipped Lua facade and C binding
-over the public shared library. Vectis retains its application interfaces.
-The first delivery must be an extremely simple drop-in for Vectis's existing
-server, preserving handlers and declarations through a small forwarding adapter.
+librotmos is a C89 HTTP server library for websites, REST services and APIs.
+It combines a public C API and Lua facade with a Kore backend, covering server
+configuration, routing, request bodies, replies, TLS and worker lifecycle.
+
+Applications supply handlers, schemas, authentication policy and storage
+providers. librotmos owns HTTP transport and the reusable server mechanisms.
+
+## Server features
+
+- HTTP/1.0 and HTTP/1.1 listeners, worker processes, readiness controls,
+  graceful shutdown and configurable resource limits.
+- Literal, parameter and regex routes, method masks, groups, middleware and
+  staged replies that remain editable until the handler chain completes.
+- Bounded request and response streaming with backpressure, uploads, native
+  readers and sources, plus explicit buffered and file-backed operations.
+- Typed JSON routes through LoneJSON, libxml2 XML codecs and routes, buffered
+  REST helpers, and OpenAPI JSON/YAML generation over the route registry.
+- Static files and directories, asset-provider mounts, conditional requests
+  and ranges, and WebDAV with filesystem or custom storage providers.
+- Reverse proxying for HTTP, SSE and WebSocket traffic, including HTTP/2
+  upstream connections, alongside application WebSocket callbacks.
+- TLS termination, mutual TLS, ACME certificate management and HTTPS redirects.
+- Trusted-proxy address resolution, admission and autoblock rules, structured
+  access logging, and transport/lifecycle observations.
+
+## C and Lua interfaces
+
+The C API uses opaque handles, configuration values, explicit ownership and
+returned errors. Route handlers construct staged replies; the server handles
+framing, source execution and delivery. Public channels and loop operations
+support direct I/O integrations, with an explicit Kore backend escape hatch.
+Public headers support C89 and C++ consumers; library and backend code use
+strict `-std=c89`.
+
+The `rotmos` Lua module provides an ergonomic facade over a C binding of the
+public shared library. It runs in the host's Lua 5.5.1 state, including embedded
+Lua, and shares the same routing, codecs, proxy, WebDAV and lifecycle APIs.
+The host owns the Lua runtime. Lua packaging comprises facade/binding sources,
+a LuaRocks rockspec and a source rock.
+
+## Application integration
+
+librotmos exposes a complete server facade for Vectis's HTTP/web/REST/API
+workflows.
+The integration preserves Vectis's handlers, route declarations, response/source
+contracts and application C/Lua interfaces through forwarding wrappers and
+generic callbacks. Application services, authentication providers, metrics
+aggregation, packed assets, durable storage and outer supervision stay with
+the application.
+
 The [Vectis integration contract](docs/vectis-integration-contract.md) defines
-the required facade coverage and cutover evidence, including REST and OpenAPI.
+facade coverage and compatibility requirements. The
+[server API specification](docs/server-api-spec.md) describes configuration,
+ownership, streaming and lifecycle behavior.
 
-**Current status:** this repository contains the pristine Kore snapshot, all 42
-Vectis patches, a build-time patch preparation target, an upgrade command and
-vendoring regression tests. It does not yet build a server library. The public
-API, C89 backend port, toolkit, Lua product and Vectis cutover remain to be
-implemented. See the
-[server API specification](docs/server-api-spec.md) for the proposed contract and
-the [extraction boundary](docs/extraction.md) for the bootstrap context.
-The [specification audit](docs/server-api-audit.md) records the resolved gaps and
-remaining implementation proof. The Lua module runs in its host's existing VM,
-including embedded Lua; it does not create or ship another interpreter.
+## Dependencies and platforms
 
-## Source ownership
+| Dependency | Role |
+| --- | --- |
+| cpkt | OpenSSL, curl, nghttp2 and libxml2 packages and their native link dependencies |
+| LoneJSON | Typed JSON records, parsing, serialization and generators |
+| libpslog | Structured runtime and access logging |
+| Lua 5.5.1 | Host runtime for the Lua module |
 
-- `vendor/kore/` is an unmodified upstream source export, including its license.
-- `vendor/kore.revision` and `vendor/kore.url` identify its exact upstream commit
-  and repository. There is no nested Git checkout or submodule.
-- `patches/kore/series` orders patches stored outside the source snapshot.
-- `build/native/kore/` is a disposable patched copy. Never edit it to preserve a
-  change: edit or add a patch, update `series`, then rebuild.
+Dependency SDKs and Lua providers come from `github.com/c89systems/`.
+C-only applications use the native library independently of the Lua module.
+Platforms comprise GNU and musl Linux on x86_64, aarch64 and armhf, and
+Darwin on arm64.
 
-Normal builds and tests are offline. CMake tracks upstream sources, patches,
-`series`, provenance and the preparation script. A changed input regenerates the
-copy from pristine sources; an unchanged build reuses it. Patch failures name the
-patch and stop the build without publishing a partially patched copy. One
-operation owns the checkout; run build, test and upgrade operations serially.
+## Backend and documentation
 
-## Commands
+Kore is a pinned, pristine source snapshot. Ordered patches live outside its
+source tree and apply to disposable build copies, keeping upstream upgrades
+and local changes separate.
 
-Prerequisites for this bootstrap: CMake >= 3.21, Git, Make and Bash >= 4.4. Upgrades
-also use `tar` and `mktemp`. The server dependency SDKs are not required for these
-vendoring tests, because no C library is compiled yet.
+- [Build availability, commands and backend maintenance](docs/development.md)
+- [Server API specification](docs/server-api-spec.md)
+- [Vectis integration contract](docs/vectis-integration-contract.md)
+- [Ownership boundary](docs/extraction.md)
+- [Specification audit](docs/server-api-audit.md)
 
-```sh
-make help
-make build                 # Prepare build/native/kore; does not compile a library.
-make test                  # Replay, failure, upgrade and invalidation tests.
-make clean                 # Remove all local build/, dist/ and .cache/ state.
-```
+## License
 
-To upgrade, start with committed, pristine `vendor/kore/` and provenance files:
-
-```sh
-make update-kore KORE_REVISION=<full-40-character-upstream-commit>
-make test
-git diff -- vendor/kore vendor/kore.revision patches/kore
-```
-
-When staging an accepted snapshot, use `git add -f -- vendor/kore` so Kore's own
-unmodified `.gitignore` does not hide newly introduced public headers. That
-directory must contain only the pristine export; generated files belong in
-`build/`.
-
-The updater fetches the recorded upstream into owned `build/` scratch, exports the
-exact requested commit and tests the current patch stack against that candidate.
-Only a successful replay replaces the tracked pristine snapshot and its revision.
-A conflict leaves both unchanged and reports the failing patch. Rebase or repair
-the patch files against the candidate revision, then repeat the update. Patch
-application alone does not prove a compatible runtime upgrade: the future C89,
-behavior and consumer checks must also pass before accepting one. No command
-commits, tags or pushes an upgrade automatically.
-
-The initial source pin is `1ff3c0f6f7973dc7fc8bf38369790ef2d8079b3b`. The original
-patches were imported from Vectis commit
-`6b1e263e0436687f68a7768ca55f4361a6e59e19`; that provenance is recorded separately
-in `patches/kore/vectis.revision`. Future fixes belong in this repository's stack.
-
-librotmos-owned code is MIT licensed. Imported Kore sources retain their upstream
-copyright and permission notices in [vendor/kore/LICENSE](vendor/kore/LICENSE).
+librotmos code is [MIT licensed](LICENSE). Kore retains its upstream copyright
+and permission notices in [vendor/kore/LICENSE](vendor/kore/LICENSE).
