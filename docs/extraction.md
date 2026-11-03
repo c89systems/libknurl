@@ -4,6 +4,9 @@ This is the implementation direction, not an available API reference. Only the
 source-vendoring foundation described in the README is currently implemented.
 The [server API specification](server-api-spec.md) now supplies the researched
 contract and supersedes this document's preliminary API direction.
+The [Vectis integration contract](vectis-integration-contract.md) makes a simple
+drop-in replacement the first delivery gate: complete the facade and generic
+server helpers here, leaving a small mechanical adapter for the consumer switch.
 
 ## Agreed ownership
 
@@ -21,6 +24,9 @@ runtime enhancement currently used by Vectis.
 The selected surface also includes the reusable router/profiles, upload/static
 helpers, typed JSON and libxml2 XML codecs/routes, reverse-proxy engine, WebDAV
 protocol/filesystem provider, and generic trusted-proxy/autoblock mechanisms.
+It also includes staged reply builders, generic source/reader execution, buffered
+REST conveniences and route-registry/OpenAPI support. Vectis handlers and source
+callbacks must not need rewriting around lower-level transport APIs.
 Ship a Lua 5.5.1 facade over a C binding of the installed public shared API; that
 binding must neither include private headers nor embed another runtime copy.
 It uses the host's existing Lua VM, including embedded Lua, with a public preload
@@ -111,8 +117,10 @@ from librotmos's own C89 compilation contract.
 6. Deliver the reusable toolkit and packaged Lua facade/public-shared-API C
    binding, including installed-consumer tests and the Lua source archive,
    rockspec and source rock. C-only consumers do not acquire a Lua runtime.
-7. Migrate Vectis in its own authorized change: remove the vendored runtime build
-   and patch stack, connect the librotmos adapter, and run its HTTP/TLS/proxy,
+7. Prove the complete public facade through an installed reference adapter before
+   proposing the switch. Migrate Vectis in its own authorized change: remove the
+   vendored runtime build and patch stack, connect the prepared forwarding adapter,
+   and run its HTTP/TLS/proxy,
    streaming, Lua, lifecycle and packaging regressions. Preserve its independent
    public application contract.
 

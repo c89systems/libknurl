@@ -5,6 +5,10 @@ public surface is a librotmos C API, with Kore as the backend and an explicit
 backend escape hatch. The planned toolkit includes routing, static serving,
 JSON/XML routes, reverse proxy and WebDAV, plus a shipped Lua facade and C binding
 over the public shared library. Vectis retains its application interfaces.
+The first delivery must be an extremely simple drop-in for Vectis's existing
+server, preserving handlers and declarations through a small forwarding adapter.
+The [Vectis integration contract](docs/vectis-integration-contract.md) defines
+the required facade coverage and cutover evidence, including REST and OpenAPI.
 
 **Current status:** this repository contains the pristine Kore snapshot, all 42
 Vectis patches, a build-time patch preparation target, an upgrade command and

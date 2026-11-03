@@ -10,6 +10,9 @@ source corrections and remaining implementation proof obligations.
 The selected product is a reusable server toolkit: public C API, Kore backend,
 generic routes, format routes, static serving, reverse proxy, WebDAV, and a
 shipped Lua facade/C binding. Vectis keeps its application facade and integrations.
+The first delivery must be an extremely simple replacement for Vectis's current
+server. The [Vectis integration contract](vectis-integration-contract.md) makes
+that acceptance criterion concrete and governs the facade/cutover requirements.
 Opaque handles, operation families, lifecycle semantics and defaults below are
 the recommended design for implementation; they are not a released ABI commitment.
 
@@ -19,6 +22,11 @@ Provide an independently usable C89 HTTP server library which can replace
 Vectis's private Kore object runtime and bridge without losing Vectis's server
 features. A normal consumer must not compile Kore, resolve callback names,
 manipulate Kore globals, include Kore headers, or link private Kore symbols.
+The public facade must already execute the server workflows Vectis exposes;
+offering primitives which require a new server implementation in Vectis does not
+satisfy this objective. Preserve existing application declarations and behavior
+through forwarding wrappers and host callbacks. Complete the necessary generic
+helpers and reference-adapter coverage here before proposing the consumer switch.
 
 The investigation used:
 
@@ -52,7 +60,7 @@ not an unresolved capability in Vectis or a reason to require new dependency API
 | Vectis normally forks a runtime parent, then starts its supervisor services; Kore forks HTTP and auxiliary workers. | Keep the outer supervisor in Vectis, expose process-domain lifecycle hooks, and require fork quiescence. |
 | ACME persistence runs in the key-manager path before certificates are distributed. | A generic persistence callback must preserve ordering and failure propagation without importing Lockd. |
 | Vectis already restricts dynamic exports; its export list includes vectis_request_kore, not a public Kore runtime. | Preserve explicit native request access without accidentally publishing all of Kore as another stable ABI. |
-| Lua upload/DSV dispatch is registered through the pthread-backed upload_reader and directly accesses the registered Lua state there. | The cutover must marshal Lua work to the owner worker loop; this thread placement is not a contract to copy. |
+| Lua upload/DSV dispatch is registered through the pthread-backed upload_reader and directly accesses the registered Lua state there. | The rotmos facade supplies owner-loop Lua delivery and generic native reader execution; Vectis must not implement another thread/transport bridge. |
 | The current reader adapter's write/finish paths can block in a condition wait or thread join in the HTTP loop. | Preserve its reader feature with partial consumption, pause/resume and wake delivery, not event-loop blocking. |
 
 ## 2. Ownership and scope
@@ -61,7 +69,7 @@ not an unresolved capability in Vectis or a reason to require new dependency API
 | --- | --- |
 | Accepted sockets, HTTP parsing, transport framing and keepalive; generic router, parameter/regex matching and route ordering | Route declarations, application handlers, auth decisions and application composition |
 | Worker processes and backend event loops; shipped Lua facade and public-API C binding | Outer supervisor, service graph, host Lua runtime ownership and application readiness policy |
-| Request/body transport, explicit materialization, uploads, response delivery and generic JSON/XML route codecs | Application schemas/business logic and unrelated client/format workflows such as DSV |
+| Request/body transport, explicit materialization, upload/reader/source execution, staged replies and generic JSON/XML/REST route codecs | Application schemas/business logic and unrelated client/format workflows such as DSV |
 | TLS termination, client-certificate enforcement and ACME mechanics | Durable ACME storage selection, Lockd/Pouch integration and hydration policy |
 | WebSocket/frame transport, raw duplex channels and generic HTTP/SSE/WebSocket reverse-proxy engine | WebSocket application behavior and configured proxy destinations/rewrite/auth decisions |
 | Admission/event hooks, generic trusted-proxy/autoblock implementation and transport observations | Selection of rules, application-specific admission events and application metrics/persistence |
@@ -71,7 +79,10 @@ not an unresolved capability in Vectis or a reason to require new dependency API
 librotmos supplies the reusable router and server conveniences described in
 section 19. Vectis translates its existing public route/configuration APIs into
 that router and removes the corresponding duplicate mechanisms at cutover.
-Its application facade remains Vectis-owned. Custom low-level consumers may use
+Its application facade remains Vectis-owned. Translation is a mechanical mapping
+of declarations and handles; it cannot require handler rewrites, another body/
+source executor, or reconstruction of the server from low-level operations.
+Custom low-level consumers may use
 the headers callback and explicitly dispatch a public router themselves; there
 must not be two implicit competing route selectors.
 
@@ -94,17 +105,19 @@ Use the `rotmos_` symbol prefix and these header families:
 | Header | Responsibility |
 | --- | --- |
 | `<rotmos/server.h>` | Errors, server/configuration, lifecycle, observations |
-| `<rotmos/http.h>` | Request views, body plans, materialized bodies, responses |
-| `<rotmos/io.h>` | Loop watches, timers, deferred work, wakers and channels |
+| `<rotmos/http.h>` | Request views, body policies/plans, materialization helpers and transport responses |
+| `<rotmos/reply.h>` | Staged route reply builders; transport submission follows completed hooks |
+| `<rotmos/io.h>` | Public sources/readers, bounded execution helpers, loop watches, timers, deferred work, wakers and channels |
 | `<rotmos/tls.h>` | Listener identities, material sources and ACME callbacks |
 | `<rotmos/websocket.h>` | Bounded application-frame connections |
 | `<rotmos/router.h>` | Route registration, captures, groups/prefixes and dispatch |
 | `<rotmos/proxy.h>` | Generic reverse-proxy configuration and public hook views |
 | `<rotmos/webdav.h>` | WebDAV mounts, filesystem provider and storage/auth interfaces |
 | `<rotmos/xml.h>` | libxml2-backed mapped routes, DOM/SAX and response encoders |
-| `<rotmos/rotmos.h>` | Ordinary server/HTTP/router/I/O/TLS/WebSocket/proxy/WebDAV interfaces; dependency-specific codec/interop headers remain explicit |
+| `<rotmos/openapi.h>` | Metadata and JSON/YAML document generation over the public route registry |
+| `<rotmos/rotmos.h>` | Ordinary server/HTTP/reply/router/I/O/TLS/WebSocket/proxy/WebDAV interfaces; dependency-specific codec/interop headers remain explicit |
 | `<rotmos/pslog.h>` | Explicit libpslog logger/access-log integration |
-| `<rotmos/lonejson.h>` | Explicit LoneJSON helpers over materialized bodies |
+| `<rotmos/lonejson.h>` | Explicit LoneJSON body/reply helpers, typed JSON and buffered REST route integration |
 | `<rotmos/backend/kore.h>` | Opt-in backend identity and native request access |
 | `<rotmos/lua.h>` | Binding-owned embedding/interop declarations; excluded from ordinary C umbrella headers |
 
@@ -159,6 +172,8 @@ explicitly named copy/take. Config, plan and error types each have an initialize
 | `rotmos_request_loop`, `rotmos_request_response` | Borrowed owning-loop/response handles |
 | `rotmos_request_effective_address`, `rotmos_request_correlation_id` | Resolver results copied into request lifetime storage |
 | `rotmos_request_body_info`, `rotmos_request_body_read`, `rotmos_request_body_rewind` | Materialized-kind/length, bounded reads and explicit rewind; live streams reject these operations |
+| `rotmos_request_body_materialize`, `rotmos_request_body_bytes/copy/spill/path`, `rotmos_request_body_reader` | Explicit facade operations over the same body store; no consumer-owned spool or reader bridge |
+| `rotmos_reply_status/header_set/header_add/text/bytes/file`, `rotmos_reply_source_materialized/source_take` | Staged route result, selected only after the middleware/handler chain; generic source ownership |
 | `rotmos_response_state`, `rotmos_response_is_committed`, `rotmos_response_queued_bytes` | Drain state, irreversible commitment latch and bounded queue occupancy |
 | `rotmos_response_bytes` | Bounded copied complete reply (status/type/body), automatically begins and ends on success; cannot replace an existing reply |
 | `rotmos_response_file_take`, `rotmos_response_producer`, `rotmos_response_producer_resume` | Explicit descriptor/producer ownership, pause/resume and close callback as defined in section 9 |
@@ -419,10 +434,12 @@ than relying on future librotmos defaults.
 | `client_ip` | Generic trusted-proxy resolution in rotmos; Vectis passes selected trust settings and can supply a resolver |
 | `autoblock` | Generic process-shared rule engine in rotmos; Vectis selects rules and emits application events through public APIs |
 
-`io.chunk_bytes` defaults to 8192 and queue/memory budgets to 262144 bytes per
+`io.chunk_bytes` defaults to 8192 and transport queue budgets to 262144 bytes per
 request direction. Those are heap allocations, not large automatic arrays.
-Bounds must include headers, held input remainder, queued writes and deferred
-callbacks. Disk materialization additionally requires a finite body/disk budget.
+Account separately for headers, held input remainder, queued writes and deferred
+callbacks. Explicit body/reply materialization has its own finite memory/disk
+budget; an existing buffered body is not rejected merely because it exceeds a
+transport queue. The facade derives those budgets from the effective body policy.
 The imported parser uses HTTP_REQ_HEADER_MAX = 25 split slots and rejects 25
 nonempty lines including the request line: its current effective maximum is
 23 header fields, including Host. Report that independent limit explicitly and
@@ -461,9 +478,12 @@ An unanswered managed request has a finite `deferred_response_timeout_ms`
 (default 30000) after successful body completion. This covers the otherwise
 unbounded wait before response begin; response write-idle timing covers started
 responses, including a paused producer. Application receive pauses do not freeze
-these deadlines. Startup and deferred-response bounds cannot be disabled in this
-initial contract. Proxy-owned progress/total deadlines are separately specified
-in section 19, with the response-start bound still applying.
+these deadlines. Startup and deferred-response deadlines have named disable
+flags; Vectis maps its existing effective deadline policy explicitly, including
+absence of a corresponding deadline. New standalone defaults must not introduce
+a shorter timeout into an existing application. Proxy-owned progress/total
+deadlines are separately specified in section 19. The worker shutdown bound
+remains mandatory.
 
 ## 7. Request dispatch and metadata
 
@@ -620,11 +640,13 @@ OPTIONS/COPY/MOVE's current managed handling must be covered by explicit wire
 tests before any change to body acceptance. All eleven existing methods remain
 available; unknown methods must not alias an ANY application route.
 
-The adapter must retain Vectis's live blocking-reader feature without exposing
-`lc_source` in librotmos. Vectis owns its bounded producer/reader bridge and
-post-fork reader thread. That thread may access a copied/materialized adapter
-view or its bounded reader, not owner-loop rotmos handles; it wakes the worker to
-resume and publish results. Lua is never entered from the foreign thread.
+Retain Vectis's live blocking-reader feature without exposing `lc_source` in
+librotmos. The public generic reader helper owns bounded queues, post-fork native
+execution, wake delivery, result publication and cleanup. Vectis supplies native
+reader/format callbacks and a thin source wrapper; it must not implement another
+producer/reader bridge for the cutover. Native jobs use immutable request metadata
+and their bounded reader, not live owner-loop transport handles. Lua chunk
+callbacks execute on the owning Lua thread through the facade.
 
 An explicit finite BUFFERED limit must fit the materialization memory budget;
 otherwise reject the plan rather than allocate beyond that budget. MATERIALIZED
@@ -644,11 +666,18 @@ The dispatch functions use `route->lua` and Lua stack/callback operations rather
 than posting back to the HTTP loop. Separately, `vectis_upload_reader_write`
 waits when its queue is full, and finish waits for the handler. These are
 source-observed migration gaps, not a reproduced race/crash report. The new
-adapter must keep Lua work on its owner loop, move only suitable native parsing
-to reader threads, and return a pause to librotmos when capacity is exhausted.
+rotmos facade must keep Lua work on its owner loop, run only suitable native
+reader work after fork, and pause input when capacity is exhausted. Vectis keeps
+its DSV/MCP/application parsers without inheriting that transport/thread plumbing.
 Record callback thread identity and concurrent-request progress in its tests.
 
 ## 9. Response construction, framing and commitment
+
+Ordinary routes first build an opaque `rotmos_reply` using the public facade in
+section 19. Auth/before/handler/after processing selects the final declaration;
+only then does the router submit it to the transport `rotmos_response` below.
+This preserves Vectis's mutable response-builder timing and source ownership.
+Immediate low-level transport operations are not a replacement for that facade.
 
 Each request has a borrowed `rotmos_response`. The principal operations are
 `rotmos_response_status`, `rotmos_response_header_set`,
@@ -1216,39 +1245,30 @@ by implementing this spec.
 
 ## 17. Concrete Vectis cutover
 
-1. Keep Vectis's public C/Lua declarations and application policies/supervisor.
-   Translate its request/response builders and registration APIs into public
-   rotmos operations; reusable server mechanisms have one owner in rotmos.
-2. Replace private `vectis_kore_runtime` object compilation with the installed
-   rotmos target. Move runtime-global configuration and worker setup behind the
-   library boundary. Remove Kore feature definitions from ordinary Vectis TUs.
-3. Construct a rotmos server in the existing runtime child. Pass explicit
-   effective settings, identities, paused-start gate, LIBRARY signal ownership
-   in that isolated runtime child, and owned control FD. Map
-   child readiness to Vectis's current control frame, then release serving only
-   when its supervisor services are ready.
-4. Translate headers into Vectis request metadata once. Move the generic selector
-   and ordinary/proxy/static/WebSocket ordering into the public rotmos router,
-   registering Vectis application handlers through that router before body delivery.
-   Select per-route body plans, preserving the 3 GiB upload default and current
-   explicit server ceilings.
-5. Map upload callbacks and materialized-body views without a second full body
-   copy. Keep blocking reader/format adapters in Vectis with bounded worker wake
-   and cleanup. Translate response variants into bytes/file/producer operations,
-   preserving materialized versus live-source names and ownership.
-   Keep Lua dispatch on the worker loop and retain callback/producer registry
-   roots until their actual terminal close, not just until the route returns.
-6. Lift generic proxy transport, curl pools, framing and hook execution into
-   rotmos, using its channel/response/loop APIs. Vectis supplies destinations and
-   application callbacks. Lift generic WebDAV/storage, static and JSON/XML route
-   machinery likewise; remove duplicate engines and all direct Kore/SSL/event
-   access from the Vectis adapter.
-7. Connect autoblock/admission, effective IP, observations, parent auth timers,
-   worker client initialization and teardown, and ACME persistence with typed
-   callbacks. Preserve process domains; no dummy Vectis hook definitions remain.
-8. Delegate vectis_request_kore through the explicit extension. Remove Vectis's
-   vendored Kore source/patch/build machinery in the same cutover and update its
-   docs, Lua coverage matrix, examples and package/source-rock closure.
+The [integration contract](vectis-integration-contract.md) defines the facade
+coverage, permitted adapter work and behavior the first replacement must preserve.
+Work which implements generic server mechanisms belongs to the extraction here,
+before cutover; it is not deferred Vectis integration work.
+
+1. Implement the required public facade and a reference adapter/host consumer
+   alongside each feature, including staged replies, body/source/reader helpers,
+   routing/REST/OpenAPI, codecs, static/proxy/WebDAV and lifecycle/provider hooks.
+   Exercise that consumer against installed static/shared SDKs and the Lua binding.
+2. Review the exact proposed Vectis adapter and dependency/build delta before
+   declaring replacement readiness. Only field/error/handle mappings, callback
+   trampolines, existing provider registrations and supervisor wiring remain.
+   Keep Vectis's public C/Lua declarations, handlers, source callbacks, application
+   policies and service graph intact. An uncovered seam is a rotmos API gap to
+   close before committing to the switch.
+3. In the separately authorized Vectis change, consume the installed rotmos
+   target, replace the private bridge with those forwarding operations and
+   remove Vectis's vendored Kore sources/patch/build machinery. The existing
+   runtime child and outer supervisor keep their roles; readiness/gates, native
+   request access, ACME storage and worker resources use the prepared hooks.
+4. Run the existing affected C/Lua, normal/packed, HTTP/TLS/proxy/WebDAV and
+   lifecycle regressions with the same application inputs and expected behavior.
+   Update dependency/package metadata and ownership docs. Do not rewrite handlers
+   or weaken tests to make the replacement appear compatible.
 
 This task does not authorize edits in the Vectis repository. The above sequence
 defines the later consumer change, with a clear cutover rather than a permanent
@@ -1258,26 +1278,26 @@ parallel runtime or refactor feature flag.
 
 This is proposed consumer syntax, not a compiled example. Once the API exists,
 turn this shape into a real installed static/shared consumer regression. It uses
-an explicit listener and explicit standalone signal ownership; it needs no Kore
-types or application router.
+an ordinary route/staged reply, explicit listener and standalone signal ownership;
+it needs no Kore types or raw transport plan.
 
 ```c
 #include <rotmos/rotmos.h>
 #include <stdio.h>
 
 static rotmos_status hello(rotmos_request *request,
-    rotmos_request_plan *plan, void *userdata, rotmos_error *error)
+    rotmos_reply *reply, void *userdata, rotmos_error *error)
 {
+    (void)request;
     (void)userdata;
-    plan->disposition = ROTMOS_REQUEST_REPLY;
-    return rotmos_response_bytes(rotmos_request_response(request),
-        200, "text/plain", "ok\n", 3u, error);
+    return rotmos_reply_text(reply, 200, "text/plain", "ok\n", error);
 }
 
 int main(void)
 {
     rotmos_server_config config;
     rotmos_listener_config listener;
+    rotmos_route_config route;
     rotmos_server *server;
     rotmos_run_result result;
     rotmos_error error;
@@ -1286,22 +1306,27 @@ int main(void)
 
     rotmos_server_config_init(&config);
     rotmos_listener_config_init(&listener);
+    rotmos_route_config_init(&route);
     rotmos_error_clear(&error);
     listener.bind = "127.0.0.1";
     listener.port = 8080u;
     config.listeners = &listener;
     config.listener_count = 1u;
-    config.dispatch_mode = ROTMOS_DISPATCH_CALLBACK;
     config.workers.count = 1u;
-    config.callbacks.on_headers = hello;
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
+    route.method = ROTMOS_HTTP_GET;
+    route.path = "/health";
+    route.handler = hello;
     server = NULL;
     status = rotmos_server_new(&config, &server, &error);
     if (status != ROTMOS_OK) {
         (void)fprintf(stderr, "%s\n", error.message);
         return 1;
     }
-    status = rotmos_server_run(server, &result, &error);
+    status = rotmos_router_route(rotmos_server_router(server), &route,
+        NULL, &error);
+    if (status == ROTMOS_OK)
+        status = rotmos_server_run(server, &result, &error);
     failed = status != ROTMOS_OK;
     if (failed)
         (void)fprintf(stderr, "%s\n", error.message);
@@ -1339,7 +1364,8 @@ Do not count an API-presence probe as behavior evidence.
 | TLS/ACME | Path/memory/bundle/chain, incorrect key/trust/SNI/client cert, no required DH files, redirect authority, account recovery, restore/persist context and persist-before-activate failure |
 | Events/logging | TCP versus effective IP, admission before allocation, once-only accounting, status override/disabled/file sinks, malformed/oversize worker logs and stable post-flush snapshots |
 | Resources | Heap allocation failure, zero-length/cached file content type, no key/pool/IPC leaks, shutdown with active channels/producers; focused musl default-worker-stack proof where applicable |
-| Consumer cutover | Vectis C/Lua routes, uploads, static/packed assets, WebDAV/auth, services, metrics, normal/packed execution and installed/source-rock consumers |
+| Consumer cutover | Reference adapter proves the full integration contract from installed SDKs before switch; Vectis handlers/configurations retain behavior across C/Lua, uploads, static/packed assets, WebDAV/auth, services, metrics and normal/packed execution |
+| Facade | Staged reply edits and after-hook replacement before commitment; buffered/file-backed/live source lifetimes, stack-record JSON preparation, body/reader helpers, REST envelopes and OpenAPI over one registry |
 | Toolkit | Public C router ordering/captures/groups, profiles/trusted-IP/autoblock, typed JSON/multiple output schemas, libxml2 mapped/DOM/SAX/resumable output, static and filesystem/read-only/custom DAV workflows |
 | Storage | Concurrent conditional mutations, cancellation before/after commit, provider AGAIN/completion races, finite lock wait and unrelated request progress during slow native jobs; confined paths and symlink replacement races |
 | Codec limits | Preserve Vectis writer isolation under original-table/option mutation, GC/reentry and spooled-field cleanup; preserve rejection of external mutable records in callback writers; parser depth/text/node budgets, disabled external entities, scoped XML callbacks and generator output without hidden staging |
@@ -1352,15 +1378,18 @@ Recommended implementation order:
 1. Add private backend lifecycle/error hooks and the C89 port; verify explicit
    start/stop independently of a standalone main and Vectis symbols.
 2. Implement inert configuration/validation, lifecycle callbacks, supervision,
-   effective settings and ordinary empty/bytes request-response behavior.
-3. Add body modes, producers, files, commitment and cancellation state machines.
+   effective settings and ordinary route/staged-reply behavior with the reference
+   adapter as an installed consumer.
+3. Add body/source/reader helpers, producers, files, commitment and cancellation
+   state machines, extending that adapter's behavioral coverage at each step.
 4. Add loop/watch/waker and channel handoff, then native WebSocket and TLS/ACME
    callbacks; prove the hard proxy/duplex scenarios before claiming replaceability.
-5. Complete the reusable router, profiles, static serving, JSON/XML codecs/routes,
-   proxy and WebDAV through public C APIs. Add the Lua facade/C binding against
-   the installed shared API and prove its source-archive/LuaRocks delivery.
-6. Finish exported packages/examples, then perform the separate Vectis cutover
-   and all affected consumer gates. No stage is a release merely because it links.
+5. Complete the reusable router, profiles, static serving, JSON/XML/REST routes,
+   registry/OpenAPI, proxy and WebDAV through public C APIs. Add the Lua facade/C
+   binding against the installed shared API and prove its source-archive/LuaRocks delivery.
+6. Complete the reference adapter and all integration-contract gates before
+   proposing the separate mechanical Vectis cutover. No stage is a release merely
+   because it links.
 
 The largest risks are expected-failure handling in Kore's fatal paths, ownership
 across callbacks/flushes and event batches, readiness/fork domains, raw surplus
@@ -1374,14 +1403,57 @@ they are not left as Vectis-only implementations. Keep transport, routing,
 codecs, proxy and WebDAV in focused modules rather than one server god object.
 All high-level helpers build on the request/response/loop contracts above.
 
+### Route facade, staged replies and body/source execution
+
+The [integration contract](vectis-integration-contract.md) is the required
+coverage inventory. Ordinary C handlers have the shape
+`rotmos_route_fn(request, reply, userdata, error) -> status`, with an opaque
+`rotmos_reply` declaration. Host application context lives in userdata. The
+router executes the selected middleware/handler chain before submitting the
+reply to its request's transport response. Raw headers callbacks/plans remain an
+explicit low-level interface rather than mandatory application integration work.
+
+Provide `rotmos_reply_status`, `rotmos_reply_header_set/header_add`,
+`rotmos_reply_text/bytes/file`, `rotmos_reply_source_materialized` and
+`rotmos_reply_source_take`. Builders copy/prepare their declared payload before
+returning as appropriate; the live source take transfers ownership only on
+success. Reply replacement releases superseded owners once. Submission transfers
+the selected owners into the existing response producer/file mechanisms without
+another whole-body copy; transport cleanup releases them on drain or abort.
+
+The optional LoneJSON header adds `rotmos_reply_json`,
+`rotmos_reply_json_file`, `rotmos_reply_error_json` and typed reply operations.
+JSON materialization and file-backed generation finish during those builder
+calls, preserving the lifetime of caller stack records. They are distinct from
+a live generator with an explicit retained owner. Vectis's existing generated
+JSON file path maps to the file-backed operation, not silently to a live borrow.
+
+Public sources/readers use generic C89 callbacks and userdata, never `lc_source`.
+Source construction is inert; unattached owners can be destroyed explicitly,
+and an accepted take closes them once at terminal cleanup. Existing source
+reset/position semantics are selected explicitly by the facade. Supply generic
+`rotmos_router_upload_stream/file/reader` registrations and body materialize,
+bytes/copy, spill/path/kind and reader helpers. The reader executor owns bounded
+post-fork execution and loop wake/cleanup; consumers provide parsing callbacks.
+These helpers reuse the same body plans and queues, not a second transport path.
+
+`rotmos_body_policy` retains the NONE/JSON/BUFFERED/STREAMING_UPLOAD distinctions,
+body bound, memory threshold and disk-spool-disabled setting needed by Vectis's
+declarations. The facade derives the low-level NONE/BUFFERED/MATERIALIZED/STREAM
+plan according to that policy and the registered helper. Do not confuse a
+materialized upload policy with a live chunk/reader callback merely because the
+historical names contain "streaming". Preserve each operation's actual behavior.
+
 ### Routing, profiles and ordinary serving
 
 Provide `rotmos_router_new`, `rotmos_server_router`, `rotmos_router_route`,
 `rotmos_router_group`, `rotmos_router_dispatch_headers` and
 `rotmos_request_path_param`. `rotmos_route_config` has a copied path, method/mask,
-literal/parameter/regex kind, body plan, typed handler and borrowed userdata.
+literal/parameter/regex kind, body policy, staged-reply handler and borrowed
+userdata.
 Registration returns a router-owned route handle. Each server creates an empty
-owned router; `rotmos_server_router` borrows it. Optional
+owned router; callers may omit the registration's optional output handle.
+`rotmos_server_router` borrows the server's router. Optional
 `rotmos_server_router_take` replaces an empty router with an independently
 created one outside a run, transferring ownership only on success. An attached
 router cannot be destroyed/attached elsewhere; unattached routers use
@@ -1427,6 +1499,17 @@ separation. Production rule defaults can preserve Vectis's existing transport/
 status thresholds; applications choose whether to enable that profile and add
 named events. Auth hooks and middleware are generic; Vectis's auth providers,
 credential issuance, sessions, login flows and Lockd storage remain outside.
+
+The same registry exposes `rotmos_router_route_count`,
+`rotmos_router_openapi_doc` and `rotmos_router_openapi`: attach per-method/path
+metadata and generate the existing JSON/YAML OpenAPI documents, retaining schema
+owners and copied descriptions for the documented lifetime. Count and generation
+must not require a duplicate Vectis route registry. Supply the generic buffered
+REST route/response conveniences in the C API and `rotmos.rest`, including decode,
+validate, handler/error callbacks and reply composition. Preserve Vectis's
+nil/string/response-table hook ordering; its custom error envelopes, auth policy
+and outbound REST/HTTP clients remain host-owned. Buffered REST remains distinct
+from typed-record fast routes and live response producers.
 
 ### Fast typed JSON and XML/libxml2 routes
 
@@ -1492,11 +1575,13 @@ retention/process-thread confinement. SAX input is bounded and incremental.
 Disable DTD/external resource loading per parser context; do not change global
 libxml2 handlers or expose xmlDoc/xmlNode internals through the binding.
 
-Initialize materialized XML document input/output limits to 16 MiB, nesting to
-128, individual text values to 1 MiB, DOM nodes to 100000 and returned XPath nodes
-to 4096; explicit larger finite values are allowed. HTTP routes also enforce
-their selected body/record limits. Streaming SAX/generator operations enforce
-depth/text and configured cumulative input/output limits without retaining the
+Preserve Vectis's separate XML limit families: mapped codecs initialize nesting
+to 64 and max_text_bytes to 67108864 (64 MiB); DOM documents initialize max_bytes
+to 16 MiB and returned XPath nodes to 4096. Preserve explicit overrides and the
+SAX chunk/attribute/metadata controls. Do not apply the DOM document bound to
+mapped streaming routes or impose a new one-MiB text/100000-node cap during
+extraction. HTTP routes also enforce their selected body/record limits. Streaming
+SAX/generator operations enforce the applicable limits without retaining the
 whole document. These are logical limits, not a claim that libxml2's allocator
 or XPath intermediate evaluation has the same byte bound. Expressions are
 application declarations, never evaluated from untrusted request text by default.
@@ -1693,10 +1778,21 @@ WebSockets, reverse proxy, WebDAV, logging, run/stop/close and observations.
 Names include `rotmos.server`, `server:route/get/post/put/patch/delete/head/options`,
 `server:group`, `server:upload`, `server:json_route/json_typed_route/xml_route`,
 `server:static_file/static_directory`, `server:websocket/proxy/webdav`,
-`server:run/stop/close`, and `rotmos.json`, `rotmos.xml`, `rotmos.proxy`,
+`server:openapi_doc/openapi/route_count`, `server:sse`, `server:run/stop/close`,
+and `rotmos.json`, `rotmos.xml`, `rotmos.rest`, `rotmos.proxy`,
 `rotmos.webdav` facades. `server:fixed_json` is explicitly a fixed materialized
 reply. Method-specific DAV registration remains available through generic route
 method sets; a mount normally registers its own method set.
+
+The ordinary facade accepts route option tables and handler return values matching
+the Vectis server workflows in the integration contract: a borrowed request table,
+nil for 204, a string reply, or a response declaration with headers/status and
+body/file/spooled_source/stream_source. Auth/before/handler/after processing runs
+before converting/submitting that declaration. Source-table read/reset/close and
+nil/false EOF retain their existing meaning, including draining an oversized
+returned chunk before calling read again. These are facade normalizations over
+public reply/source APIs, not a second HTTP implementation. Direct low-level
+write/producer operations below remain explicit and do not force handler changes.
 
 Requests expose immutable metadata, ordered headers/query data, captures, body
 mode/materialized access and streaming callbacks. Responses support text/bytes,
@@ -1766,8 +1862,8 @@ local server = assert(rotmos.server({
   workers = { count = 1 },
   signals = { mode = "library" },
 }))
-assert(server:get("/health", function(request, response)
-  return response:text(200, "ok\n")
+assert(server:get("/health", function(request)
+  return { status = 200, content_type = "text/plain", body = "ok\n" }
 end))
 -- Generic registrations also include json_route, xml_route, proxy and webdav.
 assert(server:run())

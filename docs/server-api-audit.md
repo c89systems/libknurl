@@ -5,11 +5,18 @@ librotmos `750c489`, Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19`, the
 pristine Kore pin and its complete 42-patch composition. This report records the
 documentation repair; no server, binding or consumer implementation is implied.
 The revised spec is authoritative where an earlier description differs.
+The clarified acceptance priority is an extremely simple Vectis replacement.
+The [integration contract](vectis-integration-contract.md) records the complete
+facade mapping and the small adapter/build delta permitted at cutover. Generic
+server work must be completed in rotmos before offering that switch.
 
 ## Resolved findings
 
 | Gap and concrete failure | Resolution in the revised spec |
 | --- | --- |
+| A transport-first API could make Vectis rebuild its server integration despite preserving the individual low-level capabilities. | Require the complete high-level facade and an installed reference adapter before cutover; Vectis supplies mappings, callbacks/providers and its existing supervisor only. |
+| Immediate transport replies did not preserve Vectis's reply-building and after-hook phase. | Add staged reply operations over the same transport runtime; preserve copying, replacement, source ownership and preparation-before-transmission timing. |
+| Generic reader execution, REST response tables and registry/OpenAPI coverage were insufficiently specified for a mechanical switch. | Explicit helper/registry/REST coverage, preserved Lua source conventions and actual XML limit families, and facade behavior gates in the integration contract. |
 | A producer returning AGAIN had no public resume path and could stall forever or be polled on every writable event. | Owner-loop producer resume, coalescing, strict data/EOF results and exactly-once producer close; section 9. |
 | Body completion could be mistaken for request completion while a reply, producer or channel still borrowed its data. | Explicit request terminal conditions and teardown order, separate input/response outcomes and finite unanswered-reply deadline; sections 6–7. |
 | COMMITTED and FINISHING competed for one state slot, losing information needed for safe 200-to-502 replacement. | Separate drain state and irreversible commitment latch, including TLS retry without a positive write count; section 9. |
@@ -74,7 +81,8 @@ behavior is the baseline to carry over, not an unresolved dependency capability:
 
 1. Port the selected Kore backend to C89 and replace fatal parent error paths;
    prove lifecycle, transport, cancellation and real streaming through the
-   observable acceptance matrix. Vendoring tests cannot establish any of these.
+   observable acceptance matrix. Develop the complete facade/reference adapter
+   alongside the implementation; vendoring tests cannot establish those behaviors.
 2. Carry Vectis's existing private-record assignment, retention and cleanup into
    the rotmos response-producer lifetime. Port its writer isolation/GC/reentry
    cases and input acceptance/rejection tests; no new LoneJSON copy/lease API or
@@ -90,6 +98,11 @@ behavior is the baseline to carry over, not an unresolved dependency capability:
 5. Recheck published c89systems releases when locking implementation SDKs, select
    the newest compatible closure and pin identities/digests. Baselines recorded
    here are not a promise that those releases remain latest.
+
+Staged replies and generic body/source/reader execution are extraction work in
+librotmos. Vectis's handlers, REST applications, source callbacks and service
+declarations must continue through forwarding wrappers. New standalone timeout
+or memory defaults are not permission to alter their effective behavior.
 
 Verification for this documentation checks local links, code-fence balance, all
 42 patch dispositions and all 34 Vectis server configuration mappings, followed
