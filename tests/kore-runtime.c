@@ -144,6 +144,37 @@ int main(void)
 {
     struct kore_server *server;
     int result;
+    char number[22];
+    u_int8_t wire[10];
+    u_int64_t wide;
+    int parse_error;
+    if (strcmp(kore_u64_text(~(u_int64_t)0, number), "18446744073709551615") !=
+            0 ||
+        strcmp(kore_i64_text(KORE_INT64_MIN, number), "-9223372036854775808") !=
+            0 ||
+        strcmp(kore_i64_text(KORE_INT64_MAX, number), "9223372036854775807") !=
+            0 ||
+        strcmp(kore_u64_text(0, number), "0") != 0)
+        return 13;
+    wide = ((u_int64_t)0x01234567UL << 32) | 0x89abcdefUL;
+    memset(wire, 0xa5, sizeof(wire));
+    net_write64(wire + 1, wide);
+    if (net_read64(wire + 1) != wide || wire[0] != 0xa5 || wire[9] != 0xa5 ||
+        memcmp(wire + 1, "\x01\x23\x45\x67\x89\xab\xcd\xef", 8) != 0)
+        return 14;
+    errno = ERANGE;
+    wide = kore_strtonum64("18446744073709551615", 0, &parse_error);
+    if (parse_error != KORE_RESULT_OK || wide != ~(u_int64_t)0)
+        return 15;
+    (void)kore_strtonum64("18446744073709551616", 0, &parse_error);
+    if (parse_error != KORE_RESULT_ERROR)
+        return 16;
+    (void)kore_strtonum64("-1", 0, &parse_error);
+    if (parse_error != KORE_RESULT_ERROR)
+        return 17;
+    wide = kore_strtonum64("-0", 0, &parse_error);
+    if (parse_error != KORE_RESULT_OK || wide != 0)
+        return 18;
     parent_pid = getpid();
     cleaning = 0;
     if (setjmp(failure) == 0) {

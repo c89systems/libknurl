@@ -4,7 +4,7 @@ file(MAKE_DIRECTORY "${TEST_ROOT}/project/vendor/kore/src"
   "${TEST_ROOT}/project/patches/kore" "${TEST_ROOT}/project/cmake")
 file(COPY "${ROTMOS_ROOT}/Makefile" DESTINATION "${TEST_ROOT}/project")
 file(MAKE_DIRECTORY "${TEST_ROOT}/project/scripts")
-file(COPY "${ROTMOS_ROOT}/scripts/native-target.sh" DESTINATION "${TEST_ROOT}/project/scripts")
+file(COPY "${ROTMOS_ROOT}/scripts/lifecycle" DESTINATION "${TEST_ROOT}/project/scripts")
 file(WRITE "${TEST_ROOT}/project/CMakeLists.txt"
   "cmake_minimum_required(VERSION 3.24)\nproject(source_fixture LANGUAGES NONE)\ninclude(cmake/KoreSources.cmake)\nrotmos_add_kore_sources(\"\${CMAKE_CURRENT_SOURCE_DIR}\" \"\${CMAKE_BINARY_DIR}/kore\")\n")
 file(COPY "${ROTMOS_ROOT}/cmake/PrepareKore.cmake" "${ROTMOS_ROOT}/cmake/KoreSources.cmake"
@@ -24,7 +24,7 @@ function(run)
     message(FATAL_ERROR "Command failed: ${ARGV}\n${log}${error}")
   endif()
 endfunction()
-set(binary "${TEST_ROOT}/project/build/native")
+set(binary "${TEST_ROOT}/project/build/debug")
 run("${CMAKE_COMMAND}" -S "${TEST_ROOT}/project" -B "${binary}" -DBUILD_TESTING=OFF)
 run("${CMAKE_COMMAND}" --build "${binary}" --parallel 1)
 set(output "${binary}/kore/src/kore.c")

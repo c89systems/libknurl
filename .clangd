@@ -1,2 +1,2 @@
 CompileFlags:
-  CompilationDatabase: build/native/Debug
+  CompilationDatabase: build/debug

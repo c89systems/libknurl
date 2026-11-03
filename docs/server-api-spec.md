@@ -2201,6 +2201,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0045 | Preserve the raw request target/method and Host arrival order for public metadata; bound/cancel worker initialization, expose shutdown escalation, and bracket backend forks for the public runtime's notification lock |
 | 0046 | Name queue heads and preserve BSD tail-queue layouts without empty macro arguments; retain platform queue operations and strict C89 diagnostics under Clang |
 | 0047 | Add typed loop wait/turn/cleanup hooks and native watch interest operations; separate readable, writable, read-half-close and error readiness, preserve fatal shutdown causes, and keep parent events available while workers drain |
+| 0048 | C89-safe signed/unsigned wide decimal values and limits for 32-bit and Apple targets; retain exact JSON/HSTS/curl/log values and perform unaligned-safe 64-bit network reads/writes without SDK macros containing C99 literals |
 
 ## 22. Investigation references
 

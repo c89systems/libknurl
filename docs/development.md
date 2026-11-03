@@ -66,9 +66,11 @@ Bootlin GCC/binutils/sysroot collection, with no host compiler fallback.
 ```sh
 make help
 make toolchain             # Explicit provisioning; unnecessary when already prepared.
-make build                 # Prepare released SDKs; compile core and private backend.
-make test                  # CTest core, native HTTP, SDK consumer and vendoring checks.
-make install               # Install to owned build/install/<target>/Debug by default.
+make build                 # Compile the selected x86_64-linux-gnu target in build/debug.
+make build-all             # Compile the full seven-target matrix, serially.
+make build-all CONFIG=release
+make test                  # Run checks for the selected toolchain target.
+make install               # Install to owned build/install/<target>/debug by default.
 make format-check          # Check project sources; excludes pristine/patched Kore.
 make prepare-kore          # Source preparation only; no compiler or SDK acquisition.
 make clean                 # Remove all local build/, dist/ and .cache/ state.
@@ -81,14 +83,26 @@ checkout's `.cache/`. Existing global cpkt archives may be read and copied.
 Toolchain discovery is read-only; only explicit provisioning prepares compilers.
 One operation owns the checkout; run operations serially.
 
-The native Debug database is `build/native/Debug/compile_commands.json`, matching
-`.clangd`. `make build` prepares the real headers and database used by the editor.
-Debug/Release CMake presets use the x86_64 GNU toolchain; prepare SDKs with
-`make deps` before direct preset configuration. Linux cross configurations use
-`make build TARGET=<target> CONFIG=Release` and separate target build directories.
-Darwin toolchain wiring and complete platform/runtime proof remain subsequent
-slices. No release artifacts or replacement-readiness claim follow from the
-foundation build alone.
+Every build selects a concrete architecture/OS and the lifecycle toolchain for
+that target. The default is `x86_64-linux-gnu`, with `build/debug` and
+`build/release` directories. Other targets use `build/<target>/debug` or
+`build/<target>/release`. The editor database is
+`build/debug/compile_commands.json`, matching `.clangd`; the ordinary build
+prepares its actual dependencies and generated headers. There is no host-based
+product selection.
+
+The full matrix is GNU/musl Linux for x86_64, aarch64 and armhf, plus arm64 Apple
+Darwin. `make build TARGET=<target> CONFIG=release` selects one concrete build;
+`make build-all` selects all seven. Matching CMake presets use
+`<target>-debug` / `<target>-release`, with `debug` / `release` aliases for the
+default selected target. Prepare SDKs with `make deps TARGET=<target>` before
+direct preset configuration. Linux uses pinned Bootlin collections; Darwin uses
+the selected Apple tools on macOS or approved osxcross on Linux. Discovery never
+acquires a compiler or falls back to a host compiler. Runtime checks execute only
+when the selected target matches the execution host; other configurations supply
+compile/link evidence. Full runtime and artifact validation follows the larger
+implementation surfaces. The [implementation constraints](implementation-plan.md)
+record this scope and cadence.
 
 ## Source ownership
 
@@ -96,7 +110,7 @@ foundation build alone.
 - `vendor/kore.revision` and `vendor/kore.url` identify its exact upstream commit
   and repository. There is no nested Git checkout or submodule.
 - `patches/kore/series` orders patches stored outside the source snapshot.
-- `build/native/Debug/kore/` is a disposable patched copy; source-only preparation
+- `build/debug/kore/` is a disposable patched copy; source-only preparation
   uses `build/source/kore/`. Preserve changes by editing
   or adding a patch, updating `series`, then rebuilding.
 

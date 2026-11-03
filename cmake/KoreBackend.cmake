@@ -31,5 +31,8 @@ target_compile_definitions(rotmos_kore PRIVATE _GNU_SOURCE=1 _FILE_OFFSET_BITS=6
   KORE_ROTMOS_STATIC_RUNTIME KORE_ROTMOS_DIRECT_TLS
   KORE_ROTMOS_NO_SECCOMP TLS_BACKEND_OPENSSL KORE_TMPDIR="/tmp" PREFIX="/usr/local")
 rotmos_c89(rotmos_kore)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  target_compile_definitions(rotmos_kore PRIVATE _DARWIN_C_SOURCE=1)
+endif()
 # Callback signatures retain upstream's intentionally unused parameters.
 target_compile_options(rotmos_kore PRIVATE -Wno-unused-parameter)

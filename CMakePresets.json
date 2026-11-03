@@ -1,43 +1,258 @@
 {
   "version": 5,
-  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
   "configurePresets": [
     {
-      "name": "linux",
+      "name": "selected",
       "hidden": true,
       "generator": "Ninja",
-      "toolchainFile": "${sourceDir}/cmake/toolchains/bootlin.cmake",
-      "cacheVariables": { "ROTMOS_TARGET": "x86_64-linux-gnu" }
+      "toolchainFile": "${sourceDir}/cmake/toolchains/selected.cmake"
     },
     {
-      "name": "Debug",
-      "inherits": "linux",
-      "binaryDir": "${sourceDir}/build/native/Debug",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "name": "x86_64-linux-gnu-debug",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/debug",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "x86_64-linux-gnu",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
-      "name": "Release",
-      "inherits": "linux",
-      "binaryDir": "${sourceDir}/build/native/Release",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "name": "x86_64-linux-gnu-release",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "x86_64-linux-gnu",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "x86_64-linux-musl-debug",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/x86_64-linux-musl/debug",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "x86_64-linux-musl",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "x86_64-linux-musl-release",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/x86_64-linux-musl/release",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "x86_64-linux-musl",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "aarch64-linux-gnu-debug",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/aarch64-linux-gnu/debug",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "aarch64-linux-gnu",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "aarch64-linux-gnu-release",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/aarch64-linux-gnu/release",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "aarch64-linux-gnu",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "aarch64-linux-musl-debug",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/aarch64-linux-musl/debug",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "aarch64-linux-musl",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "aarch64-linux-musl-release",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/aarch64-linux-musl/release",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "aarch64-linux-musl",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "armhf-linux-gnu-debug",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/armhf-linux-gnu/debug",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "armhf-linux-gnu",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "armhf-linux-gnu-release",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/armhf-linux-gnu/release",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "armhf-linux-gnu",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "armhf-linux-musl-debug",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/armhf-linux-musl/debug",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "armhf-linux-musl",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "armhf-linux-musl-release",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/armhf-linux-musl/release",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "armhf-linux-musl",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "arm64-apple-darwin-debug",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/arm64-apple-darwin/debug",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "arm64-apple-darwin",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "arm64-apple-darwin-release",
+      "inherits": "selected",
+      "binaryDir": "${sourceDir}/build/arm64-apple-darwin/release",
+      "cacheVariables": {
+        "ROTMOS_TARGET": "arm64-apple-darwin",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "x86_64-linux-gnu-debug"
+    },
+    {
+      "name": "release",
+      "inherits": "x86_64-linux-gnu-release"
     }
   ],
   "buildPresets": [
-    { "name": "Debug", "configurePreset": "Debug", "jobs": 1 },
-    { "name": "Release", "configurePreset": "Release", "jobs": 1 }
+    {
+      "name": "x86_64-linux-gnu-debug",
+      "configurePreset": "x86_64-linux-gnu-debug",
+      "jobs": 1
+    },
+    {
+      "name": "x86_64-linux-gnu-release",
+      "configurePreset": "x86_64-linux-gnu-release",
+      "jobs": 1
+    },
+    {
+      "name": "x86_64-linux-musl-debug",
+      "configurePreset": "x86_64-linux-musl-debug",
+      "jobs": 1
+    },
+    {
+      "name": "x86_64-linux-musl-release",
+      "configurePreset": "x86_64-linux-musl-release",
+      "jobs": 1
+    },
+    {
+      "name": "aarch64-linux-gnu-debug",
+      "configurePreset": "aarch64-linux-gnu-debug",
+      "jobs": 1
+    },
+    {
+      "name": "aarch64-linux-gnu-release",
+      "configurePreset": "aarch64-linux-gnu-release",
+      "jobs": 1
+    },
+    {
+      "name": "aarch64-linux-musl-debug",
+      "configurePreset": "aarch64-linux-musl-debug",
+      "jobs": 1
+    },
+    {
+      "name": "aarch64-linux-musl-release",
+      "configurePreset": "aarch64-linux-musl-release",
+      "jobs": 1
+    },
+    {
+      "name": "armhf-linux-gnu-debug",
+      "configurePreset": "armhf-linux-gnu-debug",
+      "jobs": 1
+    },
+    {
+      "name": "armhf-linux-gnu-release",
+      "configurePreset": "armhf-linux-gnu-release",
+      "jobs": 1
+    },
+    {
+      "name": "armhf-linux-musl-debug",
+      "configurePreset": "armhf-linux-musl-debug",
+      "jobs": 1
+    },
+    {
+      "name": "armhf-linux-musl-release",
+      "configurePreset": "armhf-linux-musl-release",
+      "jobs": 1
+    },
+    {
+      "name": "arm64-apple-darwin-debug",
+      "configurePreset": "arm64-apple-darwin-debug",
+      "jobs": 1
+    },
+    {
+      "name": "arm64-apple-darwin-release",
+      "configurePreset": "arm64-apple-darwin-release",
+      "jobs": 1
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "jobs": 1
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "jobs": 1
+    }
   ],
   "testPresets": [
     {
-      "name": "Debug",
-      "configurePreset": "Debug",
-      "output": { "outputOnFailure": true },
-      "execution": { "jobs": 1, "stopOnFailure": true, "noTestsAction": "error" }
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "stopOnFailure": true,
+        "noTestsAction": "error"
+      }
     },
     {
-      "name": "Release",
-      "configurePreset": "Release",
-      "output": { "outputOnFailure": true },
-      "execution": { "jobs": 1, "stopOnFailure": true, "noTestsAction": "error" }
+      "name": "release",
+      "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "stopOnFailure": true,
+        "noTestsAction": "error"
+      }
     }
   ]
 }

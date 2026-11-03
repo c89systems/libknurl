@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 include(cmake/OwnedPaths.cmake)
 rotmos_require_owned_path("${CMAKE_BINARY_DIR}" "Build directory")
-if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_TOOLCHAIN_FILE)
-  message(FATAL_ERROR "Linux builds require the pinned toolchain; use make build or a CMake preset")
+if(NOT CMAKE_TOOLCHAIN_FILE)
+  message(FATAL_ERROR "Select a concrete lifecycle toolchain target with make build or a CMake preset")
 endif()
 file(STRINGS VERSION rotmos_version LIMIT_COUNT 1)
 project(rotmos VERSION "${rotmos_version}" LANGUAGES C CXX)
@@ -11,7 +11,6 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C90_STANDARD_COMPILE_OPTION "-std=c89")
-set(ROTMOS_TARGET "arm64-apple-darwin" CACHE STRING "Selected SDK/toolchain target")
 include(cmake/Dependencies.cmake)
 
 function(rotmos_c89 target)
@@ -34,6 +33,9 @@ function(rotmos_local_runtime target)
     target_link_options(${target} PRIVATE "-Wl,--dynamic-linker,${loader}" -Wl,--disable-new-dtags)
     set_target_properties(${target} PROPERTIES BUILD_RPATH
       "${CMAKE_SYSROOT}/lib;${CMAKE_SYSROOT}/usr/lib;${ROTMOS_SDK_ROOT}/cpkt/lib;${ROTMOS_SDK_ROOT}/lonejson/lib;${ROTMOS_SDK_ROOT}/pslog/lib")
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set_target_properties(${target} PROPERTIES BUILD_RPATH
+      "${ROTMOS_SDK_ROOT}/cpkt/lib;${ROTMOS_SDK_ROOT}/lonejson/lib;${ROTMOS_SDK_ROOT}/pslog/lib")
   endif()
 endfunction()
 
@@ -201,4 +203,9 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/tests/upgrade path")
   set_tests_properties(kore.patch-replay kore.preparation kore.build-invalidation
     kore.upgrade PROPERTIES TIMEOUT 60)
+  if(NOT rotmos_can_run)
+    set_tests_properties(rotmos.loop-smoke rotmos.server-runtime rotmos.kore-runtime
+      rotmos.declarations rotmos.reply rotmos.kore-port rotmos.foundation
+      rotmos.headers.cpp PROPERTIES DISABLED TRUE)
+  endif()
 endif()
