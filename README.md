@@ -1,8 +1,9 @@
 # librotmos
 
 librotmos is a C89 HTTP server library for websites, REST services and APIs.
-It combines a public C API and Lua facade with a Kore backend, covering server
-configuration, routing, request bodies, replies, TLS and worker lifecycle.
+It combines a public C API and Lua facade with a [Kore](https://kore.io/) backend,
+covering server configuration, routing, request bodies, replies, TLS and worker
+lifecycle.
 
 Applications supply handlers, schemas, authentication policy and storage
 providers. librotmos owns HTTP transport and the reusable server mechanisms.
@@ -30,7 +31,8 @@ providers. librotmos owns HTTP transport and the reusable server mechanisms.
 The C API uses opaque handles, configuration values, explicit ownership and
 returned errors. Route handlers construct staged replies; the server handles
 framing, source execution and delivery. Public channels and loop operations
-support direct I/O integrations, with an explicit Kore backend escape hatch.
+support direct I/O integrations, with an explicit [Kore](https://kore.io/)
+backend escape hatch.
 Public headers support C89 and C++ consumers; library and backend code use
 strict `-std=c89`.
 
@@ -71,9 +73,9 @@ Darwin on arm64.
 
 ## Backend and documentation
 
-Kore is a pinned, pristine source snapshot. Ordered patches live outside its
-source tree and apply to disposable build copies, keeping upstream upgrades
-and local changes separate.
+[Kore](https://kore.io/) is a pinned, pristine source snapshot. Ordered patches
+live outside its source tree and apply to disposable build copies, keeping
+upstream upgrades and local changes separate.
 
 - [Build availability, commands and backend maintenance](docs/development.md)
 - [Server API specification](docs/server-api-spec.md)
@@ -83,5 +85,5 @@ and local changes separate.
 
 ## License
 
-librotmos code is [MIT licensed](LICENSE). Kore retains its upstream copyright
-and permission notices in [vendor/kore/LICENSE](vendor/kore/LICENSE).
+librotmos code is [MIT licensed](LICENSE). [Kore](https://kore.io/) retains its
+upstream copyright and permission notices in [vendor/kore/LICENSE](vendor/kore/LICENSE).
