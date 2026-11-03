@@ -1509,6 +1509,24 @@ success. Reply replacement releases superseded owners once. Submission transfers
 the selected owners into the existing response producer/file mechanisms without
 another whole-body copy; transport cleanup releases them on drain or abort.
 
+`rotmos_reply_new/destroy` also provide standalone staged builders. Runtime-owned
+builders reject explicit destruction. Borrowed status, payload-kind, body,
+content-type and ordered-header snapshots remain valid until the next mutation.
+Header-set collapses case-insensitive matches at their first position;
+header-add always appends. These views do not expose a file descriptor or a live
+source pointer. Failed replacement preserves the previous selected reply.
+
+`rotmos_source_config_init/new`, `rotmos_source_bytes/read/reset/destroy` provide
+the public source ownership shell. Construction never calls a callback. Manual
+read/reset/destroy reject a transferred or busy source. A copied byte source
+does not borrow its input. Close reports completion, failure or cancellation;
+reentrant mutation is rejected. Declared length is checked on pulls and EOF.
+The materialized-reply helper borrows the source and uses an explicit output
+bound and heap chunk; its initialized defaults are 10 MiB and 8192 bytes. It
+rejects AGAIN because it is synchronous. Reset-before and reset-after are named
+opt-ins; without reset-after a failed materialization can consume source input.
+The Vectis adapter passes its existing effective bounds and reset semantics.
+
 Preserve the existing staged-builder behavior explicitly:
 
 | Operation/outcome | Facade behavior |

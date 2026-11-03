@@ -1,8 +1,11 @@
 # Build availability and backend maintenance
 
 The [README](../README.md) describes the server library's product contract.
-The build produces a C89 static/shared foundation library with wide counters,
-errors and SSE framing. It also compiles the selected private Kore backend
+The build produces a C89 static/shared library with wide counters, errors, SSE
+framing, owned sources and staged reply builders. Reply builders copy text/bytes
+and ordered headers, pin regular files, and distinguish live source ownership
+from explicitly bounded synchronous materialization. Source registration never
+reads or resets a producer. It also compiles the selected private Kore backend
 objects under strict C89, applying the 42 original patches and an external C89
 port. Backend objects are not yet linked into the library: server execution,
 routing and the Lua module remain implementation work. The complete contract is in the

@@ -37,7 +37,8 @@ function(rotmos_local_runtime target)
   endif()
 endfunction()
 
-add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c)
+add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
+  src/headers.c src/source.c src/reply.c)
 target_include_directories(rotmos_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_compile_definitions(rotmos_objects PRIVATE ROTMOS_VERSION="${PROJECT_VERSION}")
 rotmos_c89(rotmos_objects)
@@ -52,7 +53,8 @@ foreach(variant static shared)
   install(TARGETS rotmos_${variant} EXPORT rotmosTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endforeach()
-set(rotmos_core_headers include/rotmos/common.h include/rotmos/http.h include/rotmos/rotmos.h)
+set(rotmos_core_headers include/rotmos/common.h include/rotmos/http.h include/rotmos/rotmos.h
+  include/rotmos/io.h include/rotmos/reply.h)
 set_source_files_properties(${rotmos_core_headers} PROPERTIES LANGUAGE C HEADER_FILE_ONLY FALSE)
 add_library(rotmos_headers_c OBJECT ${rotmos_core_headers})
 target_include_directories(rotmos_headers_c PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -81,6 +83,11 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_reply_test tests/reply.c)
+  target_link_libraries(rotmos_reply_test PRIVATE rotmos::shared)
+  rotmos_c89(rotmos_reply_test)
+  rotmos_local_runtime(rotmos_reply_test)
+  add_test(NAME rotmos.reply COMMAND rotmos_reply_test)
   add_executable(rotmos_kore_port tests/kore-port.c "${kore_source_dir}/src/sha2.c")
   add_dependencies(rotmos_kore_port kore-source)
   target_compile_definitions(rotmos_kore_port PRIVATE _GNU_SOURCE=1 TLS_BACKEND_OPENSSL)
