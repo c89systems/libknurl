@@ -29,6 +29,18 @@ parameters and socket endpoints. Parameter matching keeps optional omission
 ordering without recursive C calls. Runtime reply replacement queues superseded
 sources for cleanup rather than invoking close inside a setter.
 
+The [response API](responses.md) exposes a bounded queue, explicit known lengths,
+chunk framing, trailers, commitment, writable/terminal callbacks, pinned file
+ranges and nonblocking source producers. Staged file and live-source replies
+use this transport. Requests and their metadata remain alive through source
+close and terminal notification; completed buffers retire after native queue
+callbacks return. Source AGAIN pauses until explicit owner-loop resume. A quiet
+producer with no queued output does not trip the downstream write-idle guard.
+Large staged byte payloads move into bounded delivery without a second whole
+copy. File delivery uses bounded owner-loop pread and can block on filesystem I/O.
+`rotmos.response-runtime` covers these paths, including a sparse range beyond
+4 GiB, queued replacement, producer errors, bodyless replies and HTTP pipelining.
+
 Parent and HTTP-worker loops expose borrowed FD watches, monotonic wide timers,
 deferred callbacks and coalescing wakers. Readiness is dispatched after native
 event batches; cancellation retires userdata after outstanding batch references.
@@ -46,9 +58,9 @@ the library and its three released dependency prefixes.
 
 This is partial runtime coverage. Preflight explicitly rejects configured TLS,
 worker observations, access logs, trusted proxies, autoblock,
-JSON/upload plans and disk-backed bodies until those paths are connected. A final
-file or live-source reply currently returns 501; no buffered fallback implements
-streaming. Low-level response/body/channel operations, gate observations,
+JSON/upload plans and disk-backed bodies until those paths are connected.
+Native-reader sources require an executor that is not connected yet. Interim
+responses, producer trailer declarations, low-level body/channel operations and gate observations,
 complete startup/failure unwinding, auxiliary-worker lifecycle, the protocol and
 provider helpers, the opt-in native declaration component, and the Lua product
 remain implementation work. Worker failure,

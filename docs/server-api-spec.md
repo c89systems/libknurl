@@ -431,6 +431,7 @@ than relying on future librotmos defaults.
 | `worker_shutdown_timeout_ms` | Bounded child shutdown; 5000 ms |
 | `worker_death_policy` | RESTART = 0; TERMINATE stops the runtime on unexpected child death |
 | `max_request_header_bytes` | 65536 bytes, including terminator; independently expose the effective field-count bound |
+| `max_response_header_bytes` | 65536 bytes for final headers or trailers; each set must also fit the bounded output queue |
 | `max_request_body_bytes` | Separate default managed-body limit (10 MiB) and optional hard server ceiling; hard ceiling zero means route plans decide |
 | `request_body_spool_dir` | Explicit path required when a materialized-body plan permits disk spill; no hidden choice of a Vectis/XDG directory |
 | `request_header_timeout_ms` | 5000 ms |
@@ -2202,6 +2203,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0046 | Name queue heads and preserve BSD tail-queue layouts without empty macro arguments; retain platform queue operations and strict C89 diagnostics under Clang |
 | 0047 | Add typed loop wait/turn/cleanup hooks and native watch interest operations; separate readable, writable, read-half-close and error readiness, preserve fatal shutdown causes, and keep parent events available while workers drain |
 | 0048 | C89-safe signed/unsigned wide decimal values and limits for 32-bit and Apple targets; retain exact JSON/HSTS/curl/log values and perform unaligned-safe 64-bit network reads/writes without SDK macros containing C99 literals |
+| 0049 | Retain managed requests through asynchronous response drain and connection removal; retire library requests before native HTTP pools; report actual output progress and retained TLS retries through typed private hooks |
 
 ## 22. Investigation references
 

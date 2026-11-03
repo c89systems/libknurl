@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "kore_internal.h"
 #include "reply_internal.h"
+#include "response_internal.h"
 #include <rotmos/kore.h>
 
 #include <sys/socket.h>
@@ -213,38 +214,20 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
     return KORE_RESULT_OK;
 }
 
-static int release_bytes(struct netbuf *buffer)
-{
-    free(buffer->extra);
-    return KORE_RESULT_OK;
-}
-
 static int dispatch_error(struct http_request *native, int status)
 {
     (void)reject(native, status);
     return KORE_RESULT_OK;
 }
 
-static void header_add(struct http_request *native, const rotmos_header *value)
-{
-    struct http_header *header;
-    header = kore_pool_get(&http_header_pool);
-    header->header = kore_strdup(value->name.data);
-    header->value = kore_strdup(value->value.data);
-    TAILQ_INSERT_TAIL(&native->resp_headers, header, list);
-}
-
 int rotmos_kore_dispatch(struct http_request *native)
 {
     rotmos_request *request;
     rotmos_reply *reply;
+    rotmos_response *response;
     rotmos_status status;
     rotmos_error error;
-    unsigned char *body;
-    size_t length;
-    size_t i;
     int code;
-    int pretty;
     request = native->hdlr_extra;
     if (request == NULL)
         return dispatch_error(native, 500);
@@ -258,59 +241,29 @@ int rotmos_kore_dispatch(struct http_request *native)
         return dispatch_error(native, 500);
     reply = request->reply;
     reply->owner = request;
+    status =
+        rotmos_kore_response_create(kore_library_hooks.arg, request, &error);
+    if (status != ROTMOS_OK)
+        return dispatch_error(native, 500);
+    response = request->response;
     status = rotmos_router_invoke(request, &error);
-    if (status == ROTMOS_OK && (reply->kind == ROTMOS_REPLY_FILE ||
-                                reply->kind == ROTMOS_REPLY_SOURCE))
-        status = ROTMOS_NOT_SUPPORTED;
+    if (status == ROTMOS_OK) {
+        if (response->phase == ROTMOS_RESPONSE_BUILDING)
+            status = rotmos_response_submit(response, reply, &error);
+        else if (reply->selected)
+            status = ROTMOS_CONFLICT;
+    }
     if (status != ROTMOS_OK) {
         code = status == ROTMOS_INVALID
                    ? 400
                    : (status == ROTMOS_NOT_SUPPORTED ? 501 : 500);
-        reply->owner = NULL;
-        (void)rotmos_reply_destroy(reply, NULL);
-        request->reply = NULL;
-        return dispatch_error(native, code);
-    }
-    if (!reply->selected)
-        (void)rotmos_reply_status(reply, 204, NULL);
-    code = reply->status;
-    for (i = 0; i < reply->header_count; ++i) {
-        if (rotmos_text_equal_case(reply->headers[i].name.data,
-                                   "transfer-encoding") ||
-            rotmos_text_equal_case(reply->headers[i].name.data, "connection") ||
-            rotmos_text_equal_case(reply->headers[i].name.data, "keep-alive"))
-            continue;
-        if (rotmos_text_equal_case(reply->headers[i].name.data,
-                                   "content-length")) {
-            if (native->method != HTTP_METHOD_HEAD && code != 304)
-                continue;
-            if (rotmos_u64_from_decimal(reply->headers[i].value.data,
-                                        reply->headers[i].value.length,
-                                        &request->content_length,
-                                        NULL) != ROTMOS_OK)
-                return dispatch_error(native, 500);
-            native->flags |= HTTP_REQUEST_NO_CONTENT_LENGTH;
+        if (rotmos_response_replace_uncommitted(response, NULL) == ROTMOS_OK) {
+            (void)rotmos_reply_status(reply, code, NULL);
+            if (rotmos_response_submit(response, reply, NULL) == ROTMOS_OK)
+                return KORE_RESULT_OK;
         }
-        header_add(native, &reply->headers[i]);
+        (void)rotmos_response_abort(response, status, NULL);
     }
-    if (reply->content_type != NULL)
-        http_response_header(native, "content-type", reply->content_type);
-    body = reply->body;
-    length = reply->body_length;
-    if (code == 204 || code == 205 || code == 304)
-        length = 0;
-    /* The staged declaration is authoritative, including an empty error body.
-     */
-    pretty = http_pretty_error;
-    http_pretty_error = 0;
-    if (length != 0) {
-        reply->body = NULL;
-        reply->body_length = 0;
-        http_response_stream(native, code, body, length, release_bytes, body);
-    } else {
-        http_response(native, code, NULL, 0);
-    }
-    http_pretty_error = pretty;
     return KORE_RESULT_OK;
 }
 
@@ -320,8 +273,8 @@ void rotmos_kore_request_free(struct http_request *native)
     request = native->hdlr_extra;
     native->hdlr_extra = NULL;
     if (request != NULL) {
-        request->native = NULL;
         rotmos_request_cleanup(request);
+        request->native = NULL;
         free(request);
     }
 }

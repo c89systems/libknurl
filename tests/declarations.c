@@ -111,6 +111,7 @@ int main(void)
     REQUIRE(effective.requested_timeouts.request_header.milliseconds == 1001);
     REQUIRE(effective.config.timeouts.request_body_idle.disabled);
     REQUIRE(effective.config.timeouts.request_body_idle.milliseconds == 0);
+    REQUIRE(effective.config.limits.max_response_header_bytes == 65536UL);
     REQUIRE(effective.max_header_fields == 23 &&
             effective.config.autoblock.status_rule_count == 4);
     REQUIRE(rotmos_server_get_state(server) == ROTMOS_SERVER_DECLARED);
@@ -175,6 +176,10 @@ int main(void)
     REQUIRE(rotmos_router_destroy(standalone, &error) == ROTMOS_STATE);
     REQUIRE(rotmos_server_destroy(other, &error) == ROTMOS_OK);
     REQUIRE(rotmos_server_destroy(server, &error) == ROTMOS_OK && calls == 0);
+
+    rotmos_server_config_init(&config);
+    config.limits.max_response_header_bytes = 1023;
+    REQUIRE(rotmos_server_new(&config, &server, &error) == ROTMOS_INVALID);
 
     REQUIRE(pipe(fds) == 0);
     rotmos_server_config_init(&config);

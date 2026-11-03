@@ -49,7 +49,12 @@ static rotmos_status unused_read(void *buffer, size_t capacity,
 
 static void source_close(void *userdata, rotmos_status outcome)
 {
-    (void)userdata;
+    rotmos_request *request;
+    request = userdata;
+    if (rotmos_request_target(request).length == 0 ||
+        rotmos_response_state(rotmos_request_response(request)) >=
+            ROTMOS_RESPONSE_COMPLETE)
+        source_closed += 100;
     source_closed += outcome == ROTMOS_CANCELLED ? 1 : 100;
 }
 
@@ -72,6 +77,7 @@ static rotmos_status handler(rotmos_request *request, rotmos_reply *reply,
         rotmos_source_config_init(&source_config);
         source_config.read = unused_read;
         source_config.close = source_close;
+        source_config.userdata = request;
         if (rotmos_source_new(&source_config, &source, error) != ROTMOS_OK)
             return ROTMOS_NOMEM;
         if (rotmos_reply_source_take(reply, 200, "text/plain", source, error) !=

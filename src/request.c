@@ -1,4 +1,5 @@
 #include "request_internal.h"
+#include "response_internal.h"
 #include "reply_internal.h"
 #include <rotmos/loop.h>
 
@@ -224,6 +225,13 @@ void rotmos_request_set_userdata(rotmos_request *request, void *userdata)
 void rotmos_request_cleanup(rotmos_request *request)
 {
     size_t i;
+    if (request->reply != NULL) {
+        request->reply->owner = NULL;
+        (void)rotmos_reply_destroy(request->reply, NULL);
+    }
+    request->reply = NULL;
+    rotmos_response_release(request->response);
+    request->response = NULL;
     free((void *)request->path.data);
     for (i = 0; i < request->query_count; ++i) {
         free((void *)request->queries[i].name.data);
@@ -232,8 +240,4 @@ void rotmos_request_cleanup(rotmos_request *request)
     free(request->queries);
     free(request->params);
     free(request->headers);
-    if (request->reply != NULL) {
-        request->reply->owner = NULL;
-        (void)rotmos_reply_destroy(request->reply, NULL);
-    }
 }

@@ -91,6 +91,7 @@ typedef struct rotmos_limit_config {
     size_t max_connections;
     size_t request_limit;
     size_t max_request_header_bytes;
+    size_t max_response_header_bytes;
     rotmos_u64 default_body_bytes;
     rotmos_u64 hard_body_bytes;
     const char *body_spool_directory;

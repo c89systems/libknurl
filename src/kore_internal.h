@@ -15,6 +15,8 @@ struct rotmos_runtime_shared {
     int serving;
 };
 
+struct rotmos_delivery;
+
 struct rotmos_runtime {
     rotmos_server *server;
     jmp_buf unwind;
@@ -43,6 +45,10 @@ struct rotmos_runtime {
     u_int16_t curl_timeout;
     u_int64_t curl_recv_max;
     rotmos_watch *control_watch;
+    struct rotmos_delivery *responses;
+    struct rotmos_delivery *response_head;
+    struct rotmos_delivery *response_tail;
+    size_t response_count;
 };
 
 rotmos_status rotmos_runtime_hook(struct rotmos_runtime *runtime,
@@ -61,5 +67,15 @@ void rotmos_kore_loop_finish(struct rotmos_runtime *runtime);
 rotmos_status rotmos_kore_control_start(struct rotmos_runtime *runtime,
                                         rotmos_error *error);
 void rotmos_kore_control_close(struct rotmos_runtime *runtime);
+rotmos_status rotmos_kore_response_create(struct rotmos_runtime *runtime,
+                                          rotmos_request *request,
+                                          rotmos_error *error);
+void rotmos_kore_response_progress(void *userdata, struct netbuf *buffer,
+                                   size_t amount, int retry);
+int rotmos_kore_response_release(void *userdata, struct http_request *native);
+void rotmos_kore_responses_turn(struct rotmos_runtime *runtime);
+u_int64_t rotmos_kore_responses_wait(struct rotmos_runtime *runtime,
+                                     u_int64_t maximum);
+void rotmos_kore_responses_shutdown(struct rotmos_runtime *runtime);
 
 #endif

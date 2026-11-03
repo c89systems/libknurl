@@ -34,6 +34,7 @@ struct rotmos_request {
     int body_ready;
     rotmos_route *route;
     rotmos_reply *reply;
+    rotmos_response *response;
 };
 
 rotmos_bytes rotmos_view(const char *text);

@@ -122,6 +122,9 @@ u_int64_t rotmos_kore_loop_wait(void *userdata, u_int64_t maximum)
     struct rotmos_runtime *runtime;
     long wait;
     runtime = userdata;
+    if (runtime->response_count != 0)
+        maximum = 0;
+    maximum = rotmos_kore_responses_wait(runtime, maximum);
     if (runtime->server->loop != NULL) {
         wait = rotmos_loop_wait(runtime->server->loop);
         if ((u_int64_t)wait < maximum)
@@ -138,6 +141,7 @@ void rotmos_kore_loop_turn(void *userdata)
     rotmos_loop *loop;
     runtime = userdata;
     loop = runtime->server->loop;
+    rotmos_kore_responses_turn(runtime);
     if (loop != NULL) {
         rotmos_loop_turn(loop);
         if (loop->failure.status != ROTMOS_OK && runtime->status == ROTMOS_OK) {
@@ -174,6 +178,7 @@ void rotmos_kore_loop_shutdown(void *userdata)
 {
     struct rotmos_runtime *runtime;
     runtime = userdata;
+    rotmos_kore_responses_shutdown(runtime);
     rotmos_loop_shutdown(runtime->server->loop);
     if (runtime->server->loop != NULL &&
         runtime->server->loop->failure.status != ROTMOS_OK &&

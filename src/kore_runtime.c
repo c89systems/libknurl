@@ -579,6 +579,8 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             hooks.parent_drain = rotmos_kore_parent_drain;
             hooks.parent_cleanup = rotmos_kore_loop_shutdown;
             hooks.worker_cleanup = rotmos_kore_loop_shutdown;
+            hooks.request_release = rotmos_kore_response_release;
+            hooks.net_progress = rotmos_kore_response_progress;
             runtime->initialized = 1;
             runtime->curl_timeout = kore_curl_timeout;
             runtime->curl_recv_max = kore_curl_recv_max;

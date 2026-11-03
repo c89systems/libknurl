@@ -117,21 +117,32 @@ rotmos_status rotmos_reply_new(rotmos_reply **out, rotmos_error *error)
     return ROTMOS_OK;
 }
 
+void rotmos_reply_retire(rotmos_reply *reply)
+{
+    rotmos_source *source;
+    int busy;
+    if (reply == NULL)
+        return;
+    busy = reply->busy;
+    reply->busy = 1;
+    while (reply->retired_head != NULL) {
+        source = reply->retired_head;
+        reply->retired_head = source->retired_next;
+        rotmos_source_release(source, ROTMOS_CANCELLED);
+    }
+    reply->retired_tail = NULL;
+    reply->busy = busy;
+}
+
 rotmos_status rotmos_reply_destroy(rotmos_reply *reply, rotmos_error *error)
 {
     size_t i;
-    rotmos_source *source;
     if (reply != NULL) {
         if (reply->busy || reply->owner != NULL)
             return rotmos_fail(error, ROTMOS_STATE, "reply_destroy",
                                "reply is owned or busy");
         reply->busy = 1;
-        while (reply->retired_head != NULL) {
-            source = reply->retired_head;
-            reply->retired_head = source->retired_next;
-            rotmos_source_release(source, ROTMOS_CANCELLED);
-        }
-        reply->retired_tail = NULL;
+        rotmos_reply_retire(reply);
         clear_payload(reply);
         for (i = 0; i < reply->header_count; ++i) {
             free((void *)reply->headers[i].name.data);

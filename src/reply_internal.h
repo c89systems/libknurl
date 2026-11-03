@@ -22,4 +22,6 @@ struct rotmos_reply {
     size_t header_count;
 };
 
+void rotmos_reply_retire(rotmos_reply *reply);
+
 #endif
