@@ -85,6 +85,25 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_kore_runtime tests/kore-runtime.c $<TARGET_OBJECTS:rotmos_kore>)
+  add_dependencies(rotmos_kore_runtime kore-source)
+  rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/kore-runtime.c" "${CMAKE_CURRENT_SOURCE_DIR}/tests/kore-port.c")
+  target_compile_definitions(rotmos_kore_runtime PRIVATE $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
+  target_include_directories(rotmos_kore_runtime PRIVATE "${kore_source_dir}/include/kore")
+  target_link_libraries(rotmos_kore_runtime PRIVATE cpkt::openssl_ssl_shared cpkt::curl_shared
+    lonejson::lonejson pslog::pslog_shared)
+  rotmos_c89(rotmos_kore_runtime)
+  rotmos_local_runtime(rotmos_kore_runtime)
+  add_test(NAME rotmos.kore-runtime COMMAND rotmos_kore_runtime)
+  set_tests_properties(rotmos.kore-runtime PROPERTIES TIMEOUT 20)
+  add_test(NAME kore.backend-invalidation COMMAND "${CMAKE_COMMAND}"
+    "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/backend invalidation"
+    "-DTOOLCHAIN=${rotmos_toolchain}" "-DROTMOS_TARGET=${ROTMOS_TARGET}"
+    "-DROTMOS_CAN_RUN=${rotmos_can_run}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/BackendInvalidation.cmake")
+  set_tests_properties(kore.backend-invalidation PROPERTIES TIMEOUT 60)
   add_executable(rotmos_declarations tests/declarations.c)
   target_link_libraries(rotmos_declarations PRIVATE rotmos::shared)
   rotmos_c89(rotmos_declarations)

@@ -17,3 +17,11 @@ function(rotmos_add_kore_sources root output)
     COMMENT "Preparing pristine Kore ${revision} with external patches" VERBATIM)
   add_custom_target(kore-source ALL DEPENDS "${output}/.patched")
 endfunction()
+
+# A patch rebuild replaces the prepared files after Ninja has inspected their
+# old timestamps. Objects must depend on preparation itself, not only its order.
+function(rotmos_kore_object_dependencies stamp)
+  foreach(source IN LISTS ARGN)
+    set_property(SOURCE "${source}" APPEND PROPERTY OBJECT_DEPENDS "${stamp}")
+  endforeach()
+endfunction()

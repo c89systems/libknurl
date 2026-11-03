@@ -6,8 +6,12 @@ framing, owned sources and staged reply builders. Reply builders copy text/bytes
 and ordered headers, pin regular files, and distinguish live source ownership
 from explicitly bounded synchronous materialization. Source registration never
 reads or resets a producer. It also compiles the selected private Kore backend
-objects under strict C89, applying the 42 original patches and an external C89
-port. Inert server construction copies listeners, TLS material, callbacks,
+objects under strict C89, applying the 42 original patches, an external C89 port
+and the private library lifecycle patch. The selected backend excludes the
+standalone CLI configuration parser/assets and uses typed callbacks. Its native
+fixture serves HTTP, handles worker-initiated stop, repeats a run, and recovers
+from an injected error after bind. Inert server construction copies listeners,
+TLS material, callbacks,
 trusted-proxy declarations and autoblock rules, and resolves effective settings.
 The router owns stable route/group handles, validates declarations and preserves
 registration order, prefixes and exact method/path conflicts. Construction and
@@ -65,6 +69,10 @@ CMake tracks upstream sources, patches, `series`, provenance and the preparation
 script. A changed input regenerates the copy from pristine sources; an unchanged
 build reuses it. Patch failures name the patch and stop the build without
 publishing a partially patched copy.
+
+Backend objects depend directly on successful source preparation. A patch edit
+must prepare and recompile its changed source in one build invocation; CTest's
+`kore.backend-invalidation` proves that behavior with a compiled fixture.
 
 ## Upgrading Kore
 

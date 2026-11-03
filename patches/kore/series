@@ -41,3 +41,4 @@
 0041-kore-static-pool-name-ownership.patch
 0042-kore-independent-sdk-prefixes.patch
 0043-strict-c89.patch
+0044-library-lifecycle-and-typed-callbacks.patch
