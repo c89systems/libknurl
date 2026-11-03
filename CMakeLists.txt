@@ -46,7 +46,8 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
   src/config_normalize.c src/server.c src/router.c src/route_path.c
   src/request.c src/request_decode.c src/router_dispatch.c
-  src/kore_runtime.c src/kore_http.c)
+  src/kore_runtime.c src/kore_http.c src/kore_loop.c src/kore_control.c
+  src/loop.c src/loop_timer.c src/loop_waker.c)
 target_include_directories(rotmos_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(rotmos_objects PRIVATE "${kore_source_dir}/include/kore")
 target_link_libraries(rotmos_objects PRIVATE OpenSSL::SSL CURL::libcurl lonejson::lonejson pslog::pslog_shared)
@@ -56,7 +57,8 @@ target_compile_definitions(rotmos_objects PRIVATE ROTMOS_VERSION="${PROJECT_VERS
   $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
 add_dependencies(rotmos_objects kore-source)
 rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_runtime.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_http.c")
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_runtime.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_http.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_loop.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_control.c")
 rotmos_c89(rotmos_objects)
 foreach(variant static shared)
   string(TOUPPER "${variant}" kind)
@@ -79,7 +81,8 @@ target_link_libraries(rotmos_static PRIVATE OpenSSL::SSL CURL::libcurl
   lonejson::lonejson_static pslog::pslog_static Threads::Threads)
 set(rotmos_core_headers include/rotmos/common.h include/rotmos/http.h include/rotmos/rotmos.h
   include/rotmos/io.h include/rotmos/reply.h include/rotmos/tls.h
-  include/rotmos/server.h include/rotmos/router.h include/rotmos/request.h include/rotmos/kore.h)
+  include/rotmos/server.h include/rotmos/router.h include/rotmos/request.h include/rotmos/kore.h
+  include/rotmos/loop.h)
 set_source_files_properties(${rotmos_core_headers} PROPERTIES LANGUAGE C HEADER_FILE_ONLY FALSE)
 add_library(rotmos_headers_c OBJECT ${rotmos_core_headers})
 target_include_directories(rotmos_headers_c PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -105,6 +108,12 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_loop_smoke tests/loop-smoke.c)
+  target_link_libraries(rotmos_loop_smoke PRIVATE rotmos::shared)
+  rotmos_c89(rotmos_loop_smoke)
+  rotmos_local_runtime(rotmos_loop_smoke)
+  add_test(NAME rotmos.loop-smoke COMMAND rotmos_loop_smoke)
+  set_tests_properties(rotmos.loop-smoke PROPERTIES TIMEOUT 10)
   add_executable(rotmos_server_runtime tests/server-runtime.c)
   target_link_libraries(rotmos_server_runtime PRIVATE rotmos::shared Threads::Threads)
   rotmos_c89(rotmos_server_runtime)

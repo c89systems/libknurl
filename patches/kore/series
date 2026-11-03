@@ -44,3 +44,4 @@
 0044-library-lifecycle-and-typed-callbacks.patch
 0045-public-runtime-adapter.patch
 0046-c89-queue-declarations.patch
+0047-loop-integration.patch

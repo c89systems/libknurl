@@ -274,6 +274,9 @@ ROTMOS_API rotmos_status rotmos_server_router_take(rotmos_server *server,
 ROTMOS_API rotmos_status rotmos_server_supervision_take(
     rotmos_server *server, const rotmos_supervision_config *config,
     rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_server_control_interest(rotmos_server *server,
+                                                        unsigned int interest,
+                                                        rotmos_error *error);
 ROTMOS_API rotmos_status rotmos_server_destroy(rotmos_server *server,
                                                rotmos_error *error);
 ROTMOS_API rotmos_status rotmos_server_validate(rotmos_server *server,

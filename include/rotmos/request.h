@@ -13,6 +13,7 @@ typedef struct rotmos_endpoint {
 } rotmos_endpoint;
 
 ROTMOS_API rotmos_server *rotmos_request_server(const rotmos_request *request);
+ROTMOS_API rotmos_loop *rotmos_request_loop(const rotmos_request *request);
 ROTMOS_API rotmos_http_method
 rotmos_request_method(const rotmos_request *request);
 ROTMOS_API rotmos_bytes

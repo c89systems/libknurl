@@ -8,5 +8,6 @@
 #include <rotmos/server.h>
 #include <rotmos/router.h>
 #include <rotmos/request.h>
+#include <rotmos/loop.h>
 
 #endif

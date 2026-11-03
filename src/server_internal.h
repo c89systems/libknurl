@@ -16,6 +16,7 @@ struct rotmos_server {
     rotmos_server_state state;
     rotmos_process_context process;
     struct rotmos_runtime *runtime;
+    rotmos_loop *loop;
     volatile sig_atomic_t notify_fd;
     volatile sig_atomic_t stop_requested;
     volatile sig_atomic_t terminating_signal;

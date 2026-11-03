@@ -29,6 +29,15 @@ parameters and socket endpoints. Parameter matching keeps optional omission
 ordering without recursive C calls. Runtime reply replacement queues superseded
 sources for cleanup rather than invoking close inside a setter.
 
+Parent and HTTP-worker loops expose borrowed FD watches, monotonic wide timers,
+deferred callbacks and coalescing wakers. Readiness is dispatched after native
+event batches; cancellation retires userdata after outstanding batch references.
+Worker draining retains these registrations until cancellation/completion. The
+owned supervision descriptor runs on the parent loop, keeps host framing, drains
+readable bytes before EOF notification, and is consumed when the run ends.
+`rotmos.loop-smoke` covers the basic loop operations, source FD ownership,
+coalescing, control EOF and rejection of a supervised rerun without a fresh FD.
+
 `rotmos.server-runtime` exercises this public surface over TCP, including staged
 middleware replacement, framing rejection, parent/worker hooks, signal restoration,
 startup cancellation and repeated runs. The installed-consumer check repeats the
@@ -36,10 +45,10 @@ HTTP fixture through both static and shared imported targets after relocating
 the library and its three released dependency prefixes.
 
 This is partial runtime coverage. Preflight explicitly rejects configured TLS,
-supervision, worker observations, access logs, trusted proxies, autoblock,
+worker observations, access logs, trusted proxies, autoblock,
 JSON/upload plans and disk-backed bodies until those paths are connected. A final
 file or live-source reply currently returns 501; no buffered fallback implements
-streaming. Low-level response/body/channel/loop operations, gate observations,
+streaming. Low-level response/body/channel operations, gate observations,
 complete startup/failure unwinding, auxiliary-worker lifecycle, the protocol and
 provider helpers, the opt-in native declaration component, and the Lua product
 remain implementation work. Worker failure,

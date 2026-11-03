@@ -160,6 +160,9 @@ static int child_start(void *userdata, struct kore_worker *child)
     wake_close(runtime);
     kore_platform_event_cleanup();
     kore_timer_cleanup();
+    rotmos_loop_discard_after_fork(runtime->server->loop);
+    runtime->server->loop = NULL;
+    runtime->control_watch = NULL;
     if (runtime->server->config.supervision.enabled &&
         runtime->server->config.supervision.control_fd >= 0) {
         (void)close(runtime->server->config.supervision.control_fd);
@@ -178,6 +181,8 @@ static int child_start(void *userdata, struct kore_worker *child)
     runtime->server->stop_requested = runtime->server->terminating_signal = 0;
     if (!wake_open(runtime))
         return 0;
+    if (rotmos_kore_loop_create(runtime, &runtime->error) != ROTMOS_OK)
+        return 0;
     return rotmos_runtime_hook(
                runtime, runtime->server->config.callbacks.on_process_start) ==
            ROTMOS_OK;
@@ -188,6 +193,9 @@ static int worker_start(void *userdata)
     struct rotmos_runtime *runtime;
     runtime = userdata;
     kore_platform_event_level_read(runtime->wake[0], &runtime->wake_event);
+    if (rotmos_loop_activate(runtime->server->loop, &runtime->error) !=
+        ROTMOS_OK)
+        return 0;
     runtime->worker_started = 1;
     return rotmos_runtime_hook(
                runtime, runtime->server->config.callbacks.on_worker_start) ==
@@ -231,6 +239,7 @@ static int worker_exit(void *userdata)
     struct rotmos_runtime *runtime;
     int status;
     runtime = userdata;
+    rotmos_kore_loop_finish(runtime);
     wake_close(runtime);
     status = 0;
     if (runtime->server->config.callbacks.on_worker_exit != NULL)
@@ -238,6 +247,13 @@ static int worker_exit(void *userdata)
             runtime->server, &runtime->server->process,
             runtime->server->config.callbacks.userdata);
     return status;
+}
+
+static int worker_pending(void *userdata)
+{
+    struct rotmos_runtime *runtime;
+    runtime = userdata;
+    return rotmos_loop_pending(runtime->server->loop);
 }
 
 rotmos_status rotmos_server_validate(rotmos_server *server, rotmos_error *error)
@@ -256,15 +272,19 @@ rotmos_status rotmos_server_validate(rotmos_server *server, rotmos_error *error)
     if (server->config.listener_count == 0)
         return rotmos_fail(error, ROTMOS_INVALID, "server_validate",
                            "declare at least one listener");
+    if (server->config.supervision.enabled &&
+        server->config.supervision.control_fd < 0)
+        return rotmos_fail(
+            error, ROTMOS_STATE, "server_validate",
+            "supervised rerun requires a fresh control descriptor");
     if (server->config.tls.identity_count != 0 ||
-        server->config.supervision.enabled ||
         server->config.callbacks.on_worker_event != NULL ||
         server->config.autoblock.enabled ||
         server->config.client_ip.trusted_proxy_count != 0 ||
         server->config.http.access_log_path != NULL)
         return rotmos_fail(
             error, ROTMOS_NOT_SUPPORTED, "server_validate",
-            "TLS, supervision, worker observations, access logs and admission "
+            "TLS, worker observations, access logs and admission "
             "policy are unavailable in the current runtime");
     for (i = 0; i < server->config.listener_count; ++i)
         if (server->config.listeners[i].kind != ROTMOS_LISTENER_HTTP)
@@ -532,8 +552,13 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
                 ++runtime->installed_signals;
             }
         }
-        runtime->status = rotmos_runtime_hook(
-            runtime, server->config.callbacks.on_process_start);
+        runtime->status = rotmos_kore_loop_create(runtime, &runtime->error);
+        if (runtime->status == ROTMOS_OK)
+            runtime->status =
+                rotmos_kore_control_start(runtime, &runtime->error);
+        if (runtime->status == ROTMOS_OK)
+            runtime->status = rotmos_runtime_hook(
+                runtime, server->config.callbacks.on_process_start);
         if (runtime->status == ROTMOS_OK)
             runtime->status = rotmos_runtime_hook(
                 runtime, server->config.callbacks.on_parent_prepare);
@@ -548,6 +573,12 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             hooks.worker_start = worker_start;
             hooks.worker_stopping = worker_stopping;
             hooks.worker_exit = worker_exit;
+            hooks.worker_pending = worker_pending;
+            hooks.loop_wait = rotmos_kore_loop_wait;
+            hooks.loop_turn = rotmos_kore_loop_turn;
+            hooks.parent_drain = rotmos_kore_parent_drain;
+            hooks.parent_cleanup = rotmos_kore_loop_shutdown;
+            hooks.worker_cleanup = rotmos_kore_loop_shutdown;
             runtime->initialized = 1;
             runtime->curl_timeout = kore_curl_timeout;
             runtime->curl_recv_max = kore_curl_recv_max;
@@ -567,6 +598,10 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
         if (runtime->status == ROTMOS_OK && !runtime->cancelled) {
             kore_platform_event_level_read(runtime->wake[0],
                                            &runtime->wake_event);
+            runtime->status =
+                rotmos_loop_activate(server->loop, &runtime->error);
+        }
+        if (runtime->status == ROTMOS_OK && !runtime->cancelled) {
             server->state = ROTMOS_SERVER_READY_PAUSED;
             runtime->status = rotmos_runtime_hook(
                 runtime, server->config.callbacks.on_parent_ready);
@@ -597,7 +632,9 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
         kore_library_cleanup();
         kore_curl_timeout = runtime->curl_timeout;
         kore_curl_recv_max = runtime->curl_recv_max;
-    }
+    } else
+        rotmos_kore_loop_shutdown(runtime);
+    rotmos_kore_loop_finish(runtime);
     while (runtime->installed_signals != 0) {
         --runtime->installed_signals;
         (void)sigaction(handled_signals[runtime->installed_signals],
@@ -612,6 +649,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
         runtime, server->config.callbacks.on_parent_stopped);
     if (runtime->status == ROTMOS_OK && stopped_status != ROTMOS_OK)
         runtime->status = stopped_status;
+    rotmos_kore_control_close(runtime);
     if (out != NULL) {
         out->reason = runtime->status != ROTMOS_OK
                           ? (runtime->ready ? ROTMOS_RUN_BACKEND_FAILURE

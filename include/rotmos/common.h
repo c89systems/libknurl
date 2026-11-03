@@ -22,6 +22,10 @@ typedef struct rotmos_request rotmos_request;
 typedef struct rotmos_response rotmos_response;
 typedef struct rotmos_reply rotmos_reply;
 typedef struct rotmos_source rotmos_source;
+typedef struct rotmos_loop rotmos_loop;
+typedef struct rotmos_watch rotmos_watch;
+typedef struct rotmos_timer rotmos_timer;
+typedef struct rotmos_waker rotmos_waker;
 
 typedef enum rotmos_status {
     ROTMOS_OK = 0,

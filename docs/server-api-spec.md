@@ -1029,6 +1029,14 @@ Accepted deferred work runs once on a later turn or retires without delivery
 during shutdown. A full pending-work budget returns LIMIT with no ownership
 transfer; it is not a retry notification that may be silently lost.
 
+The initial loop bounds are 4096 registrations (including deferred items),
+1024 pending deferred items and 64 callback/retirement slots per turn, exposed
+as `ROTMOS_LOOP_MAX_REGISTRATIONS`, `ROTMOS_LOOP_MAX_DEFERRED` and
+`ROTMOS_LOOP_CALLBACKS_PER_TURN`. Retirement retains its registration slot until
+it is delivered. Work accepted during a callback belongs to a later batch.
+`rotmos_server_loop` and `rotmos_request_loop` borrow the current process's loop;
+they do not revive a captured parent loop after fork.
+
 Provide `rotmos_waker_new`, `rotmos_waker_signal` and `rotmos_waker_destroy`.
 A waker has bounded coalescing state and an owning-loop callback; signal is the
 only thread-safe operation on it. It schedules loop work through a real wake
@@ -2192,6 +2200,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0044 | Explicit private library lifecycle and typed native/policy callbacks; no CLI main or Vectis symbol lookup; reclaim pool mappings, isolate worker descriptors, reap owned PIDs, honor descriptor limits and drain before teardown; prove native HTTP, restart and startup-failure cleanup |
 | 0045 | Preserve the raw request target/method and Host arrival order for public metadata; bound/cancel worker initialization, expose shutdown escalation, and bracket backend forks for the public runtime's notification lock |
 | 0046 | Name queue heads and preserve BSD tail-queue layouts without empty macro arguments; retain platform queue operations and strict C89 diagnostics under Clang |
+| 0047 | Add typed loop wait/turn/cleanup hooks and native watch interest operations; separate readable, writable, read-half-close and error readiness, preserve fatal shutdown causes, and keep parent events available while workers drain |
 
 ## 22. Investigation references
 

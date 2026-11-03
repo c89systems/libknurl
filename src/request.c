@@ -1,5 +1,6 @@
 #include "request_internal.h"
 #include "reply_internal.h"
+#include <rotmos/loop.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +16,11 @@ rotmos_bytes rotmos_view(const char *text)
 rotmos_server *rotmos_request_server(const rotmos_request *request)
 {
     return request != NULL ? request->server : NULL;
+}
+
+rotmos_loop *rotmos_request_loop(const rotmos_request *request)
+{
+    return request != NULL ? rotmos_server_loop(request->server) : NULL;
 }
 
 rotmos_http_method rotmos_request_method(const rotmos_request *request)

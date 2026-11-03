@@ -1,0 +1,243 @@
+--- a/include/kore/library.h
++++ b/include/kore/library.h
+@@ -10,6 +10,11 @@
+     int (*startup_cancel)(void *);
+     void (*fork_prepare)(void *);
+     void (*fork_complete)(void *);
++    u_int64_t (*loop_wait)(void *, u_int64_t);
++    void (*loop_turn)(void *);
++    void (*parent_drain)(void *, u_int64_t);
++    void (*parent_cleanup)(void *);
++    void (*worker_cleanup)(void *);
+     int (*process_start)(void *, struct kore_worker *);
+     int (*worker_start)(void *);
+     void (*worker_stopping)(void *);
+@@ -32,6 +37,9 @@
+ int kore_library_parent_start(void);
+ int kore_worker_available(void);
+ void kore_library_parent_step(u_int64_t);
++void kore_library_parent_drain(u_int64_t);
++/* Logical read/write mask, 0 on success or an errno value on failure. */
++int kore_library_watch_update(int, unsigned int, unsigned int, void *);
+ void kore_library_cleanup(void);
+ void kore_curl_syscleanup(void);
+ int kore_library_accept(struct connection *);
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -208,6 +208,7 @@
+ #define KORE_EVENT_READ		0x01
+ #define KORE_EVENT_WRITE	0x02
+ #define KORE_EVENT_ERROR	0x04
++#define KORE_EVENT_READ_CLOSED 0x08
+ 
+ #define CONN_IDLE_TIMER_ACT	0x0001
+ #define CONN_CLOSE_EMPTY	0x0002
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -162,25 +162,39 @@
+ void
+ kore_library_parent_step(u_int64_t maximum_wait)
+ {
++    kore_library_parent_drain(maximum_wait);
++    kore_worker_reap();
++}
++
++void
++kore_library_parent_drain(u_int64_t maximum_wait)
++{
+     u_int64_t wait;
+     wait = kore_timer_next_run(kore_time_ms());
+     if (wait > maximum_wait)
+         wait = maximum_wait;
++    if (kore_library_hooks.loop_wait != NULL)
++        wait = kore_library_hooks.loop_wait(kore_library_hooks.arg, wait);
+     kore_platform_event_wait(wait);
+     kore_connection_prune(KORE_CONNECTION_PRUNE_DISCONNECT);
+     kore_timer_run(kore_time_ms());
+-    kore_worker_reap();
++    if (kore_library_hooks.loop_turn != NULL)
++        kore_library_hooks.loop_turn(kore_library_hooks.arg);
+ }
+ 
+ void
+ kore_library_cleanup(void)
+ {
++    if (kore_quit == KORE_QUIT_NONE)
++        kore_quit = KORE_QUIT_NORMAL;
+     if ((library_initialized & LIB_WORKERS) && kore_worker_available()) {
+         kore_worker_dispatch_signal(SIGQUIT);
+         kore_worker_shutdown();
+     }
+     if (library_initialized & LIB_WORKERS)
+         kore_worker_parent_cleanup();
++    if (kore_library_hooks.parent_cleanup != NULL)
++        kore_library_hooks.parent_cleanup(kore_library_hooks.arg);
+     if (library_initialized & LIB_CONNECTIONS)
+         kore_connection_cleanup();
+     if (library_initialized & LIB_EVENTS)
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -407,7 +407,10 @@
+ 			}
+ 		}
+ 
+-		usleep(10000);
++		if (kore_library_hooks.parent_drain != NULL)
++			kore_library_hooks.parent_drain(kore_library_hooks.arg, 10);
++		else
++			usleep(10000);
+ 	}
+ 
+ }
+@@ -694,6 +697,8 @@
+ 			netwait = 0;
+ #endif
+ 
++		if (kore_library_hooks.loop_wait != NULL)
++			netwait = kore_library_hooks.loop_wait(kore_library_hooks.arg, netwait);
+ 		kore_platform_event_wait(netwait);
+ 		now = kore_time_ms();
+ 
+@@ -763,6 +768,8 @@
+ 		}
+ 
+ 		kore_connection_prune(KORE_CONNECTION_PRUNE_DISCONNECT);
++		if (kore_library_hooks.loop_turn != NULL)
++			kore_library_hooks.loop_turn(kore_library_hooks.arg);
+ 	}
+ 
+ 	/* A clean worker exit must release intake before closing its IPC link. */
+@@ -772,6 +779,8 @@
+ #if !defined(KORE_NO_HTTP)
+ 	http_cleanup();
+ #endif
++	if (kore_library_hooks.worker_cleanup != NULL)
++		kore_library_hooks.worker_cleanup(kore_library_hooks.arg);
+ 	kore_server_cleanup();
+ 	kore_platform_event_cleanup();
+ 	kore_domain_cleanup();
+--- a/src/linux.c
++++ b/src/linux.c
+@@ -23,6 +23,7 @@
+ #include <sched.h>
+ 
+ #include "kore.h"
++#include "library.h"
+ #include "seccomp.h"
+ 
+ #if defined(KORE_USE_PGSQL)
+@@ -124,6 +125,10 @@
+ 
+ 		if (events[i].events & EPOLLOUT)
+ 			evt->flags |= KORE_EVENT_WRITE;
++		if (events[i].events & (EPOLLRDHUP | EPOLLHUP))
++			evt->flags |= KORE_EVENT_READ_CLOSED;
++		if (events[i].events & EPOLLERR)
++			evt->flags |= KORE_EVENT_ERROR;
+ 
+ 		if (events[i].events & EPOLLERR ||
+ 		    events[i].events & EPOLLHUP ||
+@@ -139,6 +144,31 @@
+ kore_platform_event_level_all(int fd, void *c)
+ {
+ 	kore_platform_event_schedule(fd, EPOLLIN | EPOLLOUT | EPOLLRDHUP, 0, c);
++}
++
++int
++kore_library_watch_update(int fd, unsigned int previous,
++    unsigned int interest, void *userdata)
++{
++	struct epoll_event event;
++	int operation;
++	if (previous == interest)
++		return (0);
++	memset(&event, 0, sizeof(event));
++	if (interest & 1U)
++		event.events |= EPOLLIN | EPOLLRDHUP;
++	if (interest & 2U)
++		event.events |= EPOLLOUT;
++	event.data.ptr = userdata;
++	if (interest == 0)
++		operation = EPOLL_CTL_DEL;
++	else
++		operation = previous == 0 ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
++	if (epoll_ctl(efd, operation, fd, &event) == 0)
++		return (0);
++	if (interest == 0 && (errno == ENOENT || errno == EBADF))
++		return (0);
++	return (errno);
+ }
+ 
+ void
+--- a/src/bsd.c
++++ b/src/bsd.c
+@@ -28,6 +28,7 @@
+ #include <string.h>
+ 
+ #include "kore.h"
++#include "library.h"
+ 
+ #if defined(KORE_USE_PGSQL)
+ #include "pgsql.h"
+@@ -140,6 +141,10 @@
+ 
+ 		if (events[i].filter == EVFILT_WRITE)
+ 			evt->flags |= KORE_EVENT_WRITE;
++		if ((events[i].flags & EV_EOF) && events[i].filter == EVFILT_READ)
++			evt->flags |= KORE_EVENT_READ_CLOSED;
++		if ((events[i].flags & EV_ERROR) || events[i].fflags != 0)
++			evt->flags |= KORE_EVENT_ERROR;
+ 
+ 		if ((events[i].flags & EV_ERROR) ||
+ 		    ((events[i].flags & EV_EOF) &&
+@@ -165,6 +170,39 @@
+ 	kore_platform_event_schedule(fd, EVFILT_WRITE, EV_ADD, c);
+ }
+ 
++int
++kore_library_watch_update(int fd, unsigned int previous,
++    unsigned int interest, void *userdata)
++{
++	struct kevent event;
++	int filters[2];
++	unsigned int bit, index, rollback;
++	int flags, saved;
++	filters[0] = EVFILT_READ;
++	filters[1] = EVFILT_WRITE;
++	for (index = 0; index < 2; index++) {
++		bit = 1U << index;
++		if ((previous & bit) == (interest & bit))
++			continue;
++		flags = (interest & bit) ? EV_ADD | EV_ENABLE : EV_DELETE;
++		EV_SET(&event, fd, filters[index], flags, 0, 0, userdata);
++		if (kevent(kfd, &event, 1, NULL, 0, NULL) == 0 ||
++		    ((flags & EV_DELETE) && (errno == ENOENT || errno == EBADF)))
++			continue;
++		saved = errno;
++		for (rollback = 0; rollback < index; rollback++) {
++			bit = 1U << rollback;
++			if ((previous & bit) == (interest & bit))
++				continue;
++			flags = (previous & bit) ? EV_ADD | EV_ENABLE : EV_DELETE;
++			EV_SET(&event, fd, filters[rollback], flags, 0, 0, userdata);
++			(void)kevent(kfd, &event, 1, NULL, 0, NULL);
++		}
++		return (saved);
++	}
++	return (0);
++}
++
+ void
+ kore_platform_event_level_read(int fd, void *c)
+ {
+--- a/src/msg.c
++++ b/src/msg.c
+@@ -295,7 +295,7 @@
+ 
+ 	if (msg->id == KORE_MSG_FATALX)
+ 		kore_quit = KORE_QUIT_FATAL;
+-	else
++	else if (kore_quit == KORE_QUIT_NONE)
+ 		kore_quit = KORE_QUIT_NORMAL;
+ }
+ 
