@@ -4,6 +4,8 @@ Status: proposed implementation contract, researched on 2026-11-03. No API in
 this document is implemented yet. The agreed product boundary is a librotmos
 API with Kore as its backend and an explicit backend escape hatch. This document
 supersedes the preliminary API direction in [extraction.md](extraction.md).
+The [specification audit](server-api-audit.md) records the resolved contract gaps,
+source corrections and remaining implementation proof obligations.
 
 The selected product is a reusable server toolkit: public C API, Kore backend,
 generic routes, format routes, static serving, reverse proxy, WebDAV, and a
@@ -53,7 +55,7 @@ tests below are requirements for the future implementation.
 | librotmos owns | Vectis owns |
 | --- | --- |
 | Accepted sockets, HTTP parsing, transport framing and keepalive; generic router, parameter/regex matching and route ordering | Route declarations, application handlers, auth decisions and application composition |
-| Worker processes and backend event loops; standalone Lua facade and public-API C binding | Outer supervisor, service graph, embedded Lua runtime ownership and application readiness policy |
+| Worker processes and backend event loops; shipped Lua facade and public-API C binding | Outer supervisor, service graph, host Lua runtime ownership and application readiness policy |
 | Request/body transport, explicit materialization, uploads, response delivery and generic JSON/XML route codecs | Application schemas/business logic and unrelated client/format workflows such as DSV |
 | TLS termination, client-certificate enforcement and ACME mechanics | Durable ACME storage selection, Lockd/Pouch integration and hydration policy |
 | WebSocket/frame transport, raw duplex channels and generic HTTP/SSE/WebSocket reverse-proxy engine | WebSocket application behavior and configured proxy destinations/rewrite/auth decisions |
@@ -68,9 +70,9 @@ Its application facade remains Vectis-owned. Custom low-level consumers may use
 the headers callback and explicitly dispatch a public router themselves; there
 must not be two implicit competing route selectors.
 
-The separate Lua product in section 20 has a Lua facade over a C binding which
-calls the installed public shared librotmos API. This is not Kore's native Lua
-module system and does not embed an interpreter into every C consumer.
+The separately packaged Lua module in section 20 has a Lua facade over a C binding
+which calls the installed public shared librotmos API. It runs in the host's
+existing Lua VM, including an embedded VM; the host creates and closes that VM.
 
 Initial backend scope is the Vectis-selected HTTP/1.0 and HTTP/1.1 runtime,
 OpenSSL TLS, ACME, curl integration, LoneJSON and pslog enhancements. HTTP/2 and
@@ -152,12 +154,12 @@ explicitly named copy/take. Config, plan and error types each have an initialize
 | `rotmos_request_loop`, `rotmos_request_response` | Borrowed owning-loop/response handles |
 | `rotmos_request_effective_address`, `rotmos_request_correlation_id` | Resolver results copied into request lifetime storage |
 | `rotmos_request_body_info`, `rotmos_request_body_read`, `rotmos_request_body_rewind` | Materialized-kind/length, bounded reads and explicit rewind; live streams reject these operations |
-| `rotmos_response_state`, `rotmos_response_queued_bytes` | Actual commitment/completion state and bounded queue occupancy |
+| `rotmos_response_state`, `rotmos_response_is_committed`, `rotmos_response_queued_bytes` | Drain state, irreversible commitment latch and bounded queue occupancy |
 | `rotmos_response_bytes` | Bounded copied complete reply (status/type/body), automatically begins and ends on success; cannot replace an existing reply |
-| `rotmos_response_file_take`, `rotmos_response_producer` | Explicit descriptor/producer ownership and close callback as defined in section 9 |
+| `rotmos_response_file_take`, `rotmos_response_producer`, `rotmos_response_producer_resume` | Explicit descriptor/producer ownership, pause/resume and close callback as defined in section 9 |
 | `rotmos_channel_body_complete`, `rotmos_channel_upgrade`, `rotmos_channel_queued_bytes`, `rotmos_channel_shutdown_write`, `rotmos_channel_close` | Complete the takeover family in section 10; close schedules terminal cleanup |
 | `rotmos_loop_now`, `rotmos_waker_new`, `rotmos_waker_signal`, `rotmos_waker_destroy` | Monotonic clock and bounded coalescing wake family |
-| `rotmos_websocket_accept`, `rotmos_websocket_send`, `rotmos_websocket_close` | Application-frame family with separate connection lifetime |
+| `rotmos_websocket_accept`, `rotmos_websocket_send`, `rotmos_websocket_resume`, `rotmos_websocket_close` | Application-frame family with separate connection lifetime |
 | `rotmos_server_supervision_take`, `rotmos_server_control_interest` | Replace a consumed supervision declaration before a run; update control events on its running parent loop |
 | `rotmos_server_set_pslog` | Inert logger/access policy registration from the optional header, allowed only outside a run |
 | `rotmos_request_json_validate_materialized`, `rotmos_request_json_parse_materialized` | Optional LoneJSON validation/map decode; no live-body streaming implication |
@@ -167,6 +169,13 @@ Factories, writes, state changes and indexed lookups use status plus output
 parameters when failure/absence is meaningful. No new allocation-returning
 getter hides a cleanup obligation. A direct immutable snapshot getter can return
 a borrowed pointer; it must not require a callback to retain private backend data.
+
+`rotmos_bytes` is a borrowed `(const void *data, size_t length)` view; a NULL data
+pointer is valid only at zero length. `rotmos_header` contains name and value
+views with the same lifetime rule. Text fields validate their own grammar and
+reject embedded NUL; body views remain binary. An empty view is not an absence
+indicator: lookup operations return a separate found flag. HTTP methods and
+statuses use enums/integers, never an untyped pointer convention.
 
 ## 4. Common status, ownership and execution contract
 
@@ -310,7 +319,7 @@ Provide typed hook slots, not string-to-function or void-pointer symbol tables:
 | `on_parent_prepare` | Runtime parent, before any backend fork; inert application declarations only |
 | `on_parent_ready` | Parent, after bind and initialization acknowledgements from required workers; includes actual listener addresses |
 | `on_worker_start` | Each HTTP worker after its final fork and before accepting requests; create worker clients/resources here |
-| `on_worker_stopping` | Worker before application transfers and event resources are torn down; cancel/join application work here |
+| `on_worker_stopping` | Worker before teardown; request cancellation without blocking, then retire post-fork application work during bounded drain |
 | `on_worker_exit` | Worker after backend teardown; no request, channel, timer, backend allocator or TLS access; returns child exit status |
 | `on_worker_event` | Parent observation of owned child start, exit, restart and escalation; distinguishes HTTP/key-manager/ACME roles |
 | `on_parent_stopping` / `on_parent_stopped` | Parent; stop intake first, then release parent resources after child reaping |
@@ -322,6 +331,13 @@ thread-quiescent while future worker replacement forks are possible. Worker
 threads may be created only after that worker's last fork. The library cannot
 prove arbitrary application quiescence; document it as a precondition and do not
 add thread/process scanners.
+
+Worker stopping keeps wake/completion delivery available while accepted work
+drains or acknowledges cancellation. Join only threads already known to have
+finished; never join a producer waiting for this same loop. Application-owned
+watch/waker registrations must retire before orderly loop teardown. At the
+shutdown deadline the parent escalates the child and reports abandonment rather
+than promising that unfinished native jobs or their destructors completed.
 
 Thread-bearing parent maintenance belongs in Vectis's outer supervisor or in an
 appropriate post-fork worker, not inside a parent hook which will later fork a
@@ -338,6 +354,15 @@ Vectis keeps its READY/STOP/service-failure framing. Read/write-interest updates
 and partial messages are explicit; the backend does not assume one read is one
 message. Detect EOF after draining readable bytes. No periodic control-channel
 polling or parent-PID-only lifetime supervision replaces this owned channel.
+
+Startup has a finite `startup_timeout_ms` (default 30000), covering required
+worker acknowledgements and transition to ready. Failure stops intake, tears down
+partial initialization and reaps owned children within the shutdown bound.
+Graceful shutdown stops new requests, asks active work to finish/cancel, then
+escalates at the configured bound; forced child death is reported as abandonment.
+No deadline can preempt arbitrary synchronous host C code safely: hooks must
+honor their documented execution budget. A host which blocks a parent hook
+violates the lifecycle precondition rather than receiving a promised hard timeout.
 
 ## 6. Configuration and defaults
 
@@ -393,6 +418,10 @@ than relying on future librotmos defaults.
 request direction. Those are heap allocations, not large automatic arrays.
 Bounds must include headers, held input remainder, queued writes and deferred
 callbacks. Disk materialization additionally requires a finite body/disk budget.
+The imported parser uses HTTP_REQ_HEADER_MAX = 25 split slots and rejects 25
+nonempty lines including the request line: its current effective maximum is
+23 header fields, including Host. Report that independent limit explicitly and
+test both sides of it; a 64 KiB byte allowance does not promise unlimited fields.
 
 Configuration zero normally requests the initialized default; zero explicitly
 disables HSTS and optional hard ceilings, selects automatic workers, and represents
@@ -403,11 +432,12 @@ overflow, unknown enums and unsafe text rather than silently accepting or
 truncating them.
 
 The Kore backend currently stores header, body-idle and keepalive timeouts in
-whole seconds. Either implement millisecond precision in a patch or explicitly
-round positive values up in the effective view, preserving the existing bridge's
-behavior; never promise a finer timer than is used. Values outside backend ranges
-must fail, not use the old bridge's silent integer saturation. Preserve the
-65535-second boundary where that representation remains.
+whole seconds. For this backend, round positive requested values up to whole
+seconds and expose the actual milliseconds in the effective view, preserving the
+existing bridge's behavior. Reject a rounded value over 65535 seconds rather
+than silently saturating it. Disabled means bypassing the check, not converting
+it into a one-second deadline. Other millisecond settings retain their declared
+units; scheduler lateness does not change the configured duration.
 
 Vectis currently derives a native body ceiling from the largest declared route
 when its server-wide body limit is zero; an explicit positive server limit is a
@@ -421,6 +451,14 @@ minimum-rate value requests the default; a separate rate-disabled flag is the
 explicit opt-out. The effective view must distinguish inherited, explicitly
 disabled and active settings without forcing callers to reverse-engineer
 sentinel arithmetic.
+
+An unanswered managed request has a finite `deferred_response_timeout_ms`
+(default 30000) after successful body completion. This covers the otherwise
+unbounded wait before response begin; response write-idle timing covers started
+responses, including a paused producer. Application receive pauses do not freeze
+these deadlines. Startup and deferred-response bounds cannot be disabled in this
+initial contract. Proxy-owned progress/total deadlines are separately specified
+in section 19, with the response-start bound still applying.
 
 ## 7. Request dispatch and metadata
 
@@ -447,6 +485,14 @@ finished response, application WebSocket upgrade, or connection takeover. An
 unanswered NONE-body plan invokes its completion callback for an empty body;
 it does not silently invent an application response. A missing required callback
 or conflicting disposition is `INVALID`.
+
+`plan.disposition` is MANAGED = 0, REPLY, WEBSOCKET or TAKEOVER. REPLY requires
+a successfully ended final response; WEBSOCKET/TAKEOVER require successful
+installation of that capability during dispatch. MANAGED requires an on_body_end
+callback unless a producer/response already owns completion. Body mode NONE
+still delivers an empty completion event; it never means "free the request now".
+The plan is copied on successful dispatch; pointers to the plan itself do not
+escape the callback. Its `on_body_end` slot has type `rotmos_complete_fn` below.
 
 After dispatch has started, the plan's terminal callback runs exactly once even
 if dispatch returns an error after assigning userdata. Callback failures before
@@ -486,6 +532,25 @@ metadata and cannot restart I/O on the terminated request. If a close callback
 is omitted, the library still performs its own cleanup; dynamically allocated
 application state requires an explicit owner/destructor.
 
+A managed request remains live after body completion while its final response
+is pending or draining. Returning from a handler does not implicitly end that
+response. Normal terminal cleanup waits for successful body completion, final
+response drain and release of attached producers/files/channels. Disconnect,
+timeout, abort or shutdown cancels remaining work and yields one terminal
+outcome. An early reply with an unread body closes after draining the reply;
+it cannot authorize keepalive by pretending the input completed. The deferred
+response deadline bounds a handler which never starts its reply.
+For that deliberate early reply the outcome reports the selected response and
+unconsumed/cancelled input separately; a failed peer body is never relabelled EOF.
+
+Terminal order is: stop further delivery/readiness callbacks, retire attached
+I/O and run their close callbacks, invoke the request close callback with valid
+metadata/outcome, then invalidate borrowed request/response views. No later
+callback can access that request. Delayed application work must cancel its own
+timer/watch registration during close; merely saving a request pointer does not
+extend its lifetime. A successful WebSocket upgrade instead transfers ownership
+to the separate connection lifetime in section 13.
+
 Before dispatch, reject ambiguous Host or message framing rather than allowing
 two layers to disagree: duplicate Host, conflicting/repeated Content-Length,
 or Transfer-Encoding combined with Content-Length. Valid chunked transfer coding
@@ -506,9 +571,11 @@ supported transfer codings or normalize raw routing data as a side effect.
 A zero plan body limit inherits the configured default. Nonzero plan limits may
 exceed that default but not a positive hard server ceiling. Validate declared
 length before starting application body work and enforce actual received length
-as well. Reject oversize/unwanted bodies with 413 and close when unread bytes
-prevent safe connection reuse. Empty bodies still receive completion and cleanup
-exactly once. Timeout, truncation and disconnect are not successful body EOF.
+as well. Reject oversize/unwanted managed bodies with 413 before final commitment;
+after commitment abort the exchange instead of emitting a second response.
+Close when unread bytes prevent safe connection reuse. Empty bodies still receive
+completion and cleanup exactly once. Timeout, truncation and disconnect are not
+successful body EOF.
 
 The streaming callback shape is:
 
@@ -557,9 +624,11 @@ resume and publish results. Lua is never entered from the foreign thread.
 An explicit finite BUFFERED limit must fit the materialization memory budget;
 otherwise reject the plan rather than allocate beyond that budget. MATERIALIZED
 can cross its memory threshold only when a spool directory and finite disk/body
-budget were supplied. STREAM retains neither a complete body nor a complete
-parser result. The per-worker resource model must account for concurrent header
-storage, body materialization where selected, both direction queues and TLS
+budget were supplied. STREAM never materializes the transport body. A typed
+codec may explicitly materialize a record under its separate declared budget;
+an item-stream codec must not collect the complete result. The per-worker
+resource model must account for concurrent header storage, body materialization
+where selected, both direction queues and TLS
 buffers. Bounded owned queues alone do not prove Vectis's existing conditional
 256 MiB proxy-worker planning target; repeat its actual slow-peer measurements.
 
@@ -579,7 +648,8 @@ Record callback thread identity and concurrent-request progress in its tests.
 Each request has a borrowed `rotmos_response`. The principal operations are
 `rotmos_response_status`, `rotmos_response_header_set`,
 `rotmos_response_header_add`, `rotmos_response_begin`, `rotmos_response_write`,
-`rotmos_response_end`, `rotmos_response_replace_uncommitted`, and
+`rotmos_response_trailers_enable`, `rotmos_response_end`,
+`rotmos_response_replace_uncommitted`, and
 `rotmos_response_abort`.
 
 Header operations copy validated text. `set` replaces matching fields;
@@ -598,18 +668,25 @@ rotmos_status rotmos_response_end(rotmos_response *response,
 Write accepts a bounded prefix and reports it explicitly. On `AGAIN`, accepted
 is zero; await `on_writable` instead of looping. Readiness is rearmed only when
 capacity returns. Producers stop generating when downstream capacity is exhausted.
-Known-length responses require exactly that many accepted body bytes before end;
-underflow/overflow fails and prevents unsafe keepalive. Unknown-length HTTP/1.1
+Body-bearing known-length responses require exactly that many accepted body
+bytes before end; underflow/overflow fails and prevents unsafe keepalive.
+Unknown-length HTTP/1.1
 uses chunk framing; HTTP/1.0 uses close delimitation. Trailers require supported
 framing and validation; they cannot become arbitrary framing/header overrides.
 
-| Response state | Meaning |
+| Response drain state | Meaning |
 | --- | --- |
 | BUILDING | Status and headers can change |
-| QUEUED | Serialized output is bounded and owned, but potentially retractable |
-| COMMITTED | Some final-response bytes were accepted by the transport, or backend/TLS retry state makes replacement unsafe |
+| ACTIVE | Begin accepted; bounded output may be queued or in flight |
 | FINISHING | End requested; queued data/trailers still draining |
 | COMPLETE / ABORTED | One terminal outcome; no further writes |
+
+Commitment is an independent monotonic latch, queried with
+`rotmos_response_is_committed`: final-response bytes reached the transport, or a
+backend/TLS retry makes replacement unsafe. ACTIVE and FINISHING may each be
+uncommitted or committed; starting drain must not erase commitment information.
+The latch never clears on an accepted response; replacement is possible only
+before it was set. Queue occupancy is independently observable.
 
 `begin` queues validated headers; it does not claim delivery. The backend reports
 commitment truthfully even for SSL_write which returns a retry without a public
@@ -625,6 +702,9 @@ offset/length and zero-length files, and uses a pinned open file rather than a
 later path lookup. Generic static/WebDAV helpers own cache, path, range and
 conditional mechanisms; Vectis supplies roots, asset providers and app policy.
 Preserve explicit content type across file-cache hits and TLS/non-TLS paths.
+Checked offsets must also fit the target's actual file/seek representation.
+Prove sparse-file offsets beyond 4 GiB on 32-bit targets; wide public counters
+alone are insufficient. An unsupported file range fails before taking the FD.
 
 A source producer is a nonblocking pull callback into a supplied bounded buffer
 returning bytes, EOF, AGAIN or error, plus one close callback. Do not reset or
@@ -635,12 +715,36 @@ and documented accordingly; they cannot hide a full-value staging operation
 behind a streaming name. Vectis's existing materializing `response_source` and
 live `response_stream_source` remain distinct application operations.
 
-For HEAD and 1xx/204/205/304, suppress forbidden payload generation. Preserve
+The producer callback receives `(buffer, capacity, produced, userdata, error)`.
+OK requires `0 < produced <= capacity`; zero-progress OK is invalid. AGAIN and
+EOF produce zero bytes; EOF is the sole successful end indication. Adapters for
+providers reporting data and EOF together first return the data, then EOF on the
+next pull. Errors do not expose a successful prefix. All counters are checked
+before queuing; overproduction/underproduction against a known length fails.
+
+AGAIN pauses pulls until `rotmos_response_producer_resume(response, error)` on
+the owning loop. Resume schedules a later pull, never recursively invokes it;
+repeated resumes coalesce and no pull runs without output capacity. A thread
+signals an owner-loop waker to request resume. Downstream writable events alone
+do not poll an application-paused producer. Once the library accepts the producer,
+it owns exactly one close notification even if begin subsequently fails. Failed
+registration leaves ownership with the caller. Manual writes/end and an active
+producer are exclusive; EOF ends the producer response using its copied trailers.
+
+Ordinary final status is 200..599. Status 101 requires a validated upgrade;
+100/103 use explicit interim operations, never the final-response setter. Reject
+other informational responses as unsupported in the initial API.
+For HEAD and 204/205/304, suppress forbidden payload generation. Preserve
 HEAD/304 representation length where supplied, omit an invented zero length for
 HEAD/304/204, and preserve the existing 205 zero-length keepalive behavior.
 Application-generated 101 is reserved for a validated upgrade. Bounded explicit
 100/103 interim responses do not commit a later final response; accounting and
 replacement must distinguish the two. Enforce an interim-response budget.
+For a bodyless reply, a supplied representation length does not require matching
+accepted payload bytes. Explicit body writes return STATE with zero accepted;
+bytes/file/producer conveniences suppress payload copies/pulls and still release
+transferred owners once. Wire/body counts report actual transmission, not the
+representation length. The 205 response uses zero length regardless of a source.
 
 Response completion and observations report the final selected/committed status,
 wire/body counts, success/abort cause and timing. Replaced queued statuses must
@@ -649,8 +753,19 @@ not produce duplicate request counts or a false successful completion.
 `response_end` accepting end-of-stream is idempotent while draining; it must not
 enqueue the same trailers twice. If trailer capacity is unavailable, AGAIN
 accepts nothing and the caller retries with the same trailer set after writable
-notification. A failed complete-reply convenience operation leaves no partially
-installed reply.
+notification. Trailer support must be enabled before begin; HTTP/1.0, known-length or
+bodyless responses reject incompatible declarations before committing headers.
+Once end is accepted, later end calls must use the identical trailer set or
+return STATE. `rotmos_response_trailers_enable` optionally copies known names
+for the generated Trailer field. Valid bounded trailers with names not known
+before begin remain supported for proxy relays; enabling support does not
+permit forbidden framing/authentication overrides. Reject any header/trailer
+set which can never fit its applicable
+finite bound with LIMIT, rather than returning an AGAIN that cannot become
+writable. Producer EOF retains pending end/trailers until accepted without
+pulling the producer again. A failed complete-reply convenience operation leaves
+no partially installed reply. Known-length writes reject an overflowing offered
+chunk before accepting any of that chunk; a short end is a terminal error.
 
 When adapting an already materialized Vectis response larger than the queue
 budget, retain/move that payload into a producer whose close callback releases
@@ -696,6 +811,14 @@ parsing resumes only after successful body completion, response drain, and a
 connection policy allowing reuse. Reject a tail over the configured bound. An
 incomplete body, early local rejection or invalid framing closes rather than
 guessing where the next request starts.
+
+The framer stops reading at the declared boundary and passes exactly its unread
+suffix. Successful body_complete copies that suffix and consumes the declaration;
+it disables further HTTP_INPUT reads. Failure leaves input/tail ownership intact
+so the caller can close; no partial tail transfer is allowed. Repeating a completed
+declaration returns STATE. Prefetched backend surplus and caller-supplied tail
+must not both enqueue the same bytes. The receive/tail bounds apply to coalesced
+input too, before admitting another read.
 
 For proxy upgrades, `rotmos_channel_upgrade(channel, headers, count, error)`
 accepts the host's already validated successful upstream WebSocket handshake,
@@ -743,18 +866,21 @@ required successful handoffs, not permission to reject every nonempty queue.
 Expose owner-loop FD watches, one-shot/repeating timers and deferred callbacks:
 
 ```c
+typedef void (*rotmos_retire_fn)(void *userdata);
 rotmos_status rotmos_loop_watch(rotmos_loop *loop, int fd,
-    unsigned int interest, rotmos_watch_fn callback, void *userdata,
+    unsigned int interest, rotmos_watch_fn callback, rotmos_retire_fn retired,
+    void *userdata,
     rotmos_watch **out, rotmos_error *error);
 rotmos_status rotmos_watch_update(rotmos_watch *watch,
     unsigned int interest, rotmos_error *error);
 void rotmos_watch_cancel(rotmos_watch *watch);
 rotmos_status rotmos_loop_timer(rotmos_loop *loop, long delay_ms,
-    long repeat_ms, rotmos_timer_fn callback, void *userdata,
+    long repeat_ms, rotmos_timer_fn callback, rotmos_retire_fn retired,
+    void *userdata,
     rotmos_timer **out, rotmos_error *error);
 void rotmos_timer_cancel(rotmos_timer *timer);
 rotmos_status rotmos_loop_defer(rotmos_loop *loop, rotmos_defer_fn callback,
-    void *userdata, rotmos_error *error);
+    rotmos_retire_fn retired, void *userdata, rotmos_error *error);
 ```
 
 Events describe READABLE, WRITABLE, READ_CLOSED and ERROR independently.
@@ -762,15 +888,27 @@ Zero interest suspends a watch; it does not close its borrowed descriptor.
 Unchanged interest must not spuriously rearm or generate work. Watch cancellation
 prevents future callbacks; internal event memory remains safe through the current
 batch. The caller retains userdata until its active callback returns and a
-documented after-batch retirement callback/deferred action confirms removal.
+non-reentrant `retired(userdata)` confirms removal. Each accepted watch/timer/
+deferred item invokes its optional retirement callback exactly once, including
+shutdown or cancellation before first delivery; rejected registration invokes
+neither callback. The callback is the point at which userdata may be released.
 Do not expose epoll/kqueue flags or require an upstream library's private structs.
 
-Timers and `rotmos_loop_now` use a monotonic time base. Zero repeat means one-shot;
-zero delay means deferred work on a later turn, not immediate recursion or a
+Timers and `rotmos_loop_now` use a monotonic time base; absolute timestamps use
+`rotmos_u64` milliseconds, while bounded relative durations use `long`. Neither
+uptime nor subtraction may wrap at a 32-bit signed-long boundary.
+Zero repeat means one-shot; zero delay means deferred work on a later turn,
+not immediate recursion or a
 busy timer. Bound pending deferred work and per-turn work. Parent and worker
 loops are distinct; watches/timers are created in the process which owns them
 after the relevant fork boundary. This supports parent auth/control work and
 worker curl-multi socket/timer integration without a Kore dependency in Vectis.
+
+A one-shot timer retires after delivery. A cancelled repeating timer cannot rearm
+when its callback returns. Repeats coalesce missed ticks, with no catch-up burst.
+Accepted deferred work runs once on a later turn or retires without delivery
+during shutdown. A full pending-work budget returns LIMIT with no ownership
+transfer; it is not a retry notification that may be silently lost.
 
 Provide `rotmos_waker_new`, `rotmos_waker_signal` and `rotmos_waker_destroy`.
 A waker has bounded coalescing state and an owning-loop callback; signal is the
@@ -780,6 +918,12 @@ drains the application's own queue to its declared budget and reschedules if
 needed. Signal is not async-signal-safe and not a cross-process pointer API.
 Stop producers and join their threads before destroying the waker. Creation and
 destruction require its loop and cannot straddle a fork or server run.
+Waker creation also declares an optional retirement callback. Destruction
+disables delivery and retires after pending batch references. Signalling which
+races a running callback must leave either a pending callback or work observed
+by that callback; clearing the coalescing bit must not lose the wake. A signal
+after owner-loop destruction has begun returns STATE; producers must already
+have stopped before retirement, so no freed pointer can be signalled.
 
 These facilities do not become a generic service scheduler or message broker.
 Vectis keeps its supervisor dispatcher, outbox/mailbox and application clients.
@@ -833,8 +977,11 @@ private runtime directory. Merely creating a server performs no ACME traffic.
 Its runtime directory is working state; Vectis's durable storage remains external.
 Support the existing account-key recovery and HTTP challenge/order/renewal path.
 ACME transport timeout/response bounds and CA trust affect backend workflows,
-not Vectis's application clients. Preserve the existing CURL_CA_BUNDLE /
-SSL_CERT_FILE fallback when no explicit backend trust source overrides it.
+not Vectis's application clients. The imported CA-environment patch uses
+`SSL_CERT_FILE` and `SSL_CERT_DIR`, not `CURL_CA_BUNDLE`. Resolve explicit backend
+trust first, then those environment sources, then the selected SDK's defaults.
+Snapshot environment configuration before forks; a later environment edit must
+not silently change a running client's trust. Report invalid explicit sources.
 
 Define `rotmos_acme_state_fn(server, event, domain, runtime_dir, userdata,
 error)` with explicit events and process context:
@@ -865,6 +1012,11 @@ RESTORE must close/join any temporary thread-bearing storage resources before
 returning to the parent fork boundary. It cannot leave a supervisor client alive
 in the runtime parent for reuse in the key manager. PERSIST receives its own
 post-fork client lifetime; it must clean partial initialization on failure.
+Validation never calls RESTORE/PERSIST. RESTORE receives a cooperative startup
+budget and must return within it; a synchronous C callback cannot be forcibly
+unwound by the parent. An auxiliary PERSIST deadline is enforced by the parent
+through the owned child lifecycle, with a timed-out child reaped and no candidate
+activation. Timeout does not prove that an external storage write did not occur.
 
 Initial ACME configuration requires the RESTORE/PERSIST callback contract;
 standalone applications can implement it over their own private durable
@@ -878,8 +1030,12 @@ does not bypass application auth on arbitrary routes.
 PERSIST sees a complete, bounded candidate state directory. The backend must
 keep that candidate separate from active material until the callback succeeds;
 an auxiliary restart must not activate a candidate whose persistence failed.
-Use ordinary private staging and atomic file replacement, not a new public
-storage format or transaction service. The callback acknowledges the host's
+Publish a complete certificate/key identity as one selected generation; separate
+renames of live key and certificate files do not provide atomic pair activation.
+Private staging/publication must retain the last acknowledged usable generation
+after a crash or restart. This is an implementation requirement within the
+backend's private runtime directory, not a new public storage format or
+transaction service. The callback acknowledges the host's
 durability policy; it can be retried with the same snapshot, so the host must
 make repeated persistence safe. The backend cannot roll back an external write
 which completed before a callback returned an ambiguous failure. Test failure
@@ -894,6 +1050,21 @@ Frames are borrowed for the invocation, with explicit opcode and byte length.
 `rotmos_websocket_send` accepts only a bounded payload into the configured output
 budget and reports backpressure. Close is idempotent; open and terminal callbacks
 occur at most once in their documented order.
+
+Accept also registers `on_writable`; an output frame is accepted atomically or
+returns AGAIN with nothing queued. Resume after capacity notification, never by
+polling. Oversize frames return LIMIT. Frame callbacks accept a complete bounded
+frame with OK or pause with AGAIN and no consumption; explicit
+`rotmos_websocket_resume` redelivers a held frame before any later frame. This
+does not turn frames into unbounded message assembly. Validate control/close and
+UTF-8 text according to the advertised WebSocket protocol. A finite close
+handshake deadline (default 5000 ms) prevents a peer from holding shutdown
+indefinitely and is capped by an earlier worker shutdown deadline.
+
+Failed accept leaves callback userdata with the caller. Successful accept owns
+one on_close notification even if the handshake fails before on_open. No frame
+or writable callback occurs before on_open or after terminal close. The request
+metadata must be copied if application WebSocket state needs it after upgrade.
 
 The initial application path provides bounded text/binary frames and the current
 ping/pong/close behavior. Kore's receiver does not support continuation frames;
@@ -952,6 +1123,12 @@ disconnect side where known. Unknown values are explicit, not fabricated.
 Vectis owns metrics aggregation/persistence. Exactly-once final accounting must
 cover replacement before commitment and abort after commitment; queuing a chunk
 is not proof it reached the client.
+
+Counts use checked wide values. Body counts exclude framing; HTTP wire counts
+include plaintext HTTP headers/framing at the transport boundary, not TLS record
+overhead or TCP acknowledgements. A queued/accepted count and a transmitted
+count are distinct. If a backend cannot measure a quantity, report it as unknown
+rather than substituting queue length or a producer's representation size.
 
 ## 15. LoneJSON and backend escape hatch
 
@@ -1086,8 +1263,8 @@ types or application router.
 static rotmos_status hello(rotmos_request *request,
     rotmos_request_plan *plan, void *userdata, rotmos_error *error)
 {
-    (void)plan;
     (void)userdata;
+    plan->disposition = ROTMOS_REQUEST_REPLY;
     return rotmos_response_bytes(rotmos_request_response(request),
         200, "text/plain", "ok\n", 3u, error);
 }
@@ -1144,9 +1321,12 @@ Do not count an API-presence probe as behavior evidence.
 | Requests/parser | All methods, raw/decoded separation, ordered duplicate headers/query data, exact Host lookup, malformed NUL/bare-CR/field-count blocks, near-64-KiB headers, Host/SNI mismatch |
 | Body modes | Empty/fixed/truncated/oversize bodies, early rejection, no forbidden spool, explicit spill cleanup, pause/resume partial consumption and no redelivery of accepted bytes |
 | Streaming | First output before producer EOF; chunk-size-independent memory bounds, slow producer/consumer, cancel/failure and cross-thread wake; counters beyond 4 GiB without full-value buffers |
+| Async progress | Producer AGAIN requires explicit resume; no writable-event polling, lost wake or zero-progress spin; body EOF with delayed reply retains the request until drain/deadline |
+| Cancellation | Cancel watch/timer/defer within its callback and earlier in the same event batch; retire once on success/shutdown; no rearm, callback after retirement or userdata use after free |
 | Reader/Lua dispatch | Slow native reader does not stall an unrelated request; upload/DSV Lua callback thread equals the owner worker thread; callback/producer roots survive GC until terminal cleanup |
 | Responses | Repeated Set-Cookie, known-length under/overflow, HTTP/1.0 close and HTTP/1.1 chunk framing/trailers, HEAD/1xx/204/205/304, interim/final distinction |
 | Commitment | Untouched queued 200 replaced by complete 502 once; partial write/TLS retry refuses replacement; committed failure has no success terminator |
+| Response state | Exercise ACTIVE/FINISHING both before/after commitment; declared trailers rejected before an incompatible begin, atomic end retry, terminal producer close and strict byte/EOF results |
 | Handoff | Coalesced header/body/trailer/pipeline bytes, bounded tail return, preserved queued output, exclusive ownership, read-half-close drain and HTTP restore |
 | TLS channels | Plain/TLS same observable contract; read WANT_WRITE and write WANT_READ; no busy-spin or dropped queued writes; mTLS, slow peers and disconnect during retry |
 | Proxy integration | HTTP/SSE, chunked upload/trailers, HTTP/2 upstream duplex, shared admission, raw WebSocket early frames/fragmentation/extensions and non-101 streamed rejection |
@@ -1156,8 +1336,11 @@ Do not count an API-presence probe as behavior evidence.
 | Resources | Heap allocation failure, zero-length/cached file content type, no key/pool/IPC leaks, shutdown with active channels/producers; focused musl default-worker-stack proof where applicable |
 | Consumer cutover | Vectis C/Lua routes, uploads, static/packed assets, WebDAV/auth, services, metrics, normal/packed execution and installed/source-rock consumers |
 | Toolkit | Public C router ordering/captures/groups, profiles/trusted-IP/autoblock, typed JSON/multiple output schemas, libxml2 mapped/DOM/SAX/resumable output, static and filesystem/read-only/custom DAV workflows |
+| Storage | Concurrent conditional mutations, cancellation before/after commit, provider AGAIN/completion races, finite lock wait and unrelated request progress during slow native jobs; confined paths and symlink replacement races |
+| Codec limits | Record mutation during paused output, parser depth/text/node budgets, disabled external entities, scoped XML callbacks, generator first byte before EOF and no hidden materialized XML staging |
 | Lua public boundary | Build only from installed public headers against shared librotmos; inspect imports/loaded identity, reject private-symbol consumers, prove no static runtime copy and no private Vectis/Kore/codec access |
 | Lua behavior/delivery | C/Lua workflow parity, binary payloads, owner retention/GC/mutation, protected callback errors, fork roles, backpressure, proxy/DAV, reconstructed source archive, rockspec/source rock and matching Lua runtime |
+| Lua embedding | Host-created VM preload/require/run/stop/host-close, existing globals preserved, loader conflict/idempotence, one shared core/provider identity, exact wide counters and allocation-failure cleanup |
 
 Recommended implementation order:
 
@@ -1192,10 +1375,21 @@ Provide `rotmos_router_new`, `rotmos_server_router`, `rotmos_router_route`,
 `rotmos_router_group`, `rotmos_router_dispatch_headers` and
 `rotmos_request_path_param`. `rotmos_route_config` has a copied path, method/mask,
 literal/parameter/regex kind, body plan, typed handler and borrowed userdata.
-Registration returns an owned-by-router route handle; routes freeze before run.
-Invalid regexes, duplicate/conflicting registrations and registration during a
-run return structured errors. Destroying the server closes its attached router
-after the run; independently owned routers have an explicit destroy operation.
+Registration returns a router-owned route handle. Each server creates an empty
+owned router; `rotmos_server_router` borrows it. Optional
+`rotmos_server_router_take` replaces an empty router with an independently
+created one outside a run, transferring ownership only on success. An attached
+router cannot be destroyed/attached elsewhere; unattached routers use
+`rotmos_router_destroy`. Route/group handles never own a second copy. Registries
+are immutable from STARTING until run returns; registration errors leave the
+registry unchanged and caller userdata unconsumed.
+
+Reject invalid regexes and exact conflicts: overlapping normalized method masks,
+the same path kind and identical path text, matching Vectis's registration
+predicate. General overlap across regexes, parameters and literal/proxy routes
+is allowed and resolved by the preserved ordering; rejecting every possible
+overlap would break valid Vectis configurations. Group prefixes/options are
+copied at registration, not mutable aliases that can change a running route.
 
 Preserve registration ordering across route kinds, static trailing-slash and
 method-denial exceptions, captured parameter lifetimes, validated decoded paths,
@@ -1214,6 +1408,11 @@ authorization hooks. Own path confinement, ETag/If-Match/If-None-Match and bound
 range behavior in the generic helpers; do not make each consumer reconstruct
 those mechanisms. Packed asset lookup is a provider supplied by Vectis through
 public stat/list/open/read operations, not a Vectis structure inside rotmos.
+Path confinement includes decoded traversal, embedded NUL, repeated decoding
+and symlink escapes. The filesystem provider defaults to rejecting symlinks and
+resolves relative to pinned roots without an unchecked stat/open gap; lexical
+prefix checks alone do not establish confinement. Conditional/range policy is
+evaluated against the same opened object used for delivery.
 
 Provide `rotmos_server_config_init_production_webserver` and convenience
 constructors, retaining explicit listener/TLS selection and validated zero/default
@@ -1248,6 +1447,17 @@ callback, whose caller must keep the record unchanged for that whole lifetime.
 Schemas, input maps and output maps may differ; typed replies may choose an
 output schema per response. Preserve the current multi-output/generator use cases.
 
+Released LoneJSON v0.45.0 supplies public schema/borrowed-record views and pull
+generators. A borrowed record view is not an immutable lease or proof of a
+general owned-record copy operation. Implementing safe asynchronous output from
+externally mutable Lua records therefore requires a verified public copy/lease
+path or an upstream public interop addition before that case can ship. Records
+owned exclusively by a rotmos typed route may instead be frozen until producer
+close. Do not advertise arbitrary cross-module record support from view access
+alone; test attempted mutation during a paused response.
+Exclusive ownership must be established without exposing mutable aliases;
+holding a registry reference to a Lua record is not evidence of exclusivity.
+
 Typed object parsing materializes the declared record, under its body/field and
 spill policy. Selected-array/item APIs use actual incremental producer/consumer
 flow where requested. Generated JSON response output uses the public pull-style
@@ -1265,6 +1475,17 @@ remain explicitly materialized, with mutation invalidating old views and owner
 retention/process-thread confinement. SAX input is bounded and incremental.
 Disable DTD/external resource loading per parser context; do not change global
 libxml2 handlers or expose xmlDoc/xmlNode internals through the binding.
+
+Initialize materialized XML document input/output limits to 16 MiB, nesting to
+128, individual text values to 1 MiB, DOM nodes to 100000 and returned XPath nodes
+to 4096; explicit larger finite values are allowed. HTTP routes also enforce
+their selected body/record limits. Streaming SAX/generator operations enforce
+depth/text and configured cumulative input/output limits without retaining the
+whole document. These are logical limits, not a claim that libxml2's allocator
+or XPath intermediate evaluation has the same byte bound. Expressions are
+application declarations, never evaluated from untrusted request text by default.
+Do not promise cancellable/preemptible XPath or strict process RSS based only on
+an output-node count. Parser/record budget failures retire partial owners once.
 
 Provide public `rotmos_xml_generator_new/read/destroy` for HTTP output. Its state
 is resumable between bounded reads; each step drives public libxml2 output APIs
@@ -1342,6 +1563,34 @@ sequence over an incapable remote provider. Listing/mutation allocation and
 temporary files are explicitly bounded. Any retained legacy materialized PUT
 path is named and capped; a streaming upload path never collects the whole file.
 
+Each provider call receives an opaque `rotmos_storage_operation` and immutable
+arguments. OK completes synchronously; AGAIN transfers completion responsibility
+to the provider, pins its owners and pauses the relevant HTTP flow. Complete
+later through `rotmos_storage_operation_complete` on the owner loop, using a
+waker for foreign-thread results. Failure before accepting an operation transfers
+nothing. Completion occurs once; metadata/results are copied or explicitly taken,
+and byte writes report accepted prefixes using the transport count rules.
+Read/list iteration exposes bounded items and has explicit EOF, not read-all.
+For a pending operation, the engine pins its bounded argument/chunk storage until
+completion/cancellation retirement. Providers do not retain a transient public
+body callback pointer after that callback returns. An accepted prefix becomes
+consumed input once and is never retried as part of the next provider write.
+
+Provider cancellation suppresses further HTTP work and invokes its cancel hook;
+the provider acknowledges cancellation before its terminal retirement callback
+releases operation userdata. A result racing cancellation is retired without
+touching a closed request. Cleanup cannot free resources still used by a job.
+Shutdown has the same bounded escalation/abandonment rules as other worker work.
+Lua providers complete on their own loop and may not yield across the binding.
+
+Declare conditional-mutation and cross-resource atomicity capabilities up front.
+An incapable provider returns NOT_SUPPORTED before mutating, never an unlocked
+stat-then-write approximation. Success acknowledges the provider's documented
+commit/durability point. Cancellation after a committed mutation does not undo
+it; outcome reporting distinguishes a completed mutation from abandoned delivery.
+Cross-filesystem MOVE/COPY and partial recovery retain their explicit existing
+semantics rather than acquiring a fictitious universal transaction guarantee.
+
 The default HTTP PUT path is incremental: provider begin/write/finish/abort
 operations receive bounded body chunks, with pause/resume when storage cannot
 keep up. For filesystem storage the temporary destination is an explicitly
@@ -1349,6 +1598,16 @@ declared storage transaction, committed by replacement only after successful
 end-of-body; it is not an undisclosed transport spool or a complete in-memory
 body. Abort removes owned partial output. PROPFIND output advances a bounded
 listing iterator/XML generator rather than collecting a whole directory tree.
+
+The existing filesystem mutation lock uses blocking flock; importing it unchanged
+would violate worker-loop progress. Acquire locks with nonblocking attempts and
+owner-loop timer/deadline resumption, or in a declared bounded native job; never
+wait on a lock, condition variable or thread join in an HTTP callback. Initialize
+storage-operation timeout to 30000 ms, including lock wait, with finite overrides.
+Regular filesystem syscalls may still block in the OS; the API promises bounded
+queues and cooperative progress, not real-time disk latency. Potentially long
+filesystem jobs run in a bounded post-fork native executor and complete via the
+same operation contract. No executor thread calls Lua or owns a request handle.
 
 Protected mount registration requires an auth callback. Its public request view
 includes method and normalized source/destination resource. Its reply can allow
@@ -1361,11 +1620,15 @@ does not acquire mandatory Lockd/Pouch/database dependencies to serve WebDAV.
 
 ### Product and API boundary
 
-Ship a standalone `require("rotmos")` product for **Lua 5.5.1**. Its Lua facade
+Ship a separately packaged `require("rotmos")` module for **Lua 5.5.1**. Its Lua facade
 normalizes ergonomic configuration and receiver calls over `rotmos.native`, a C
 binding of the installed public **shared** librotmos library. Do not compile a
-second static librotmos/Kore runtime into the module. Lua/LuaJIT alternatives,
-an embedded interpreter executable and a redistributed Lua SDK are not implied.
+second static librotmos/Kore runtime into the module. Runtime ownership belongs
+to the host, whether it is the Lua executable or an application embedding Lua.
+The binding never creates a second VM, opens standard libraries implicitly or
+closes the host VM. Supporting another Lua ABI requires an explicit product
+decision; no interpreter executable or redistributed Lua SDK is part of this
+module delivery.
 
 Expected layout is `lua/rotmos.lua`, focused `lua/rotmos/` facades, and
 `src/lua/rotmos_native.c` plus small binding-owned support files. These are planned
@@ -1375,6 +1638,17 @@ conversion declarations. Vectis may retain its application Lua facade while
 delegating the underlying server operations to public rotmos C APIs.
 That Lua interop header belongs to the separate binding source/install product,
 not the per-target C SDK payload.
+
+Provide `rotmos_lua_preload(lua_State *state, rotmos_error *error)` from the
+binding product. It registers the native loader and packaged Lua facade loaders
+in an existing initialized VM, without requiring source-tree paths or creating
+a runtime. Return CONFLICT for unrelated existing module registrations; repeated
+registration by the same binding is idempotent. The host then uses ordinary
+`require("rotmos")`. Declare required host libraries (`package`, plus those the
+facade actually uses) and return an actionable error if unavailable. The binding
+product exports `rotmos::lua` through `find_package(rotmos_lua CONFIG REQUIRED)`
+for this embedding path. Preload and
+dynamic loading resolve the same public shared core and provider instances.
 
 The binding compiles with only installed public rotmos and Lua headers plus
 explicit public dependency interop headers and binding-owned support headers.
@@ -1416,12 +1690,40 @@ status/source/operation/native-code fields and copied diagnostics. Callback
 failures are protected and converted into the native error/abort contract after
 cleanup; they must not longjmp through active backend/codec frames.
 
+Byte counts, offsets and lengths are exact Lua integers when representable;
+larger `rotmos_u64` values use a public immutable count value with high/low words,
+comparison and decimal formatting. Never convert them through a Lua floating
+number, truncate to signed range or use numeric zero to mean absence. Reject
+fractional/negative/out-of-range sizes before calling C. Missing headers return
+nil; empty values return an empty string. I/O results distinguish accepted bytes,
+the stable `rotmos.AGAIN` sentinel and true EOF; empty strings cannot stand for
+EOF or a zero-progress producer success. Resume is an explicit owner-loop action.
+
+Concretely, `response:write(chunk)` returns an accepted byte count, or
+`nil, rotmos.AGAIN`, or `nil, error`. Reads return a binary chunk, or
+`nil, rotmos.EOF/AGAIN`, or `nil, error`. A producer callback receives its bounded
+capacity and uses that same chunk/EOF/AGAIN/error convention. Body callbacks
+return a consumed count, or `nil, rotmos.AGAIN`, or `nil, error`; only the consumed
+prefix is released. Frame callbacks return true for a whole accepted frame, or
+`nil, rotmos.AGAIN`, or `nil, error`. The sentinels have stable identity and are
+distinct from error tables and empty strings. Callback exceptions take the same
+protected error path as an explicit error result; they never mean successful EOF.
+
 Userdata retains its server/request/schema/record/producer owners until actual
 terminal cleanup, including after a route returns. Scope-bound request views
 fail cleanly when retained past close; do not expose dangling lightuserdata.
 Explicit close is idempotent after orderly completion. GC never starts a server,
 waits indefinitely, forks, or substitutes for an explicit stop/run join. Reject
 close from an active callback when it would invalidate that callback's owner.
+
+Acquire registry references and install finalizers with unwind-safe ownership:
+an allocation failure during userdata creation must not strand a newly acquired
+native resource. Protect all Lua callback entry points and retain the original
+bounded error through cleanup. `__gc`/close methods release only resources they
+own; they never close the host VM. Test allocation failure during registration,
+callback result conversion and producer setup, in addition to explicit Lua errors.
+The running server and callbacks are rooted until run returns; request/proxy/
+provider wrappers become inert after their individual terminal notification.
 
 All Lua callbacks execute on their owning runtime thread in the correct process,
 never on a foreign producer/parser/logging thread. Bindings receive a public
@@ -1469,7 +1771,7 @@ just show API presence.
 | cpkt | 0.6.1; selected public packages for OpenSSL, curl, nghttp2, libxml2, Lua and complete native link closure |
 | LoneJSON | 0.45.0; typed JSON/maps/generators, XML record mapping and ACME JSON |
 | libpslog | 0.12.0; structured runtime/access logging and public Lua logger interop |
-| Lua | 5.5.1 from cpkt's Lua runtime selection for binding builds/tests; standalone consumers supply that runtime |
+| Lua | 5.5.1 from cpkt's Lua runtime selection for binding builds/tests; hosts supply one compatible runtime, executable or embedded |
 | LoneJSON/pslog Lua providers | Their matching released public facade/binding/interop products, only where schemas/loggers cross into the rotmos binding |
 | OS runtime | Selected target libc, threads, sockets/files and platform event facilities |
 
@@ -1480,6 +1782,13 @@ closure comes from imported package metadata. All product SDK/facade acquisition
 uses exact published c89systems assets/digests and independent prefixes. No
 cpktdb/cpktmisc, CAI, LQL, MDF, Lockd, Pouch, Vectis, Python or XML Lua package is
 a mandatory rotmos server dependency. The Lua C binding itself remains C89.
+
+These versions are compatibility baselines verified against the recorded source
+tags, not a continuing claim of latest availability. Before implementation locks
+SDK inputs, check current published c89systems releases and prefer the newest
+compatible complete C/Lua closure, pinning exact asset identities and digests.
+A newer version still has to satisfy the public interop and behavioral gates;
+a version number alone does not discharge those requirements.
 
 Ship `rotmos-lua-<version>.tar.gz`, `rotmos-<version>-1.rockspec` and
 `rotmos-<version>-1.src.rock`. Include all facade/binding sources, needed public
@@ -1494,18 +1803,23 @@ Lua artifacts and nested payload checks in release checksums/privacy evidence.
 Test the module against an installed SDK with the matching Bootlin-built Lua
 runtime on Linux and selected native/cross Darwin evidence. Inspect actual module
 imports, include closure, loaded shared-library identity and once-only runtime
-state; a symbol scan alone is not the whole gate. Prove route/config parity,
+state; a symbol scan alone is not the whole gate. Include an installed C host
+which creates one Lua VM, preloads/requires rotmos, serves and stops, verifies
+its own globals remain intact and closes that same VM itself. Prove route/config parity,
 binary data, schema ownership/GC, callback errors, cancellation, fork roles,
 backpressure, JSON/XML flow, proxy/DAV behavior and finalizers. No required test
 may pass by using a source-tree module or privately linked runtime copy.
 
-Vectis's existing static/packed CLI can keep its own application Lua facade over
-its public C adapter, with one statically selected rotmos core where that product
-requires it. That is distinct from this standalone shared-library Lua binding.
-Shipping this Lua product does not silently add `require("rotmos")` to the packed
-CLI. If direct upstream rotmos Lua loading is selected there later, package and
-prove its real shared runtime closure; do not resolve the difference by compiling
-a private/static duplicate into rotmos.native or weakening packed behavior.
+An embedded Lua VM is supported by the shared binding; embedding is independent
+of whether a product is packaged as a source rock or a native application.
+Vectis's existing fully static/packed CLI may keep its application Lua facade over
+its public C adapter and one selected static rotmos core. Loading this shared
+module beside that static core would create a second runtime and is unsupported.
+Direct `require("rotmos")` inside that fully static product is a separate
+composition decision, requiring a proved single shared closure or a deliberately
+specified single-runtime static embedding product. This spec does not claim
+that packed composition already works. The Vectis cutover must preserve its
+existing Lua facade/packed behavior without a second VM or private runtime copy.
 
 ## 21. Patch preservation ledger
 

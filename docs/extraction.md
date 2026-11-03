@@ -23,6 +23,10 @@ helpers, typed JSON and libxml2 XML codecs/routes, reverse-proxy engine, WebDAV
 protocol/filesystem provider, and generic trusted-proxy/autoblock mechanisms.
 Ship a Lua 5.5.1 facade over a C binding of the installed public shared API; that
 binding must neither include private headers nor embed another runtime copy.
+It uses the host's existing Lua VM, including embedded Lua, with a public preload
+path; the host owns VM creation and destruction. Separate packaging does not
+mean a separate interpreter. The [specification audit](server-api-audit.md)
+records the ownership, async progress and packaging corrections.
 
 Vectis retains its public application C/Lua facade, route declarations/business
 handlers, auth/credential providers, selected admission/proxy policy, metrics
@@ -62,8 +66,9 @@ blindly importing that application layer.
 
 ## Dependency and language baseline
 
-The latest published releases checked during this investigation match Vectis's
-pins:
+The recorded compatibility baselines match Vectis's pins. Recheck published
+releases before locking implementation SDKs and prefer the newest compatible
+complete dependency closure:
 
 | Dependency | Initial candidate | Responsibility |
 | --- | --- | --- |
@@ -103,7 +108,7 @@ from librotmos's own C89 compilation contract.
    default-thread-stack regressions for substantial stack use.
 5. Export and test static/shared library metadata and installed consumers,
    including the backend escape hatch and absence of required Vectis symbols.
-6. Deliver the reusable toolkit and standalone Lua facade/public-shared-API C
+6. Deliver the reusable toolkit and packaged Lua facade/public-shared-API C
    binding, including installed-consumer tests and the Lua source archive,
    rockspec and source rock. C-only consumers do not acquire a Lua runtime.
 7. Migrate Vectis in its own authorized change: remove the vendored runtime build

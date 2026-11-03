@@ -13,6 +13,9 @@ API, C89 backend port, toolkit, Lua product and Vectis cutover remain to be
 implemented. See the
 [server API specification](docs/server-api-spec.md) for the proposed contract and
 the [extraction boundary](docs/extraction.md) for the bootstrap context.
+The [specification audit](docs/server-api-audit.md) records the resolved gaps and
+remaining implementation proof. The Lua module runs in its host's existing VM,
+including embedded Lua; it does not create or ship another interpreter.
 
 ## Source ownership
 
