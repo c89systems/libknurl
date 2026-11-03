@@ -26,7 +26,7 @@ The revised spec is authoritative where an earlier description differs.
 | WebDAV promised generic providers without specifying asynchronous completion, cancellation, lock wait or the mutation commit boundary. | Public operation completion/retirement, finite waits, declared capabilities and explicit post-commit cancellation outcomes; section 19. |
 | Importing filesystem code unchanged would carry blocking flock into the HTTP loop. | Nonblocking lock attempts or bounded post-fork native work, with public completion and no foreign-thread Lua; section 19. |
 | STREAM prohibited a complete parser result even though a typed JSON route must materialize a record; XML budget claims were underspecified. | Separate transport streaming from explicit typed/DOM materialization, finite codec limits and no false XPath/RSS or resumability claim; sections 8 and 19. |
-| Public borrowed LoneJSON record views were insufficient evidence of safe immutable asynchronous Lua output. | Require a verified public copy/lease or exclusive immutable storage; reject unsupported cases without private casts; section 19. |
+| The audit treated mutable LoneJSON record interop as unresolved instead of tracing Vectis's existing writer input policy. | Preserve private records assigned from value tables, pinned owners, buffered external-record support and callback-writer rejection of external mutable records. No new copy/lease API is an extraction prerequisite; section 19. |
 | ACME trust documentation named CURL_CA_BUNDLE, which the imported patch does not use. | Correct to SSL_CERT_FILE/SSL_CERT_DIR with explicit source precedence; section 12. |
 | ACME restore/validation and atomic certificate/key activation were insufficiently separated. | No hydration during validate, cooperative parent budget, auxiliary persistence deadline, retained acknowledged generation and explicit ambiguous external-write outcomes; section 12. |
 | “Standalone Lua product” could imply a new interpreter or exclude an embedded host. | Host-owned Lua VM, public preload helper, packaged loaders and an installed embedded-host test; section 20. |
@@ -49,7 +49,13 @@ The revised spec is authoritative where an earlier description differs.
   filesystem operations also show why lexical path checks are insufficient.
 - Public LoneJSON declarations were checked at **v0.45.0**, rather than inferred
   from a potentially modified sibling worktree. Schema/record views and pull
-  generators exist; a view alone promises neither copying nor immutability.
+  generators exist. Vectis's `vectis_lua_writer_record` already allocates private
+  records and uses public schema assignment, while rejecting external record
+  userdata for callback output. The [Lua XML contract](../../vectis/manual/lua-xml.md)
+  and [upgrade regression](../../vectis/tests/lua/upgrade_seams.lua) document and
+  exercise original-input mutation, GC/reentry, spooled-field isolation and the
+  buffered-versus-callback input distinction. This is an existing integration to
+  preserve, not missing LoneJSON functionality to add for this extraction.
 - cpkt's **v0.6.1** CMake declarations and libpslog's **v0.12.0** public header
   supply the recorded dependency baselines and native logging capability.
   These source inspections are not an installed-package compatibility test.
@@ -63,14 +69,16 @@ The revised spec is authoritative where an earlier description differs.
 There is no unresolved choice about the main architecture: librotmos owns the
 server toolkit/API, Kore is private behind external build-time patches, Vectis
 owns its application policy/supervision, and Lua reuses the same public C API.
-The following are explicit proof obligations, not implemented capabilities:
+The following are extraction implementation/verification tasks. Existing Vectis
+behavior is the baseline to carry over, not an unresolved dependency capability:
 
 1. Port the selected Kore backend to C89 and replace fatal parent error paths;
    prove lifecycle, transport, cancellation and real streaming through the
    observable acceptance matrix. Vendoring tests cannot establish any of these.
-2. Establish the public LoneJSON immutable copy/lease path before shipping
-   asynchronous output from arbitrary mutable external Lua records. Add upstream
-   public interop if needed under a separately authorized dependency change.
+2. Carry Vectis's existing private-record assignment, retention and cleanup into
+   the rotmos response-producer lifetime. Port its writer isolation/GC/reentry
+   cases and input acceptance/rejection tests; no new LoneJSON copy/lease API or
+   support for arbitrary borrowed mutable records is required.
 3. Implement and prove resumable XML output and asynchronous storage operations;
    the existing synchronous XML sink and blocking filesystem lock do not satisfy
    those contracts simply by being wrapped.

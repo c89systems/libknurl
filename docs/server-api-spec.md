@@ -33,6 +33,11 @@ Findings describe source behavior. Existing Vectis tests were inspected, not
 rerun, and their presence does not establish fresh runtime proof. All acceptance
 tests below are requirements for the future implementation.
 
+Vectis's existing implementations and regressions are the extraction baseline.
+Reuse their working mechanisms and supported-input contracts through the public
+rotmos boundary. Verification of the relocated integration is a cutover task,
+not an unresolved capability in Vectis or a reason to require new dependency APIs.
+
 ### Findings which determine the API
 
 | Finding | Consequence |
@@ -1337,7 +1342,7 @@ Do not count an API-presence probe as behavior evidence.
 | Consumer cutover | Vectis C/Lua routes, uploads, static/packed assets, WebDAV/auth, services, metrics, normal/packed execution and installed/source-rock consumers |
 | Toolkit | Public C router ordering/captures/groups, profiles/trusted-IP/autoblock, typed JSON/multiple output schemas, libxml2 mapped/DOM/SAX/resumable output, static and filesystem/read-only/custom DAV workflows |
 | Storage | Concurrent conditional mutations, cancellation before/after commit, provider AGAIN/completion races, finite lock wait and unrelated request progress during slow native jobs; confined paths and symlink replacement races |
-| Codec limits | Record mutation during paused output, parser depth/text/node budgets, disabled external entities, scoped XML callbacks, generator first byte before EOF and no hidden materialized XML staging |
+| Codec limits | Preserve Vectis writer isolation under original-table/option mutation, GC/reentry and spooled-field cleanup; preserve rejection of external mutable records in callback writers; parser depth/text/node budgets, disabled external entities, scoped XML callbacks and generator output without hidden staging |
 | Lua public boundary | Build only from installed public headers against shared librotmos; inspect imports/loaded identity, reject private-symbol consumers, prove no static runtime copy and no private Vectis/Kore/codec access |
 | Lua behavior/delivery | C/Lua workflow parity, binary payloads, owner retention/GC/mutation, protected callback errors, fork roles, backpressure, proxy/DAV, reconstructed source archive, rockspec/source rock and matching Lua runtime |
 | Lua embedding | Host-created VM preload/require/run/stop/host-close, existing globals preserved, loader conflict/idempotence, one shared core/provider identity, exact wide counters and allocation-failure cleanup |
@@ -1437,26 +1442,37 @@ parser, mandatory Lua table/DOM conversion, or per-field Lua reflection loop is
 inserted. Supply public schema-view/record-storage entry points alongside C-owned
 map registration so the binding does not need a private route or record layout.
 Lua uses LoneJSON's public schema/record interop, retaining owners until cleanup.
-Retention alone does not freeze externally mutable records. Before asynchronous
-serialization, Lua input is assigned through public provider APIs into owned
-immutable record storage; disclose any input materialization/spilled-field copy.
-If the public provider cannot safely copy or lease an input, reject that case
-and identify the upstream gap rather than casting private userdata. The C API
-also permits explicitly borrowed immutable record storage with a terminal release
-callback, whose caller must keep the record unchanged for that whole lifetime.
+Preserve Vectis's established writer input/ownership contract:
+
+- Lua callback writers accept value tables, allocate private records through
+  `lonejson_lua_new_record`, and populate them through public `schema:assign`.
+  They retain schema/record owners and copied options through output and cleanup.
+  Changing the original table/options, collecting Lua objects, or reentering an
+  independent writer cannot alter the private input already being emitted.
+- Spooled input fields follow the existing public schema-assignment/spill policy.
+  Disclose that input preparation; it does not materialize or spool the output.
+- External mutable record userdata remains supported by the existing explicitly
+  buffered serializers. Callback writers reject it with the existing actionable
+  error. Do not add support for borrowing that userdata across output callbacks
+  or asynchronous drain as a prerequisite of the extraction.
+- The C API permits borrowed record storage with a terminal release callback;
+  callers keep it valid and unchanged until release. Owned route/generator
+  storage is retained until producer close when output becomes asynchronous.
+
+This path already uses released public LoneJSON operations. No new mutation
+lease, general record-copy API, private userdata cast or upstream dependency
+change is required to extract it. The binding delegates ownership to public
+rotmos entry points; it does not reimplement native storage or codecs.
 Schemas, input maps and output maps may differ; typed replies may choose an
 output schema per response. Preserve the current multi-output/generator use cases.
 
-Released LoneJSON v0.45.0 supplies public schema/borrowed-record views and pull
-generators. A borrowed record view is not an immutable lease or proof of a
-general owned-record copy operation. Implementing safe asynchronous output from
-externally mutable Lua records therefore requires a verified public copy/lease
-path or an upstream public interop addition before that case can ship. Records
-owned exclusively by a rotmos typed route may instead be frozen until producer
-close. Do not advertise arbitrary cross-module record support from view access
-alone; test attempted mutation during a paused response.
-Exclusive ownership must be established without exposing mutable aliases;
-holding a registry reference to a Lua record is not evidence of exclusivity.
+The source baseline is `vectis_lua_writer_record`/`vectis_lua_writer_clear_record`
+in [vectis_cli.c](../../vectis/src/vectis_cli.c), documented in the
+[Lua XML contract](../../vectis/manual/lua-xml.md) and exercised by
+[upgrade_seams.lua](../../vectis/tests/lua/upgrade_seams.lua). Port those cases,
+including mutation/GC/reentry, private spooled input and buffered external-record
+acceptance, to the installed rotmos consumers. Add producer pause/cancellation
+coverage for the new transport boundary while preserving the same input policy.
 
 Typed object parsing materializes the declared record, under its body/field and
 spill policy. Selected-array/item APIs use actual incremental producer/consumer
