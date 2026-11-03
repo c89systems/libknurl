@@ -18,11 +18,18 @@ static-file transport and structured/access logging. Its API needs explicit
 ownership, lifetimes, startup errors and teardown semantics. Preserve every
 runtime enhancement currently used by Vectis.
 
-Vectis retains application routing policy, Lua integration, authentication,
-autoblock decisions, metrics, WebDAV/service workflows, proxy policy and Lockd
-storage integration. Reusable transport behavior must remain possible through
-librotmos. Moving Vectis types, application globals or its storage client into the
-library would recreate the coupling this extraction is intended to remove.
+The selected surface also includes the reusable router/profiles, upload/static
+helpers, typed JSON and libxml2 XML codecs/routes, reverse-proxy engine, WebDAV
+protocol/filesystem provider, and generic trusted-proxy/autoblock mechanisms.
+Ship a Lua 5.5.1 facade over a C binding of the installed public shared API; that
+binding must neither include private headers nor embed another runtime copy.
+
+Vectis retains its public application C/Lua facade, route declarations/business
+handlers, auth/credential providers, selected admission/proxy policy, metrics
+aggregation/persistence, outer supervision/services, packed assets and Lockd
+storage integration. Generic server engines move to librotmos; Vectis provides
+application adapters rather than maintaining duplicate routing/proxy/WebDAV
+implementations. Vectis types/globals and storage clients stay outside the library.
 
 The integration should read as a Vectis adapter configuring a librotmos server,
 registering callbacks, translating request/response operations and handling
@@ -40,7 +47,7 @@ The inspected Vectis baseline is commit
 | Private `vectis_kore_runtime` object target and Kore compile definitions | Consume the library's exported CMake target and installed public headers. |
 | `vectis_kore_bridge.c` runtime configuration and global writes | Translate Vectis configuration into the librotmos interface. |
 | `kore_vectis_runtime_symbols` callback table | Library-owned callback registration, without required Vectis symbols. |
-| `vectis_kore_autoblock_*` native hooks | Generic admission/event callbacks; Vectis supplies its autoblock policy. |
+| `vectis_kore_autoblock_*` native hooks | Generic native rule engine and admission/events in rotmos; Vectis supplies configuration/application events. |
 | Parent timers, worker exit and teardown hooks | Defined parent/worker lifecycle callbacks with fork-safe ownership. |
 | `vectis_kore_acme_state_persist()` | A persistence callback preserving Vectis's Lockd workflow. |
 | Prebody handoff and body-chunk callbacks | Preserve borrowed bytes, backpressure, rejection and cleanup behavior. |
@@ -60,7 +67,7 @@ pins:
 
 | Dependency | Initial candidate | Responsibility |
 | --- | --- | --- |
-| [cpkt](https://github.com/c89systems/cpkt/releases/tag/v0.6.1) | 0.6.1 | TLS/curl and their native dependency closure; test support. |
+| [cpkt](https://github.com/c89systems/cpkt/releases/tag/v0.6.1) | 0.6.1 | TLS/curl/libxml2 closure, test support and Lua 5.5.1 for the separate binding product. |
 | [lonejson](https://github.com/c89systems/lonejson/releases/tag/v0.45.0) | 0.45.0 | JSON request helpers and ACME parsing. |
 | [libpslog](https://github.com/c89systems/libpslog/releases/tag/v0.12.0) | 0.12.0 | Structured runtime/access logging. |
 
@@ -96,7 +103,10 @@ from librotmos's own C89 compilation contract.
    default-thread-stack regressions for substantial stack use.
 5. Export and test static/shared library metadata and installed consumers,
    including the backend escape hatch and absence of required Vectis symbols.
-6. Migrate Vectis in its own authorized change: remove the vendored runtime build
+6. Deliver the reusable toolkit and standalone Lua facade/public-shared-API C
+   binding, including installed-consumer tests and the Lua source archive,
+   rockspec and source rock. C-only consumers do not acquire a Lua runtime.
+7. Migrate Vectis in its own authorized change: remove the vendored runtime build
    and patch stack, connect the librotmos adapter, and run its HTTP/TLS/proxy,
    streaming, Lua, lifecycle and packaging regressions. Preserve its independent
    public application contract.

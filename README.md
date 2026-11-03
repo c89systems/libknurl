@@ -2,12 +2,15 @@
 
 librotmos is being extracted from Vectis's enhanced Kore HTTP runtime. Its intended
 public surface is a librotmos C API, with Kore as the backend and an explicit
-backend escape hatch. Vectis will retain its application and Lua interfaces.
+backend escape hatch. The planned toolkit includes routing, static serving,
+JSON/XML routes, reverse proxy and WebDAV, plus a shipped Lua facade and C binding
+over the public shared library. Vectis retains its application interfaces.
 
 **Current status:** this repository contains the pristine Kore snapshot, all 42
 Vectis patches, a build-time patch preparation target, an upgrade command and
 vendoring regression tests. It does not yet build a server library. The public
-API, C89 backend port and Vectis cutover remain to be implemented. See the
+API, C89 backend port, toolkit, Lua product and Vectis cutover remain to be
+implemented. See the
 [server API specification](docs/server-api-spec.md) for the proposed contract and
 the [extraction boundary](docs/extraction.md) for the bootstrap context.
 
