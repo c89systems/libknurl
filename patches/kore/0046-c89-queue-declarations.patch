@@ -1,0 +1,496 @@
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -181,11 +181,11 @@
+ 	char				*domain;
+ 	char				*certloc;
+ 	struct acme_auth		*curauth;
+-	LIST_HEAD(, acme_auth)		auth;
++	LIST_HEAD(kore_acme_acme_auth_head_1, acme_auth)		auth;
+ 	LIST_ENTRY(acme_order)		list;
+ };
+ 
+-static LIST_HEAD(, acme_order)		orders;
++static LIST_HEAD(kore_acme_acme_order_head_2, acme_order)		orders;
+ 
+ #define ACME_FLAG_CHALLENGE_CREATED	0x0001
+ #define ACME_CHALLENGE_TOKEN_MAXLEN	64
+@@ -202,7 +202,7 @@
+ 			    struct acme_challenge *);
+ };
+ 
+-static LIST_HEAD(, acme_sign_op)	signops;
++static LIST_HEAD(kore_acme_acme_sign_op_head_3, acme_sign_op)	signops;
+ 
+ static int	acme_status_type(const char *);
+ static int	acme_request_run(struct acme_request *);
+--- a/src/auth.c
++++ b/src/auth.c
+@@ -22,7 +22,7 @@
+ #include "kore.h"
+ #include "http.h"
+ 
+-TAILQ_HEAD(, kore_auth)		auth_list;
++TAILQ_HEAD(kore_auth_kore_auth_head_1, kore_auth)		auth_list;
+ 
+ void
+ kore_auth_init(void)
+--- a/src/cli.c
++++ b/src/cli.c
+@@ -17,7 +17,7 @@
+ #include <sys/param.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
+-#include <sys/queue.h>
++#include "kore_queue.h"
+ #include <sys/wait.h>
+ #include <sys/mman.h>
+ #include <sys/time.h>
+--- a/src/curl.c
++++ b/src/curl.c
+@@ -91,7 +91,7 @@
+ 
+ static struct fd_cache	*fd_cache_get(int);
+ 
+-static TAILQ_HEAD(, curl_run)	runlist;
++static TAILQ_HEAD(kore_curl_curl_run_head_1, curl_run)	runlist;
+ static struct kore_pool		run_pool;
+ static int			running = 0;
+ static CURLM			*multi = NULL;
+@@ -100,7 +100,7 @@
+ static struct kore_pool		fd_cache_pool;
+ static char			user_agent[64];
+ static int			timeout_immediate = 0;
+-static LIST_HEAD(, fd_cache)	cache[FD_CACHE_BUCKETS];
++static LIST_HEAD(kore_curl_fd_cache_head_2, fd_cache)	cache[FD_CACHE_BUCKETS];
+ 
+ u_int16_t	kore_curl_timeout = KORE_CURL_TIMEOUT;
+ u_int64_t	kore_curl_recv_max = KORE_CURL_RECV_MAX;
+--- a/src/filemap.c
++++ b/src/filemap.c
+@@ -41,7 +41,7 @@
+ 
+ static void	filemap_serve(struct http_request *, const struct filemap_entry *);
+ 
+-static TAILQ_HEAD(, filemap_entry)	maps;
++static TAILQ_HEAD(kore_filemap_filemap_entry_head_1, filemap_entry)	maps;
+ 
+ char	*kore_filemap_ext = NULL;
+ char	*kore_filemap_index = NULL;
+--- a/src/fileref.c
++++ b/src/fileref.c
+@@ -31,7 +31,7 @@
+ static void	fileref_soft_remove(struct kore_fileref *);
+ static void	fileref_expiration_check(void *, u_int64_t);
+ 
+-static TAILQ_HEAD(, kore_fileref)	refs;
++static TAILQ_HEAD(kore_fileref_kore_fileref_head_1, kore_fileref)	refs;
+ static struct kore_pool			ref_pool;
+ static struct kore_timer		*ref_timer = NULL;
+ 
+--- a/src/http.c
++++ b/src/http.c
+@@ -160,9 +160,9 @@
+ static struct kore_buf			*ckhdr_buf;
+ static char				http_version[64];
+ static u_int16_t			http_version_len;
+-static TAILQ_HEAD(, http_request)	http_requests;
+-static TAILQ_HEAD(, http_request)	http_requests_sleeping;
+-static LIST_HEAD(, http_media_type)	http_media_types;
++static TAILQ_HEAD(kore_http_http_request_head_1, http_request)	http_requests;
++static TAILQ_HEAD(kore_http_http_request_head_2, http_request)	http_requests_sleeping;
++static LIST_HEAD(kore_http_http_media_type_head_3, http_media_type)	http_media_types;
+ static struct kore_pool			http_request_pool;
+ static struct kore_pool			http_cookie_pool;
+ static struct kore_pool			http_body_path;
+--- a/src/keymgr_openssl.c
++++ b/src/keymgr_openssl.c
+@@ -289,7 +289,7 @@
+ #endif
+ #endif
+ 
+-static TAILQ_HEAD(, key)	keys;
++static TAILQ_HEAD(kore_keymgr_openssl_key_head_1, key)	keys;
+ static int			initialized = 0;
+ 
+ char				*kore_rand_file = NULL;
+--- a/src/lua.c
++++ b/src/lua.c
+@@ -37,7 +37,7 @@
+ 
+ struct lua_module {
+ 	lua_State			*L;
+-	LIST_HEAD(, lua_symbol)		symbols;
++	LIST_HEAD(kore_lua_lua_symbol_head_1, lua_symbol)		symbols;
+ };
+ 
+ static int	lua_runtime_resolve(const char *, const struct stat *);
+--- a/src/mem.c
++++ b/src/mem.c
+@@ -52,7 +52,7 @@
+ static void			*mem_alloc(size_t);
+ static size_t			mem_index(size_t);
+ 
+-static TAILQ_HEAD(, tag)	tags;
++static TAILQ_HEAD(kore_mem_tag_head_1, tag)	tags;
+ static struct kore_pool		tag_pool;
+ static struct kore_pool		mempools[KORE_MEM_POOLS];
+ 
+--- a/src/module.c
++++ b/src/module.c
+@@ -33,7 +33,7 @@
+ #include "lua_api.h"
+ #endif
+ 
+-static TAILQ_HEAD(, kore_module)	modules;
++static TAILQ_HEAD(kore_module_kore_module_head_1, kore_module)	modules;
+ 
+ static void	native_free(struct kore_module *);
+ static void	native_load(struct kore_module *);
+--- a/src/msg.c
++++ b/src/msg.c
+@@ -42,7 +42,7 @@
+ static void		msg_type_websocket(struct kore_msg *, const void *);
+ #endif
+ 
+-static TAILQ_HEAD(, msg_type)	msg_types;
++static TAILQ_HEAD(kore_msg_msg_type_head_1, msg_type)	msg_types;
+ static size_t			cacheidx = 0;
+ static struct connection	**conncache = NULL;
+ 
+--- a/src/pgsql.c
++++ b/src/pgsql.c
+@@ -15,7 +15,7 @@
+  */
+ 
+ #include <sys/param.h>
+-#include <sys/queue.h>
++#include "kore_queue.h"
+ 
+ #include <libpq-fe.h>
+ #include <pg_config.h>
+@@ -76,9 +76,9 @@
+ 
+ static struct kore_pool			pgsql_job_pool;
+ static struct kore_pool			pgsql_wait_pool;
+-static TAILQ_HEAD(, pgsql_conn)		pgsql_conn_free;
+-static TAILQ_HEAD(, pgsql_wait)		pgsql_wait_queue;
+-static LIST_HEAD(, pgsql_db)		pgsql_db_conn_strings;
++static TAILQ_HEAD(kore_pgsql_pgsql_conn_head_1, pgsql_conn)		pgsql_conn_free;
++static TAILQ_HEAD(kore_pgsql_pgsql_wait_head_2, pgsql_wait)		pgsql_wait_queue;
++static LIST_HEAD(kore_pgsql_pgsql_db_head_3, pgsql_db)		pgsql_db_conn_strings;
+ 
+ u_int32_t	pgsql_queue_count = 0;
+ u_int16_t	pgsql_conn_max = PGSQL_CONN_MAX;
+--- a/src/pool.c
++++ b/src/pool.c
+@@ -41,7 +41,7 @@
+ 
+ #include <sys/types.h>
+ #include <sys/mman.h>
+-#include <sys/queue.h>
++#include "kore_queue.h"
+ 
+ #include <stdint.h>
+ 
+--- a/src/python.c
++++ b/src/python.c
+@@ -333,8 +333,8 @@
+ static struct pyseccomp			*py_seccomp = NULL;
+ #endif
+ 
+-static TAILQ_HEAD(, pyproc)		procs;
+-static TAILQ_HEAD(, pyroute)		routes;
++static TAILQ_HEAD(kore_python_pyproc_head_1, pyproc)		procs;
++static TAILQ_HEAD(kore_python_pyroute_head_2, pyroute)		routes;
+ static struct reqcall_list		prereq;
+ 
+ static struct kore_pool			coro_pool;
+--- a/src/seccomp.c
++++ b/src/seccomp.c
+@@ -225,7 +225,7 @@
+ 	TAILQ_ENTRY(filter)	list;
+ };
+ 
+-static TAILQ_HEAD(, filter)	filters;
++static TAILQ_HEAD(kore_seccomp_filter_head_1, filter)	filters;
+ static struct filter		*ufilter = NULL;
+ 
+ /*
+--- a/src/tasks.c
++++ b/src/tasks.c
+@@ -15,7 +15,7 @@
+  */
+ 
+ #include <sys/param.h>
+-#include <sys/queue.h>
++#include "kore_queue.h"
+ #include <sys/socket.h>
+ 
+ #include <pthread.h>
+@@ -43,7 +43,7 @@
+ #endif
+ 
+ static u_int8_t				threads;
+-static TAILQ_HEAD(, kore_task_thread)	task_threads;
++static TAILQ_HEAD(kore_tasks_kore_task_thread_head_1, kore_task_thread)	task_threads;
+ 
+ u_int16_t	kore_task_threads = KORE_TASK_THREADS;
+ 
+--- a/src/timer.c
++++ b/src/timer.c
+@@ -16,7 +16,7 @@
+ 
+ #include <sys/param.h>
+ #include <sys/types.h>
+-#include <sys/queue.h>
++#include "kore_queue.h"
+ 
+ #include "kore.h"
+ 
+--- a/src/validator.c
++++ b/src/validator.c
+@@ -18,7 +18,7 @@
+ 
+ #include "kore.h"
+ 
+-TAILQ_HEAD(, kore_validator)		validators;
++TAILQ_HEAD(kore_validator_kore_validator_head_1, kore_validator)		validators;
+ 
+ void
+ kore_validator_init(void)
+--- a/include/kore/curl.h
++++ b/include/kore/curl.h
+@@ -60,7 +60,7 @@
+ 		struct kore_buf			*tosend;
+ 		struct kore_buf			*headers;
+ 
+-		TAILQ_HEAD(, http_header)	resp_hdrs;
++		TAILQ_HEAD(kore_curl_http_header_head_1, http_header)	resp_hdrs;
+ 	} http;
+ 
+ 	LIST_ENTRY(kore_curl)		list;
+--- a/include/kore/http.h
++++ b/include/kore/http.h
+@@ -20,7 +20,7 @@
+ #define __H_HTTP_H
+ 
+ #include <sys/types.h>
+-#include <sys/queue.h>
++#include "kore_queue.h"
+ 
+ #include <regex.h>
+ 
+@@ -85,7 +85,7 @@
+ 
+ struct http_runlock {
+ 	struct http_request		*owner;
+-	LIST_HEAD(, http_runlock_queue)	queue;
++	LIST_HEAD(kore_http_http_runlock_queue_head_1, http_runlock_queue)	queue;
+ };
+ 
+ struct http_header {
+@@ -322,23 +322,23 @@
+ 	u_int8_t	http_body_digest[HTTP_BODY_DIGEST_LEN];
+ 
+ #if defined(KORE_USE_CURL)
+-	LIST_HEAD(, kore_curl)		chandles;
++	LIST_HEAD(kore_http_kore_curl_head_2, kore_curl)		chandles;
+ #endif
+ 
+ #if defined(KORE_USE_TASKS)
+-	LIST_HEAD(, kore_task)		tasks;
++	LIST_HEAD(kore_http_kore_task_head_3, kore_task)		tasks;
+ #endif
+ 
+ #if defined(KORE_USE_PGSQL)
+-	LIST_HEAD(, kore_pgsql)		pgsqls;
++	LIST_HEAD(kore_http_kore_pgsql_head_4, kore_pgsql)		pgsqls;
+ #endif
+ 
+-	TAILQ_HEAD(, http_cookie)	req_cookies;
+-	TAILQ_HEAD(, http_cookie)	resp_cookies;
+-	TAILQ_HEAD(, http_header)	req_headers;
+-	TAILQ_HEAD(, http_header)	resp_headers;
+-	TAILQ_HEAD(, http_arg)		arguments;
+-	TAILQ_HEAD(, http_file)		files;
++	TAILQ_HEAD(kore_http_http_cookie_head_5, http_cookie)	req_cookies;
++	TAILQ_HEAD(kore_http_http_cookie_head_6, http_cookie)	resp_cookies;
++	TAILQ_HEAD(kore_http_http_header_head_7, http_header)	req_headers;
++	TAILQ_HEAD(kore_http_http_header_head_8, http_header)	resp_headers;
++	TAILQ_HEAD(kore_http_http_arg_head_9, http_arg)		arguments;
++	TAILQ_HEAD(kore_http_http_file_head_10, http_file)		files;
+ 	TAILQ_ENTRY(http_request)	list;
+ 	TAILQ_ENTRY(http_request)	olist;
+ };
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -33,7 +33,7 @@
+ #include <sys/param.h>
+ #include <sys/types.h>
+ #include <sys/time.h>
+-#include <sys/queue.h>
++#include "kore_queue.h"
+ #include <sys/stat.h>
+ #include <sys/un.h>
+ 
+@@ -289,7 +289,7 @@
+ 	struct kore_runtime_call	*ws_connect;
+ 	struct kore_runtime_call	*ws_message;
+ 	struct kore_runtime_call	*ws_disconnect;
+-	TAILQ_HEAD(, http_request)	http_requests;
++	TAILQ_HEAD(kore_kore_http_request_head_1, http_request)	http_requests;
+ #endif
+ 
+ 	TAILQ_ENTRY(connection)	list;
+@@ -371,7 +371,7 @@
+ 					    const void *, size_t);
+ 	struct kore_runtime_call		*on_body_chunk;
+ 
+-	TAILQ_HEAD(, kore_route_params)		params;
++	TAILQ_HEAD(kore_kore_kore_route_params_head_2, kore_route_params)		params;
+ 	TAILQ_ENTRY(kore_route)			list;
+ };
+ 
+@@ -400,9 +400,9 @@
+ 	KORE_TLS_CTX				*tls_ctx;
+ 	int					x509_verify_depth;
+ #if !defined(KORE_NO_HTTP)
+-	TAILQ_HEAD(, kore_route)		routes;
+-	TAILQ_HEAD(, http_header)		headers;
+-	TAILQ_HEAD(, http_redirect)		redirects;
++	TAILQ_HEAD(kore_kore_kore_route_head_3, kore_route)		routes;
++	TAILQ_HEAD(kore_kore_http_header_head_4, http_header)		headers;
++	TAILQ_HEAD(kore_kore_http_redirect_head_5, http_redirect)		redirects;
+ #endif
+ 	TAILQ_ENTRY(kore_domain)		list;
+ };
+@@ -427,7 +427,7 @@
+ 	int				tls;
+ 	char				*name;
+ 	struct kore_domain_h		domains;
+-	LIST_HEAD(, listener)		listeners;
++	LIST_HEAD(kore_kore_listener_head_6, listener)		listeners;
+ 	LIST_ENTRY(kore_server)		list;
+ };
+ 
+@@ -643,7 +643,7 @@
+ 	struct kore_json_item		*parent;
+ 
+ 	union {
+-		TAILQ_HEAD(, kore_json_item)	items;
++		TAILQ_HEAD(kore_kore_kore_json_item_head_7, kore_json_item)	items;
+ 		char				*string;
+ 		double				number;
+ 		int				literal;
+--- /dev/null
++++ b/include/kore/kore_queue.h
+@@ -0,0 +1,56 @@
++/*
++ * Copyright (c) 1991, 1993
++ *	The Regents of the University of California.  All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ * 3. Neither the name of the University nor the names of its contributors
++ *    may be used to endorse or promote products derived from this software
++ *    without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ *
++ *	@(#)queue.h	8.5 (Berkeley) 8/20/94
++ */
++
++#ifndef KORE_QUEUE_H
++#define KORE_QUEUE_H
++
++#include <sys/queue.h>
++
++/* Some system headers implement these through an empty qualifier argument,
++ * which Clang correctly diagnoses in C89. Preserve the BSD queue layout while
++ * keeping these declaration macros and their named callers valid C89.
++ * All queue operations continue to use the platform definitions.
++ */
++#undef TAILQ_HEAD
++#define TAILQ_HEAD(name, type) \
++struct name { \
++    struct type *tqh_first; \
++    struct type **tqh_last; \
++}
++
++#undef TAILQ_ENTRY
++#define TAILQ_ENTRY(type) \
++struct { \
++    struct type *tqe_next; \
++    struct type **tqe_prev; \
++}
++
++#endif
+--- a/include/kore/python_methods.h
++++ b/include/kore/python_methods.h
+@@ -444,8 +444,8 @@
+ 
+ struct pyqueue {
+ 	PyObject_HEAD
+-	TAILQ_HEAD(, pyqueue_object)	objects;
+-	TAILQ_HEAD(, pyqueue_waiting)	waiting;
++	TAILQ_HEAD(kore_python_methods_pyqueue_object_head_1, pyqueue_object)	objects;
++	TAILQ_HEAD(kore_python_methods_pyqueue_waiting_head_2, pyqueue_waiting)	waiting;
+ };
+ 
+ static PyObject *pyqueue_pop(struct pyqueue *, PyObject *);
+@@ -502,7 +502,7 @@
+ struct pylock {
+ 	PyObject_HEAD
+ 	struct python_coro		*owner;
+-	TAILQ_HEAD(, pylock_op)		ops;
++	TAILQ_HEAD(kore_python_methods_pylock_op_head_3, pylock_op)		ops;
+ };
+ 
+ static PyObject *pylock_aexit(struct pylock *, PyObject *);
+@@ -658,8 +658,8 @@
+ 	int				running;
+ 	int				concurrency;
+ 	struct python_coro		*coro;
+-	TAILQ_HEAD(, pygather_result)	results;
+-	TAILQ_HEAD(, pygather_coro)	coroutines;
++	TAILQ_HEAD(kore_python_methods_pygather_result_head_4, pygather_result)	results;
++	TAILQ_HEAD(kore_python_methods_pygather_coro_head_5, pygather_coro)	coroutines;
+ };
+ 
+ static void	pygather_op_dealloc(struct pygather_op *);
+@@ -859,7 +859,7 @@
+ 
+ struct pycurl_data {
+ 	struct kore_curl		curl;
+-	LIST_HEAD(, pycurl_slist)	slists;
++	LIST_HEAD(kore_python_methods_pycurl_slist_head_6, pycurl_slist)	slists;
+ };
+ 
+ struct pycurl_handle {
+--- a/include/kore/tasks.h
++++ b/include/kore/tasks.h
+@@ -59,7 +59,7 @@
+ 	pthread_t		tid;
+ 	pthread_mutex_t		lock;
+ 	pthread_cond_t		cond;
+-	TAILQ_HEAD(, kore_task)	tasks;
++	TAILQ_HEAD(kore_tasks_kore_task_head_1, kore_task)	tasks;
+ 
+ 	TAILQ_ENTRY(kore_task_thread)	list;
+ };

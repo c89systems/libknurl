@@ -11,6 +11,7 @@ struct rotmos_source {
     int busy;
     int eof;
     rotmos_status failure;
+    rotmos_source *retired_next;
 };
 
 rotmos_status rotmos_source_pull(rotmos_source *source, void *owner,

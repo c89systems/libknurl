@@ -7,5 +7,6 @@
 #include <rotmos/reply.h>
 #include <rotmos/server.h>
 #include <rotmos/router.h>
+#include <rotmos/request.h>
 
 #endif

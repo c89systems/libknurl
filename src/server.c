@@ -72,6 +72,9 @@ rotmos_status rotmos_server_new(const rotmos_server_config *input,
     server->requested_timeouts = requested;
     server->requested_worker_count = worker_count;
     server->state = ROTMOS_SERVER_DECLARED;
+    server->runtime = NULL;
+    server->notify_fd = -1;
+    server->stop_requested = server->terminating_signal = 0;
     server->process.role = ROTMOS_PROCESS_PARENT;
     server->process.process_id = 0;
     server->process.worker_index = 0;

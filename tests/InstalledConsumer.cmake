@@ -6,6 +6,7 @@ file(MAKE_DIRECTORY "${TEST_ROOT}/source")
 file(COPY "${ROTMOS_ROOT}/tests/consumer/CMakeLists.txt"
   "${ROTMOS_ROOT}/tests/foundation.c" "${ROTMOS_ROOT}/tests/reply.c"
   "${ROTMOS_ROOT}/tests/declarations.c"
+  "${ROTMOS_ROOT}/tests/server-runtime.c"
   DESTINATION "${TEST_ROOT}/source")
 file(STRINGS "${ROTMOS_ROOT}/VERSION" version LIMIT_COUNT 1)
 function(run)
@@ -15,6 +16,9 @@ function(run)
   endif()
 endfunction()
 run("${CMAKE_COMMAND}" --install "${ROTMOS_BINARY}" --prefix "${TEST_ROOT}/installed")
+foreach(provider cpkt lonejson pslog)
+  file(COPY "${ROTMOS_SDK_ROOT}/${provider}" DESTINATION "${TEST_ROOT}/installed/providers")
+endforeach()
 file(RENAME "${TEST_ROOT}/installed" "${TEST_ROOT}/relocated SDK")
 foreach(variant static shared)
   run("${CMAKE_COMMAND}" -S "${TEST_ROOT}/source" -B "${TEST_ROOT}/${variant}" -G Ninja
@@ -25,5 +29,6 @@ foreach(variant static shared)
   if(ROTMOS_CAN_RUN)
     run("${TEST_ROOT}/${variant}/foundation_consumer")
     run("${TEST_ROOT}/${variant}/reply_consumer")
+    run("${TEST_ROOT}/${variant}/server-runtime_consumer")
   endif()
 endforeach()

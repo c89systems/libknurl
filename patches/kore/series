@@ -42,3 +42,5 @@
 0042-kore-independent-sdk-prefixes.patch
 0043-strict-c89.patch
 0044-library-lifecycle-and-typed-callbacks.patch
+0045-public-runtime-adapter.patch
+0046-c89-queue-declarations.patch

@@ -37,15 +37,30 @@ function(rotmos_local_runtime target)
   endif()
 endfunction()
 
+include(cmake/KoreSources.cmake)
+set(kore_source_dir "${CMAKE_CURRENT_BINARY_DIR}/kore")
+rotmos_add_kore_sources("${CMAKE_CURRENT_SOURCE_DIR}" "${kore_source_dir}")
+include(cmake/KoreBackend.cmake)
+
 add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
-  src/config_normalize.c src/server.c src/router.c src/route_path.c)
+  src/config_normalize.c src/server.c src/router.c src/route_path.c
+  src/request.c src/request_decode.c src/router_dispatch.c
+  src/kore_runtime.c src/kore_http.c)
 target_include_directories(rotmos_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_compile_definitions(rotmos_objects PRIVATE ROTMOS_VERSION="${PROJECT_VERSION}")
+target_include_directories(rotmos_objects PRIVATE "${kore_source_dir}/include/kore")
+target_link_libraries(rotmos_objects PRIVATE OpenSSL::SSL CURL::libcurl lonejson::lonejson pslog::pslog_shared)
+file(STRINGS vendor/kore.revision kore_revision LIMIT_COUNT 1)
+target_compile_definitions(rotmos_objects PRIVATE ROTMOS_VERSION="${PROJECT_VERSION}"
+  ROTMOS_KORE_REVISION="${kore_revision}"
+  $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
+add_dependencies(rotmos_objects kore-source)
+rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_runtime.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_http.c")
 rotmos_c89(rotmos_objects)
 foreach(variant static shared)
   string(TOUPPER "${variant}" kind)
-  add_library(rotmos_${variant} ${kind} $<TARGET_OBJECTS:rotmos_objects>)
+  add_library(rotmos_${variant} ${kind} $<TARGET_OBJECTS:rotmos_objects> $<TARGET_OBJECTS:rotmos_kore>)
   add_library(rotmos::${variant} ALIAS rotmos_${variant})
   set_target_properties(rotmos_${variant} PROPERTIES OUTPUT_NAME rotmos
     EXPORT_NAME ${variant} VERSION ${PROJECT_VERSION} SOVERSION 0)
@@ -54,15 +69,25 @@ foreach(variant static shared)
   install(TARGETS rotmos_${variant} EXPORT rotmosTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endforeach()
+target_link_libraries(rotmos_shared PRIVATE cpkt::openssl_ssl_shared cpkt::curl_shared
+  lonejson::lonejson pslog::pslog_shared Threads::Threads)
+target_link_libraries(rotmos_shared INTERFACE "$<LINK_ONLY:pslog::pslog_shared>")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_options(rotmos_shared PRIVATE -Wl,--no-undefined)
+endif()
+target_link_libraries(rotmos_static PRIVATE OpenSSL::SSL CURL::libcurl
+  lonejson::lonejson_static pslog::pslog_static Threads::Threads)
 set(rotmos_core_headers include/rotmos/common.h include/rotmos/http.h include/rotmos/rotmos.h
   include/rotmos/io.h include/rotmos/reply.h include/rotmos/tls.h
-  include/rotmos/server.h include/rotmos/router.h)
+  include/rotmos/server.h include/rotmos/router.h include/rotmos/request.h include/rotmos/kore.h)
 set_source_files_properties(${rotmos_core_headers} PROPERTIES LANGUAGE C HEADER_FILE_ONLY FALSE)
 add_library(rotmos_headers_c OBJECT ${rotmos_core_headers})
 target_include_directories(rotmos_headers_c PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 rotmos_c89(rotmos_headers_c)
 install(DIRECTORY include/rotmos DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/rotmos)
+install(FILES vendor/kore/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/rotmos/kore)
+install(FILES LICENSES/BSD-queue.txt DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/rotmos)
 install(EXPORT rotmosTargets NAMESPACE rotmos:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/rotmos)
 configure_package_config_file(cmake/rotmosConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/rotmosConfig.cmake"
   INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/rotmos)
@@ -73,11 +98,6 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/rotmosConfig.cmake"
 configure_file(cmake/rotmos.pc.in "${CMAKE_CURRENT_BINARY_DIR}/rotmos.pc" @ONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/rotmos.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
-include(cmake/KoreSources.cmake)
-set(kore_source_dir "${CMAKE_CURRENT_BINARY_DIR}/kore")
-rotmos_add_kore_sources("${CMAKE_CURRENT_SOURCE_DIR}" "${kore_source_dir}")
-include(cmake/KoreBackend.cmake)
-
 get_filename_component(rotmos_toolchain "${CMAKE_TOOLCHAIN_FILE}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(rotmos_can_run FALSE)
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL CMAKE_SYSTEM_PROCESSOR)
@@ -85,6 +105,12 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_server_runtime tests/server-runtime.c)
+  target_link_libraries(rotmos_server_runtime PRIVATE rotmos::shared Threads::Threads)
+  rotmos_c89(rotmos_server_runtime)
+  rotmos_local_runtime(rotmos_server_runtime)
+  add_test(NAME rotmos.server-runtime COMMAND rotmos_server_runtime)
+  set_tests_properties(rotmos.server-runtime PROPERTIES TIMEOUT 30)
   add_executable(rotmos_kore_runtime tests/kore-runtime.c $<TARGET_OBJECTS:rotmos_kore>)
   add_dependencies(rotmos_kore_runtime kore-source)
   rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
@@ -138,6 +164,7 @@ if(BUILD_TESTING)
     "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}" "-DROTMOS_BINARY=${CMAKE_CURRENT_BINARY_DIR}"
     "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/consumer"
     "-DTOOLCHAIN=${rotmos_toolchain}" "-DROTMOS_TARGET=${ROTMOS_TARGET}"
+    "-DROTMOS_SDK_ROOT=${ROTMOS_SDK_ROOT}"
     "-DROTMOS_CAN_RUN=${rotmos_can_run}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/InstalledConsumer.cmake")
   set_tests_properties(rotmos.installed-consumer PROPERTIES TIMEOUT 60)

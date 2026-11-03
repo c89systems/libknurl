@@ -2190,6 +2190,8 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0042 | Independent cpkt/LoneJSON/pslog prefixes and relocatable closure |
 | 0043 | Strict C89 backend port; preserve runtime/module callback ordering, SHA-2 vectors and IPC header offsets; replace variadic seccomp registration with a named filter array |
 | 0044 | Explicit private library lifecycle and typed native/policy callbacks; no CLI main or Vectis symbol lookup; reclaim pool mappings, isolate worker descriptors, reap owned PIDs, honor descriptor limits and drain before teardown; prove native HTTP, restart and startup-failure cleanup |
+| 0045 | Preserve the raw request target/method and Host arrival order for public metadata; bound/cancel worker initialization, expose shutdown escalation, and bracket backend forks for the public runtime's notification lock |
+| 0046 | Name queue heads and preserve BSD tail-queue layouts without empty macro arguments; retain platform queue operations and strict C89 diagnostics under Clang |
 
 ## 22. Investigation references
 

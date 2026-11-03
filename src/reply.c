@@ -41,8 +41,18 @@ static void clear_payload(rotmos_reply *reply)
     free(type);
     if (file != -1)
         (void)close(file);
-    if (source != NULL)
-        rotmos_source_release(source, ROTMOS_CANCELLED);
+    if (source != NULL) {
+        if (reply->owner != NULL) {
+            source->retired_next = NULL;
+            if (reply->retired_tail != NULL)
+                reply->retired_tail->retired_next = source;
+            else
+                reply->retired_head = source;
+            reply->retired_tail = source;
+        } else {
+            rotmos_source_release(source, ROTMOS_CANCELLED);
+        }
+    }
 }
 
 static rotmos_status prepare_type(rotmos_reply *reply, int status,
@@ -99,6 +109,7 @@ rotmos_status rotmos_reply_new(rotmos_reply **out, rotmos_error *error)
     reply->file = -1;
     reply->file_length.high = reply->file_length.low = 0;
     reply->source = NULL;
+    reply->retired_head = reply->retired_tail = NULL;
     reply->headers = NULL;
     reply->header_count = 0;
     *out = reply;
@@ -109,11 +120,18 @@ rotmos_status rotmos_reply_new(rotmos_reply **out, rotmos_error *error)
 rotmos_status rotmos_reply_destroy(rotmos_reply *reply, rotmos_error *error)
 {
     size_t i;
+    rotmos_source *source;
     if (reply != NULL) {
         if (reply->busy || reply->owner != NULL)
             return rotmos_fail(error, ROTMOS_STATE, "reply_destroy",
                                "reply is owned or busy");
         reply->busy = 1;
+        while (reply->retired_head != NULL) {
+            source = reply->retired_head;
+            reply->retired_head = source->retired_next;
+            rotmos_source_release(source, ROTMOS_CANCELLED);
+        }
+        reply->retired_tail = NULL;
         clear_payload(reply);
         for (i = 0; i < reply->header_count; ++i) {
             free((void *)reply->headers[i].name.data);

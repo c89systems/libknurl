@@ -16,6 +16,8 @@ struct rotmos_reply {
     int file;
     rotmos_u64 file_length;
     rotmos_source *source;
+    rotmos_source *retired_head;
+    rotmos_source *retired_tail;
     rotmos_header *headers;
     size_t header_count;
 };

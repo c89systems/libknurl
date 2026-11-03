@@ -8,17 +8,43 @@ from explicitly bounded synchronous materialization. Source registration never
 reads or resets a producer. It also compiles the selected private Kore backend
 objects under strict C89, applying the 42 original patches, an external C89 port
 and the private library lifecycle patch. The selected backend excludes the
-standalone CLI configuration parser/assets and uses typed callbacks. Its native
+standalone CLI configuration parser/assets and uses typed callbacks. Queue
+declarations use named heads and C89 layout macros, retaining platform queue
+operations without Clang's empty-macro-argument extension. Its native
 fixture serves HTTP, handles worker-initiated stop, repeats a run, and recovers
 from an injected error after bind. Inert server construction copies listeners,
-TLS material, callbacks,
-trusted-proxy declarations and autoblock rules, and resolves effective settings.
+TLS material, callbacks, trusted-proxy declarations and autoblock rules, and
+resolves effective settings.
 The router owns stable route/group handles, validates declarations and preserves
 registration order, prefixes and exact method/path conflicts. Construction and
 registration execute no user callbacks or network operations.
 
-Backend objects are not yet linked into the library. Live server execution,
-request dispatch and the Lua module remain implementation work. The contract is in the
+Both library variants now include the private backend. The initial public runtime
+binds cleartext listeners, reports ephemeral addresses, forks HTTP workers and
+runs on the calling parent thread. It supports process hooks, a shared serving
+gate, owner-loop route dispatch, copied byte replies, bounded in-memory bodies,
+thread-safe stop notifications and worker-to-parent stop requests. Request views
+retain the raw target, header order including Host, decoded ordered query pairs,
+parameters and socket endpoints. Parameter matching keeps optional omission
+ordering without recursive C calls. Runtime reply replacement queues superseded
+sources for cleanup rather than invoking close inside a setter.
+
+`rotmos.server-runtime` exercises this public surface over TCP, including staged
+middleware replacement, framing rejection, parent/worker hooks, signal restoration,
+startup cancellation and repeated runs. The installed-consumer check repeats the
+HTTP fixture through both static and shared imported targets after relocating
+the library and its three released dependency prefixes.
+
+This is partial runtime coverage. Preflight explicitly rejects configured TLS,
+supervision, worker observations, access logs, trusted proxies, autoblock,
+JSON/upload plans and disk-backed bodies until those paths are connected. A final
+file or live-source reply currently returns 501; no buffered fallback implements
+streaming. Low-level response/body/channel/loop operations, gate observations,
+complete startup/failure unwinding, auxiliary-worker lifecycle, the protocol and
+provider helpers, the opt-in native declaration component, and the Lua product
+remain implementation work. Worker failure,
+replacement, deadline escalation and allocation-failure coverage remain part of
+the later runtime review. The contract is in the
 [server API specification](server-api-spec.md) and
 [Vectis integration contract](vectis-integration-contract.md).
 
@@ -32,7 +58,7 @@ Bootlin GCC/binutils/sysroot collection, with no host compiler fallback.
 make help
 make toolchain             # Explicit provisioning; unnecessary when already prepared.
 make build                 # Prepare released SDKs; compile core and private backend.
-make test                  # CTest foundation and backend-maintenance checks.
+make test                  # CTest core, native HTTP, SDK consumer and vendoring checks.
 make install               # Install to owned build/install/<target>/Debug by default.
 make format-check          # Check project sources; excludes pristine/patched Kore.
 make prepare-kore          # Source preparation only; no compiler or SDK acquisition.

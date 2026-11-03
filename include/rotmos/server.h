@@ -25,6 +25,26 @@ typedef enum rotmos_process_role {
     ROTMOS_PROCESS_ACME
 } rotmos_process_role;
 
+typedef enum rotmos_run_reason {
+    ROTMOS_RUN_REQUESTED_STOP = 0,
+    ROTMOS_RUN_TERMINATING_SIGNAL,
+    ROTMOS_RUN_STARTUP_FAILURE,
+    ROTMOS_RUN_BACKEND_FAILURE
+} rotmos_run_reason;
+
+typedef struct rotmos_run_result {
+    rotmos_run_reason reason;
+    int signal_number;
+    int escalated;
+} rotmos_run_result;
+
+typedef struct rotmos_bound_listener {
+    const char *name;
+    rotmos_bytes address;
+    unsigned short port;
+    int tls;
+} rotmos_bound_listener;
+
 struct rotmos_process_context {
     rotmos_process_role role;
     long process_id;
@@ -256,6 +276,24 @@ ROTMOS_API rotmos_status rotmos_server_supervision_take(
     rotmos_error *error);
 ROTMOS_API rotmos_status rotmos_server_destroy(rotmos_server *server,
                                                rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_server_validate(rotmos_server *server,
+                                                rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_server_run(rotmos_server *server,
+                                           rotmos_run_result *out,
+                                           rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_server_request_stop(rotmos_server *server,
+                                                    rotmos_error *error);
+/* Async-signal-safe during a run; the caller keeps the server alive. */
+ROTMOS_API void rotmos_server_notify_signal(rotmos_server *server,
+                                            int signal_number);
+ROTMOS_API rotmos_status rotmos_server_set_serving(rotmos_server *server,
+                                                   int serving,
+                                                   rotmos_error *error);
+/* Borrows addresses acquired by the active run, including ephemeral ports. */
+ROTMOS_API rotmos_status rotmos_server_listener_at(const rotmos_server *server,
+                                                   size_t index,
+                                                   rotmos_bound_listener *out,
+                                                   rotmos_error *error);
 
 #ifdef __cplusplus
 }

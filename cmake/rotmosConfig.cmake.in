@@ -1,4 +1,11 @@
 @PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(CpktCore 0.6.1 EXACT CONFIG REQUIRED)
+find_dependency(Threads REQUIRED)
+find_dependency(OpenSSL CONFIG REQUIRED)
+find_dependency(CURL CONFIG REQUIRED)
+find_dependency(lonejson 0.45.0 EXACT CONFIG REQUIRED)
+find_dependency(pslog 0.13.0 EXACT CONFIG REQUIRED)
 include("${CMAKE_CURRENT_LIST_DIR}/rotmosTargets.cmake")
 set(rotmos_static_FOUND FALSE)
 set(rotmos_shared_FOUND FALSE)
