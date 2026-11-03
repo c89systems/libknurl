@@ -8,7 +8,8 @@ backend escape hatch. Vectis will retain its application and Lua interfaces.
 Vectis patches, a build-time patch preparation target, an upgrade command and
 vendoring regression tests. It does not yet build a server library. The public
 API, C89 backend port and Vectis cutover remain to be implemented. See the
-[extraction boundary](docs/extraction.md).
+[server API specification](docs/server-api-spec.md) for the proposed contract and
+the [extraction boundary](docs/extraction.md) for the bootstrap context.
 
 ## Source ownership
 

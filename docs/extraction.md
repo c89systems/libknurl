@@ -2,6 +2,8 @@
 
 This is the implementation direction, not an available API reference. Only the
 source-vendoring foundation described in the README is currently implemented.
+The [server API specification](server-api-spec.md) now supplies the researched
+contract and supersedes this document's preliminary API direction.
 
 ## Agreed ownership
 
@@ -79,9 +81,9 @@ from librotmos's own C89 compilation contract.
 
 ## Required evidence before Vectis replacement
 
-1. Define and document the librotmos API with runnable C examples. Prove request,
-   response, configuration, ownership, failure and callback contracts through
-   observable tests.
+1. Implement the specified librotmos API with public documentation and runnable
+   C examples. Prove request, response, configuration, ownership, failure and
+   callback contracts through observable tests.
 2. Compile the backend under strict C89. Preserve Vectis-used HTTP, TLS/mTLS,
    ACME, WebSocket, static-file, method, parser and timing enhancements. Initially
    preserve the existing feature selection; Kore's optional Python, Lua,
