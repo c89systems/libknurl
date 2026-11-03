@@ -1,0 +1,26 @@
+cmake_minimum_required(VERSION 3.24)
+include("${ROTMOS_ROOT}/cmake/OwnedPaths.cmake")
+rotmos_require_owned_path("${TEST_ROOT}" "Consumer fixture")
+file(REMOVE_RECURSE "${TEST_ROOT}")
+file(MAKE_DIRECTORY "${TEST_ROOT}/source")
+file(COPY "${ROTMOS_ROOT}/tests/consumer/CMakeLists.txt"
+  "${ROTMOS_ROOT}/tests/foundation.c" DESTINATION "${TEST_ROOT}/source")
+file(STRINGS "${ROTMOS_ROOT}/VERSION" version LIMIT_COUNT 1)
+function(run)
+  execute_process(COMMAND ${ARGV} RESULT_VARIABLE result OUTPUT_VARIABLE log ERROR_VARIABLE diagnostic)
+  if(NOT result EQUAL 0)
+    message(FATAL_ERROR "Consumer command failed: ${ARGV}\n${log}${diagnostic}")
+  endif()
+endfunction()
+run("${CMAKE_COMMAND}" --install "${ROTMOS_BINARY}" --prefix "${TEST_ROOT}/installed")
+file(RENAME "${TEST_ROOT}/installed" "${TEST_ROOT}/relocated SDK")
+foreach(variant static shared)
+  run("${CMAKE_COMMAND}" -S "${TEST_ROOT}/source" -B "${TEST_ROOT}/${variant}" -G Ninja
+    "-DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN}" "-DROTMOS_TARGET=${ROTMOS_TARGET}"
+    "-DROTMOS_PREFIX=${TEST_ROOT}/relocated SDK" "-DROTMOS_VARIANT=${variant}"
+    "-DROTMOS_VERSION=${version}")
+  run("${CMAKE_COMMAND}" --build "${TEST_ROOT}/${variant}" --parallel 1)
+  if(ROTMOS_CAN_RUN)
+    run("${TEST_ROOT}/${variant}/consumer")
+  endif()
+endforeach()

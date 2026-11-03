@@ -1,0 +1,8 @@
+#include <rotmos/rotmos.h>
+
+int main()
+{
+    rotmos_error error;
+    rotmos_error_clear(&error);
+    return error.status == ROTMOS_OK ? 0 : 1;
+}

@@ -104,6 +104,7 @@ Use the `rotmos_` symbol prefix and these header families:
 
 | Header | Responsibility |
 | --- | --- |
+| `<rotmos/common.h>` | Shared statuses, bounded diagnostics, byte views and checked wide counters |
 | `<rotmos/server.h>` | Errors, server/configuration, lifecycle, observations |
 | `<rotmos/http.h>` | Request views, body policies/plans, materialization helpers and transport responses |
 | `<rotmos/reply.h>` | Staged route reply builders; transport submission follows completed hooks |
@@ -1313,8 +1314,8 @@ closure and relocatable installed include paths. Hide private adapter/Kore
 symbols with native export controls; ensure static archives do not impose unresolved `vectis_*` hooks or
 colliding standalone main/global callbacks. Do not leak build/cache paths.
 
-Initial dependency candidates remain cpkt 0.6.1, LoneJSON 0.45.0 and libpslog
-0.12.0, the releases checked during the extraction audit. Acquire exact target
+The implementation dependency pins are cpkt 0.6.1, LoneJSON 0.45.0 and libpslog
+0.13.0, checked against published releases on 2026-11-03. Acquire exact target
 SDKs/digests from c89systems, retain independent prefixes, and use complete
 upstream imported-target link closure. Core server headers must not acquire
 Lockd or cpktdb/cpktmisc merely because Vectis uses them. Lua 5.5.1 is a selected
@@ -2048,7 +2049,7 @@ just show API presence.
 | Vendored Kore | Exact source revision and external patches already recorded; private HTTP backend |
 | cpkt | 0.6.1; selected public packages for OpenSSL, curl, nghttp2, libxml2, Lua and complete native link closure |
 | LoneJSON | 0.45.0; typed JSON/maps/generators, XML record mapping and ACME JSON |
-| libpslog | 0.12.0; structured runtime/access logging and public Lua logger interop |
+| libpslog | 0.13.0; structured runtime/access logging and public Lua logger interop |
 | Lua | 5.5.1 from cpkt's Lua runtime selection for binding builds/tests; hosts supply one compatible runtime, executable or embedded |
 | LoneJSON/pslog Lua providers | Their matching released public facade/binding/interop products, only where schemas/loggers cross into the rotmos binding |
 | OS runtime | Selected target libc, threads, sockets/files and platform event facilities |
@@ -2149,6 +2150,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0040 | Release worker accept lock on clean exit |
 | 0041 | Static pool-name ownership; cleanup without freeing static names |
 | 0042 | Independent cpkt/LoneJSON/pslog prefixes and relocatable closure |
+| 0043 | Strict C89 backend port; preserve runtime/module callback ordering, SHA-2 vectors and IPC header offsets; replace variadic seccomp registration with a named filter array |
 
 ## 22. Investigation references
 

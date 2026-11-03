@@ -1,28 +1,46 @@
 # Build availability and backend maintenance
 
 The [README](../README.md) describes the server library's product contract.
-The current build contains the pristine Kore snapshot, all 42 Vectis patches,
-a build-time patch preparation target, an upgrade command and vendoring
-regression tests. It does not yet compile the server library or Lua module.
-The public API, C89 backend port and server facade are specified in the
+The build produces a C89 static/shared foundation library with wide counters,
+errors and SSE framing. It also compiles the selected private Kore backend
+objects under strict C89, applying the 42 original patches and an external C89
+port. Backend objects are not yet linked into the library: server execution,
+routing and the Lua module remain implementation work. The complete contract is in the
 [server API specification](server-api-spec.md) and
 [Vectis integration contract](vectis-integration-contract.md).
 
 ## Commands
 
-Prerequisites: CMake >= 3.21, Git, Make and Bash >= 4.4. Upgrades also use `tar`
-and `mktemp`. The server dependency SDKs are not required for the current
-vendoring tests, because no C library is compiled by those targets.
+Prerequisites: CMake >= 3.24, Ninja, Git, Make, Bash >= 4.4, curl, tar, flock,
+SHA-256 tools and clang-format. Linux compilation uses the lifecycle's pinned
+Bootlin GCC/binutils/sysroot collection, with no host compiler fallback.
 
 ```sh
 make help
-make build                 # Prepare build/native/kore; does not compile a library.
-make test                  # Replay, failure, upgrade and invalidation tests.
+make toolchain             # Explicit provisioning; unnecessary when already prepared.
+make build                 # Prepare released SDKs; compile core and private backend.
+make test                  # CTest foundation and backend-maintenance checks.
+make install               # Install to owned build/install/<target>/Debug by default.
+make format-check          # Check project sources; excludes pristine/patched Kore.
+make prepare-kore          # Source preparation only; no compiler or SDK acquisition.
 make clean                 # Remove all local build/, dist/ and .cache/ state.
 ```
 
-Normal builds and tests are offline. One operation owns the checkout; run build,
-test and upgrade operations serially.
+`make build` reuses checksum-verified local archives or acquires missing released
+SDKs from c89systems. Once prepared, builds and tests are offline. SDKs have
+independent prefixes under `.cache/sdk/<target>/`; archives stay in this
+checkout's `.cache/`. Existing global cpkt archives may be read and copied.
+Toolchain discovery is read-only; only explicit provisioning prepares compilers.
+One operation owns the checkout; run operations serially.
+
+The native Debug database is `build/native/Debug/compile_commands.json`, matching
+`.clangd`. `make build` prepares the real headers and database used by the editor.
+Debug/Release CMake presets use the x86_64 GNU toolchain; prepare SDKs with
+`make deps` before direct preset configuration. Linux cross configurations use
+`make build TARGET=<target> CONFIG=Release` and separate target build directories.
+Darwin toolchain wiring and complete platform/runtime proof remain subsequent
+slices. No release artifacts or replacement-readiness claim follow from the
+foundation build alone.
 
 ## Source ownership
 
@@ -30,7 +48,8 @@ test and upgrade operations serially.
 - `vendor/kore.revision` and `vendor/kore.url` identify its exact upstream commit
   and repository. There is no nested Git checkout or submodule.
 - `patches/kore/series` orders patches stored outside the source snapshot.
-- `build/native/kore/` is a disposable patched copy. Preserve changes by editing
+- `build/native/Debug/kore/` is a disposable patched copy; source-only preparation
+  uses `build/source/kore/`. Preserve changes by editing
   or adding a patch, updating `series`, then rebuilding.
 
 CMake tracks upstream sources, patches, `series`, provenance and the preparation

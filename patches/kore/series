@@ -40,3 +40,4 @@
 0040-kore-release-worker-accept-lock-on-exit.patch
 0041-kore-static-pool-name-ownership.patch
 0042-kore-independent-sdk-prefixes.patch
+0043-strict-c89.patch

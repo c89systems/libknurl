@@ -1,0 +1,9 @@
+prefix=${pcfiledir}/../..
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: librotmos
+Description: C89 HTTP server library
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lrotmos
+Cflags: -I${includedir}

@@ -1,0 +1,43 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "linux",
+      "hidden": true,
+      "generator": "Ninja",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/bootlin.cmake",
+      "cacheVariables": { "ROTMOS_TARGET": "x86_64-linux-gnu" }
+    },
+    {
+      "name": "Debug",
+      "inherits": "linux",
+      "binaryDir": "${sourceDir}/build/native/Debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "Release",
+      "inherits": "linux",
+      "binaryDir": "${sourceDir}/build/native/Release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "Debug", "configurePreset": "Debug", "jobs": 1 },
+    { "name": "Release", "configurePreset": "Release", "jobs": 1 }
+  ],
+  "testPresets": [
+    {
+      "name": "Debug",
+      "configurePreset": "Debug",
+      "output": { "outputOnFailure": true },
+      "execution": { "jobs": 1, "stopOnFailure": true, "noTestsAction": "error" }
+    },
+    {
+      "name": "Release",
+      "configurePreset": "Release",
+      "output": { "outputOnFailure": true },
+      "execution": { "jobs": 1, "stopOnFailure": true, "noTestsAction": "error" }
+    }
+  ]
+}

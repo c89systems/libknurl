@@ -72,15 +72,15 @@ blindly importing that application layer.
 
 ## Dependency and language baseline
 
-The recorded compatibility baselines match Vectis's pins. Recheck published
-releases before locking implementation SDKs and prefer the newest compatible
-complete dependency closure:
+Implementation pins use the published releases checked on 2026-11-03. cpkt and
+LoneJSON retain the Vectis baselines; libpslog advances to 0.13.0. Exact target
+archive hashes and URLs are recorded in [dependency pins](../scripts/dependency-pins.tsv):
 
 | Dependency | Initial candidate | Responsibility |
 | --- | --- | --- |
 | [cpkt](https://github.com/c89systems/cpkt/releases/tag/v0.6.1) | 0.6.1 | TLS/curl/libxml2 closure, test support and Lua 5.5.1 for the separate binding product. |
 | [lonejson](https://github.com/c89systems/lonejson/releases/tag/v0.45.0) | 0.45.0 | JSON request helpers and ACME parsing. |
-| [libpslog](https://github.com/c89systems/libpslog/releases/tag/v0.12.0) | 0.12.0 | Structured runtime/access logging. |
+| [libpslog](https://github.com/c89systems/libpslog/releases/tag/v0.13.0) | 0.13.0 | Structured runtime/access logging. |
 
 Acquire exact published SDK assets with target identities and SHA-256 pins from
 `github.com/c89systems/`. Keep independent installation prefixes and consume

@@ -2,9 +2,13 @@ cmake_minimum_required(VERSION 3.21)
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(MAKE_DIRECTORY "${TEST_ROOT}/project/vendor/kore/src"
   "${TEST_ROOT}/project/patches/kore" "${TEST_ROOT}/project/cmake")
-file(COPY "${ROTMOS_ROOT}/CMakeLists.txt" "${ROTMOS_ROOT}/Makefile"
-  DESTINATION "${TEST_ROOT}/project")
-file(COPY "${ROTMOS_ROOT}/cmake/PrepareKore.cmake" DESTINATION "${TEST_ROOT}/project/cmake")
+file(COPY "${ROTMOS_ROOT}/Makefile" DESTINATION "${TEST_ROOT}/project")
+file(MAKE_DIRECTORY "${TEST_ROOT}/project/scripts")
+file(COPY "${ROTMOS_ROOT}/scripts/native-target.sh" DESTINATION "${TEST_ROOT}/project/scripts")
+file(WRITE "${TEST_ROOT}/project/CMakeLists.txt"
+  "cmake_minimum_required(VERSION 3.24)\nproject(source_fixture LANGUAGES NONE)\ninclude(cmake/KoreSources.cmake)\nrotmos_add_kore_sources(\"\${CMAKE_CURRENT_SOURCE_DIR}\" \"\${CMAKE_BINARY_DIR}/kore\")\n")
+file(COPY "${ROTMOS_ROOT}/cmake/PrepareKore.cmake" "${ROTMOS_ROOT}/cmake/KoreSources.cmake"
+  "${ROTMOS_ROOT}/cmake/OwnedPaths.cmake" DESTINATION "${TEST_ROOT}/project/cmake")
 file(WRITE "${TEST_ROOT}/project/vendor/kore.revision"
   "0123456789012345678901234567890123456789\n")
 file(WRITE "${TEST_ROOT}/project/vendor/kore.url" "unused local fixture\n")

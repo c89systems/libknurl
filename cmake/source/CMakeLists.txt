@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.21)
+project(rotmos_kore_sources LANGUAGES NONE)
+if(NOT ROTMOS_ROOT)
+  get_filename_component(ROTMOS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+endif()
+include("${ROTMOS_ROOT}/cmake/KoreSources.cmake")
+rotmos_add_kore_sources("${ROTMOS_ROOT}" "${CMAKE_BINARY_DIR}/kore")

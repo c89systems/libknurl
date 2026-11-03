@@ -1,0 +1,1376 @@
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -43,6 +43,8 @@
+ #include <errno.h>
+ #include <regex.h>
+ #include <stdarg.h>
++#include <stddef.h>
++#include <stdint.h>
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <string.h>
+@@ -725,13 +727,13 @@
+ 	int		padding;
+ 	char		domain[KORE_DOMAINNAME_LEN + 1];
+ 	size_t		data_len;
+-	u_int8_t	data[];
++	u_int8_t	data[1];
+ };
+ 
+ struct kore_x509_msg {
+ 	char		domain[KORE_DOMAINNAME_LEN + 1];
+ 	size_t		data_len;
+-	u_int8_t	data[];
++	u_int8_t	data[1];
+ };
+ 
+ #if !defined(KORE_SINGLE_BINARY)
+@@ -999,7 +1001,7 @@
+ void		kore_strip_chars(const char *, const char, char **);
+ int		kore_snprintf(char *, size_t, int *, const char *, ...)
+ 		    __attribute__((format (printf, 4, 5)));
+-long long	kore_strtonum(const char *, int, long long, long long, int *);
++int64_t	kore_strtonum(const char *, int, int64_t, int64_t, int *);
+ double		kore_strtodouble(const char *, long double, long double, int *);
+ int		kore_base64_encode(const void *, size_t, char **);
+ int		kore_base64_decode(const char *, u_int8_t **, size_t *);
+--- a/include/kore/seccomp.h
++++ b/include/kore/seccomp.h
+@@ -149,15 +149,11 @@
+  *	KORE_SYSCALL_ALLOW(poll),
+  * )
+  */
+-#define KORE_SECCOMP_FILTER(name, ...)				\
+-	struct sock_filter _scfilt[] = {			\
+-		__VA_ARGS__					\
+-	};							\
+-	void							\
+-	kore_seccomp_hook(void)					\
+-	{							\
+-		kore_seccomp_filter(name, _scfilt,		\
+-		    KORE_FILTER_LEN(_scfilt));			\
++/* Define the filter array separately, then register it with this C89 macro. */
++#define KORE_SECCOMP_FILTER(name, filter) \
++	void kore_seccomp_hook(void) \
++	{ \
++		kore_seccomp_filter(name, filter, KORE_FILTER_LEN(filter)); \
+ 	}
+ 
+ extern int	kore_seccomp_tracing;
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -162,6 +162,8 @@
+ 	struct kore_alog_header	*hdr;
+ 	size_t			avail;
+ 	time_t			curtime;
++	long			zone;
++	size_t			stamp_length;
+ 	int			len, attempts;
+ 	char			addr[INET6_ADDRSTRLEN], *cn_value;
+ 	const char		*ptr, *method, *http_version, *cn, *referer;
+@@ -260,7 +262,12 @@
+ 	if ((now - time_cache) >= 1000) {
+ 		time(&curtime);
+ 		tm = localtime(&curtime);
+-		(void)strftime(tbuf, sizeof(tbuf), "%d/%b/%Y:%H:%M:%S %z", tm);
++		stamp_length = strftime(tbuf, sizeof(tbuf),
++		    "%d/%b/%Y:%H:%M:%S ", tm);
++		zone = tm->tm_gmtoff / 60;
++		(void)snprintf(tbuf + stamp_length, sizeof(tbuf) - stamp_length,
++		    "%c%02ld%02ld", zone < 0 ? '-' : '+',
++		    labs(zone) / 60, labs(zone) % 60);
+ 		time_cache = now;
+ 	}
+ 
+@@ -407,7 +414,7 @@
+ 		while (remain > 0) {
+ 			if (remain < sizeof(*hdr)) {
+ 				kore_log(LOG_ERR,
+-				    "invalid log buffer: (%zu remain)", remain);
++				    "invalid log buffer: (%lu remain)", (unsigned long)(remain));
+ 				break;
+ 			}
+ 
+@@ -417,8 +424,8 @@
+ 
+ 			if (hdr->loglen > remain) {
+ 				kore_log(LOG_ERR,
+-				    "invalid log header: %u (%zu remain)",
+-				    hdr->loglen, remain);
++				    "invalid log header: %u (%lu remain)",
++				    hdr->loglen, (unsigned long)(remain));
+ 				break;
+ 			}
+ 
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -393,8 +393,8 @@
+ 	status = lonejson_parse_buffer(runtime, map, dst, body, len, &error);
+ 	lonejson_free(runtime);
+ 	if (status != LONEJSON_STATUS_OK) {
+-		kore_log(LOG_NOTICE, "%s: lonejson parse failed at %zu:%zu (%s)",
+-		    what, error.line, error.column, error.message);
++		kore_log(LOG_NOTICE, "%s: lonejson parse failed at %lu:%lu (%s)",
++		    what, (unsigned long)(error.line), (unsigned long)(error.column), error.message);
+ 		lonejson_cleanup(map, dst);
+ 		return (KORE_RESULT_ERROR);
+ 	}
+@@ -1139,7 +1139,7 @@
+ 		order = NULL;
+ 		break;
+ 	default:
+-		fatal("%s: invalid order state %d", __func__, order->state);
++		fatal("%s: invalid order state %d", "acme_order_process", order->state);
+ 	}
+ 
+ 	if (order != NULL) {
+@@ -1225,7 +1225,7 @@
+ 
+ 	kore_curl_response_as_bytes(&req.curl, &body, &len);
+ 
+-	kore_log(LOG_INFO, "got %zu bytes of cert data", len);
++	kore_log(LOG_INFO, "got %lu bytes of cert data", (unsigned long)(len));
+ 	acme_keymgr_key_req(order->domain, body, len, KORE_ACME_INSTALL_CERT);
+ 
+ 	acme_request_cleanup(&req);
+@@ -1742,8 +1742,7 @@
+ 		goto cleanup;
+ 	}
+ 
+-	kore_log(LOG_INFO, "submitted %zu bytes to %s",
+-	    payload->offset, req.curl.url);
++	kore_log(LOG_INFO, "submitted %lu bytes to %s", (unsigned long)(payload->offset), req.curl.url);
+ 
+ cleanup:
+ 	acme_request_cleanup(&req);
+@@ -1808,6 +1807,9 @@
+ {
+ 	size_t				len;
+ 	const u_int8_t			*body;
++#if defined(KORE_USE_LONEJSON)
++	struct acme_badreq_doc		doc;
++#endif
+ 
+ 	kore_curl_run(&req->curl);
+ 
+@@ -1820,8 +1822,6 @@
+ 	if (req->curl.http.status == HTTP_STATUS_BAD_REQUEST) {
+ 		kore_curl_response_as_bytes(&req->curl, &body, &len);
+ #if defined(KORE_USE_LONEJSON)
+-		struct acme_badreq_doc	doc;
+-
+ 		memset(&doc, 0, sizeof(doc));
+ 		if (acme_ljson_parse(&acme_badreq_map, &doc, body, len,
+ 		    "acme bad request payload") == KORE_RESULT_OK &&
+@@ -1950,7 +1950,7 @@
+ 	const u_int8_t		*ptr;
+ 
+ 	if (msg->length < sizeof(id))
+-		fatal("%s: invalid length (%zu)", __func__, msg->length);
++		fatal("%s: invalid length (%lu)", "acme_sign_result", (unsigned long)(msg->length));
+ 
+ 	ptr = data;
+ 	memcpy(&id, ptr, sizeof(id));
+@@ -2055,8 +2055,8 @@
+ 	char		*b64;
+ 
+ 	if (!kore_base64url_encode(data, len, &b64, KORE_BASE64_RAW)) {
+-		fatal("%s: failed to encode base64url data of %zu bytes",
+-		    __func__, len);
++		fatal("%s: failed to encode base64url data of %lu bytes",
++		    "acme_base64url", (unsigned long)(len));
+ 	}
+ 
+ 	return (b64);
+@@ -2073,10 +2073,10 @@
+ 
+ 	if (kore_strlcpy(req.domain, domain, sizeof(req.domain)) >=
+ 	    sizeof(req.domain))
+-		fatal("%s: domain truncated", __func__);
+-
+-	kore_buf_init(&buf, sizeof(req) + len);
+-	kore_buf_append(&buf, &req, sizeof(req));
++		fatal("%s: domain truncated", "acme_keymgr_key_req");
++
++	kore_buf_init(&buf, offsetof(struct kore_keyreq, data) + len);
++	kore_buf_append(&buf, &req, offsetof(struct kore_keyreq, data));
+ 
+ 	if (data != NULL)
+ 		kore_buf_append(&buf, data, len);
+--- a/src/buf.c
++++ b/src/buf.c
+@@ -87,7 +87,7 @@
+ 	va_list		copy;
+ 	char		*b, sb[BUFSIZ];
+ 
+-	va_copy(copy, args);
++	__builtin_va_copy(copy, args);
+ 
+ 	l = vsnprintf(sb, sizeof(sb), fmt, args);
+ 	if (l == -1)
+--- a/src/curl.c
++++ b/src/curl.c
+@@ -262,7 +262,7 @@
+ 	struct kore_buf		**buf, *b;
+ 
+ 	if (SIZE_MAX / nmemb < size)
+-		fatal("%s: %zu * %zu overflow", __func__, nmemb, size);
++		fatal("%s: %lu * %lu overflow", "kore_curl_tobuf", (unsigned long)(nmemb), (unsigned long)(size));
+ 
+ 	buf = udata;
+ 	len = size * nmemb;
+@@ -273,12 +273,11 @@
+ 	b = *buf;
+ 
+ 	if (b->offset + len < b->offset)
+-		fatal("%s: %zu+%zu overflows", __func__, b->offset, len);
++		fatal("%s: %lu+%lu overflows", "kore_curl_tobuf", (unsigned long)(b->offset), (unsigned long)(len));
+ 
+ 	if ((b->offset + len) > kore_curl_recv_max) {
+ 		kore_log(LOG_ERR,
+-		    "received too large transfer (%zu > %" PRIu64 ")",
+-		    b->offset + len, kore_curl_recv_max);
++		    "received too large transfer (%lu > %" PRIu64 ")", (unsigned long)(b->offset + len), kore_curl_recv_max);
+ 		return (0);
+ 	}
+ 
+@@ -294,7 +293,7 @@
+ 	struct kore_buf		*buf;
+ 
+ 	if (SIZE_MAX / nmemb < size)
+-		fatal("%s: %zu * %zu overflow", __func__, nmemb, size);
++		fatal("%s: %lu * %lu overflow", "kore_curl_frombuf", (unsigned long)(nmemb), (unsigned long)(size));
+ 
+ 	buf = udata;
+ 	len = size * nmemb;
+@@ -303,7 +302,7 @@
+ 		return (0);
+ 
+ 	if (buf->offset + len < buf->offset)
+-		fatal("%s: %zu+%zu overflows", __func__, buf->offset, len);
++		fatal("%s: %lu+%lu overflows", "kore_curl_frombuf", (unsigned long)(buf->offset), (unsigned long)(len));
+ 
+ 	if ((buf->offset + len) < buf->length) {
+ 		memcpy(ptr, buf->data + buf->offset, len);
+@@ -321,7 +320,7 @@
+ kore_curl_bind_request(struct kore_curl *client, struct http_request *req)
+ {
+ 	if (client->cb != NULL)
+-		fatal("%s: already bound to callback", __func__);
++		fatal("%s: already bound to callback", "kore_curl_bind_request");
+ 
+ 	client->req = req;
+ 	http_request_sleep(req);
+@@ -335,7 +334,7 @@
+     void (*cb)(struct kore_curl *, void *), void *arg)
+ {
+ 	if (client->req != NULL)
+-		fatal("%s: already bound to request", __func__);
++		fatal("%s: already bound to request", "kore_curl_bind_callback");
+ 
+ 	client->cb = cb;
+ 	client->arg = arg;
+@@ -413,7 +412,7 @@
+ 	int		has_body;
+ 
+ 	if (client->handle == NULL)
+-		fatal("%s: called without setup", __func__);
++		fatal("%s: called without setup", "kore_curl_http_setup");
+ 
+ 	mname = NULL;
+ 	has_body = 1;
+@@ -447,7 +446,7 @@
+ 		curl_easy_setopt(client->handle, CURLOPT_POST, 1L);
+ 		break;
+ 	default:
+-		fatal("%s: unknown method %d", __func__, method);
++		fatal("%s: unknown method %d", "kore_curl_http_setup", method);
+ 	}
+ 
+ 	if (has_body && data != NULL && len > 0) {
+@@ -472,7 +471,7 @@
+ 	} else {
+ 		if (data != NULL || len != 0) {
+ 			fatal("%s: %d should not have a body",
+-			    __func__, method);
++			    "kore_curl_http_setup", method);
+ 		}
+ 	}
+ 
+@@ -531,7 +530,7 @@
+ 	char			*value, *hbuf, *headers[HTTP_REQ_HEADER_MAX];
+ 
+ 	if (client->flags & KORE_CURL_FLAG_HTTP_PARSED_HEADERS)
+-		fatal("%s: headers already parsed", __func__);
++		fatal("%s: headers already parsed", "kore_curl_http_parse_headers");
+ 
+ 	client->flags |= KORE_CURL_FLAG_HTTP_PARSED_HEADERS;
+ 
+@@ -569,7 +568,7 @@
+ 		fatal("curl_easy_getinfo: %s", curl_easy_strerror(res));
+ 
+ 	if (client == NULL)
+-		fatal("%s: failed to get client context", __func__);
++		fatal("%s: failed to get client context", "curl_socket");
+ 
+ 	fdc = fd_cache_get(fd);
+ 
+@@ -640,7 +639,7 @@
+ 			fatal("curl_easy_getinfo: %s", curl_easy_strerror(res));
+ 
+ 		if (client == NULL)
+-			fatal("%s: failed to get client context", __func__);
++			fatal("%s: failed to get client context", "curl_process");
+ 
+ 		client->result = msg->data.result;
+ 
+--- a/src/filemap.c
++++ b/src/filemap.c
+@@ -81,7 +81,7 @@
+ 	}
+ 
+ 	if (stat(fpath, &st) == -1) {
+-		kore_log(LOG_ERR, "%s: failed to stat '%s': %s", __func__,
++		kore_log(LOG_ERR, "%s: failed to stat '%s': %s", "kore_filemap_create",
+ 		    fpath, errno_s);
+ 		return (NULL);
+ 	}
+--- a/src/http.c
++++ b/src/http.c
+@@ -635,7 +635,7 @@
+ 		http_response_normal(req, req->owner, code, d, l);
+ 		break;
+ 	default:
+-		fatal("%s: bad proto %d", __func__, req->owner->proto);
++		fatal("%s: bad proto %d", "http_response", req->owner->proto);
+ 		/* NOTREACHED. */
+ 	}
+ }
+@@ -656,7 +656,7 @@
+ 		http_response_normal(req, req->owner, code, d, l);
+ 		break;
+ 	default:
+-		fatal("%s: bad proto %d", __func__, req->owner->proto);
++		fatal("%s: bad proto %d", "http_response_close", req->owner->proto);
+ 		/* NOTREACHED. */
+ 	}
+ }
+@@ -683,7 +683,7 @@
+ 		    http_release_buffer, buf);
+ 		break;
+ 	default:
+-		fatal("%s: bad proto %d", __func__, req->owner->proto);
++		fatal("%s: bad proto %d", "http_response_json", req->owner->proto);
+ 		/* NOTREACHED. */
+ 	}
+ }
+@@ -704,7 +704,7 @@
+ 		http_response_normal(req, req->owner, status, NULL, len);
+ 		break;
+ 	default:
+-		fatal("%s: bad proto %d", __func__, req->owner->proto);
++		fatal("%s: bad proto %d", "http_response_stream", req->owner->proto);
+ 		/* NOTREACHED. */
+ 	}
+ 
+@@ -803,7 +803,7 @@
+ 	struct http_header	*hdr;
+ 
+ 	if (type == HTTP_ARG_TYPE_STRING)
+-		fatal("%s: cannot be called with type string", __func__);
++		fatal("%s: cannot be called with type string", "http_request_header_get");
+ 
+ 	TAILQ_FOREACH(hdr, &req->req_headers, list) {
+ 		if (strcasecmp(hdr->header, header))
+@@ -1457,8 +1457,7 @@
+ 	int		slen;
+ 
+ 	if (len != HTTP_BODY_DIGEST_STRLEN) {
+-		fatal("http_body_digest: bad len:%zu wanted:%u",
+-		    len, HTTP_BODY_DIGEST_STRLEN);
++		fatal("http_body_digest: bad len:%lu wanted:%u", (unsigned long)(len), HTTP_BODY_DIGEST_STRLEN);
+ 	}
+ 
+ 	if (!(req->flags & HTTP_REQUEST_COMPLETE))
+@@ -1608,7 +1607,7 @@
+ 	if (len == 0)
+ 		return;
+ 	if (c->http_pipeline != NULL)
+-		fatal("%s: pipeline already saved", __func__);
++		fatal("%s: pipeline already saved", "http_pipeline_save");
+ 	c->http_pipeline = kore_malloc(len);
+ 	memcpy(c->http_pipeline, data, len);
+ 	c->http_pipeline_len = len;
+@@ -1626,7 +1625,7 @@
+ {
+ 	if (lock->owner != NULL) {
+ 		if (req->runlock != NULL)
+-			fatal("%s: request already waiting on lock", __func__);
++			fatal("%s: request already waiting on lock", "http_runlock_acquire");
+ 
+ 		req->runlock = kore_pool_get(&http_rlq_pool);
+ 		req->runlock->req = req;
+@@ -1648,7 +1647,7 @@
+ 	struct http_request		*nextreq;
+ 
+ 	if (lock->owner != req)
+-		fatal("%s: calling request != owner of runlock", __func__);
++		fatal("%s: calling request != owner of runlock", "http_runlock_release");
+ 
+ 	lock->owner = NULL;
+ 
+@@ -2719,12 +2718,12 @@
+ 		if (status != 204 && status >= 200 &&
+ 		    !(req->flags & HTTP_REQUEST_NO_CONTENT_LENGTH)) {
+ 			kore_buf_appendf(header_buf,
+-			    "content-length: %zu\r\n", len);
++			    "content-length: %lu\r\n", (unsigned long)(len));
+ 		}
+ 	} else {
+ 		if (status != 204 && status >= 200) {
+ 			kore_buf_appendf(header_buf,
+-			    "content-length: %zu\r\n", len);
++			    "content-length: %lu\r\n", (unsigned long)(len));
+ 		}
+ 	}
+ 
+--- a/src/json.c
++++ b/src/json.c
+@@ -208,7 +208,7 @@
+ 		item->data.literal = va_arg(args, int);
+ 		break;
+ 	default:
+-		fatal("%s: unknown type %d", __func__, item->type);
++		fatal("%s: unknown type %d", "kore_json_create_item", item->type);
+ 	}
+ 
+ 	if (name)
+@@ -218,7 +218,7 @@
+ 		if (parent->type != KORE_JSON_TYPE_OBJECT &&
+ 		    parent->type != KORE_JSON_TYPE_ARRAY) {
+ 			fatal("%s: invalid parent type (%d)",
+-			    __func__, parent->type);
++			    "kore_json_create_item", parent->type);
+ 		}
+ 
+ 		TAILQ_INSERT_TAIL(&parent->data.items, item, list);
+@@ -285,12 +285,12 @@
+ 			    json_null_literal, sizeof(json_null_literal));
+ 			break;
+ 		default:
+-			fatal("%s: unknown literal %d", __func__,
++			fatal("%s: unknown literal %d", "kore_json_item_tobuf",
+ 			    item->data.literal);
+ 		}
+ 		break;
+ 	default:
+-		fatal("%s: unknown type %d", __func__, item->type);
++		fatal("%s: unknown type %d", "kore_json_item_tobuf", item->type);
+ 	}
+ }
+ 
+@@ -299,14 +299,14 @@
+     struct kore_json_item *item)
+ {
+ 	if (item->parent != NULL)
+-		fatal("%s: item already has parent", __func__);
++		fatal("%s: item already has parent", "kore_json_item_attach");
+ 
+ 	item->parent = parent;
+ 
+ 	if (parent->type != KORE_JSON_TYPE_OBJECT &&
+ 	    parent->type != KORE_JSON_TYPE_ARRAY) {
+ 		fatal("%s: invalid parent type (%d)",
+-		    __func__, parent->type);
++		    "kore_json_item_attach", parent->type);
+ 	}
+ 
+ 	TAILQ_INSERT_TAIL(&parent->data.items, item, list);
+@@ -427,7 +427,7 @@
+ 	case KORE_JSON_TYPE_INTEGER_U64:
+ 		break;
+ 	default:
+-		fatal("%s: unknown type %d", __func__, item->type);
++		fatal("%s: unknown type %d", "kore_json_item_free", item->type);
+ 	}
+ 
+ 	kore_free(item->name);
+@@ -464,7 +464,7 @@
+ 		item->parse = json_parse_literal;
+ 		break;
+ 	default:
+-		fatal("%s: unknown type %d", __func__, item->type);
++		fatal("%s: unknown type %d", "json_item_alloc", item->type);
+ 	}
+ 
+ 	if (name)
+@@ -474,7 +474,7 @@
+ 		if (parent->type != KORE_JSON_TYPE_OBJECT &&
+ 		    parent->type != KORE_JSON_TYPE_ARRAY) {
+ 			fatal("%s: invalid parent type (%d)",
+-			    __func__, parent->type);
++			    "json_item_alloc", parent->type);
+ 		}
+ 
+ 		TAILQ_INSERT_TAIL(&parent->data.items, item, list);
+--- a/src/keymgr_openssl.c
++++ b/src/keymgr_openssl.c
+@@ -303,7 +303,7 @@
+ 	u_int64_t	now, netwait, last_seed;
+ 
+ 	if (kore_keymgr_active == 0)
+-		fatalx("%s: called with kore_keymgr_active == 0", __func__);
++		fatalx("%s: called with kore_keymgr_active == 0", "kore_keymgr_run");
+ 
+ 	quit = 0;
+ 
+@@ -666,12 +666,12 @@
+ 	const struct kore_keyreq	*req;
+ 	struct key			*key;
+ 
+-	if (msg->length < sizeof(*req))
++	if (msg->length < offsetof(struct kore_keyreq, data))
+ 		return;
+ 
+ 	req = (const struct kore_keyreq *)data;
+ 
+-	if (msg->length != (sizeof(*req) + req->data_len))
++	if (msg->length != (offsetof(struct kore_keyreq, data) + req->data_len))
+ 		return;
+ 
+ 	if (req->domain[KORE_DOMAINNAME_LEN] != '\0')
+@@ -755,10 +755,10 @@
+ 
+ 	if (kore_strlcpy(hdr.domain, domain, sizeof(hdr.domain)) >=
+ 	    sizeof(hdr.domain))
+-		fatalx("%s: domain truncated", __func__);
+-
+-	kore_buf_init(&buf, sizeof(hdr) + len);
+-	kore_buf_append(&buf, &hdr, sizeof(hdr));
++		fatalx("%s: domain truncated", "keymgr_x509_msg");
++
++	kore_buf_init(&buf, offsetof(struct kore_x509_msg, data) + len);
++	kore_buf_append(&buf, &hdr, offsetof(struct kore_x509_msg, data));
+ 	kore_buf_append(&buf, data, len);
+ 
+ 	kore_msg_send(target, msg, buf.data, buf.offset);
+@@ -893,7 +893,7 @@
+ 		order = NULL;
+ 		break;
+ 	default:
+-		fatalx("%s: unknown order state %d", __func__, order->state);
++		fatalx("%s: unknown order state %d", "keymgr_acme_order_start", order->state);
+ 	}
+ 
+ 	if (order != NULL) {
+@@ -987,10 +987,10 @@
+ 	}
+ 
+ 	if (key == NULL)
+-		fatalx("%s: missing key", __func__);
++		fatalx("%s: missing key", "keymgr_acme_sign");
+ 
+ 	if (msg->length < sizeof(id))
+-		fatalx("%s: invalid length (%zu)", __func__, msg->length);
++		fatalx("%s: invalid length (%lu)", "keymgr_acme_sign", (unsigned long)(msg->length));
+ 
+ 	ptr = data;
+ 	memcpy(&id, ptr, sizeof(id));
+@@ -1013,7 +1013,7 @@
+ 		fatalx("EVP_SignFinal: %s", ssl_errno_s);
+ 
+ 	if (!kore_base64url_encode(sig, siglen, &b64, KORE_BASE64_RAW))
+-		fatalx("%s: failed to b64url encode signed data", __func__);
++		fatalx("%s: failed to b64url encode signed data", "keymgr_acme_sign");
+ 
+ 	kore_buf_init(&buf, siglen + sizeof(id));
+ 	kore_buf_append(&buf, &id, sizeof(id));
+@@ -1039,7 +1039,7 @@
+ 	if (fd == -1)
+ 		fatalx("open(%s): %s", key->dom->certfile, errno_s);
+ 
+-	kore_log(LOG_INFO, "writing %zu bytes of data", len);
++	kore_log(LOG_INFO, "writing %lu bytes of data", (unsigned long)(len));
+ 
+ 	for (;;) {
+ 		ret = write(fd, data, len);
+@@ -1053,8 +1053,8 @@
+ 	}
+ 
+ 	if ((size_t)ret != len) {
+-		fatalx("incorrect write on %s (%zd/%zu)",
+-		    key->dom->certfile, ret, len);
++		fatalx("incorrect write on %s (%ld/%lu)",
++		    key->dom->certfile, (long)(ret), (unsigned long)(len));
+ 	}
+ 
+ 	if (close(fd) == -1) {
+@@ -1079,7 +1079,7 @@
+ 	u_int32_t	retry;
+ 
+ 	if (len != sizeof(retry)) {
+-		kore_log(LOG_ERR, "%s: invalid payload (%zu)", __func__, len);
++		kore_log(LOG_ERR, "%s: invalid payload (%lu)", "keymgr_acme_order_failed", (unsigned long)(len));
+ 		return;
+ 	}
+ 
+@@ -1104,7 +1104,7 @@
+ 	    key->dom->domain);
+ 
+ 	if (len != SHA256_DIGEST_LENGTH)
+-		fatalx("invalid digest length of %zu bytes", len);
++		fatalx("invalid digest length of %lu bytes", (unsigned long)(len));
+ 
+ 	if ((x509 = X509_new()) == NULL)
+ 		fatalx("X509_new(): %s", ssl_errno_s);
+@@ -1265,7 +1265,7 @@
+ 	int			 der_len;
+ 
+ 	if (len != SHA256_DIGEST_LENGTH)
+-		fatalx("invalid digest length of %zu bytes", len);
++		fatalx("invalid digest length of %lu bytes", (unsigned long)(len));
+ 
+ 	if ((aos = ASN1_OCTET_STRING_new()) == NULL)
+ 		fatalx("ASN1_OCTET_STRING_new(): %s", ssl_errno_s);
+@@ -1385,8 +1385,7 @@
+ 	const u_int8_t		*buf;
+ 
+ 	if (len != ASN1_GENERALIZEDTIME_LEN) {
+-		kore_log(LOG_ERR, "invalid GENERALIZEDTIME: too short (%zu)",
+-		    len);
++		kore_log(LOG_ERR, "invalid GENERALIZEDTIME: too short (%lu)", (unsigned long)(len));
+ 		return (KORE_RESULT_ERROR);
+ 	}
+ 
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -28,6 +28,10 @@
+ #include <signal.h>
+ 
+ #include "kore.h"
++
++#if defined(KORE_VECTIS_EMBEDDED_RUNTIME)
++extern void vectis_kore_parent_timers(void);
++#endif
+ #include "hooks.h"
+ 
+ #if !defined(KORE_NO_HTTP)
+@@ -959,8 +963,6 @@
+ 	kore_timer_init();
+ 
+ #if defined(KORE_VECTIS_EMBEDDED_RUNTIME)
+-	extern void	vectis_kore_parent_timers(void);
+-
+ 	vectis_kore_parent_timers();
+ #endif
+ 
+--- a/src/linux.c
++++ b/src/linux.c
+@@ -275,7 +275,7 @@
+ 		fatalx("getrandom(): %s", errno_s);
+ 
+ 	if ((size_t)ret != sizeof(val))
+-		fatalx("getrandom() %zd != %zu", ret, sizeof(val));
++		fatalx("getrandom() %ld != %lu", (long)(ret), (unsigned long)(sizeof(val)));
+ 
+ 	return (val);
+ }
+--- a/src/log.c
++++ b/src/log.c
+@@ -29,7 +29,7 @@
+ 	int		prio;
+ 	u_int16_t	wid;
+ 	size_t		loglen;
+-	char		logmsg[];
++	char		logmsg[1];
+ };
+ 
+ static void	log_print(int, const char *, ...)
+@@ -184,7 +184,7 @@
+ 	va_end(args);
+ 
+ 	if (worker != NULL) {
+-		kore_buf_init(&pkt, sizeof(wlog) + buf.offset);
++		kore_buf_init(&pkt, offsetof(struct kore_wlog, logmsg) + buf.offset);
+ 
+ 		memset(&wlog, 0, sizeof(wlog));
+ 
+@@ -192,7 +192,7 @@
+ 		wlog.wid = worker->id;
+ 		wlog.loglen = buf.offset;
+ 
+-		kore_buf_append(&pkt, &wlog, sizeof(wlog));
++		kore_buf_append(&pkt, &wlog, offsetof(struct kore_wlog, logmsg));
+ 		kore_buf_append(&pkt, buf.data, buf.offset);
+ 
+ 		kore_msg_send(KORE_MSG_PARENT, KORE_MSG_WORKER_LOG,
+@@ -221,16 +221,15 @@
+ 	const struct kore_wlog	*wlog;
+ 	struct kore_buf		buf;
+ 
+-	if (msg->length < sizeof(*wlog)) {
++	if (msg->length < offsetof(struct kore_wlog, logmsg)) {
+ 		kore_log(LOG_NOTICE,
+-		    "too short worker log received (%zu < %zu)",
+-		    msg->length, sizeof(*wlog));
++		    "too short worker log received (%lu < %lu)", (unsigned long)(msg->length), (unsigned long)offsetof(struct kore_wlog, logmsg));
+ 		return;
+ 	}
+ 
+ 	wlog = data;
+ 	name = kore_worker_name(wlog->wid);
+-	if (wlog->loglen != msg->length - sizeof(*wlog)) {
++	if (wlog->loglen != msg->length - offsetof(struct kore_wlog, logmsg)) {
+ 		kore_log(LOG_NOTICE, "invalid worker log length");
+ 		return;
+ 	}
+--- a/src/mem.c
++++ b/src/mem.c
+@@ -48,7 +48,7 @@
+ 	TAILQ_ENTRY(tag)	list;
+ };
+ 
+-static inline struct meminfo	*meminfo(void *);
++static struct meminfo	*meminfo(void *);
+ static void			*mem_alloc(size_t);
+ static size_t			mem_index(size_t);
+ 
+@@ -72,7 +72,7 @@
+ 	kore_pool_init(&tag_pool, "tag_pool", sizeof(struct tag), 4);
+ 
+ 	for (i = 0; i < KORE_MEM_POOLS; i++) {
+-		len = snprintf(name, sizeof(name), "block-%zu", size);
++		len = snprintf(name, sizeof(name), "block-%lu", (unsigned long)(size));
+ 		if (len == -1 || (size_t)len >= sizeof(name))
+ 			fatal("kore_mem_init: snprintf");
+ 
+@@ -102,7 +102,7 @@
+ 
+ 	if ((ptr = mmap(NULL, len, PROT_READ | PROT_WRITE,
+ 	    MAP_ANONYMOUS | MAP_PRIVATE, -1, 0)) == MAP_FAILED)
+-		fatal("%s: mmap: %s", __func__, errno_s);
++		fatal("%s: mmap: %s", "kore_mmap_region", errno_s);
+ 
+ 	return (ptr);
+ }
+@@ -186,7 +186,7 @@
+ 		kore_pool_put(&mempools[idx], addr);
+ 	} else {
+ 		if (munmap(addr, sizeof(*mem) + mem->len) == -1)
+-			fatal("%s: munmap: %s", __func__, errno_s);
++			fatal("%s: munmap: %s", "kore_free", errno_s);
+ 	}
+ }
+ 
+@@ -317,7 +317,7 @@
+ 	return (idx);
+ }
+ 
+-static inline struct meminfo *
++static struct meminfo *
+ meminfo(void *ptr)
+ {
+ 	return ((struct meminfo *)((u_int8_t *)ptr - sizeof(struct meminfo)));
+--- a/src/module.c
++++ b/src/module.c
+@@ -41,10 +41,11 @@
+ static void	*native_getsym(struct kore_module *, const char *);
+ 
+ struct kore_module_functions kore_native_module = {
+-	.free = native_free,
+-	.load = native_load,
+-	.getsym = native_getsym,
+-	.reload = native_reload,
++	native_free,
++	native_reload,
++	NULL,
++	native_load,
++	native_getsym
+ };
+ 
+ void
+--- a/src/pool.c
++++ b/src/pool.c
+@@ -74,7 +74,7 @@
+ 		elm = POOL_MIN_ELEMENTS;
+ 
+ 	if ((pagesz = sysconf(_SC_PAGESIZE)) == -1)
+-		fatal("%s: sysconf: %s", __func__, errno_s);
++		fatal("%s: sysconf: %s", "kore_pool_init", errno_s);
+ 
+ 	if ((pool->name = strdup(name)) == NULL)
+ 		fatal("kore_pool_init: strdup %s", errno_s);
+@@ -256,13 +256,13 @@
+ 			p += pool->elmlen;
+ 
+ 			if (((uintptr_t)p % pool->pagesz) != 0)
+-				fatal("%s: misaligned page", __func__);
++				fatal("%s: misaligned page", "pool_grow");
+ 
+ 			if (mprotect(p, pool->pagesz, PROT_NONE) == -1)
+-				fatal("%s: mprotect: %s", __func__, errno_s);
++				fatal("%s: mprotect: %s", "pool_grow", errno_s);
+ 
+ 			if (madvise(p, pool->pagesz, MADV_FREE) == -1)
+-				fatal("%s: madvise: %s", __func__, errno_s);
++				fatal("%s: madvise: %s", "pool_grow", errno_s);
+ 		}
+ 	}
+ 
+@@ -274,7 +274,7 @@
+ pool_mark_entry_none(struct kore_pool *pool, void *ptr)
+ {
+ 	if (mprotect(ptr, pool->memsz - pool->pagesz, PROT_NONE) == -1)
+-		fatal("%s: mprotect: %s", __func__, errno_s);
++		fatal("%s: mprotect: %s", "pool_mark_entry_none", errno_s);
+ }
+ 
+ static void
+@@ -282,7 +282,7 @@
+ {
+ 	if (mprotect(ptr, pool->memsz - pool->pagesz,
+ 	    PROT_READ | PROT_WRITE) == -1)
+-		fatal("%s: mprotect: %s", __func__, errno_s);
++		fatal("%s: mprotect: %s", "pool_mark_entry_rw", errno_s);
+ }
+ 
+ #if defined(KORE_USE_TASKS)
+--- a/src/runtime.c
++++ b/src/runtime.c
+@@ -50,20 +50,21 @@
+ 
+ struct kore_runtime kore_native_runtime = {
+ 	KORE_RUNTIME_NATIVE,
+-#if !defined(KORE_NO_HTTP)
+-	.http_request = native_runtime_http_request,
+-	.http_request_free = native_runtime_http_request_free,
+-	.http_body_chunk = native_runtime_http_body_chunk,
+-	.validator = native_runtime_validator,
+-	.wsconnect = native_runtime_connect,
+-	.wsmessage = native_runtime_wsmessage,
+-	.wsdisconnect = native_runtime_connect,
+-#endif
+-	.onload = native_runtime_onload,
+-	.signal = native_runtime_signal,
+-	.connect = native_runtime_connect,
+-	.execute = native_runtime_execute,
+-	.configure = native_runtime_configure
++	NULL,
++#if !defined(KORE_NO_HTTP)
++	native_runtime_http_request,
++	native_runtime_http_request_free,
++	native_runtime_http_body_chunk,
++	native_runtime_validator,
++	native_runtime_connect,
++	native_runtime_connect,
++	native_runtime_wsmessage,
++#endif
++	native_runtime_execute,
++	native_runtime_onload,
++	native_runtime_signal,
++	native_runtime_connect,
++	native_runtime_configure
+ };
+ 
+ static struct kore_runtime *runtimes[] = {
+--- a/src/seccomp.c
++++ b/src/seccomp.c
+@@ -444,10 +444,12 @@
+ kore_seccomp_syscall_filter(const char *name, int action)
+ {
+ 	struct sock_filter	filter[] = {
+-		KORE_SYSCALL_FILTER(exit, action),
++		KORE_SYSCALL_FILTER(exit, 0),
+ 		KORE_BPF_GUARD
+ 	};
+ 
++	filter[1].k = action;
++
+ 	return (seccomp_filter_update(filter, name, KORE_FILTER_LEN(filter)));
+ }
+ 
+@@ -455,10 +457,16 @@
+ kore_seccomp_syscall_arg(const char *name, int action, int arg, int value)
+ {
+ 	struct sock_filter	filter[] = {
+-		KORE_SYSCALL_ARG(exit, arg, value, action),
++		KORE_SYSCALL_ARG(exit, 0, 0, 0),
+ 		KORE_BPF_GUARD
+ 	};
+ 
++	filter[1].k = offsetof(struct seccomp_data, args[0]) + arg * sizeof(uint64_t) + ARGS_LO_OFFSET;
++	filter[2].k = (uint32_t)value;
++	filter[3].k = offsetof(struct seccomp_data, args[0]) + arg * sizeof(uint64_t) + ARGS_HI_OFFSET;
++	filter[4].k = (uint32_t)((uint64_t)value >> 32);
++	filter[5].k = action;
++
+ 	return (seccomp_filter_update(filter, name, KORE_FILTER_LEN(filter)));
+ }
+ 
+@@ -466,10 +474,16 @@
+ kore_seccomp_syscall_mask(const char *name, int action, int arg, int value)
+ {
+ 	struct sock_filter	filter[] = {
+-		KORE_SYSCALL_MASK(exit, arg, value, action),
++		KORE_SYSCALL_MASK(exit, 0, 0, 0),
+ 		KORE_BPF_GUARD
+ 	};
+ 
++	filter[1].k = offsetof(struct seccomp_data, args[0]) + arg * sizeof(uint64_t) + ARGS_LO_OFFSET;
++	filter[2].k = ~((uint32_t)value);
++	filter[4].k = offsetof(struct seccomp_data, args[0]) + arg * sizeof(uint64_t) + ARGS_HI_OFFSET;
++	filter[5].k = ~((uint32_t)((uint64_t)value >> 32));
++	filter[7].k = action;
++
+ 	return (seccomp_filter_update(filter, name, KORE_FILTER_LEN(filter)));
+ }
+ 
+@@ -477,9 +491,15 @@
+ kore_seccomp_syscall_flag(const char *name, int action, int arg, int value)
+ {
+ 	struct sock_filter	filter[] = {
+-		KORE_SYSCALL_WITH_FLAG(exit, arg, value, action),
++		KORE_SYSCALL_WITH_FLAG(exit, 0, 0, 0),
+ 		KORE_BPF_GUARD
+ 	};
++
++	filter[1].k = offsetof(struct seccomp_data, args[0]) + arg * sizeof(uint64_t) + ARGS_LO_OFFSET;
++	filter[2].k = filter[3].k = (uint32_t)value;
++	filter[4].k = offsetof(struct seccomp_data, args[0]) + arg * sizeof(uint64_t) + ARGS_HI_OFFSET;
++	filter[5].k = filter[6].k = (uint32_t)((uint64_t)value >> 32);
++	filter[7].k = action;
+ 
+ 	return (seccomp_filter_update(filter, name, KORE_FILTER_LEN(filter)));
+ }
+--- a/src/sha2.c
++++ b/src/sha2.c
+@@ -216,70 +216,70 @@
+ 
+ /* Hash constant words K for SHA-384 and SHA-512: */
+ static const u_int64_t K512[80] = {
+-	0x428a2f98d728ae22ULL, 0x7137449123ef65cdULL,
+-	0xb5c0fbcfec4d3b2fULL, 0xe9b5dba58189dbbcULL,
+-	0x3956c25bf348b538ULL, 0x59f111f1b605d019ULL,
+-	0x923f82a4af194f9bULL, 0xab1c5ed5da6d8118ULL,
+-	0xd807aa98a3030242ULL, 0x12835b0145706fbeULL,
+-	0x243185be4ee4b28cULL, 0x550c7dc3d5ffb4e2ULL,
+-	0x72be5d74f27b896fULL, 0x80deb1fe3b1696b1ULL,
+-	0x9bdc06a725c71235ULL, 0xc19bf174cf692694ULL,
+-	0xe49b69c19ef14ad2ULL, 0xefbe4786384f25e3ULL,
+-	0x0fc19dc68b8cd5b5ULL, 0x240ca1cc77ac9c65ULL,
+-	0x2de92c6f592b0275ULL, 0x4a7484aa6ea6e483ULL,
+-	0x5cb0a9dcbd41fbd4ULL, 0x76f988da831153b5ULL,
+-	0x983e5152ee66dfabULL, 0xa831c66d2db43210ULL,
+-	0xb00327c898fb213fULL, 0xbf597fc7beef0ee4ULL,
+-	0xc6e00bf33da88fc2ULL, 0xd5a79147930aa725ULL,
+-	0x06ca6351e003826fULL, 0x142929670a0e6e70ULL,
+-	0x27b70a8546d22ffcULL, 0x2e1b21385c26c926ULL,
+-	0x4d2c6dfc5ac42aedULL, 0x53380d139d95b3dfULL,
+-	0x650a73548baf63deULL, 0x766a0abb3c77b2a8ULL,
+-	0x81c2c92e47edaee6ULL, 0x92722c851482353bULL,
+-	0xa2bfe8a14cf10364ULL, 0xa81a664bbc423001ULL,
+-	0xc24b8b70d0f89791ULL, 0xc76c51a30654be30ULL,
+-	0xd192e819d6ef5218ULL, 0xd69906245565a910ULL,
+-	0xf40e35855771202aULL, 0x106aa07032bbd1b8ULL,
+-	0x19a4c116b8d2d0c8ULL, 0x1e376c085141ab53ULL,
+-	0x2748774cdf8eeb99ULL, 0x34b0bcb5e19b48a8ULL,
+-	0x391c0cb3c5c95a63ULL, 0x4ed8aa4ae3418acbULL,
+-	0x5b9cca4f7763e373ULL, 0x682e6ff3d6b2b8a3ULL,
+-	0x748f82ee5defb2fcULL, 0x78a5636f43172f60ULL,
+-	0x84c87814a1f0ab72ULL, 0x8cc702081a6439ecULL,
+-	0x90befffa23631e28ULL, 0xa4506cebde82bde9ULL,
+-	0xbef9a3f7b2c67915ULL, 0xc67178f2e372532bULL,
+-	0xca273eceea26619cULL, 0xd186b8c721c0c207ULL,
+-	0xeada7dd6cde0eb1eULL, 0xf57d4f7fee6ed178ULL,
+-	0x06f067aa72176fbaULL, 0x0a637dc5a2c898a6ULL,
+-	0x113f9804bef90daeULL, 0x1b710b35131c471bULL,
+-	0x28db77f523047d84ULL, 0x32caab7b40c72493ULL,
+-	0x3c9ebe0a15c9bebcULL, 0x431d67c49c100d4cULL,
+-	0x4cc5d4becb3e42b6ULL, 0x597f299cfc657e2aULL,
+-	0x5fcb6fab3ad6faecULL, 0x6c44198c4a475817ULL
++	(((u_int64_t)0x428a2f98UL << 32) | 0xd728ae22UL), (((u_int64_t)0x71374491UL << 32) | 0x23ef65cdUL),
++	(((u_int64_t)0xb5c0fbcfUL << 32) | 0xec4d3b2fUL), (((u_int64_t)0xe9b5dba5UL << 32) | 0x8189dbbcUL),
++	(((u_int64_t)0x3956c25bUL << 32) | 0xf348b538UL), (((u_int64_t)0x59f111f1UL << 32) | 0xb605d019UL),
++	(((u_int64_t)0x923f82a4UL << 32) | 0xaf194f9bUL), (((u_int64_t)0xab1c5ed5UL << 32) | 0xda6d8118UL),
++	(((u_int64_t)0xd807aa98UL << 32) | 0xa3030242UL), (((u_int64_t)0x12835b01UL << 32) | 0x45706fbeUL),
++	(((u_int64_t)0x243185beUL << 32) | 0x4ee4b28cUL), (((u_int64_t)0x550c7dc3UL << 32) | 0xd5ffb4e2UL),
++	(((u_int64_t)0x72be5d74UL << 32) | 0xf27b896fUL), (((u_int64_t)0x80deb1feUL << 32) | 0x3b1696b1UL),
++	(((u_int64_t)0x9bdc06a7UL << 32) | 0x25c71235UL), (((u_int64_t)0xc19bf174UL << 32) | 0xcf692694UL),
++	(((u_int64_t)0xe49b69c1UL << 32) | 0x9ef14ad2UL), (((u_int64_t)0xefbe4786UL << 32) | 0x384f25e3UL),
++	(((u_int64_t)0x0fc19dc6UL << 32) | 0x8b8cd5b5UL), (((u_int64_t)0x240ca1ccUL << 32) | 0x77ac9c65UL),
++	(((u_int64_t)0x2de92c6fUL << 32) | 0x592b0275UL), (((u_int64_t)0x4a7484aaUL << 32) | 0x6ea6e483UL),
++	(((u_int64_t)0x5cb0a9dcUL << 32) | 0xbd41fbd4UL), (((u_int64_t)0x76f988daUL << 32) | 0x831153b5UL),
++	(((u_int64_t)0x983e5152UL << 32) | 0xee66dfabUL), (((u_int64_t)0xa831c66dUL << 32) | 0x2db43210UL),
++	(((u_int64_t)0xb00327c8UL << 32) | 0x98fb213fUL), (((u_int64_t)0xbf597fc7UL << 32) | 0xbeef0ee4UL),
++	(((u_int64_t)0xc6e00bf3UL << 32) | 0x3da88fc2UL), (((u_int64_t)0xd5a79147UL << 32) | 0x930aa725UL),
++	(((u_int64_t)0x06ca6351UL << 32) | 0xe003826fUL), (((u_int64_t)0x14292967UL << 32) | 0x0a0e6e70UL),
++	(((u_int64_t)0x27b70a85UL << 32) | 0x46d22ffcUL), (((u_int64_t)0x2e1b2138UL << 32) | 0x5c26c926UL),
++	(((u_int64_t)0x4d2c6dfcUL << 32) | 0x5ac42aedUL), (((u_int64_t)0x53380d13UL << 32) | 0x9d95b3dfUL),
++	(((u_int64_t)0x650a7354UL << 32) | 0x8baf63deUL), (((u_int64_t)0x766a0abbUL << 32) | 0x3c77b2a8UL),
++	(((u_int64_t)0x81c2c92eUL << 32) | 0x47edaee6UL), (((u_int64_t)0x92722c85UL << 32) | 0x1482353bUL),
++	(((u_int64_t)0xa2bfe8a1UL << 32) | 0x4cf10364UL), (((u_int64_t)0xa81a664bUL << 32) | 0xbc423001UL),
++	(((u_int64_t)0xc24b8b70UL << 32) | 0xd0f89791UL), (((u_int64_t)0xc76c51a3UL << 32) | 0x0654be30UL),
++	(((u_int64_t)0xd192e819UL << 32) | 0xd6ef5218UL), (((u_int64_t)0xd6990624UL << 32) | 0x5565a910UL),
++	(((u_int64_t)0xf40e3585UL << 32) | 0x5771202aUL), (((u_int64_t)0x106aa070UL << 32) | 0x32bbd1b8UL),
++	(((u_int64_t)0x19a4c116UL << 32) | 0xb8d2d0c8UL), (((u_int64_t)0x1e376c08UL << 32) | 0x5141ab53UL),
++	(((u_int64_t)0x2748774cUL << 32) | 0xdf8eeb99UL), (((u_int64_t)0x34b0bcb5UL << 32) | 0xe19b48a8UL),
++	(((u_int64_t)0x391c0cb3UL << 32) | 0xc5c95a63UL), (((u_int64_t)0x4ed8aa4aUL << 32) | 0xe3418acbUL),
++	(((u_int64_t)0x5b9cca4fUL << 32) | 0x7763e373UL), (((u_int64_t)0x682e6ff3UL << 32) | 0xd6b2b8a3UL),
++	(((u_int64_t)0x748f82eeUL << 32) | 0x5defb2fcUL), (((u_int64_t)0x78a5636fUL << 32) | 0x43172f60UL),
++	(((u_int64_t)0x84c87814UL << 32) | 0xa1f0ab72UL), (((u_int64_t)0x8cc70208UL << 32) | 0x1a6439ecUL),
++	(((u_int64_t)0x90befffaUL << 32) | 0x23631e28UL), (((u_int64_t)0xa4506cebUL << 32) | 0xde82bde9UL),
++	(((u_int64_t)0xbef9a3f7UL << 32) | 0xb2c67915UL), (((u_int64_t)0xc67178f2UL << 32) | 0xe372532bUL),
++	(((u_int64_t)0xca273eceUL << 32) | 0xea26619cUL), (((u_int64_t)0xd186b8c7UL << 32) | 0x21c0c207UL),
++	(((u_int64_t)0xeada7dd6UL << 32) | 0xcde0eb1eUL), (((u_int64_t)0xf57d4f7fUL << 32) | 0xee6ed178UL),
++	(((u_int64_t)0x06f067aaUL << 32) | 0x72176fbaUL), (((u_int64_t)0x0a637dc5UL << 32) | 0xa2c898a6UL),
++	(((u_int64_t)0x113f9804UL << 32) | 0xbef90daeUL), (((u_int64_t)0x1b710b35UL << 32) | 0x131c471bUL),
++	(((u_int64_t)0x28db77f5UL << 32) | 0x23047d84UL), (((u_int64_t)0x32caab7bUL << 32) | 0x40c72493UL),
++	(((u_int64_t)0x3c9ebe0aUL << 32) | 0x15c9bebcUL), (((u_int64_t)0x431d67c4UL << 32) | 0x9c100d4cUL),
++	(((u_int64_t)0x4cc5d4beUL << 32) | 0xcb3e42b6UL), (((u_int64_t)0x597f299cUL << 32) | 0xfc657e2aUL),
++	(((u_int64_t)0x5fcb6fabUL << 32) | 0x3ad6faecUL), (((u_int64_t)0x6c44198cUL << 32) | 0x4a475817UL)
+ };
+ 
+ /* Initial hash value H for SHA-512 */
+ static const u_int64_t sha512_initial_hash_value[8] = {
+-	0x6a09e667f3bcc908ULL,
+-	0xbb67ae8584caa73bULL,
+-	0x3c6ef372fe94f82bULL,
+-	0xa54ff53a5f1d36f1ULL,
+-	0x510e527fade682d1ULL,
+-	0x9b05688c2b3e6c1fULL,
+-	0x1f83d9abfb41bd6bULL,
+-	0x5be0cd19137e2179ULL
++	(((u_int64_t)0x6a09e667UL << 32) | 0xf3bcc908UL),
++	(((u_int64_t)0xbb67ae85UL << 32) | 0x84caa73bUL),
++	(((u_int64_t)0x3c6ef372UL << 32) | 0xfe94f82bUL),
++	(((u_int64_t)0xa54ff53aUL << 32) | 0x5f1d36f1UL),
++	(((u_int64_t)0x510e527fUL << 32) | 0xade682d1UL),
++	(((u_int64_t)0x9b05688cUL << 32) | 0x2b3e6c1fUL),
++	(((u_int64_t)0x1f83d9abUL << 32) | 0xfb41bd6bUL),
++	(((u_int64_t)0x5be0cd19UL << 32) | 0x137e2179UL)
+ };
+ 
+ /* Initial hash value H for SHA-384 */
+ static const u_int64_t sha384_initial_hash_value[8] = {
+-	0xcbbb9d5dc1059ed8ULL,
+-	0x629a292a367cd507ULL,
+-	0x9159015a3070dd17ULL,
+-	0x152fecd8f70e5939ULL,
+-	0x67332667ffc00b31ULL,
+-	0x8eb44a8768581511ULL,
+-	0xdb0c2e0d64f98fa7ULL,
+-	0x47b5481dbefa4fa4ULL
++	(((u_int64_t)0xcbbb9d5dUL << 32) | 0xc1059ed8UL),
++	(((u_int64_t)0x629a292aUL << 32) | 0x367cd507UL),
++	(((u_int64_t)0x9159015aUL << 32) | 0x3070dd17UL),
++	(((u_int64_t)0x152fecd8UL << 32) | 0xf70e5939UL),
++	(((u_int64_t)0x67332667UL << 32) | 0xffc00b31UL),
++	(((u_int64_t)0x8eb44a87UL << 32) | 0x68581511UL),
++	(((u_int64_t)0xdb0c2e0dUL << 32) | 0x64f98fa7UL),
++	(((u_int64_t)0x47b5481dUL << 32) | 0xbefa4fa4UL)
+ };
+ 
+ /*** SHA-256: *********************************************************/
+@@ -541,10 +541,13 @@
+ void
+ SHA256Final(u_int8_t digest[SHA256_DIGEST_LENGTH], SHA2_CTX *context)
+ {
+-	SHA256Pad(context);
+-
+ #if BYTE_ORDER == LITTLE_ENDIAN
+ 	int	i;
++#endif
++
++	SHA256Pad(context);
++
++#if BYTE_ORDER == LITTLE_ENDIAN
+ 
+ 	/* Convert TO host byte order */
+ 	for (i = 0; i < 8; i++)
+@@ -817,10 +820,13 @@
+ void
+ SHA512Final(u_int8_t digest[SHA512_DIGEST_LENGTH], SHA2_CTX *context)
+ {
+-	SHA512Pad(context);
+-
+ #if BYTE_ORDER == LITTLE_ENDIAN
+ 	int	i;
++#endif
++
++	SHA512Pad(context);
++
++#if BYTE_ORDER == LITTLE_ENDIAN
+ 
+ 	/* Convert TO host byte order */
+ 	for (i = 0; i < 8; i++)
+@@ -863,10 +869,13 @@
+ void
+ SHA384Final(u_int8_t digest[SHA384_DIGEST_LENGTH], SHA2_CTX *context)
+ {
+-	SHA384Pad(context);
+-
+ #if BYTE_ORDER == LITTLE_ENDIAN
+ 	int	i;
++#endif
++
++	SHA384Pad(context);
++
++#if BYTE_ORDER == LITTLE_ENDIAN
+ 
+ 	/* Convert TO host byte order */
+ 	for (i = 0; i < 6; i++)
+--- a/src/tls_openssl.c
++++ b/src/tls_openssl.c
+@@ -284,7 +284,7 @@
+ 			fatalx("SSL_CTX_use_certificate: %s", ssl_errno_s);
+ 		break;
+ 	default:
+-		fatalx("%s: unknown type %d", __func__, type);
++		fatalx("%s: unknown type %d", "kore_tls_domain_setup", type);
+ 	}
+ 
+ 	if (x509 == NULL) {
+@@ -657,7 +657,7 @@
+ 		return (NULL);
+ 
+ 	if ((fp = fopen(path, "r")) == NULL)
+-		fatalx("%s(%s): %s", __func__, path, errno_s);
++		fatalx("%s(%s): %s", "kore_tls_rsakey_load", path, errno_s);
+ 
+ 	if ((pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL)) == NULL)
+ 		fatalx("PEM_read_PrivateKey: %s", ssl_errno_s);
+@@ -842,7 +842,7 @@
+ 	const char		*sname;
+ 
+ 	if ((c = SSL_get_ex_data(ssl, 0)) == NULL)
+-		fatal("no connection data in %s", __func__);
++		fatal("no connection data in %s", "tls_sni_cb");
+ 
+ 	sname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+ 
+@@ -906,7 +906,7 @@
+ 	struct kore_keyreq	*req;
+ 	struct kore_domain	*dom;
+ 
+-	len = sizeof(*req) + flen;
++	len = offsetof(struct kore_keyreq, data) + flen;
+ 	if (len > sizeof(keymgr_buf))
+ 		fatal("keymgr_buf too small");
+ 
+@@ -919,7 +919,7 @@
+ 
+ 	if (kore_strlcpy(req->domain, dom->domain, sizeof(req->domain)) >=
+ 	    sizeof(req->domain))
+-		fatal("%s: domain truncated", __func__);
++		fatal("%s: domain truncated", "tls_keymgr_rsa_privenc");
+ 
+ 	req->data_len = flen;
+ 	req->padding = padding;
+@@ -1064,7 +1064,7 @@
+ 		fatal("X509_STORE_CTX_get_ex_data: no data");
+ 
+ 	if ((c = SSL_get_ex_data(tls, 0)) == NULL)
+-		fatal("no connection data in %s", __func__);
++		fatal("no connection data in %s", "tls_domain_x509_verify");
+ 
+ 	error = X509_STORE_CTX_get_error(ctx);
+ 	cert = X509_STORE_CTX_get_current_cert(ctx);
+@@ -1183,7 +1183,7 @@
+ 	struct connection	*c;
+ 
+ 	if ((c = SSL_get_ex_data(ssl, 0)) == NULL)
+-		fatal("%s: no connection data present", __func__);
++		fatal("%s: no connection data present", "tls_acme_alpn");
+ 
+ 	if (inlen != sizeof(acme_alpn_name))
+ 		return (SSL_TLSEXT_ERR_NOACK);
+@@ -1231,7 +1231,7 @@
+ 	    dom->domain);
+ 
+ 	if ((c = SSL_get_ex_data(ssl, 0)) == NULL)
+-		fatal("%s: no connection data present", __func__);
++		fatal("%s: no connection data present", "tls_acme_challenge_set_cert");
+ 
+ 	ptr = dom->acme_cert;
+ 	if ((x509 = d2i_X509(NULL, &ptr, dom->acme_cert_len)) == NULL)
+--- a/src/utils.c
++++ b/src/utils.c
+@@ -108,10 +108,10 @@
+ 	return (KORE_RESULT_OK);
+ }
+ 
+-long long
+-kore_strtonum(const char *str, int base, long long min, long long max, int *err)
+-{
+-	long long	l;
++int64_t
++kore_strtonum(const char *str, int base, int64_t min, int64_t max, int *err)
++{
++	int64_t	l;
+ 	char		*ep;
+ 
+ 	if (min > max) {
+@@ -144,7 +144,7 @@
+ kore_strtonum64(const char *str, int sign, int *err)
+ {
+ 	u_int64_t	l;
+-	long long	ll;
++	int64_t	ll;
+ 	char		*ep;
+ 	int		check;
+ 
+@@ -153,7 +153,7 @@
+ 
+ 	ll = strtoll(str, &ep, 10);
+ 	if ((errno == EINVAL || errno == ERANGE) &&
+-	    (ll == LLONG_MIN || ll == LLONG_MAX)) {
++	    (ll == INT64_MIN || ll == INT64_MAX)) {
+ 		if (sign) {
+ 			*err = KORE_RESULT_ERROR;
+ 			return (0);
+@@ -357,7 +357,7 @@
+ 		last = now;
+ 
+ 		tm = gmtime(&now);
+-		if (!strftime(tbuf, sizeof(tbuf), "%a, %d %b %Y %T GMT", tm))
++		if (!strftime(tbuf, sizeof(tbuf), "%a, %d %b %Y %H:%M:%S GMT", tm))
+ 			return (NULL);
+ 	}
+ 
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -83,8 +83,8 @@
+ 
+ static struct kore_runtime_call	*worker_runtime_signal(void);
+ 
+-static inline int	worker_acceptlock_obtain(void);
+-static inline void	worker_acceptlock_release(void);
++static int	worker_acceptlock_obtain(void);
++static void	worker_acceptlock_release(void);
+ static void		worker_accept_avail(struct kore_msg *, const void *);
+ 
+ static void	worker_entropy_recv(struct kore_msg *, const void *);
+@@ -152,7 +152,7 @@
+ 		kore_log(LOG_INFO, "starting worker processes");
+ 
+ 	if ((worker_pgrp = getpgrp()) == -1)
+-		fatal("%s: getpgrp(): %s", __func__, errno_s);
++		fatal("%s: getpgrp(): %s", "kore_worker_init", errno_s);
+ 
+ 	/* Now start all the workers. */
+ 	id = 1;
+@@ -439,7 +439,7 @@
+ 	struct passwd		*pw;
+ 
+ 	if (worker == NULL)
+-		fatalx("%s called with no worker", __func__);
++		fatalx("%s called with no worker", "kore_worker_privsep");
+ 
+ 	if (worker_set_affinity == 1)
+ 		kore_platform_worker_setcpu(worker);
+@@ -767,7 +767,7 @@
+ 		if (pid == -1) {
+ 			if (errno != ECHILD && errno != EINTR) {
+ 				kore_log(LOG_ERR,
+-				    "%s: waitpid(): %s", __func__, errno_s);
++				    "%s: waitpid(): %s", "kore_worker_reap", errno_s);
+ 			}
+ 			break;
+ 		}
+@@ -783,7 +783,7 @@
+ kore_worker_make_busy(void)
+ {
+ 	if (worker->no_accept)
+-		fatal("%s called with no_accept set", __func__);
++		fatal("%s called with no_accept set", "kore_worker_make_busy");
+ 
+ 	if (worker_count == WORKER_SOLO_COUNT || worker_no_lock == 1)
+ 		return;
+@@ -804,16 +804,16 @@
+ 	struct kore_domain		*dom;
+ 	const struct kore_x509_msg	*req;
+ 
+-	if (msg->length < sizeof(*req)) {
++	if (msg->length < offsetof(struct kore_x509_msg, data)) {
+ 		kore_log(LOG_WARNING,
+-		    "short keymgr message (%zu)", msg->length);
++		    "short keymgr message (%lu)", (unsigned long)(msg->length));
+ 		return (KORE_RESULT_ERROR);
+ 	}
+ 
+ 	req = (const struct kore_x509_msg *)data;
+-	if (msg->length != (sizeof(*req) + req->data_len)) {
++	if (msg->length != (offsetof(struct kore_x509_msg, data) + req->data_len)) {
+ 		kore_log(LOG_WARNING,
+-		    "invalid keymgr payload (%zu)", msg->length);
++		    "invalid keymgr payload (%lu)", (unsigned long)(msg->length));
+ 		return (KORE_RESULT_ERROR);
+ 	}
+ 
+@@ -1081,11 +1081,11 @@
+ 	}
+ }
+ 
+-static inline void
++static void
+ worker_acceptlock_release(void)
+ {
+ 	if (worker->no_accept)
+-		fatal("%s called with no_accept set", __func__);
++		fatal("%s called with no_accept set", "worker_acceptlock_release");
+ 
+ 	if (worker_count == WORKER_SOLO_COUNT || worker_no_lock == 1)
+ 		return;
+@@ -1112,13 +1112,13 @@
+ 	kore_msg_send(KORE_MSG_WORKER_ALL, KORE_MSG_ACCEPT_AVAILABLE, NULL, 0);
+ }
+ 
+-static inline int
++static int
+ worker_acceptlock_obtain(void)
+ {
+ 	int		r;
+ 
+ 	if (worker->no_accept)
+-		fatal("%s called with no_accept set", __func__);
++		fatal("%s called with no_accept set", "worker_acceptlock_obtain");
+ 
+ 	if (worker->has_lock == 1)
+ 		return (1);
+@@ -1152,7 +1152,7 @@
+ worker_trylock(void)
+ {
+ 	if (worker->no_accept)
+-		fatal("%s called with no_accept set", __func__);
++		fatal("%s called with no_accept set", "worker_trylock");
+ 
+ 	if (!__sync_bool_compare_and_swap(&(accept_lock->lock), 0, 1))
+ 		return (0);
+@@ -1170,7 +1170,7 @@
+ 
+ 	/* The parent also releases a dead worker's lock from worker_reaper(). */
+ 	if (worker != NULL && worker->no_accept)
+-		fatal("%s called with no_accept set", __func__);
++		fatal("%s called with no_accept set", "worker_unlock");
+ 
+ 	accept_lock->current = 0;
+ 	if (!__sync_bool_compare_and_swap(&(accept_lock->lock), 1, 0))
+@@ -1189,7 +1189,7 @@
+ worker_accept_avail(struct kore_msg *msg, const void *data)
+ {
+ 	if (worker->no_accept)
+-		fatal("%s called with no_accept set", __func__);
++		fatal("%s called with no_accept set", "worker_accept_avail");
+ 
+ 	accept_avail = 1;
+ }
+@@ -1199,8 +1199,7 @@
+ {
+ 	if (msg->length != 1024) {
+ 		kore_log(LOG_WARNING,
+-		    "invalid entropy response (got:%zu - wanted:1024)",
+-		    msg->length);
++		    "invalid entropy response (got:%lu - wanted:1024)", (unsigned long)(msg->length));
+ 	}
+ 
+ 	kore_tls_seed(data, msg->length);

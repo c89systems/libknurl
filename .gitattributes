@@ -1,0 +1,2 @@
+# Unified diffs preserve upstream indentation and blank context lines literally.
+patches/kore/*.patch -whitespace
