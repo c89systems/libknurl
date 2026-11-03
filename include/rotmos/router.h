@@ -3,6 +3,7 @@
 
 #include <rotmos/http.h>
 #include <rotmos/reply.h>
+#include <rotmos/dispatch.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,6 +41,7 @@ typedef struct rotmos_route_config {
     rotmos_route_path_kind path_kind;
     rotmos_body_policy body;
     rotmos_route_fn handler;
+    rotmos_headers_fn on_headers;
     void *userdata;
     rotmos_route_hooks hooks;
 } rotmos_route_config;
@@ -75,6 +77,11 @@ ROTMOS_API rotmos_status rotmos_router_route_at(const rotmos_router *router,
                                                 rotmos_error *error);
 ROTMOS_API const rotmos_route_config *
 rotmos_route_declaration(const rotmos_route *route);
+/* Selects one route. Ordinary handlers are invoked after body completion;
+ * raw on_headers routes own their plan and admission policy. */
+ROTMOS_API rotmos_status
+rotmos_router_dispatch_headers(rotmos_router *router, rotmos_request *request,
+                               rotmos_request_plan *plan, rotmos_error *error);
 
 #ifdef __cplusplus
 }

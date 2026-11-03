@@ -3,6 +3,7 @@
 
 #include "router_internal.h"
 #include <rotmos/request.h>
+#include <rotmos/dispatch.h>
 
 struct rotmos_request {
     rotmos_server *server;
@@ -29,12 +30,21 @@ struct rotmos_request {
     char local_address[46];
     rotmos_u64 content_length;
     int has_length;
+    int has_coding;
     int tls;
     rotmos_bytes body;
     int body_ready;
     rotmos_route *route;
     rotmos_reply *reply;
     rotmos_response *response;
+    rotmos_body *body_store;
+    void *input;
+    rotmos_request_plan plan;
+    rotmos_request_outcome outcome;
+    int dispatch_started;
+    int router_dispatched;
+    int close_notified;
+    int rejection_status;
 };
 
 rotmos_bytes rotmos_view(const char *text);

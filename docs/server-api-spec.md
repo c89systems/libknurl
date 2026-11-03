@@ -600,6 +600,12 @@ reports out-of-range explicitly. Path decoding uses the existing path rules,
 including keeping plus literal and rejecting encoded separators/control bytes;
 query decoding must not be reused as a path decoder.
 
+Raw router registrations select `on_headers` instead of an ordinary `handler`.
+They own their plan and admission policy; staged auth/before/after hooks belong
+to ordinary handlers and cannot be attached to a raw registration. In CALLBACK
+mode, the configured callback can explicitly invoke `rotmos_router_dispatch_headers`;
+no second routing pass follows it.
+
 The plan callback types are `rotmos_body_fn` (section 8), `rotmos_complete_fn`
 (request, userdata, error -> status), `rotmos_writable_fn` (request, userdata ->
 void), and `rotmos_request_close_fn` (request, const outcome, userdata -> void).
@@ -698,8 +704,13 @@ Vectis's `rotmos_body_materialize_config` inputs: optional caller buffer and
 capacity, memory threshold, directory and prefix. The result reports memory/file
 kind on success, checked length and memory ownership; zero-length success is a
 memory result without a required allocation. A fitting caller buffer is borrowed
-and never freed; otherwise an allocated memory result belongs to
-the caller. The helper rewinds the completed body reader before preparation and
+and never freed. A positive caller capacity caps the effective memory threshold;
+a larger body spills instead of overrunning it. Without a caller buffer, a
+fitting allocated memory result belongs to the caller. A zero threshold inherits
+the body's memory budget. Independent materialization defaults an omitted
+directory to `/tmp` and an omitted prefix to a library filename prefix, preserving
+the existing helper defaults. Transport spooling still requires its explicitly
+declared directory and permission. The helper rewinds the completed body reader before preparation and
 rewinds it to the beginning after successful preparation, so repeated calls
 do not silently return an already-consumed suffix. This is explicit copying or
 file materialization, not transport streaming.
@@ -2204,6 +2215,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0047 | Add typed loop wait/turn/cleanup hooks and native watch interest operations; separate readable, writable, read-half-close and error readiness, preserve fatal shutdown causes, and keep parent events available while workers drain |
 | 0048 | C89-safe signed/unsigned wide decimal values and limits for 32-bit and Apple targets; retain exact JSON/HSTS/curl/log values and perform unaligned-safe 64-bit network reads/writes without SDK macros containing C99 literals |
 | 0049 | Retain managed requests through asynchronous response drain and connection removal; retire library requests before native HTTP pools; report actual output progress and retained TLS retries through typed private hooks |
+| 0050 | Preserve prebody-owned pipelined surplus through a private typed wrapper around Kore's existing pipeline retention; managed body delivery bypasses automatic buffering/storage |
 
 ## 22. Investigation references
 

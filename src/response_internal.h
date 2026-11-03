@@ -44,6 +44,7 @@ struct rotmos_response {
     size_t memory_position;
     int file;
     int producer;
+    int complete_reply;
     int paused;
     int eof;
     int busy;
@@ -65,6 +66,8 @@ rotmos_status rotmos_response_submit(rotmos_response *response,
                                      rotmos_reply *reply, rotmos_error *error);
 void rotmos_response_step(rotmos_response *response);
 void rotmos_response_fail(rotmos_response *response, rotmos_status cause);
+void rotmos_response_error(rotmos_response *response, rotmos_status cause,
+                           int status);
 void rotmos_response_sent(rotmos_response *response, size_t offset,
                           size_t amount, int retry);
 void rotmos_response_shift(rotmos_response *response);

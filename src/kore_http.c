@@ -2,6 +2,7 @@
 #include "kore_internal.h"
 #include "reply_internal.h"
 #include "response_internal.h"
+#include "body_internal.h"
 #include <rotmos/kore.h>
 
 #include <sys/socket.h>
@@ -125,24 +126,109 @@ static rotmos_status metadata(struct rotmos_runtime *runtime,
     return rotmos_request_decode(request, error);
 }
 
+static rotmos_status admit(rotmos_request *request, rotmos_error *error)
+{
+    rotmos_body_policy *policy;
+    rotmos_u64 hard;
+    int order;
+    policy = &request->plan.body;
+    if (request->plan.disposition != ROTMOS_REQUEST_MANAGED) {
+        if (request->plan.disposition != ROTMOS_REQUEST_REPLY)
+            return rotmos_fail(
+                error, ROTMOS_NOT_SUPPORTED, "request_plan",
+                "upgrade/takeover requires an installed connection capability");
+        if (request->response->phase != ROTMOS_RESPONSE_FINISHING)
+            return rotmos_fail(
+                error, ROTMOS_INVALID, "request_plan",
+                "REPLY requires a successfully ended final response");
+        if (request->has_coding ||
+            (request->has_length &&
+             (request->content_length.high || request->content_length.low))) {
+            rotmos_kore_body_cancel(request, ROTMOS_CANCELLED);
+            request->response->close_connection = 1;
+        } else {
+            return rotmos_kore_body_empty_reply(request, error);
+        }
+        return ROTMOS_OK;
+    }
+    if (request->has_coding)
+        return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "request_plan",
+                           "chunked bodies require connection takeover");
+    if (!request->has_length && (request->method == ROTMOS_HTTP_POST ||
+                                 request->method == ROTMOS_HTTP_PUT ||
+                                 request->method == ROTMOS_HTTP_PATCH)) {
+        request->rejection_status = 411;
+        return rotmos_fail(
+            error, ROTMOS_INVALID, "request_plan",
+            "managed POST, PUT and PATCH require Content-Length");
+    }
+    if (request->plan.on_body_end == NULL && !request->response->producer &&
+        request->response->phase == ROTMOS_RESPONSE_BUILDING)
+        return rotmos_fail(
+            error, ROTMOS_INVALID, "request_plan",
+            "MANAGED requires body completion or an installed response owner");
+    if ((policy->mode == ROTMOS_BODY_STREAM && request->plan.on_body == NULL) ||
+        (policy->mode != ROTMOS_BODY_STREAM && request->plan.on_body != NULL))
+        return rotmos_fail(error, ROTMOS_INVALID, "request_plan",
+                           "on_body belongs exclusively to STREAM delivery");
+    if (policy->mode == ROTMOS_BODY_JSON ||
+        policy->mode == ROTMOS_BODY_STREAMING_UPLOAD)
+        return rotmos_fail(
+            error, ROTMOS_NOT_SUPPORTED, "request_plan",
+            "typed JSON and reader-upload facades are not connected yet");
+    if (policy->max_bytes.high == 0 && policy->max_bytes.low == 0)
+        policy->max_bytes = request->server->config.limits.default_body_bytes;
+    hard = request->server->config.limits.hard_body_bytes;
+    if (!rotmos_u64_valid(policy->max_bytes))
+        return rotmos_fail(error, ROTMOS_INVALID, "request_plan",
+                           "invalid body limit words");
+    if (hard.high || hard.low) {
+        (void)rotmos_u64_compare(policy->max_bytes, hard, &order, NULL);
+        if (order > 0)
+            return rotmos_fail(
+                error, ROTMOS_INVALID, "request_plan",
+                "plan body limit exceeds the configured hard ceiling");
+    }
+    if (request->has_length) {
+        (void)rotmos_u64_compare(request->content_length, policy->max_bytes,
+                                 &order, NULL);
+        if (order > 0 ||
+            (policy->mode == ROTMOS_BODY_NONE &&
+             (request->content_length.high || request->content_length.low))) {
+            request->rejection_status = 413;
+            return rotmos_fail(error, ROTMOS_LIMIT, "request_plan",
+                               "declared body exceeds the admitted limit");
+        }
+        if ((request->content_length.high || request->content_length.low) &&
+            request->method != ROTMOS_HTTP_POST &&
+            request->method != ROTMOS_HTTP_PUT &&
+            request->method != ROTMOS_HTTP_PATCH &&
+            request->method != ROTMOS_HTTP_DELETE &&
+            request->method != ROTMOS_HTTP_PROPFIND &&
+            request->method != ROTMOS_HTTP_MKCOL)
+            return rotmos_fail(
+                error, ROTMOS_NOT_SUPPORTED, "request_plan",
+                "this managed method does not accept a positive body length");
+    }
+    return rotmos_body_create(
+        policy, request->server->config.limits.body_spool_directory,
+        &request->body_store, error);
+}
+
 int rotmos_kore_prebody(struct http_request *native, const void *data,
                         size_t length)
 {
     struct rotmos_runtime *runtime;
     rotmos_request *request;
+    rotmos_request_plan plan;
     rotmos_error error;
     rotmos_bytes value;
     rotmos_status status;
-    rotmos_u64 limit;
-    size_t maximum;
-    size_t declared;
     size_t i;
     int hosts;
     int lengths;
     int coding;
-    int order;
-    (void)data;
-    (void)length;
+    int expect;
     runtime = kore_library_hooks.arg;
     if (!__atomic_load_n(&runtime->shared->serving, __ATOMIC_ACQUIRE))
         return reject(native, 503);
@@ -154,7 +240,7 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
     status = metadata(runtime, native, request, &error);
     if (status != ROTMOS_OK)
         return reject(native, status == ROTMOS_INVALID ? 400 : 500);
-    hosts = lengths = coding = 0;
+    hosts = lengths = coding = expect = 0;
     for (i = 0; i < request->header_count; ++i) {
         if (rotmos_text_equal_case(request->headers[i].name.data, "host"))
             ++hosts;
@@ -164,107 +250,74 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
         if (rotmos_text_equal_case(request->headers[i].name.data,
                                    "transfer-encoding"))
             ++coding;
+        if (rotmos_text_equal_case(request->headers[i].name.data, "expect"))
+            ++expect;
     }
     if (hosts != 1 || lengths > 1 || coding > 1 || (coding && lengths))
         return reject(native, 400);
-    if (coding)
-        return reject(native, 501);
+    if (coding) {
+        (void)rotmos_request_header_first(request, "transfer-encoding", &value,
+                                          NULL);
+        if (!rotmos_text_equal_case(value.data, "chunked"))
+            return reject(native, 501);
+        request->has_coding = 1;
+    }
     if (lengths) {
         (void)rotmos_request_header_first(request, "content-length", &value,
                                           NULL);
-        status = rotmos_u64_from_decimal(value.data, value.length,
-                                         &request->content_length, &error);
-        if (status != ROTMOS_OK)
+        if (rotmos_u64_from_decimal(value.data, value.length,
+                                    &request->content_length,
+                                    &error) != ROTMOS_OK)
             return reject(native, 400);
         request->has_length = 1;
     }
-    status = rotmos_router_select(runtime->server->router, request, &error);
-    if (status != ROTMOS_OK)
-        return reject(native, status == ROTMOS_EOF ? 404 : 500);
-    limit = request->route->config.body.max_bytes;
-    if (limit.high == 0 && limit.low == 0)
-        limit = runtime->server->config.limits.default_body_bytes;
-    if (request->has_length) {
-        if (rotmos_u64_to_size(request->content_length, &declared, &error) !=
-            ROTMOS_OK)
-            return reject(native, 413);
-        if (request->route->config.body.mode == ROTMOS_BODY_NONE &&
-            declared != 0)
-            return reject(native, 413);
-        (void)rotmos_u64_compare(request->content_length, limit, &order, NULL);
-        if (order > 0)
-            return reject(native, 413);
-        maximum = request->route->config.body.memory_buffer_limit_bytes;
-        if (maximum == 0 &&
-            rotmos_u64_to_size(limit, &maximum, &error) != ROTMOS_OK)
-            return reject(native, 413);
-        if (declared > maximum)
-            return reject(native, 413);
-        if (declared != 0 && !(native->flags & HTTP_REQUEST_EXPECT_BODY))
-            return reject(native, 501);
-    }
-    status = rotmos_request_header_first(request, "expect", &value, NULL);
-    if (status == ROTMOS_OK) {
-        if (!rotmos_text_equal_case(value.data, "100-continue"))
+    if (expect) {
+        (void)rotmos_request_header_first(request, "expect", &value, NULL);
+        if (expect > 1 || !rotmos_text_equal_case(value.data, "100-continue"))
             return reject(native, 417);
-        if (request->has_length &&
-            (request->content_length.high || request->content_length.low))
-            http_response(native, 100, NULL, 0);
     }
-    return KORE_RESULT_OK;
-}
-
-static int dispatch_error(struct http_request *native, int status)
-{
-    (void)reject(native, status);
-    return KORE_RESULT_OK;
+    status = rotmos_kore_response_create(runtime, request, &error);
+    if (status != ROTMOS_OK)
+        return reject(native, 500);
+    status = rotmos_kore_body_create(request, data, length, &error);
+    if (status != ROTMOS_OK) {
+        rotmos_kore_request_fail(request, status, 500);
+        return KORE_RESULT_RETRY;
+    }
+    rotmos_request_plan_init(&plan);
+    request->dispatch_started = 1;
+    if (runtime->server->config.dispatch.mode == ROTMOS_DISPATCH_CALLBACK)
+        status = runtime->server->config.dispatch.on_headers(
+            request, &plan, runtime->server->config.dispatch.userdata, &error);
+    else
+        status = rotmos_router_dispatch_headers(runtime->server->router,
+                                                request, &plan, &error);
+    request->plan = plan;
+    request->userdata = plan.userdata;
+    if (status == ROTMOS_OK)
+        status = admit(request, &error);
+    if (status != ROTMOS_OK) {
+        rotmos_kore_request_fail(
+            request, status,
+            request->rejection_status
+                ? request->rejection_status
+                : (status == ROTMOS_NOT_SUPPORTED ? 501 : 500));
+        return KORE_RESULT_RETRY;
+    }
+    if (expect && plan.disposition == ROTMOS_REQUEST_MANAGED &&
+        request->has_length &&
+        (request->content_length.high || request->content_length.low) &&
+        request->response->phase == ROTMOS_RESPONSE_BUILDING)
+        http_response(native, 100, NULL, 0);
+    request->response->schedule(request->response);
+    return KORE_RESULT_RETRY;
 }
 
 int rotmos_kore_dispatch(struct http_request *native)
 {
-    rotmos_request *request;
-    rotmos_reply *reply;
-    rotmos_response *response;
-    rotmos_status status;
-    rotmos_error error;
-    int code;
-    request = native->hdlr_extra;
-    if (request == NULL)
-        return dispatch_error(native, 500);
-    request->body_ready = native->http_body_fd == -1;
-    if (native->http_body != NULL) {
-        request->body.data = native->http_body->data;
-        request->body.length = (size_t)native->content_length;
-    }
-    status = rotmos_reply_new(&request->reply, &error);
-    if (status != ROTMOS_OK)
-        return dispatch_error(native, 500);
-    reply = request->reply;
-    reply->owner = request;
-    status =
-        rotmos_kore_response_create(kore_library_hooks.arg, request, &error);
-    if (status != ROTMOS_OK)
-        return dispatch_error(native, 500);
-    response = request->response;
-    status = rotmos_router_invoke(request, &error);
-    if (status == ROTMOS_OK) {
-        if (response->phase == ROTMOS_RESPONSE_BUILDING)
-            status = rotmos_response_submit(response, reply, &error);
-        else if (reply->selected)
-            status = ROTMOS_CONFLICT;
-    }
-    if (status != ROTMOS_OK) {
-        code = status == ROTMOS_INVALID
-                   ? 400
-                   : (status == ROTMOS_NOT_SUPPORTED ? 501 : 500);
-        if (rotmos_response_replace_uncommitted(response, NULL) == ROTMOS_OK) {
-            (void)rotmos_reply_status(reply, code, NULL);
-            if (rotmos_response_submit(response, reply, NULL) == ROTMOS_OK)
-                return KORE_RESULT_OK;
-        }
-        (void)rotmos_response_abort(response, status, NULL);
-    }
-    return KORE_RESULT_OK;
+    /* Public managed requests are scheduled from the prebody handoff. */
+    (void)native;
+    return KORE_RESULT_RETRY;
 }
 
 void rotmos_kore_request_free(struct http_request *native)

@@ -41,6 +41,19 @@ copy. File delivery uses bounded owner-loop pread and can block on filesystem I/
 `rotmos.response-runtime` covers these paths, including a sparse range beyond
 4 GiB, queued replacement, producer errors, bodyless replies and HTTP pipelining.
 
+[Request plans and bodies](requests.md) support explicit CALLBACK dispatch and
+raw router routes alongside the ordinary staged facade. All enter the prebody
+boundary before storage, application body callbacks or 100 Continue. Fixed-length
+STREAM bodies use bounded chunks with partial consumption, pause/resume and
+owner-loop callbacks. BUFFERED stays within its declared memory budget;
+MATERIALIZED can spill only into the configured transport spool directory.
+Completed bodies expose memory/file readers and independent copy/spill results,
+including public source readers. Request terminal callbacks retain metadata and
+distinguish successful input completion, cancelled unread input and failure.
+`rotmos.body-runtime` exercises partial upload/response progress, concurrent
+requests during a pause, deferred replies, deadlines, file/result ownership and
+callback failure. Immediate and ordinary replies preserve pipelined surplus.
+
 Parent and HTTP-worker loops expose borrowed FD watches, monotonic wide timers,
 deferred callbacks and coalescing wakers. Readiness is dispatched after native
 event batches; cancellation retires userdata after outstanding batch references.
@@ -58,9 +71,9 @@ the library and its three released dependency prefixes.
 
 This is partial runtime coverage. Preflight explicitly rejects configured TLS,
 worker observations, access logs, trusted proxies, autoblock,
-JSON/upload plans and disk-backed bodies until those paths are connected.
+typed JSON and native-reader upload facades until those paths are connected.
 Native-reader sources require an executor that is not connected yet. Interim
-responses, producer trailer declarations, low-level body/channel operations and gate observations,
+responses, producer trailer declarations, connection channels and gate observations,
 complete startup/failure unwinding, auxiliary-worker lifecycle, the protocol and
 provider helpers, the opt-in native declaration component, and the Lua product
 remain implementation work. Worker failure,

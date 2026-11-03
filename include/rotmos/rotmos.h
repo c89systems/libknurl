@@ -10,5 +10,7 @@
 #include <rotmos/request.h>
 #include <rotmos/loop.h>
 #include <rotmos/response.h>
+#include <rotmos/dispatch.h>
+#include <rotmos/body.h>
 
 #endif

@@ -122,7 +122,7 @@ u_int64_t rotmos_kore_loop_wait(void *userdata, u_int64_t maximum)
     struct rotmos_runtime *runtime;
     long wait;
     runtime = userdata;
-    if (runtime->response_count != 0)
+    if (runtime->response_count != 0 || !TAILQ_EMPTY(&disconnected))
         maximum = 0;
     maximum = rotmos_kore_responses_wait(runtime, maximum);
     if (runtime->server->loop != NULL) {

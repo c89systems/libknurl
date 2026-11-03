@@ -52,6 +52,7 @@ void rotmos_route_config_init(rotmos_route_config *config)
     config->path_kind = ROTMOS_PATH_LITERAL;
     rotmos_body_policy_init(&config->body);
     config->handler = NULL;
+    config->on_headers = NULL;
     config->userdata = NULL;
     hooks_init(&config->hooks);
 }
@@ -131,9 +132,20 @@ static rotmos_status route_add(rotmos_router *router,
     int code;
     if (out != NULL)
         *out = NULL;
-    if (router == NULL || input == NULL || input->handler == NULL)
+    if (router == NULL || input == NULL ||
+        ((input->handler == NULL) == (input->on_headers == NULL)))
         return rotmos_fail(error, ROTMOS_INVALID, "router_route",
-                           "router, declaration and handler are required");
+                           "provide a router, declaration and exactly one "
+                           "handler or on_headers callback");
+    if (input->on_headers != NULL &&
+        (input->hooks.auth != NULL || input->hooks.before != NULL ||
+         input->hooks.after != NULL ||
+         (group != NULL && (group->config.hooks.auth != NULL ||
+                            group->config.hooks.before != NULL ||
+                            group->config.hooks.after != NULL))))
+        return rotmos_fail(error, ROTMOS_INVALID, "router_route",
+                           "raw on_headers routes own admission and cannot use "
+                           "staged facade hooks");
     if (router->frozen)
         return rotmos_fail(error, ROTMOS_STATE, "router_route",
                            "route registration is unavailable during a run");
@@ -149,7 +161,7 @@ static rotmos_status route_add(rotmos_router *router,
         return rotmos_fail(error, ROTMOS_INVALID, "router_route",
                            "HTTP method mask contains unsupported bits");
     if (input->body.mode < ROTMOS_BODY_NONE ||
-        input->body.mode > ROTMOS_BODY_STREAMING_UPLOAD ||
+        input->body.mode > ROTMOS_BODY_STREAM ||
         !rotmos_u64_valid(input->body.max_bytes))
         return rotmos_fail(error, ROTMOS_INVALID, "router_route",
                            "invalid body policy mode or wide limit");

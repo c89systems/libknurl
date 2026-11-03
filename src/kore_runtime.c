@@ -1,6 +1,7 @@
 #define _GNU_SOURCE 1
 #define _POSIX_C_SOURCE 200809L
 #include "kore_internal.h"
+#include "body_internal.h"
 
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -261,7 +262,8 @@ rotmos_status rotmos_server_validate(rotmos_server *server, rotmos_error *error)
     size_t i;
     rotmos_status status;
     rotmos_u64 limit;
-    size_t maximum;
+    rotmos_body_policy policy;
+    rotmos_body *body;
     const rotmos_route_config *route;
     if (server == NULL)
         return rotmos_fail(error, ROTMOS_INVALID, "server_validate",
@@ -293,24 +295,26 @@ rotmos_status rotmos_server_validate(rotmos_server *server, rotmos_error *error)
                 "the current runtime supports cleartext HTTP listeners");
     for (i = 0; i < server->router->count; ++i) {
         route = &server->router->routes[i]->config;
+        if (route->on_headers != NULL)
+            continue;
         if (route->body.mode != ROTMOS_BODY_NONE &&
-            route->body.mode != ROTMOS_BODY_BUFFERED)
-            return rotmos_fail(
-                error, ROTMOS_NOT_SUPPORTED, "server_validate",
-                "JSON and upload plans are unavailable in the current runtime");
+            route->body.mode != ROTMOS_BODY_BUFFERED &&
+            route->body.mode != ROTMOS_BODY_MATERIALIZED)
+            return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "server_validate",
+                               "JSON/upload facades are not connected; STREAM "
+                               "requires an on_headers route");
         if (route->body.mode == ROTMOS_BODY_NONE)
             continue;
         limit = route->body.max_bytes;
         if (limit.high == 0 && limit.low == 0)
             limit = server->config.limits.default_body_bytes;
-        status = rotmos_u64_to_size(limit, &maximum, error);
+        policy = route->body;
+        policy.max_bytes = limit;
+        status = rotmos_body_create(
+            &policy, server->config.limits.body_spool_directory, &body, error);
         if (status != ROTMOS_OK)
             return status;
-        if (route->body.memory_buffer_limit_bytes != 0 &&
-            route->body.memory_buffer_limit_bytes < maximum)
-            return rotmos_fail(
-                error, ROTMOS_NOT_SUPPORTED, "server_validate",
-                "disk-backed bodies are unavailable in the current runtime");
+        rotmos_body_release(body);
     }
     rotmos_error_clear(error);
     return ROTMOS_OK;

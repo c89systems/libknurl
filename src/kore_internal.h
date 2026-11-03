@@ -77,5 +77,17 @@ void rotmos_kore_responses_turn(struct rotmos_runtime *runtime);
 u_int64_t rotmos_kore_responses_wait(struct rotmos_runtime *runtime,
                                      u_int64_t maximum);
 void rotmos_kore_responses_shutdown(struct rotmos_runtime *runtime);
+rotmos_status rotmos_kore_body_create(rotmos_request *request, const void *data,
+                                      size_t length, rotmos_error *error);
+void rotmos_kore_body_cancel(rotmos_request *request, rotmos_status cause);
+void rotmos_kore_body_step(rotmos_request *request);
+rotmos_status rotmos_kore_body_empty_reply(rotmos_request *request,
+                                           rotmos_error *error);
+void rotmos_kore_body_timeout(rotmos_request *request);
+u_int64_t rotmos_kore_body_wait(rotmos_request *request, u_int64_t maximum);
+void rotmos_kore_request_fail(rotmos_request *request, rotmos_status cause,
+                              int status);
+void rotmos_kore_request_closed(rotmos_request *request);
+void rotmos_kore_response_body_end(rotmos_request *request);
 
 #endif

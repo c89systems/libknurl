@@ -81,6 +81,8 @@ rotmos_status rotmos_kore_response_create(struct rotmos_runtime *runtime,
     delivery->next = runtime->responses;
     runtime->responses = delivery;
     native->flags |= HTTP_REQUEST_LIBRARY_MANAGED;
+    native->start = kore_time_ms();
+    http_request_sleep(native);
     native->owner->flags |= CONN_IS_BUSY;
     kore_platform_disable_read(native->owner->fd);
     /* Linux disable_read removes the whole epoll registration. Restore the
@@ -156,8 +158,10 @@ int rotmos_kore_response_release(void *userdata, struct http_request *native)
     request = native->hdlr_extra;
     if (request == NULL || request->response == NULL)
         return 1;
-    if (request->response->phase < ROTMOS_RESPONSE_COMPLETE)
-        (void)rotmos_response_abort(request->response, ROTMOS_CANCELLED, NULL);
+    if (request->response->phase < ROTMOS_RESPONSE_COMPLETE) {
+        rotmos_kore_body_cancel(request, ROTMOS_IO);
+        (void)rotmos_response_abort(request->response, ROTMOS_IO, NULL);
+    }
     schedule(request->response);
     return 0;
 }
@@ -190,8 +194,12 @@ static void terminal(struct rotmos_delivery *delivery)
         --delivery->runtime->response_count;
         delivery->queued = 0;
     }
-    rotmos_response_terminal(response);
     native->status = response->outcome.status;
+    native->end = kore_time_ms();
+    native->total = native->end - native->start;
+    native->ms = native->total;
+    rotmos_response_terminal(response);
+    rotmos_kore_request_closed(request);
     if (native->rt->dom->accesslog || kore_accesslog_enabled())
         kore_accesslog(native);
     native->flags &= ~HTTP_REQUEST_LIBRARY_MANAGED;
@@ -233,6 +241,7 @@ static void advance(struct rotmos_delivery *delivery)
         response->phase < ROTMOS_RESPONSE_COMPLETE)
         (void)rotmos_response_abort(response, ROTMOS_CANCELLED, NULL);
     if (response->phase == ROTMOS_RESPONSE_ABORTED) {
+        rotmos_kore_body_cancel(response->request, response->outcome.cause);
         if (delivery->buffer != NULL) {
             if (connection != NULL)
                 kore_connection_disconnect(connection);
@@ -241,6 +250,7 @@ static void advance(struct rotmos_delivery *delivery)
         terminal(delivery);
         return;
     }
+    rotmos_kore_body_step(response->request);
     rotmos_response_step(response);
     if (response->phase == ROTMOS_RESPONSE_ABORTED) {
         schedule(response);
@@ -276,16 +286,19 @@ void rotmos_kore_responses_turn(struct rotmos_runtime *runtime)
     now = kore_time_ms();
     for (delivery = runtime->responses; delivery != NULL;
          delivery = delivery->next) {
+        rotmos_kore_body_timeout(delivery->response->request);
         timeout = delivery->response->phase == ROTMOS_RESPONSE_BUILDING
                       ? runtime->server->config.timeouts.deferred_response
                       : runtime->server->config.timeouts.response_write_idle;
         if (!timeout.disabled &&
-            (delivery->response->phase == ROTMOS_RESPONSE_BUILDING ||
+            ((delivery->response->phase == ROTMOS_RESPONSE_BUILDING &&
+              delivery->response->request->outcome.body_complete) ||
              pending_output(delivery)) &&
             delivery->response->phase < ROTMOS_RESPONSE_COMPLETE &&
             now - delivery->last_progress >= (u_int64_t)timeout.milliseconds) {
             delivery->last_progress = now;
-            rotmos_response_fail(delivery->response, ROTMOS_TIMEOUT);
+            rotmos_kore_request_fail(delivery->response->request,
+                                     ROTMOS_TIMEOUT, 500);
         }
     }
     budget = runtime->response_count;
@@ -313,10 +326,13 @@ u_int64_t rotmos_kore_responses_wait(struct rotmos_runtime *runtime,
     now = kore_time_ms();
     for (delivery = runtime->responses; delivery != NULL;
          delivery = delivery->next) {
+        maximum = rotmos_kore_body_wait(delivery->response->request, maximum);
         timeout = delivery->response->phase == ROTMOS_RESPONSE_BUILDING
                       ? runtime->server->config.timeouts.deferred_response
                       : runtime->server->config.timeouts.response_write_idle;
         if (timeout.disabled ||
+            (delivery->response->phase == ROTMOS_RESPONSE_BUILDING &&
+             !delivery->response->request->outcome.body_complete) ||
             (delivery->response->phase != ROTMOS_RESPONSE_BUILDING &&
              !pending_output(delivery)) ||
             delivery->response->phase >= ROTMOS_RESPONSE_COMPLETE)
@@ -343,6 +359,15 @@ void rotmos_kore_responses_shutdown(struct rotmos_runtime *runtime)
         delivery->queued = 0;
         delivery->response->outcome.cause = ROTMOS_CANCELLED;
         delivery->response->phase = ROTMOS_RESPONSE_ABORTED;
+        rotmos_kore_body_cancel(delivery->response->request, ROTMOS_CANCELLED);
         terminal(delivery);
     }
+}
+
+void rotmos_kore_response_body_end(rotmos_request *request)
+{
+    struct rotmos_delivery *delivery;
+    delivery = request->response->backend;
+    if (request->response->phase == ROTMOS_RESPONSE_BUILDING)
+        delivery->last_progress = kore_time_ms();
 }

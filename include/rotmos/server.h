@@ -3,6 +3,7 @@
 
 #include <rotmos/http.h>
 #include <rotmos/tls.h>
+#include <rotmos/dispatch.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -237,6 +238,7 @@ typedef struct rotmos_server_config {
     rotmos_tls_config tls;
     rotmos_signal_config signals;
     rotmos_server_callbacks callbacks;
+    rotmos_dispatch_config dispatch;
     rotmos_supervision_config supervision;
     rotmos_client_ip_config client_ip;
     rotmos_autoblock_config autoblock;

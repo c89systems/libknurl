@@ -36,6 +36,18 @@ static rotmos_status handler(rotmos_request *request, rotmos_reply *reply,
     return rotmos_reply_status(reply, 204, error);
 }
 
+static rotmos_status headers(rotmos_request *request, rotmos_request_plan *plan,
+                             void *userdata, rotmos_error *error)
+{
+    int *calls;
+    (void)request;
+    (void)plan;
+    (void)error;
+    calls = userdata;
+    ++*calls;
+    return ROTMOS_STATE;
+}
+
 static rotmos_status control(rotmos_server *server, unsigned int events,
                              void *userdata, rotmos_error *error)
 {
@@ -179,6 +191,25 @@ int main(void)
 
     rotmos_server_config_init(&config);
     config.limits.max_response_header_bytes = 1023;
+    REQUIRE(rotmos_server_new(&config, &server, &error) == ROTMOS_INVALID);
+
+    rotmos_server_config_init(&config);
+    config.dispatch.mode = ROTMOS_DISPATCH_CALLBACK;
+    REQUIRE(rotmos_server_new(&config, &server, &error) == ROTMOS_INVALID);
+    config.dispatch.on_headers = headers;
+    config.dispatch.userdata = &calls;
+    REQUIRE(rotmos_server_new(&config, &server, &error) == ROTMOS_OK);
+    rotmos_route_config_init(&route);
+    route.path = "/raw";
+    route.handler = handler;
+    route.on_headers = headers;
+    REQUIRE(rotmos_router_route(rotmos_server_router(server), &route, NULL,
+                                &error) == ROTMOS_INVALID);
+    route.handler = NULL;
+    REQUIRE(rotmos_router_route(rotmos_server_router(server), &route, NULL,
+                                &error) == ROTMOS_OK);
+    REQUIRE(rotmos_server_destroy(server, &error) == ROTMOS_OK && calls == 0);
+    config.dispatch.mode = ROTMOS_DISPATCH_ROUTER;
     REQUIRE(rotmos_server_new(&config, &server, &error) == ROTMOS_INVALID);
 
     REQUIRE(pipe(fds) == 0);

@@ -117,6 +117,7 @@ void rotmos_server_config_init(rotmos_server_config *config)
     config->io.input_queue_bytes = config->io.output_queue_bytes = 262144UL;
     rotmos_tls_config_init(&config->tls);
     config->signals.mode = ROTMOS_SIGNALS_HOST;
+    rotmos_dispatch_config_init(&config->dispatch);
     config->callbacks.on_process_start = NULL;
     config->callbacks.on_parent_prepare = NULL;
     config->callbacks.on_parent_ready = NULL;

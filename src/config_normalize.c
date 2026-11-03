@@ -235,6 +235,14 @@ rotmos_status rotmos_config_normalize(rotmos_server_config *config,
         config->limits.max_response_header_bytes < 1024)
         return invalid(error, "connection, worker, backlog, header or curl "
                               "limit exceeds backend range");
+    if ((config->dispatch.mode != ROTMOS_DISPATCH_ROUTER &&
+         config->dispatch.mode != ROTMOS_DISPATCH_CALLBACK) ||
+        (config->dispatch.mode == ROTMOS_DISPATCH_CALLBACK &&
+         config->dispatch.on_headers == NULL) ||
+        (config->dispatch.mode == ROTMOS_DISPATCH_ROUTER &&
+         config->dispatch.on_headers != NULL))
+        return invalid(error, "select ROUTER or CALLBACK with its required "
+                              "on_headers dispatcher");
     if ((config->workers.death_policy != ROTMOS_WORKER_RESTART &&
          config->workers.death_policy != ROTMOS_WORKER_TERMINATE) ||
         (config->signals.mode != ROTMOS_SIGNALS_HOST &&

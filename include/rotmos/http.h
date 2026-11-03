@@ -42,7 +42,9 @@ typedef enum rotmos_body_mode {
     ROTMOS_BODY_NONE = 0,
     ROTMOS_BODY_JSON,
     ROTMOS_BODY_BUFFERED,
-    ROTMOS_BODY_STREAMING_UPLOAD
+    ROTMOS_BODY_STREAMING_UPLOAD,
+    ROTMOS_BODY_MATERIALIZED,
+    ROTMOS_BODY_STREAM
 } rotmos_body_mode;
 
 typedef struct rotmos_body_policy {

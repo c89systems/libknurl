@@ -1,6 +1,7 @@
 #include "request_internal.h"
 #include "response_internal.h"
 #include "reply_internal.h"
+#include "body_internal.h"
 #include <rotmos/loop.h>
 
 #include <stdlib.h>
@@ -232,6 +233,8 @@ void rotmos_request_cleanup(rotmos_request *request)
     request->reply = NULL;
     rotmos_response_release(request->response);
     request->response = NULL;
+    rotmos_body_release(request->body_store);
+    request->body_store = NULL;
     free((void *)request->path.data);
     for (i = 0; i < request->query_count; ++i) {
         free((void *)request->queries[i].name.data);

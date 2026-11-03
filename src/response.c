@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _FILE_OFFSET_BITS 64
 #include "response_internal.h"
+#include "body_internal.h"
 #include "server_internal.h"
 #include "loop_internal.h"
 
@@ -417,7 +418,9 @@ static rotmos_status write_body(rotmos_response *r, const void *data,
     size_t prefix;
     unsigned char *copy;
     *accepted = 0;
-    if (r->phase != ROTMOS_RESPONSE_ACTIVE || r->suppressed)
+    if ((r->phase != ROTMOS_RESPONSE_ACTIVE &&
+         !(r->phase == ROTMOS_RESPONSE_FINISHING && r->complete_reply)) ||
+        r->suppressed)
         return rotmos_fail(error, ROTMOS_STATE, "response_write",
                            "response does not accept payload");
     status = add_size(r->accepted, length, &next);
@@ -573,7 +576,7 @@ static rotmos_status end_response(rotmos_response *r,
     status = make_ending(r, trailers, count, &ending, &length, error);
     if (status != ROTMOS_OK)
         return status;
-    if (r->phase == ROTMOS_RESPONSE_FINISHING) {
+    if (r->phase == ROTMOS_RESPONSE_FINISHING && r->ending != NULL) {
         status =
             length == r->ending_length && memcmp(ending, r->ending, length) == 0
                 ? ROTMOS_OK
@@ -655,6 +658,7 @@ rotmos_status rotmos_response_replace_uncommitted(rotmos_response *r,
     r->trailer_names = NULL;
     r->ending = NULL;
     r->ending_length = 0;
+    r->complete_reply = 0;
     r->has_length = r->trailers_enabled = r->chunked = r->suppressed =
         r->blocked = 0;
     r->length.high = r->length.low = r->accepted.high = r->accepted.low = 0;
@@ -747,27 +751,6 @@ rotmos_status rotmos_response_producer_resume(rotmos_response *r,
     return ROTMOS_OK;
 }
 
-static int file_offset(rotmos_u64 value, off_t *out)
-{
-    off_t result;
-    unsigned long high;
-    int bit;
-    result = 0;
-    high = value.high;
-    /* Construct without an out-of-range signed conversion or a 32-bit shift. */
-    for (bit = 63; bit >= 0; --bit) {
-        if (bit >= 32 && sizeof(off_t) <= 4 && (high >> (bit - 32) & 1UL))
-            return 0;
-        if ((sizeof(off_t) <= 4 && bit == 31 && (value.low >> 31 & 1UL)) ||
-            (bit == 63 && (high >> 31 & 1UL)))
-            return 0;
-        result = result * 2 + (off_t)(bit >= 32 ? (high >> (bit - 32) & 1UL)
-                                                : (value.low >> bit & 1UL));
-    }
-    *out = result;
-    return 1;
-}
-
 rotmos_status rotmos_response_file_take(rotmos_response *r, int fd,
                                         rotmos_u64 offset, rotmos_u64 length,
                                         rotmos_error *error)
@@ -782,7 +765,8 @@ rotmos_status rotmos_response_file_take(rotmos_response *r, int fd,
         return status;
     if (!rotmos_u64_valid(offset) || !rotmos_u64_valid(length) ||
         rotmos_u64_add(offset, length, &end, NULL) != ROTMOS_OK ||
-        !file_offset(offset, &start) || !file_offset(end, &finish))
+        !rotmos_file_offset(offset, &start) ||
+        !rotmos_file_offset(end, &finish))
         return rotmos_fail(
             error, ROTMOS_OVERFLOW, "response_file",
             "file range does not fit the target seek representation");
@@ -851,6 +835,10 @@ rotmos_status rotmos_response_bytes(rotmos_response *r, int code,
     }
     if (status == ROTMOS_OK)
         status = rotmos_response_submit(r, reply, error);
+    if (status == ROTMOS_OK) {
+        r->complete_reply = 1;
+        r->phase = ROTMOS_RESPONSE_FINISHING;
+    }
     (void)rotmos_reply_destroy(reply, NULL);
     return status;
 }
@@ -953,10 +941,15 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
 
 void rotmos_response_fail(rotmos_response *r, rotmos_status cause)
 {
+    rotmos_response_error(r, cause, 500);
+}
+
+void rotmos_response_error(rotmos_response *r, rotmos_status cause, int code)
+{
     if (!r->outcome.committed && !r->inflight) {
         retire_source(r, cause);
         if (rotmos_response_replace_uncommitted(r, NULL) == ROTMOS_OK) {
-            r->outcome.status = 500;
+            r->outcome.status = code;
             r->has_length = 1;
             if (rotmos_response_begin(r, NULL) == ROTMOS_OK &&
                 end_response(r, NULL, 0, NULL) == ROTMOS_OK)
@@ -988,17 +981,23 @@ void rotmos_response_step(rotmos_response *r)
         rotmos_source_release(retired, retired->failure);
         r->busy = 0;
     }
-    if (r->phase != ROTMOS_RESPONSE_ACTIVE)
+    if (r->phase != ROTMOS_RESPONSE_ACTIVE &&
+        !(r->phase == ROTMOS_RESPONSE_FINISHING && r->complete_reply &&
+          r->ending == NULL))
         return;
     if (r->suppressed) {
         r->eof = 1;
         (void)end_response(r, NULL, 0, NULL);
         return;
     }
-    if (r->blocked && r->bound - r->queued > 32) {
+    if (r->blocked && r->phase == ROTMOS_RESPONSE_ACTIVE &&
+        r->bound - r->queued > 32) {
         r->blocked = 0;
         if (r->writable != NULL)
             r->writable(r, r->userdata);
+        if (r->phase == ROTMOS_RESPONSE_ACTIVE &&
+            r->request->plan.on_writable != NULL)
+            r->request->plan.on_writable(r->request, r->request->userdata);
         if (r->phase != ROTMOS_RESPONSE_ACTIVE)
             return;
     }
@@ -1037,7 +1036,7 @@ void rotmos_response_step(rotmos_response *r)
                 ROTMOS_OK &&
             capacity > remaining)
             capacity = remaining;
-        (void)file_offset(r->file_offset, &offset);
+        (void)rotmos_file_offset(r->file_offset, &offset);
         do {
             result = pread(r->file, buffer, capacity, offset);
         } while (result == -1 && errno == EINTR);
