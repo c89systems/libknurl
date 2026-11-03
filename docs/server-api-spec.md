@@ -167,12 +167,14 @@ explicitly named copy/take. Config, plan and error types each have an initialize
 | `rotmos_listener_config_init`, `rotmos_tls_identity_init`, `rotmos_request_plan_init` | Explicit initial states, including no implicit TLS identity/body |
 | `rotmos_request_method`, `rotmos_request_method_token`, `rotmos_request_http_version` | Parsed method/version and original method spelling |
 | `rotmos_request_target`, `rotmos_request_path`, `rotmos_request_query`, `rotmos_request_authority` | Raw, un-decoded length-delimited views |
+| `rotmos_request_query_count`, `rotmos_request_query_at`, `rotmos_request_query_first` | Decoded ordered query pairs and exact-name first lookup; distinct from the raw query accessor |
 | `rotmos_request_header_count`, `rotmos_request_header_at`, `rotmos_request_header_first` | Ordered duplicate-preserving enumeration and case-insensitive lookup; missing is distinct from empty |
 | `rotmos_request_peer`, `rotmos_request_local`, `rotmos_request_tls_info`, `rotmos_request_framing` | Immutable transport/framing snapshots |
-| `rotmos_request_loop`, `rotmos_request_response` | Borrowed owning-loop/response handles |
+| `rotmos_request_server`, `rotmos_request_loop`, `rotmos_request_response` | Borrowed process-local server and owning-loop/response handles |
 | `rotmos_request_effective_address`, `rotmos_request_correlation_id` | Resolver results copied into request lifetime storage |
 | `rotmos_request_body_info`, `rotmos_request_body_read`, `rotmos_request_body_rewind` | Materialized-kind/length, bounded reads and explicit rewind; live streams reject these operations |
 | `rotmos_request_body_materialize`, `rotmos_request_body_bytes/copy/spill/path`, `rotmos_request_body_reader` | Explicit facade operations over the same body store; no consumer-owned spool or reader bridge |
+| `rotmos_body_materialize_config_init`, `rotmos_body_materialized_cleanup`, `rotmos_body_materialized_open_reader` | Explicit result ownership and caller-buffer/file behavior, separate from borrowed request storage |
 | `rotmos_reply_status/header_set/header_add/text/bytes/file`, `rotmos_reply_source_materialized/source_take` | Staged route result, selected only after the middleware/handler chain; generic source ownership |
 | `rotmos_response_state`, `rotmos_response_is_committed`, `rotmos_response_queued_bytes` | Drain state, irreversible commitment latch and bounded queue occupancy |
 | `rotmos_response_bytes` | Bounded copied complete reply (status/type/body), automatically begins and ends on success; cannot replace an existing reply |
@@ -209,8 +211,9 @@ statuses use enums/integers, never an untyped pointer convention.
 category, native/dependency code, operation, message and detail. It requires no
 cleanup. Optional error outputs may be NULL. Success clears a supplied error;
 failed factories leave output handles NULL. Errors must not disclose keys,
-credentials or body contents. HTTP status is selected explicitly by the adapter,
-not inferred from every library error.
+credentials or body contents. A status is not a universal HTTP mapping: the
+facade's default/error-reply policy selects HTTP outcomes as specified in section
+19, while raw I/O errors do not automatically synthesize an HTTP response.
 AGAIN/EOF clear diagnostic error fields; neither should generate an error log by
 itself. I/O count outputs are zero on those outcomes unless an operation explicitly
 documents a successfully accepted prefix.
@@ -219,7 +222,8 @@ documents a successfully accepted prefix.
 | --- | --- |
 | Configuration structs, strings, domain lists, TLS memory and rule arrays | Copied when accepted; later caller edits have no effect |
 | Callback functions, callback userdata, configured pslog logger | Borrowed for the documented server/process lifetime |
-| Request handle, metadata, materialized body and response handle | Runtime-owned until the request's terminal callback |
+| Request handle, metadata, borrowed body view/reader and response handle | Runtime-owned until the request's terminal callback |
+| Explicit materialization/copy/spill result | Caller-owned result; memory ownership, caller-buffer borrowing and file cleanup follow section 8, independently of request lifetime |
 | Body/frame callback bytes | Borrowed only during that callback |
 | Bytes accepted by a response/channel write | Copied into a bounded owned queue; caller may immediately reuse the accepted prefix |
 | File-response descriptor passed to a take operation | Transferred only on success; closed once on completion/cancellation |
@@ -232,6 +236,13 @@ not portable across fork boundaries, threads or server runs. Borrowed handles ma
 be kept in owner-loop request state until their documented terminal callback;
 they cannot outlive it. There is no general request refcount or cross-thread
 response mutation API.
+
+These are live-runtime restrictions. Caller-owned byte/materialization results
+and standalone readers opened over them do not require a live request or server
+loop; their storage owner and reader lifetime govern access. Native reader jobs
+use the executor's declared context, not a live request handle. Lua-backed
+sources/readers remain confined to their Lua owner thread even when their
+underlying bytes have an independent lifetime.
 
 Server pointers deliberately supplied to post-fork hooks identify the newly
 initialized process-local runtime context. That exception does not make captured
@@ -308,10 +319,21 @@ workers apply it. A replacement worker inherits the current gate, never a stale
 initial value. Request bodies and proxy admission honor the gate too.
 
 Repeated stop requests are idempotent. `request_stop` is thread-safe within the
-running process; it wakes the parent loop and never waits for its own callback.
-It is not async-signal-safe. `notify_signal` is the separate async-signal-safe
+running process and valid from the runtime parent or an owned worker, including
+an HTTP route callback. It never waits for its own callback and is not
+async-signal-safe. `notify_signal` is the separate async-signal-safe
 notification path during a run, with no allocation, locks or user callbacks.
 The caller must keep the server alive while a signal handler can reference it.
+
+In an HTTP worker, `rotmos_server_request_stop` sends a bounded, coalescing stop
+notification through the library's owned parent/worker control path. Waking only
+a fork-local parent flag/descriptor is insufficient. The parent applies normal
+requested-stop policy to the whole server; this must not become a worker exit
+followed by RESTART. A route obtains its local server through
+`rotmos_request_server`; no parent address-space pointer or host stop protocol is
+needed. The initiating callback may finish its reply under the normal bounded
+drain rules, without recursive teardown. `set_serving` remains a parent-loop
+operation; a worker cannot independently change the global gate.
 
 Default signal mode is HOST: the caller forwards relevant child/termination
 signals. Explicit LIBRARY mode installs/restores its own run-scoped handlers.
@@ -476,9 +498,13 @@ sentinel arithmetic.
 
 An unanswered managed request has a finite `deferred_response_timeout_ms`
 (default 30000) after successful body completion. This covers the otherwise
-unbounded wait before response begin; response write-idle timing covers started
-responses, including a paused producer. Application receive pauses do not freeze
-these deadlines. Startup and deferred-response deadlines have named disable
+unbounded wait before response begin. Write-idle timing applies while output is
+pending on the downstream transport, including a retained TLS retry; it is not
+a timeout on a producer paused with no pending output. As in the imported Kore
+send-queue guard, an empty queue is not evidence of a stalled downstream writer.
+Selected route/proxy idle or total deadlines still apply to a quiet producer;
+receive/producer pauses do not disable those independent policies.
+Startup and deferred-response deadlines have named disable
 flags; Vectis maps its existing effective deadline policy explicitly, including
 absence of a corresponding deadline. New standalone defaults must not introduce
 a shorter timeout into an existing application. Proxy-owned progress/total
@@ -524,6 +550,8 @@ if dispatch returns an error after assigning userdata. Callback failures before
 commit produce a bounded 500 response unless the adapter already selected a
 valid error reply; after commit they abort the exchange. Parser rejects which
 precede dispatch use connection-level observations instead.
+These are the low-level callback rules. The ordinary route facade's empty-reply,
+middleware and error-status rules are specified in section 19.
 
 Request accessors provide:
 
@@ -548,6 +576,17 @@ its declarations through that public contract instead of keeping a second copy.
 Never rebuild a proxy target from decoded parameters or normalize percent
 escapes in the transport accessor.
 
+`rotmos_request_query` returns the raw query, without the leading question mark;
+the query count/at/first family operates on the decoded pairs maintained by the
+router. Preserve Vectis's first-equals split, ordered duplicates, empty values,
+bare keys and skipped empty ampersand segments. Decode percent escapes once and
+plus as space for query names/values. First lookup is case-sensitive and selects
+the first matching pair; missing is distinct from a present empty value. Header
+lookup is separately case-insensitive. Indexed lookup does not allocate and
+reports out-of-range explicitly. Path decoding uses the existing path rules,
+including keeping plus literal and rejecting encoded separators/control bytes;
+query decoding must not be reused as a path decoder.
+
 The plan callback types are `rotmos_body_fn` (section 8), `rotmos_complete_fn`
 (request, userdata, error -> status), `rotmos_writable_fn` (request, userdata ->
 void), and `rotmos_request_close_fn` (request, const outcome, userdata -> void).
@@ -558,9 +597,10 @@ is omitted, the library still performs its own cleanup; dynamically allocated
 application state requires an explicit owner/destructor.
 
 A managed request remains live after body completion while its final response
-is pending or draining. Returning from a handler does not implicitly end that
-response. Normal terminal cleanup waits for successful body completion, final
-response drain and release of attached producers/files/channels. Disconnect,
+is pending or draining. Returning from a low-level callback does not implicitly
+end that response. Ordinary facade handlers instead submit their staged reply
+when their chain completes. Normal terminal cleanup waits for body completion,
+final response drain and release of attached producers/files/channels. Disconnect,
 timeout, abort or shutdown cancels remaining work and yields one terminal
 outcome. An early reply with an unread body closes after draining the reply;
 it cannot authorize keepalive by pretending the input completed. The deferred
@@ -575,6 +615,14 @@ callback can access that request. Delayed application work must cancel its own
 timer/watch registration during close; merely saving a request pointer does not
 extend its lifetime. A successful WebSocket upgrade instead transfers ownership
 to the separate connection lifetime in section 13.
+
+A cancelled provider/native job can outlive transport closure only through its
+independently pinned operation context and copied/retained argument storage.
+Retire its request-facing capability before request close; subsequent completion
+may release that context but cannot access the request or restart HTTP delivery.
+If application state is shared with such an operation, release its request owner
+at request close and its operation owner at retirement. This does not extend the
+request handle lifetime or permit a job to retain an unprotected request pointer.
 
 Before dispatch, reject ambiguous Host or message framing rather than allowing
 two layers to disagree: duplicate Host, conflicting/repeated Content-Length,
@@ -624,11 +672,36 @@ Peer body-idle/minimum-rate accounting excludes time in an application-requested
 receive pause. It must not disable independent total/deadline policy supplied by
 the application. Slow consumers cannot create an unbounded queue.
 
-Materialized bodies expose kind, length, borrowed memory or borrowed file/path,
-and bounded read/rewind operations. Memory-only access to a spilled body reports
-its actual kind; no hidden read-all or second spool. Spool files are private,
-created only in the declared directory and removed once after request cleanup.
-Materialized/rewind operations on a live STREAM request return `STATE`.
+Request-owned materialized bodies expose kind, length, borrowed memory or
+borrowed file/path, and bounded read/rewind operations. Memory-only access to a
+spilled body reports its actual kind; no hidden read-all or second spool. These
+transport spool files are private, created only in the declared directory and
+removed once after request cleanup. Materialized/rewind operations on a live
+STREAM request return `STATE`.
+
+Explicit `rotmos_request_body_materialize/copy/spill` calls produce independent
+caller results, not aliases whose storage expires at request close. Preserve
+Vectis's `rotmos_body_materialize_config` inputs: optional caller buffer and
+capacity, memory threshold, directory and prefix. The result reports memory/file
+kind on success, checked length and memory ownership; zero-length success is a
+memory result without a required allocation. A fitting caller buffer is borrowed
+and never freed; otherwise an allocated memory result belongs to
+the caller. The helper rewinds the completed body reader before preparation and
+rewinds it to the beginning after successful preparation, so repeated calls
+do not silently return an already-consumed suffix. This is explicit copying or
+file materialization, not transport streaming.
+
+For compatibility with Vectis's public materialization/spill results, a returned
+file is independent of the transport spool and remains the caller's filesystem
+artifact. Result cleanup frees allocated memory/path metadata and clears the
+value; it does not unlink that returned file. The caller explicitly removes it
+when done. Failure removes only partial files created by that failed operation
+and returns an empty result; a supplied caller buffer may contain a partial
+copy and remains caller-owned. Failure does not promise to restore reader
+position. Keep this policy distinct from automatic deletion of request spools
+and temporary reply files. A result reader is separately
+closed; a memory reader borrows the result/caller buffer for its whole lifetime.
+Lua wrappers retain those owners until their reader closes.
 
 The initial managed Kore path retains its Content-Length framing contract.
 Chunked bodies and trailers required by proxy routes use takeover and the
@@ -1221,9 +1294,23 @@ worker children produce lifecycle events and apply the selected death policy.
 This does not promise recovery from arbitrary memory corruption.
 
 Install static/shared targets as `rotmos::static` and `rotmos::shared` from
-`find_package(rotmos CONFIG REQUIRED COMPONENTS ...)`, with a distinct opt-in
-Kore-header component. Hide private adapter/Kore symbols with native export
-controls; ensure static archives do not impose unresolved `vectis_*` hooks or
+`find_package(rotmos CONFIG REQUIRED COMPONENTS static)` or `COMPONENTS shared`.
+The opt-in `kore_headers` component exports `rotmos::kore_headers`, supplying
+matching backend declarations/definitions without another runtime. Ordinary
+consumers choose one core target; the shared Lua binding selects shared.
+
+The Vectis native build integration has this shape:
+
+```cmake
+find_package(rotmos CONFIG REQUIRED COMPONENTS static)
+target_link_libraries(vectis PRIVATE rotmos::static)
+```
+
+Package lookup fails clearly when a requested variant/component is missing;
+it does not silently choose another variant, rebuild a private core, or fall back
+to host libraries. Imported targets provide the complete selected dependency
+closure and relocatable installed include paths. Hide private adapter/Kore
+symbols with native export controls; ensure static archives do not impose unresolved `vectis_*` hooks or
 colliding standalone main/global callbacks. Do not leak build/cache paths.
 
 Initial dependency candidates remain cpkt 0.6.1, LoneJSON 0.45.0 and libpslog
@@ -1344,14 +1431,14 @@ Do not count an API-presence probe as behavior evidence.
 | Gate | Required evidence |
 | --- | --- |
 | C89/API | Real compile commands for core/backend/header/example TUs; strict installed C89 and C++ consumers; no private includes/defines |
-| Build boundary | Original 42 patches plus extraction patches replay; pristine snapshot unchanged; static/shared installed links, exports and no vectis imports |
+| Build boundary | Original 42 patches plus extraction patches replay; pristine snapshot unchanged; explicit static/shared/kore_headers component consumers, missing-component failure, exports and no vectis imports |
 | Configuration | Defaults/zero normalization, every mapping above, invalid enums/negative times, width overflow, range limits and effective timeout rounding |
 | Lifecycle | Bind conflict after validation, startup-hook failure, real ready barrier, paused admission, gate release/worker replacement, restart and second-active-server rejection |
-| Process ownership | Hook role/order, post-fork resources, unrelated child not reaped, first signal preserved, control EOF/parent death and bounded escalation |
-| Requests/parser | All methods, raw/decoded separation, ordered duplicate headers/query data, exact Host lookup, malformed NUL/bare-CR/field-count blocks, near-64-KiB headers, Host/SNI mismatch |
-| Body modes | Empty/fixed/truncated/oversize bodies, early rejection, no forbidden spool, explicit spill cleanup, pause/resume partial consumption and no redelivery of accepted bytes |
+| Process ownership | Hook role/order, post-fork resources, unrelated child not reaped, first signal preserved, worker route requests whole-server stop without restart, control EOF/parent death and bounded escalation |
+| Requests/parser | All methods, raw query versus decoded ordered pairs, first exact-name query lookup, plus/percent/empty/duplicate cases, exact Host lookup, malformed blocks/field-count bounds, near-64-KiB headers and Host/SNI mismatch |
+| Body modes | Empty/fixed/truncated/oversize bodies, early rejection, no forbidden spool, explicit spill cleanup, pause/resume partial consumption and no redelivery; caller buffers and independent materializations survive request close, returned files require explicit removal |
 | Streaming | First output before producer EOF; chunk-size-independent memory bounds, slow producer/consumer, cancel/failure and cross-thread wake; counters beyond 4 GiB without full-value buffers |
-| Async progress | Producer AGAIN requires explicit resume; no writable-event polling, lost wake or zero-progress spin; body EOF with delayed reply retains the request until drain/deadline |
+| Async progress | Producer AGAIN requires explicit resume; no polling/lost wake/spin; delayed reply retains request until drain/deadline; an empty-queue quiet producer is not killed by downstream write-idle, while pending output remains guarded |
 | Cancellation | Cancel watch/timer/defer within its callback and earlier in the same event batch; retire once on success/shutdown; no rearm, callback after retirement or userdata use after free |
 | Reader/Lua dispatch | Slow native reader does not stall an unrelated request; upload/DSV Lua callback thread equals the owner worker thread; callback/producer roots survive GC until terminal cleanup |
 | Responses | Repeated Set-Cookie, known-length under/overflow, HTTP/1.0 close and HTTP/1.1 chunk framing/trailers, HEAD/1xx/204/205/304, interim/final distinction |
@@ -1365,7 +1452,7 @@ Do not count an API-presence probe as behavior evidence.
 | Events/logging | TCP versus effective IP, admission before allocation, once-only accounting, status override/disabled/file sinks, malformed/oversize worker logs and stable post-flush snapshots |
 | Resources | Heap allocation failure, zero-length/cached file content type, no key/pool/IPC leaks, shutdown with active channels/producers; focused musl default-worker-stack proof where applicable |
 | Consumer cutover | Reference adapter proves the full integration contract from installed SDKs before switch; Vectis handlers/configurations retain behavior across C/Lua, uploads, static/packed assets, WebDAV/auth, services, metrics and normal/packed execution |
-| Facade | Staged reply edits and after-hook replacement before commitment; buffered/file-backed/live source lifetimes, stack-record JSON preparation, body/reader helpers, REST envelopes and OpenAPI over one registry |
+| Facade | Empty success gives 204, callback errors preserve 400/501/500, staged status clears payload but keeps appended headers, framing normalization, auth/before short-circuit order and unselected-source ownership; body/source helpers, stack-record preparation, REST/OpenAPI and C/Lua bounded SSE encoding |
 | Toolkit | Public C router ordering/captures/groups, profiles/trusted-IP/autoblock, typed JSON/multiple output schemas, libxml2 mapped/DOM/SAX/resumable output, static and filesystem/read-only/custom DAV workflows |
 | Storage | Concurrent conditional mutations, cancellation before/after commit, provider AGAIN/completion races, finite lock wait and unrelated request progress during slow native jobs; confined paths and symlink replacement races |
 | Codec limits | Preserve Vectis writer isolation under original-table/option mutation, GC/reentry and spooled-field cleanup; preserve rejection of external mutable records in callback writers; parser depth/text/node budgets, disabled external entities, scoped XML callbacks and generator output without hidden staging |
@@ -1420,6 +1507,52 @@ returning as appropriate; the live source take transfers ownership only on
 success. Reply replacement releases superseded owners once. Submission transfers
 the selected owners into the existing response producer/file mechanisms without
 another whole-body copy; transport cleanup releases them on drain or abort.
+
+Preserve the existing staged-builder behavior explicitly:
+
+| Operation/outcome | Facade behavior |
+| --- | --- |
+| Successful ordinary/typed handler with no selected reply | Submit 204 after the handler chain; do not leave a live unanswered low-level plan |
+| `rotmos_reply_status` | Select the status, release the previous payload/content type, and retain explicitly added headers |
+| Text/bytes/file/source/JSON payload replacement | Prepare the replacement before discarding the old payload; keep headers, and close only transferred superseded owners once |
+| Vectis `response_header` | Forward to `rotmos_reply_header_add`, preserving duplicate fields and their order; explicit header_set is a separate operation |
+| Failure before submission | Discard the failed staged result and render the selected error reply; no partially selected success response reaches the wire |
+
+Staged header addition copies syntactically valid declarations, including the
+Content-Length/Transfer-Encoding declarations accepted by Vectis today. At
+submission the facade owns framing: ignore application Transfer-Encoding and
+derive ordinary payload lengths from the selected body/source. Preserve the
+existing explicitly supplied HEAD/304 representation length and 205 zero-length
+behavior. These fields cannot override transport framing. The low-level
+response-header interface still rejects conflicting framing controls; Vectis
+must not use it to implement its staged header builder. Retain separate
+Set-Cookie fields through submission.
+
+The default route error policy matches the existing bridge: INVALID becomes
+400, NOT_SUPPORTED becomes 501, and other ordinary handler failures become 500.
+A selector miss is 404, not an inference from any application STATE error;
+body/parser/admission rejections keep their independently selected statuses.
+Upload open/write/finish and codec execution preserve their existing
+phase-specific mappings and selected rejection statuses; do not flatten them
+through either the raw callback fallback or one universal status conversion.
+Provide an optional public error-reply callback receiving request/error views,
+the operation/phase and selected HTTP status, userdata and a staged reply, so
+Vectis/REST policy can supply its existing body and envelope centrally.
+Application-selected auth/challenge/redirect replies are
+successful reply decisions, not library error statuses. Low-level AGAIN/EOF do
+not become valid ordinary handler success results. Already terminated requests
+do not receive a new error response.
+
+For the Lua route facade, preserve the actual chain: auth denial finishes without
+before/handler/after; a before response table finishes without handler/after;
+otherwise the handler runs, then after sees its unprocessed result. Nil/true from
+before means continue; nil/true from after retains the result, and a response
+table replaces it. Other hook result kinds fail under the existing policy.
+Native source ownership starts only when a selected declaration is converted/
+accepted. An unprocessed Lua source table discarded by an after hook is never
+read/reset/closed by the library; acquired owners from partial conversion still
+receive their required cleanup. Do not confuse discarding an unselected table
+with replacing a source already transferred to a C reply builder.
 
 The optional LoneJSON header adds `rotmos_reply_json`,
 `rotmos_reply_json_file`, `rotmos_reply_error_json` and typed reply operations.
@@ -1510,6 +1643,28 @@ validate, handler/error callbacks and reply composition. Preserve Vectis's
 nil/string/response-table hook ordering; its custom error envelopes, auth policy
 and outbound REST/HTTP clients remain host-owned. Buffered REST remains distinct
 from typed-record fast routes and live response producers.
+
+### Server-sent events
+
+Provide public `rotmos_sse_event_init`, `rotmos_sse_encode` and
+`rotmos_router_sse` operations, with value types declared through the HTTP/router
+headers. Event fields are optional byte views for comment/id/event/data/raw frame
+and an exact nonnegative retry interval in milliseconds, with presence separate from an empty
+value. The encoder writes one bounded event into caller-provided capacity and
+reports its length; an oversized event returns LIMIT without a partial frame.
+Reuse Vectis's field ordering, line splitting/CRLF handling, blank event terminator
+and raw-frame passthrough. A data string is a data event, not a raw frame: empty
+data still emits a framed data event, while an empty raw frame follows the source
+facade's zero-length EOF convention before reaching the low-level producer.
+
+The route helper supplies text/event-stream; charset=utf-8, default GET and the
+existing no-cache/x-accel-buffering headers when absent. Its open/read/close
+callbacks use the same staged-reply/live-source ownership and middleware rules.
+Each produced event fits the declared read budget; it is not silently fragmented
+across producer reads to evade that limit. Actual socket writes may still be
+partial. No output spool or collection of the complete event stream is permitted.
+Lua `server:sse` marshals its existing event tables through this public C helper;
+the binding must not carry a private SSE encoder.
 
 ### Fast typed JSON and XML/libxml2 routes
 
@@ -1704,7 +1859,14 @@ The existing filesystem mutation lock uses blocking flock; importing it unchange
 would violate worker-loop progress. Acquire locks with nonblocking attempts and
 owner-loop timer/deadline resumption, or in a declared bounded native job; never
 wait on a lock, condition variable or thread join in an HTTP callback. Initialize
-storage-operation timeout to 30000 ms, including lock wait, with finite overrides.
+storage-operation timeout to 30000 ms, including lock wait, with finite overrides
+and a named disabled flag for an explicitly absent host deadline. The Vectis
+adapter maps its existing operation policy rather than imposing that new default
+on a long upload/copy. Worker shutdown remains bounded even when that deadline
+is disabled. Cancellation/timeout retires a native operation only after its
+acknowledgement; until then its storage/job context remains independently pinned,
+with live request access revoked. That context is not freed by request close and
+late completion cannot invoke callbacks on the closed request.
 Regular filesystem syscalls may still block in the OS; the API promises bounded
 queues and cooperative progress, not real-time disk latency. Potentially long
 filesystem jobs run in a bounded post-fork native executor and complete via the
@@ -1790,7 +1952,9 @@ nil for 204, a string reply, or a response declaration with headers/status and
 body/file/spooled_source/stream_source. Auth/before/handler/after processing runs
 before converting/submitting that declaration. Source-table read/reset/close and
 nil/false EOF retain their existing meaning, including draining an oversized
-returned chunk before calling read again. These are facade normalizations over
+returned chunk before calling read again. Preserve the existing protected
+numeric-to-string source conversion and zero-length chunk as EOF; do not invoke
+arbitrary table/userdata stringification. These are facade normalizations over
 public reply/source APIs, not a second HTTP implementation. Direct low-level
 write/producer operations below remain explicit and do not force handler changes.
 
@@ -1808,8 +1972,10 @@ comparison and decimal formatting. Never convert them through a Lua floating
 number, truncate to signed range or use numeric zero to mean absence. Reject
 fractional/negative/out-of-range sizes before calling C. Missing headers return
 nil; empty values return an empty string. I/O results distinguish accepted bytes,
-the stable `rotmos.AGAIN` sentinel and true EOF; empty strings cannot stand for
-EOF or a zero-progress producer success. Resume is an explicit owner-loop action.
+the stable `rotmos.AGAIN` sentinel and true EOF. The direct low-level producer
+does not accept a zero-progress empty-string success. The existing source-table
+facade normalizes its zero-length/EOF conventions before reaching that producer.
+Resume is an explicit owner-loop action.
 
 Concretely, `response:write(chunk)` returns an accepted byte count, or
 `nil, rotmos.AGAIN`, or `nil, error`. Reads return a binary chunk, or

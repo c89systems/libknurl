@@ -81,13 +81,13 @@ the stated operation without additional server logic in the adapter.
 | `json_route`, `json_typed_route`, `xml_route`, `prefixed_json_route`, `prefixed_json_typed_route`, `prefixed_xml_route` | Corresponding public router registrations and codecs, typed input/output handlers and multiple output schemas, without text round trips or private record access. |
 | `upload_stream`, `upload_file`, `upload_reader`; Lua `upload`, `dsv` and `mcp` | Generic chunk/file/reader execution, finite backpressure and completion/cancellation/close callbacks. Vectis retains the DSV/MCP integration and forwards its parser callbacks. |
 | `dsv_route`, `prefixed_dsv_route`, `cai_mcp_route` | These Vectis-owned format/protocol adapters register ordinary routes with public body/source helpers. Their handlers and dependencies stay in Vectis; no custom transport executor is needed. |
-| Request method/path/IP/param/query/header and `request_kore` | Public request views preserve raw versus decoded data, duplicate order and absence behavior; native access delegates to the explicit Kore escape hatch. |
-| `request_body_reader`, `body_materialize`, `body_read_all`, `body_spill`, `body_bytes`, `body_copy`, `body_path`, `body_is_spooled` | Explicit borrowed readers and memory/file materialization results, rewind/copy/spill helpers and cleanup. No new read-all implementation or hidden transport spool in Vectis. |
+| Request method/path/IP/param/query/header, `query_count`, `query_at` and `request_kore` | Public views separate raw query from decoded ordered pairs and exact-name first lookup, preserve absence behavior and path decoding, and provide the explicit Kore escape hatch. |
+| `request_body_reader`, `body_materialize`, `body_read_all`, `body_spill`, `body_bytes`, `body_copy`, `body_path`, `body_is_spooled` | Distinguish borrowed request storage from independent caller materialization/copy/spill results, including caller buffers, reader rewind and explicit returned-file removal. No read-all implementation or hidden transport spool in Vectis. |
 | `response_status`, `response_header`, `response_text`, `response_bytes`, `response_file` | Staged `rotmos_reply_*` helpers preserve copying, replacement, validation, content type and preparation-before-transmission behavior. |
 | `response_source`, `response_stream_source`, `response_json`, `response_json_generated`, `json_reply`, `json_reply_status`, `response_error_json` | Explicit materialized/live/file-backed reply helpers with the same source transfer, serialization timing and typed-reply behavior, as detailed below. |
 | `static_file`, `static_directory`, `static_embedded` | Generic filesystem and public asset-provider mounts preserve methods, indexes/redirects, media types, conditional/range behavior and path confinement. Packed lookup remains Vectis-owned. |
 | `proxy_route`; Lua `proxy` | Public proxy config and copied hook views cover all rewrite/response/error hooks, streaming HTTP/SSE, HTTP/2 upstreams and raw WebSocket relays. No direct curl/Kore/TLS transport remains in Vectis. |
-| `websocket`; Lua `websocket` and `sse` | Existing application-frame callbacks and live response sources, including their owner/close/error behavior. An SSE route does not acquire a new buffering layer. |
+| `websocket`; Lua `websocket` and `sse` | Existing frame/source callbacks and public C SSE encoding/route helpers preserve event fields, size bounds, default headers and lifecycle. An SSE route does not acquire a new buffering layer or binding-private formatter. |
 | `webdav`, `webdav_embedded_site`, `webdav_embedded` | Public filesystem/read-only/custom provider mounts, generic auth decisions, conditional mutations, quotas and recovery. Vectis supplies asset/Lockd/credential providers. |
 | `openapi_doc`, `openapi`, `route_count` | Public registry metadata, count and OpenAPI JSON/YAML generation over that same registry. Business schema descriptions come from Vectis; no duplicate route registry is needed for documentation. |
 | Lua `vectis.rest` server helpers | Buffered JSON decode, validation, error mapping and response composition fit the route/reply facade unchanged. Ship generic server helpers through `rotmos.rest`; Vectis keeps its error-envelope/application policy and its outbound REST/HTTP clients. |
@@ -101,6 +101,14 @@ infer them from private response tags or backend state:
 
 - `response_bytes` copies the caller's bytes before returning; it stages the
   selected reply. Later header/payload changes occur before transport submission.
+- `response_header` appends, including repeated Set-Cookie fields. Status-only
+  selection clears the old payload/content type while preserving added headers.
+  Staged framing declarations retain their existing submission-time normalization;
+  they are not passed to the stricter low-level response-header setter.
+- A successful ordinary C handler with no reply produces 204. Callback failures
+  preserve phase-specific bridge mappings, independent selector/body rejection
+  statuses and host error-envelope policy. Auth/before short-circuiting skips
+  later hooks; an unselected Lua source declaration acquires no native ownership.
 - `response_source` is explicitly materialized/file-backed. `response_stream_source`
   takes a live source on success and closes it when output finishes or aborts.
   The source's initial reset behavior and position follow the existing Vectis
@@ -119,6 +127,8 @@ infer them from private response tags or backend state:
   them to the public producer contract without requiring source rewrites or
   concatenating the full output. Native low-level AGAIN/EOF conventions do not
   become mandatory new return values for existing Vectis Lua sources.
+  Keep the existing protected numeric-string conversion and zero-length chunk
+  EOF behavior when normalizing those source tables.
 - Keep the working public LoneJSON schema assignment/record ownership policy.
   Callback-writer input restrictions, buffered external-record support and
   schema/map selection remain as in Vectis.
@@ -130,6 +140,14 @@ infer them from private response tags or backend state:
   defaults or convenience limits cannot silently tighten an existing Vectis
   route or change its output. Changes beyond an API adaptation need a concrete
   reason and separate specification; do not accumulate redesign into extraction.
+- A route callback may request whole-server stop through its process-local server
+  handle. Rotmos forwards that request to the parent and drains under the shutdown
+  policy; it must not merely exit/restart the calling worker or require a new host
+  control protocol. Request close revokes handles even if an independently pinned
+  cancelled native operation still has context to retire.
+- Write-idle guards pending downstream output, not an empty queue waiting for a
+  producer/upstream. Existing route/proxy deadlines remain effective; new default
+  storage-operation deadlines can be explicitly disabled where Vectis had none.
 
 ## Cutover readiness and verification
 
@@ -146,6 +164,10 @@ scope ends on builder return, source reset/close/error ownership, every body
 materialization mode, prefix/middleware ordering, REST envelopes, OpenAPI and
 the existing TLS/proxy/WebDAV/process scenarios. Installed C and Lua workflows
 must cover the same facade. A low-level transport example alone is insufficient.
+Include caller materialization results retained after request close, explicit
+returned-file removal, decoded duplicate query lookup, empty C replies, staged
+header normalization and whole-server stop from an active worker. Test SSE event
+encoding from public C and Lua and a quiet producer with no pending output.
 
 Before declaring the library ready for the Vectis replacement, review the exact
 proposed Vectis adapter/build delta against this contract and run the affected
