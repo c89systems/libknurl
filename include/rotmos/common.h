@@ -13,6 +13,16 @@
 extern "C" {
 #endif
 
+typedef struct rotmos_server rotmos_server;
+typedef struct rotmos_process_context rotmos_process_context;
+typedef struct rotmos_router rotmos_router;
+typedef struct rotmos_route rotmos_route;
+typedef struct rotmos_route_group rotmos_route_group;
+typedef struct rotmos_request rotmos_request;
+typedef struct rotmos_response rotmos_response;
+typedef struct rotmos_reply rotmos_reply;
+typedef struct rotmos_source rotmos_source;
+
 typedef enum rotmos_status {
     ROTMOS_OK = 0,
     ROTMOS_AGAIN,

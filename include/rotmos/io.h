@@ -7,8 +7,6 @@
 extern "C" {
 #endif
 
-typedef struct rotmos_source rotmos_source;
-
 typedef rotmos_status (*rotmos_source_read_fn)(void *buffer, size_t capacity,
                                                size_t *produced, void *userdata,
                                                rotmos_error *error);

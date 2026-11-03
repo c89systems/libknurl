@@ -7,8 +7,14 @@ and ordered headers, pin regular files, and distinguish live source ownership
 from explicitly bounded synchronous materialization. Source registration never
 reads or resets a producer. It also compiles the selected private Kore backend
 objects under strict C89, applying the 42 original patches and an external C89
-port. Backend objects are not yet linked into the library: server execution,
-routing and the Lua module remain implementation work. The complete contract is in the
+port. Inert server construction copies listeners, TLS material, callbacks,
+trusted-proxy declarations and autoblock rules, and resolves effective settings.
+The router owns stable route/group handles, validates declarations and preserves
+registration order, prefixes and exact method/path conflicts. Construction and
+registration execute no user callbacks or network operations.
+
+Backend objects are not yet linked into the library. Live server execution,
+request dispatch and the Lua module remain implementation work. The contract is in the
 [server API specification](server-api-spec.md) and
 [Vectis integration contract](vectis-integration-contract.md).
 

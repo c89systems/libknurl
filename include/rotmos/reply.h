@@ -7,8 +7,6 @@
 extern "C" {
 #endif
 
-typedef struct rotmos_reply rotmos_reply;
-
 typedef enum rotmos_reply_kind {
     ROTMOS_REPLY_EMPTY = 0,
     ROTMOS_REPLY_BYTES,

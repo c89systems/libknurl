@@ -450,7 +450,7 @@ than relying on future librotmos defaults.
 | `hsts_max_age_seconds` | Zero disables HSTS; apply only to appropriate TLS responses |
 | `websocket_max_frame_bytes` | 16384 bytes for application frames; not a proxy-tunnel message limit |
 | `websocket_timeout_ms` | 120000 ms |
-| `server_header` | Nonempty copied value; librotmos default `rotmos`, Vectis explicitly passes `vectis` |
+| `server_header` | Copied value of 1..53 bytes under the current Kore formatter; default `rotmos`, Vectis explicitly passes `vectis`; reject longer declarations before runtime |
 | `access_log_path` | NULL disables the independent file sink; preflight append access |
 | `access_log` | pslog sink enabled by default, trace/warn/error categories and up to 32 exact-status overrides |
 | `pretty_error_pages` | False |
@@ -483,6 +483,17 @@ existing bridge's behavior. Reject a rounded value over 65535 seconds rather
 than silently saturating it. Disabled means bypassing the check, not converting
 it into a one-second deadline. Other millisecond settings retain their declared
 units; scheduler lateness does not change the configured duration.
+
+The C declaration groups these values in `rotmos_worker_config`,
+`rotmos_limit_config`, `rotmos_timeout_config`, `rotmos_http_config` and
+`rotmos_io_config`. Each `rotmos_deadline` has milliseconds plus a named disabled
+flag; initialized zero milliseconds inherits its default. The effective view
+contains resolved configuration and retains `requested_timeouts` and
+`requested_worker_count`, so callers can distinguish inheritance and rounding.
+Automatic HTTP workers resolve to the online CPU count bounded to 1..253.
+`rotmos_server_get_state` reports the object state without executing callbacks.
+Core declarations include trusted-proxy/autoblock policy; pslog-specific logger
+and level declarations stay in their explicit integration header.
 
 Vectis currently derives a native body ceiling from the largest declared route
 when its server-wide body limit is zero; an explicit positive server limit is a
@@ -1629,6 +1640,15 @@ Groups apply one prefix and shared middleware/auth hooks without copying route
 matching into Lua. Unmatched routes return 404; matched static/WebDAV method
 denials return the appropriate 405/Allow contract. ANY never accepts a method
 which the backend rejected as unknown.
+
+`rotmos_router_group` returns a router-owned group and
+`rotmos_route_group_route` registers through it. A trailing prefix slash is
+normalized once; parameter prefixes promote literal child declarations to PARAMS,
+and regex prefixes escape metacharacters rather than changing their meaning.
+`rotmos_router_route_at` and `rotmos_route_declaration` expose the same registry
+as immutable borrowed declarations. Handles and their declarations remain stable
+across later registrations, until their router is destroyed. Method zero selects
+ANY only when no explicit mask was supplied; unknown method values/bits fail.
 
 Supply helpers for verb routes, streaming uploads, fixed replies, static files,
 static directories and read-only asset providers. `rotmos_static_config` covers
