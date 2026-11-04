@@ -37,6 +37,7 @@ static void clear_payload(rotmos_reply *reply)
     reply->content_type = NULL;
     reply->file = -1;
     reply->file_length.high = reply->file_length.low = 0;
+    reply->file_modified = 0;
     reply->source = NULL;
     free(body);
     free(type);
@@ -128,6 +129,7 @@ rotmos_status rotmos_reply_new(rotmos_reply **out, rotmos_error *error)
     reply->file = -1;
     reply->file_path = NULL;
     reply->file_length.high = reply->file_length.low = 0;
+    reply->file_modified = 0;
     reply->source = NULL;
     reply->retired_head = reply->retired_tail = NULL;
     reply->headers = NULL;
@@ -373,6 +375,7 @@ rotmos_status rotmos_reply_open_file(rotmos_reply *reply, rotmos_error *error)
     reply->file = file;
     reply->file_length.high = (unsigned long)((info.st_size >> 16) >> 16);
     reply->file_length.low = (unsigned long)info.st_size & 0xffffffffUL;
+    reply->file_modified = info.st_mtime;
     rotmos_error_clear(error);
     return ROTMOS_OK;
 }
@@ -454,6 +457,7 @@ rotmos_status rotmos_reply_generate_file(rotmos_reply *reply, int status,
         reply->file = fd;
         reply->file_length.high = (unsigned long)((info.st_size >> 16) >> 16);
         reply->file_length.low = (unsigned long)info.st_size & 0xffffffffUL;
+        reply->file_modified = info.st_mtime;
         rotmos_error_clear(error);
         return ROTMOS_OK;
     }

@@ -210,7 +210,8 @@ rotmos_status rotmos_response_status(rotmos_response *r, int code,
 }
 
 static rotmos_status header(rotmos_response *r, const char *name,
-                            const char *value, int set, rotmos_error *error)
+                            const char *value, int set, int staged,
+                            rotmos_error *error)
 {
     rotmos_status status;
     size_t total;
@@ -219,14 +220,17 @@ static rotmos_status header(rotmos_response *r, const char *name,
     if (status != ROTMOS_OK)
         return status;
     if (!rotmos_header_name_valid(name) || !rotmos_header_value_valid(value) ||
-        forbidden(name))
+        (!staged && forbidden(name)))
         return rotmos_fail(error, ROTMOS_INVALID, "response_header",
                            "invalid or transport-owned field");
     total = 0;
     for (i = 0; i < r->headers->header_count; ++i) {
         if (set &&
-            rotmos_text_equal_case(r->headers->headers[i].name.data, name))
+            rotmos_text_equal_case(r->headers->headers[i].name.data, name)) {
+            if (staged)
+                name = r->headers->headers[i].name.data;
             continue;
+        }
         total += r->headers->headers[i].name.length +
                  r->headers->headers[i].value.length + 4;
     }
@@ -243,13 +247,13 @@ static rotmos_status header(rotmos_response *r, const char *name,
 rotmos_status rotmos_response_header_set(rotmos_response *r, const char *name,
                                          const char *value, rotmos_error *error)
 {
-    return header(r, name, value, 1, error);
+    return header(r, name, value, 1, 0, error);
 }
 
 rotmos_status rotmos_response_header_add(rotmos_response *r, const char *name,
                                          const char *value, rotmos_error *error)
 {
-    return header(r, name, value, 0, error);
+    return header(r, name, value, 0, 0, error);
 }
 
 rotmos_status rotmos_response_known_length(rotmos_response *r,
@@ -832,6 +836,7 @@ rotmos_status rotmos_response_replace_uncommitted(rotmos_response *r,
     r->complete_reply = 0;
     r->has_length = r->trailers_enabled = r->chunked = r->suppressed =
         r->blocked = 0;
+    r->explicit_length_header = 0;
     r->length.high = r->length.low = r->accepted.high = r->accepted.low = 0;
     r->outcome.status = 200;
     r->outcome.cause = ROTMOS_OK;
@@ -1028,11 +1033,12 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
     rotmos_u64 saved_length;
     int saved_status;
     int saved_has_length;
+    int saved_explicit_length;
     int saved_close;
     size_t i;
-    rotmos_u64 representation;
     rotmos_owned_bytes pretty;
-    int has_representation;
+    char modified[128];
+    int conditional = 0;
     status = available_producer(r, error);
     if (status != ROTMOS_OK)
         return status;
@@ -1041,6 +1047,7 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
     saved_status = r->outcome.status;
     saved_length = r->length;
     saved_has_length = r->has_length;
+    saved_explicit_length = r->explicit_length_header;
     saved_close = r->close_connection;
     status = rotmos_reply_new(&r->headers, error);
     if (status != ROTMOS_OK) {
@@ -1048,24 +1055,29 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
         return status;
     }
     r->outcome.status = reply->selected ? reply->status : 204;
-    has_representation = 0;
+    r->explicit_length_header = 0;
     for (i = 0; status == ROTMOS_OK && i < reply->header_count; ++i) {
         if (rotmos_text_equal_case(reply->headers[i].name.data,
                                    "content-length")) {
-            if (r->request->method == ROTMOS_HTTP_HEAD ||
-                r->outcome.status == 304) {
-                status = rotmos_u64_from_decimal(reply->headers[i].value.data,
-                                                 reply->headers[i].value.length,
-                                                 &representation, error);
-                has_representation = 1;
+            if (r->outcome.status == 304 ||
+                (r->request->method == ROTMOS_HTTP_HEAD &&
+                 !status_bodyless(r->outcome.status))) {
+                status = header(r, reply->headers[i].name.data,
+                                reply->headers[i].value.data, 1, 1, error);
+                if (status == ROTMOS_OK)
+                    r->explicit_length_header = 1;
             }
-        } else if (!forbidden(reply->headers[i].name.data)) {
+        } else if (!rotmos_text_equal_case(reply->headers[i].name.data,
+                                           "transfer-encoding")) {
             status = header(r, reply->headers[i].name.data,
-                            reply->headers[i].value.data, 0, error);
+                            reply->headers[i].value.data,
+                            !rotmos_text_equal_case(reply->headers[i].name.data,
+                                                    "set-cookie"),
+                            1, error);
         }
     }
     if (status == ROTMOS_OK && reply->content_type != NULL)
-        status = header(r, "content-type", reply->content_type, 1, error);
+        status = header(r, "content-type", reply->content_type, 1, 1, error);
     if (status == ROTMOS_OK) {
         if (reply->kind == ROTMOS_REPLY_SOURCE) {
             reply->source->owner = NULL;
@@ -1089,16 +1101,30 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
                     r->has_length = r->producer = 1;
                     r->length = zero;
                     status = ROTMOS_OK;
-                } else if (status == ROTMOS_OK)
-                    status = rotmos_response_file_take(
-                        r, reply->file, zero, reply->file_length, error);
+                } else if (status == ROTMOS_OK) {
+                    if (reply->file_length.high || reply->file_length.low) {
+                        conditional = rotmos_response_file_metadata(
+                                          r, reply->file_modified, modified,
+                                          sizeof(modified)) == 304;
+                        if (!conditional && modified[0] != '\0')
+                            status = header(r, "last-modified", modified, 1, 1,
+                                            error);
+                    }
+                    if (conditional) {
+                        r->outcome.status = 304;
+                        r->has_length = r->producer = 1;
+                        r->length = zero;
+                    } else if (status == ROTMOS_OK)
+                        status = rotmos_response_file_take(
+                            r, reply->file, zero, reply->file_length, error);
+                }
             }
         } else {
             r->has_length = !status_bodyless(r->outcome.status);
             (void)rotmos_u64_from_size(reply->body_length, &r->length, NULL);
         }
     }
-    if (status_bodyless(r->outcome.status))
+    if (status_bodyless(r->outcome.status) && !conditional)
         r->has_length = 0;
     if (status == ROTMOS_OK && r->outcome.status >= 400 &&
         reply->kind != ROTMOS_REPLY_SOURCE && reply->body_length == 0 &&
@@ -1109,10 +1135,6 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
             r->has_length = 1;
             status = rotmos_u64_from_size(pretty.length, &r->length, error);
         }
-    }
-    if (status == ROTMOS_OK && has_representation) {
-        r->has_length = 1;
-        r->length = representation;
     }
     if (status == ROTMOS_OK)
         status = rotmos_response_begin(r, error);
@@ -1128,6 +1150,7 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
         r->file = -1;
         r->producer = r->chunked = r->suppressed = 0;
         r->has_length = saved_has_length;
+        r->explicit_length_header = saved_explicit_length;
         r->length = saved_length;
         r->close_connection = saved_close;
         (void)rotmos_reply_destroy(r->headers, NULL);

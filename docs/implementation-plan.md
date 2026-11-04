@@ -81,9 +81,13 @@ native cookies/headers and optional error pages are preserved. Default response
 headers have no added size ceiling; pending heads drain within the output queue.
 The public reference fixture checks large heads, manual backpressure/replacement,
 HEAD/304 and configured error output. TLS/native backend cases check HSTS and
-cookie/header merging. Next resolve the remaining ordinary-file behavior from
-Kore fileref (Last-Modified and conditional replies), and review staged header
-forwarding: Vectis filters Content-Length/Transfer-Encoding, while submission
-currently drops the additional connection/trailer/upgrade fields rejected by
-the low-level sender. Then continue the remaining adapter families and broader
-surface audit.
+cookie/header merging. The combined request/reply batch adds independent body
+materialization/copy/spill/result-reader forwarding, baseline header replacement
+and transport fields, and shared Kore file metadata/conditional replies. It fixes
+default-directory spill execution and caller-buffer edge cases. Lua status/hook
+validation and REST body defaults now follow the baseline. New cases cover these
+operations together with registration order, masks and conflicts.
+Next batch: complete proxy, WebDAV/storage, upload/WebSocket/SSE and TLS host
+callback/provider forwarding against their existing engines. Then finish the
+remaining surface audit and consolidated consumer/artifact gates. The complete
+Vectis adapter and final compatibility claim remain open.

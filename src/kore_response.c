@@ -48,7 +48,8 @@ rotmos_status rotmos_response_head(rotmos_response *r, rotmos_owned_bytes *out,
     flags = HTTP_RESPONSE_HEAD_COUNTED;
     if (r->close_connection)
         flags |= HTTP_RESPONSE_HEAD_CLOSE;
-    if (!r->has_length && r->outcome.status != 205)
+    if (r->explicit_length_header ||
+        (!r->has_length && r->outcome.status != 205))
         flags |= HTTP_RESPONSE_HEAD_NO_LENGTH;
     if (r->outcome.status == 101)
         flags |= HTTP_RESPONSE_HEAD_UPGRADE;
@@ -85,6 +86,13 @@ rotmos_status rotmos_response_pretty(int code, rotmos_owned_bytes *out,
         status = copy_buffer(&buffer, out, error);
     kore_buf_cleanup(&buffer);
     return status;
+}
+
+int rotmos_response_file_metadata(rotmos_response *response, time_t modified,
+                                  char *stamp, size_t capacity)
+{
+    return http_response_file_metadata(response->request->native, modified,
+                                       stamp, capacity);
 }
 
 struct rotmos_delivery {

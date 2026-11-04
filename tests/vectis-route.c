@@ -347,6 +347,197 @@ struct source_forward {
     struct reference_source *host;
     int taken;
 };
+void reference_body_config_init(struct reference_body_config *config)
+{
+    if (config != NULL) {
+        memset(config, 0, sizeof(*config));
+        config->memory_limit_bytes = 262144UL;
+    }
+}
+struct result_reader {
+    struct reference_source source;
+    rotmos_source *native;
+    rotmos_error error;
+};
+static size_t result_read(struct reference_source *source, void *buffer,
+                          size_t capacity, struct reference_source_error *error)
+{
+    struct result_reader *reader = source->impl;
+    size_t produced = 0;
+    rotmos_status status = rotmos_source_read(reader->native, buffer, capacity,
+                                              &produced, &reader->error);
+    error->code = status == ROTMOS_OK || status == ROTMOS_EOF ? 0 : 3;
+    error->message = error->code ? reader->error.message : NULL;
+    return produced;
+}
+static int result_reset(struct reference_source *source,
+                        struct reference_source_error *error)
+{
+    struct result_reader *reader = source->impl;
+    rotmos_status status = rotmos_source_reset(reader->native, &reader->error);
+    error->code = status == ROTMOS_OK ? 0 : 3;
+    error->message = error->code ? reader->error.message : NULL;
+    return error->code;
+}
+static void result_close(struct reference_source *source)
+{
+    struct result_reader *reader = source->impl;
+    (void)rotmos_source_destroy(reader->native, NULL);
+    free(reader);
+}
+reference_status
+reference_body_open_reader(const struct reference_body_result *in,
+                           struct reference_source **out,
+                           reference_error *error)
+{
+    struct result_reader *reader;
+    rotmos_body_result view;
+    rotmos_error native;
+    rotmos_status status;
+    if (out != NULL)
+        *out = NULL;
+    if (in == NULL || out == NULL)
+        return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
+    reader = calloc(1, sizeof(*reader));
+    if (reader == NULL)
+        return reference_error_from_rotmos(ROTMOS_NOMEM, NULL, error);
+    rotmos_body_result_init(&view);
+    view.kind = (rotmos_body_storage)in->kind;
+    (void)rotmos_u64_from_size(in->size, &view.length, NULL);
+    view.memory.data = in->memory.data;
+    view.memory.length = in->memory.size;
+    view.path = in->path;
+    status = rotmos_body_result_open_reader(&view, &reader->native, &native);
+    if (status != ROTMOS_OK) {
+        free(reader);
+        return reference_error_from_rotmos(status, &native, error);
+    }
+    reader->source.read = result_read;
+    reader->source.reset = result_reset;
+    reader->source.close = result_close;
+    reader->source.impl = reader;
+    *out = &reader->source;
+    return reference_error_from_rotmos(ROTMOS_OK, NULL, error);
+}
+void reference_body_result_cleanup(struct reference_body_result *result)
+{
+    if (result != NULL) {
+        if (result->owns_memory)
+            free(result->memory.data);
+        free(result->path);
+        memset(result, 0, sizeof(*result));
+    }
+}
+void reference_mutable_bytes_cleanup(struct reference_mutable_bytes *bytes)
+{
+    if (bytes != NULL) {
+        free(bytes->data);
+        bytes->data = NULL;
+        bytes->size = 0;
+    }
+}
+void reference_body_spill_cleanup(struct reference_body_spill_result *result)
+{
+    if (result != NULL) {
+        reference_mutable_bytes_cleanup(&result->memory);
+        free(result->path);
+        memset(result, 0, sizeof(*result));
+    }
+}
+reference_status reference_request_materialize(
+    struct reference_request *r, const struct reference_body_config *in,
+    struct reference_body_result *out, reference_error *error)
+{
+    rotmos_body_materialize_config config;
+    rotmos_body_result result;
+    rotmos_error native;
+    rotmos_status status;
+    if (out == NULL)
+        return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
+    memset(out, 0, sizeof(*out));
+    rotmos_body_materialize_config_init(&config);
+    if (in != NULL) {
+        config.buffer = in->buffer;
+        config.capacity = in->buffer_size;
+        config.memory_limit_bytes = in->memory_limit_bytes;
+        config.directory = in->directory;
+        config.prefix = in->prefix;
+    }
+    status = rotmos_request_body_materialize(r != NULL ? r->request : NULL,
+                                             in != NULL ? &config : NULL,
+                                             &result, &native);
+    if (status == ROTMOS_OK)
+        status = rotmos_u64_to_size(result.length, &out->size, &native);
+    if (status != ROTMOS_OK) {
+        rotmos_body_result_cleanup(&result);
+        return reference_error_from_rotmos(status, &native, error);
+    }
+    out->kind = result.kind;
+    out->memory.data = (void *)result.memory.data;
+    out->memory.size = result.memory.length;
+    out->path = result.path;
+    out->owns_memory = result.owns_memory;
+    return reference_error_from_rotmos(ROTMOS_OK, NULL, error);
+}
+reference_status
+reference_request_body_copy(struct reference_request *r,
+                            struct reference_mutable_bytes *out,
+                            reference_error *error)
+{
+    struct reference_body_config config;
+    struct reference_body_result result;
+    reference_status status;
+    if (out == NULL)
+        return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
+    out->data = NULL;
+    out->size = 0;
+    reference_body_config_init(&config);
+    config.memory_limit_bytes = (size_t)-1;
+    status = reference_request_materialize(r, &config, &result, error);
+    if (status == REFERENCE_OK) {
+        *out = result.memory;
+        result.memory.data = NULL;
+        result.owns_memory = 0;
+        reference_body_result_cleanup(&result);
+    }
+    return status;
+}
+reference_status reference_request_body_spill(
+    struct reference_request *r, const struct reference_body_spill_config *in,
+    struct reference_body_spill_result *out, reference_error *error)
+{
+    struct reference_body_config config;
+    struct reference_body_result result;
+    reference_status status;
+    if (out == NULL)
+        return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
+    memset(out, 0, sizeof(*out));
+    reference_body_config_init(&config);
+    if (in != NULL) {
+        config.memory_limit_bytes = in->memory_limit_bytes;
+        config.directory = in->directory;
+        config.prefix = in->prefix;
+    }
+    status = reference_request_materialize(r, in != NULL ? &config : NULL,
+                                           &result, error);
+    if (status == REFERENCE_OK) {
+        out->memory = result.memory;
+        out->path = result.path;
+        out->size = result.size;
+        out->spooled_to_disk = result.kind == 2;
+    }
+    return status;
+}
+reference_status reference_response_bytes(struct reference_response *r,
+                                          int code, const char *type,
+                                          rotmos_bytes bytes,
+                                          reference_error *error)
+{
+    rotmos_error native;
+    rotmos_status status = rotmos_reply_bytes(r != NULL ? r->reply : NULL, code,
+                                              type, bytes, &native);
+    return reference_error_from_rotmos(status, &native, error);
+}
 reference_status reference_response_file(struct reference_response *r, int code,
                                          const char *type, const char *path,
                                          reference_error *error)

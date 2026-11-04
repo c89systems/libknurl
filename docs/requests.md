@@ -43,6 +43,8 @@ request cleanup. Ordinary handlers may also use the legacy STREAMING_UPLOAD
 policy with its 3 GiB default; disabling its spooling requires a fully fitting
 memory budget. This policy still delivers a completed body, while live upload
 registrations deliver the bounded reader/chunk callbacks.
+The default-directory regression runs real spill requests and cleanup, rather
+than checking registration alone.
 STREAM never collects or spools the message. The [typed JSON facade](json.md)
 decodes completed JSON/BUFFERED/MATERIALIZED bodies and retains its records through
 response cleanup. Native-reader upload remains a separate implementation surface.

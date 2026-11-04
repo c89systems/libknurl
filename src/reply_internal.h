@@ -4,6 +4,7 @@
 #include "source_internal.h"
 
 #include <rotmos/reply.h>
+#include <time.h>
 
 rotmos_status rotmos_reply_failure(rotmos_reply *, int, const char *);
 
@@ -19,6 +20,7 @@ struct rotmos_reply {
     int file;
     char *file_path;
     rotmos_u64 file_length;
+    time_t file_modified;
     rotmos_source *source;
     rotmos_source *retired_head;
     rotmos_source *retired_tail;

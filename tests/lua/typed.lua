@@ -143,7 +143,7 @@ ok(server:json_typed_route{path='/large',input_schema=big,body={memory_buffer_li
   return {stream_source=source,content_type='application/json'}
 end})
 ok(server:get('/discard',function() return {json=setmetatable({},{__index=function() error('unselected getter') end})} end,
-  {after=function() return 'discarded' end}))
+  {after=function() return {body='discarded'} end}))
 ok(server:get('/bad-codec',function() return {json={schema=text,record=retained}} end))
 ok(server:get('/stop',function() ok(server:stop());return 'ok' end))
 ok(server:run());ok(fixture.join());ok(server:close());collectgarbage('collect')

@@ -371,7 +371,6 @@ local function rest_route_options(opts)
     body.mode=mode
     if mode=='buffered' or mode==native.BODY_BUFFERED then
       body.max_bytes=body.max_bytes or opts.max_body_bytes or 1048576
-      body.memory_buffer_limit_bytes=body.memory_buffer_limit_bytes or 1048576
     end
     route.body=body
   end

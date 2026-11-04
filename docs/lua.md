@@ -51,11 +51,14 @@ expressions retain Vectis's inference. Verb helpers forward to the same registry
 The separate `server:group(prefix, hooks)` form returns a public C group wrapper.
 Registration returns true, or `nil, error`; it does not start the server.
 
-Before hooks may short-circuit. After hooks receive the original handler value
+Before hooks may short-circuit. Before/after hooks return nil/true to continue
+or a response table to select/replace; false and strings are invalid, as in
+Vectis. After hooks receive the original handler value
 and may retain, mutate or replace it. Only the final selected declaration is
 converted, under protection that includes response/source getters and allocation.
 Nil means 204; strings and numbers produce text. Response declarations accept
-`status_code`/`status`, headers, content type and body/file/stream source. Repeated
+`status_code`/`status` in 100..599, headers, content type and body/file/stream
+source. Repeated
 headers can use an ordered array of `{name=..., value=...}` pairs.
 
 Native route helpers supply their already staged result to after hooks as a

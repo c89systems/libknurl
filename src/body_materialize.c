@@ -67,9 +67,6 @@ rotmos_request_body_materialize(rotmos_request *request,
     defaults.memory_limit_bytes = 0;
     if (config == NULL)
         config = &defaults;
-    if (config->buffer == NULL && config->capacity != 0)
-        return rotmos_fail(error, ROTMOS_INVALID, "body_materialize",
-                           "a caller capacity requires a buffer");
     body = rotmos_request_body(request);
     status = rotmos_body_rewind(body, error);
     if (status != ROTMOS_OK)
@@ -92,11 +89,14 @@ rotmos_request_body_materialize(rotmos_request *request,
                     ? config->directory
                     : "/tmp";
     if (fits && length == 0) {
+        if (config->buffer != NULL && config->capacity != 0)
+            result.memory.data = config->buffer;
         *out = result;
         rotmos_error_clear(error);
         return ROTMOS_OK;
     }
-    if (fits && config->buffer != NULL && length <= config->capacity) {
+    if (fits && config->buffer != NULL && length <= config->capacity &&
+        length <= memory_limit) {
         memory = config->buffer;
     } else if (fits && length <= memory_limit) {
         memory = malloc(length);

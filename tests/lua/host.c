@@ -251,6 +251,15 @@ static int drive(unsigned short port)
     REQ("GET", "/spooled-paused", "", 0, 501, NULL, 0);
     required_body = NULL;
     REQ("GET", "/spooled-discard", "", 0, 200, "discarded", 9);
+    required_body = "Lua route before hook must return";
+    REQ("GET", "/hook-before-false", "", 0, 400, NULL, 0);
+    REQ("GET", "/hook-before-invalid", "", 0, 400, NULL, 0);
+    required_body = "Lua route after hook must return";
+    REQ("GET", "/hook-after-false", "", 0, 400, NULL, 0);
+    REQ("GET", "/hook-after-invalid", "", 0, 400, NULL, 0);
+    required_body = NULL;
+    REQ("GET", "/continue", "", 0, 100, "", 0);
+    REQ("GET", "/hints", "", 0, 103, "", 0);
     required_body = "expected getter failure";
     REQ("GET", "/getter-error", "", 0, 500, NULL, 0);
     required_body = "memory";

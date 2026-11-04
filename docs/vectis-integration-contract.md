@@ -64,4 +64,10 @@ translation to check configured Server, keep-alive timeout/budget, ordinary erro
 pages, HEAD/304, optional header limits and large-head queueing/replacement.
 Kore's head codec is shared through an external patch; the adapter adds no encoder.
 The TLS/backend cases separately cover HSTS and native cookies/header merging.
-Ordinary-file Last-Modified/conditional behavior is still an open parity gap.
+[vectis-request-reply.c](../tests/vectis-request-reply.c) extends the ordinary
+adapter with fixed/owned memory materialization, independent spill files/readers,
+read-all copying and binary responses. It also checks registration order/masks/
+conflicts, file Last-Modified and exact conditional matching, empty files, HEAD
+representation lengths, duplicate cookies/headers and staged transport fields.
+Its source adapters only forward public read/reset/close; collection, files and
+HTTP execution stay in the library.

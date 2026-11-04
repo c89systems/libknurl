@@ -36,7 +36,7 @@ static int serve(struct http_request *request)
     int failed;
     http_response_cookie(request, "session", "native", "/", 0, 0, NULL);
     http_response_header(request, "x-backend", "retained");
-    http_response_header(request, "x-overridden", "native");
+    http_response_header(request, "X-Overridden", "native");
     http_response_header(request, "set-cookie", "first=one");
     fields[0].name = "x-overridden";
     fields[0].value = "staged";
@@ -51,8 +51,8 @@ static int serve(struct http_request *request)
     (void)kore_buf_stringify(&head, NULL);
     failed = request->owner->http_response_count != counted ||
              strstr((char *)head.data, "x-backend: retained\r\n") == NULL ||
-             strstr((char *)head.data, "x-overridden: staged\r\n") == NULL ||
-             strstr((char *)head.data, "x-overridden: native\r\n") != NULL ||
+             strstr((char *)head.data, "X-Overridden: staged\r\n") == NULL ||
+             strstr((char *)head.data, "X-Overridden: native\r\n") != NULL ||
              strstr((char *)head.data,
                     "set-cookie: session=native; Path=/; "
                     "Domain=localhost; HttpOnly; Secure\r\n") == NULL ||

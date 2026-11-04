@@ -112,10 +112,16 @@ reach the wire. The public reference case covers a 70 KB header in a 128-byte
 queue, manual backpressure/replacement, HEAD/304 and configured errors; TLS and
 native backend cases check HSTS and cookie/header merging. Default response-head
 size is unrestricted as in Vectis; a nonzero caller ceiling remains available.
-Ordinary file parity still needs Kore fileref's Last-Modified/conditional behavior.
-Staged header submission also still filters more fields than Vectis's bridge:
-Connection/Keep-Alive/Trailer/Upgrade are discarded with framing fields. Review
-that ordinary-builder behavior separately from low-level sender validation.
+Ordinary file replies now share Kore's Last-Modified/exact conditional matcher.
+Staged headers retain Connection/Keep-Alive/Trailer/Upgrade and raw HEAD/304
+representation lengths; duplicate fields follow the baseline replacement/cookie
+rules, including native field spelling/position. Independent body results/readers,
+read-all, fixed buffers and spill cleanup are forwarded through public operations.
+The combined reference case exposed and corrected default-directory spilling,
+ignored NULL-buffer capacity, empty fixed-buffer ownership and a lower explicit
+memory threshold being ignored. The JSON default-directory case now runs requests.
+Lua hooks reject strings/false, response tables accept 100..599, and REST no longer
+adds a fixed memory threshold that conflicts with a smaller input limit.
 
 ## Evidence limits and work state
 

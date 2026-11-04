@@ -622,12 +622,6 @@ int main(int argc, char **argv)
     ordinary.handler = stop;
     CHECK(rotmos_router_route(rotmos_server_router(server), &ordinary, NULL,
                               &error) == ROTMOS_OK);
-    if (default_spool_directory) {
-        CHECK(rotmos_server_validate(server, &error) == ROTMOS_OK);
-        CHECK(rotmos_server_destroy(server, &error) == ROTMOS_OK &&
-              rmdir(fixture.directory) == 0);
-        return 0;
-    }
     status = rotmos_server_run(server, &result, &error);
     if (status != ROTMOS_OK) {
         (void)fprintf(stderr, "%s: %s\n", error.operation, error.message);

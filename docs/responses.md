@@ -23,6 +23,13 @@ Configured pretty error pages use Kore's template for empty staged error replies
 missing/empty files and empty internal errors. Explicit diagnostic/body bytes
 remain the payload. HEAD suppresses the HTML while retaining its length.
 
+Staged headers follow the Vectis bridge: every Set-Cookie survives; other
+duplicates replace the value at the first field's position and spelling.
+Content-Length is filtered except for HEAD representations and 304, where its
+supplied text is retained. Transfer-Encoding is filtered. Connection,
+Keep-Alive, Trailer and Upgrade declarations retain their baseline wire behavior.
+Low-level sender setters retain their stricter transport-owned-field validation.
+
 Set status, copied headers, optional known length, and writable/close callbacks
 before `rotmos_response_begin`. Begin queues headers without claiming delivery.
 Header setters reject transport-owned framing and connection fields.
@@ -84,6 +91,11 @@ retaining staged headers/type, with Kore's configured error page. HEAD resolves
 the representation; 1xx/204/205/304 do not open the path.
 Generated/spooled private-file replies have
 already finished their file before returning and retain their existing FD.
+Nonempty staged files share Kore's Last-Modified/date-matching code. Its exact
+If-Modified-Since match selects 304 before body reads, including HEAD; a later
+date is not an equality match. Empty files skip metadata and condition handling.
+Kore's conditional-file 304 retains its zero length unless a HEAD representation
+length was supplied. Generated/spooled files use the completed file's timestamp.
 
 `rotmos_source_file(path)` opens a regular file once at its current length and
 uses the same bounded reader as file-backed body results. The Source retains an

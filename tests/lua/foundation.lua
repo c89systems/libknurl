@@ -103,7 +103,18 @@ ok(server:get('/spooled-paused',function() return {spooled_source=ok(rotmos.sour
   close=function(cause) assert(cause==rotmos.status.CANCELLED);spooled_closed=spooled_closed+1 end,
 })} end))
 ok(server:get('/spooled-discard',function() return {spooled_source=setmetatable({},{__index=function() error('unselected spool getter') end})} end,
-  {after=function() return 'discarded' end}))
+  {after=function() return {body='discarded'} end}))
+for _,phase in ipairs{'before','after'} do
+  for _,value in ipairs{false,'invalid'} do
+    local hooks={[phase]=function() return value end}
+    ok(server:get('/hook-'..phase..'-'..tostring(value),function()
+      if phase=='before' then error('before must short circuit') end
+      return 'discarded'
+    end,hooks))
+  end
+end
+ok(server:get('/continue',function() return {status_code=100,body='suppressed'} end))
+ok(server:get('/hints',function() return {status_code=103,body='suppressed'} end))
 ok(server:get('/getter-error',function() return setmetatable({},{__index=function() error('expected getter failure') end}) end))
 local reply={body='cannot allocate this reply'}
 ok(server:get('/oom-reply',function() fixture.fail_next();return reply end))
@@ -133,9 +144,9 @@ ok(server:get('/verify',function()
   return 'verified'
 end))
 ok(server:get('/stop',function() ok(server:stop());return 'stopped' end))
-assert(server:route_count()==24)
+assert(server:route_count()==30)
 local value,why=server:route{path='/bad-method',method='BOGUS',handler=function() end}
-assert(value==nil and why.status==rotmos.status.INVALID and server:route_count()==24)
+assert(value==nil and why.status==rotmos.status.INVALID and server:route_count()==30)
 value,why=server:route{path='/auth',auth={},handler=function() end}
 assert(value==nil and why.status==rotmos.status.NOT_SUPPORTED)
 ok(server:validate())

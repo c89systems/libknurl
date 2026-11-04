@@ -25,6 +25,7 @@ struct rotmos_response {
     rotmos_u64 file_offset;
     rotmos_u64 file_remaining;
     int has_length;
+    int explicit_length_header;
     int suppressed;
     int chunked;
     int close_connection;
@@ -87,6 +88,7 @@ void rotmos_response_release(rotmos_response *response);
 rotmos_status rotmos_response_head(rotmos_response *, rotmos_owned_bytes *,
                                    rotmos_error *);
 rotmos_status rotmos_response_pretty(int, rotmos_owned_bytes *, rotmos_error *);
+int rotmos_response_file_metadata(rotmos_response *, time_t, char *, size_t);
 rotmos_status rotmos_response_upgrade_headers(rotmos_response *response,
                                               const rotmos_header *headers,
                                               size_t count,

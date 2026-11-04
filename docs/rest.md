@@ -69,8 +69,11 @@ options)` and `group(server, options)` use the ordinary public router and its
 auth/before/after chain. Nonempty buffered input becomes `request.json` through
 the released LoneJSON Lua decoder; empty input leaves it nil and JSON null uses
 LoneJSON's null sentinel. `decode_json=false` leaves explicit buffered input raw.
-Body policy accepts BUFFERED or NONE, defaulting to a 1 MiB buffered limit/budget
-when decoding is enabled. No request spool or stream is hidden in these helpers.
+Body policy accepts BUFFERED or NONE, defaulting to a 1 MiB input limit when
+decoding is enabled. Memory/spill policy follows the ordinary route; the facade
+does not impose a separate 1 MiB memory threshold. Buffered decoding uses
+`request.body`; body-reader and explicit materialization operations retain their
+own ownership.
 
 `validate(json, request)` may return nil/true to continue, an ordinary reply to
 short-circuit, or false/detail to reject with 400. Validator exceptions also

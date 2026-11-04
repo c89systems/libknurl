@@ -120,8 +120,9 @@ rotmos_status rotmos_body_append(rotmos_body *body, const void *data,
         if (body->policy.disk_spool_disabled)
             return rotmos_fail(error, ROTMOS_LIMIT, "body_receive",
                                "body exceeds its memory budget");
-        status = rotmos_private_file(body->directory, "rotmos-body", &body->fd,
-                                     &body->path, error);
+        status = rotmos_private_file(
+            body->directory != NULL ? body->directory : "/tmp", "rotmos-body",
+            &body->fd, &body->path, error);
         if (status != ROTMOS_OK)
             return status;
         if (rotmos_u64_to_size(body->length, &previous, NULL) != ROTMOS_OK)

@@ -394,7 +394,7 @@ rotmos_status rl_reply(lua_State *L, int index, rotmos_reply *reply,
     index = reply_snapshot(L, index);
     if (!rl_field_size(L, index, "status_code", &code))
         return rl_fail(error, ROTMOS_INVALID, "invalid response status");
-    if (code > 599 || code < 200 ||
+    if (code > 599 || code < 100 ||
         !rl_field_string(L, index, "content_type", &declared_type) ||
         !rl_field_string(L, index, "file", &file) ||
         !rl_field_string(L, index, "file_path", &file))
@@ -513,6 +513,14 @@ static int route_trampoline(lua_State *L)
              (lua_isboolean(L, -1) && lua_toboolean(L, -1)) ||
              (c->reply_view != NULL && lua_touserdata(L, -1) == c->reply_view)))
             invoke = 0;
+    }
+    if (invoke && c->hook != 0 && !lua_istable(L, -1)) {
+        c->status = rl_fail(c->error, ROTMOS_INVALID,
+                            c->hook == 1 ? "Lua route before hook must return "
+                                           "nil, true, or a response table"
+                                         : "Lua route after hook must return "
+                                           "nil, true, or a response table");
+        return 0;
     }
     if (c->hook == 1) {
         if (invoke) {

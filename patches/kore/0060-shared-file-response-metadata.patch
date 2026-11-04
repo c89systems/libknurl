@@ -1,0 +1,127 @@
+diff --git a/src/http.c b/src/http.c
+--- a/src/http.c
++++ b/src/http.c
+@@ -727,15 +727,31 @@
+ 	}
+ }
+ 
++/* Shared with managed file replies; callers retain their own file/queue owner. */
++int
++http_response_file_metadata(struct http_request *req, time_t modified,
++    char *stamp, size_t capacity)
++{
++	struct tm *tm;
++	const char *value;
++
++	stamp[0] = '\0';
++	if (http_request_header(req, "if-modified-since", &value) &&
++	    kore_date_to_time(value) == modified)
++		return (HTTP_STATUS_NOT_MODIFIED);
++	if ((tm = gmtime(&modified)) != NULL &&
++	    strftime(stamp, capacity, "%a, %d %b %Y %H:%M:%S GMT", tm) == 0)
++		stamp[0] = '\0';
++	return (0);
++}
++
+ void
+ http_response_fileref(struct http_request *req, int status,
+     struct kore_fileref *ref)
+ {
+ 	struct http_header	*hdr;
+-	struct tm		*tm;
+-	time_t			mtime;
+ 	char			tbuf[128];
+-	const char		*media_type, *modified;
++	const char		*media_type;
+ 	int		has_content_type;
+ 
+ 	if (req->owner == NULL)
+@@ -753,21 +769,14 @@
+ 	if (!has_content_type && media_type != NULL)
+ 		http_response_header(req, "content-type", media_type);
+ 
+-	if (http_request_header(req, "if-modified-since", &modified)) {
+-		mtime = kore_date_to_time(modified);
+-		if (mtime == ref->mtime_sec) {
+-			kore_fileref_release(ref);
+-			http_response(req, HTTP_STATUS_NOT_MODIFIED, NULL, 0);
+-			return;
+-		}
+-	}
+-
+-	if ((tm = gmtime(&ref->mtime_sec)) != NULL) {
+-		if (strftime(tbuf, sizeof(tbuf),
+-		    "%a, %d %b %Y %H:%M:%S GMT", tm) > 0) {
+-			http_response_header(req, "last-modified", tbuf);
+-		}
+-	}
++	if (http_response_file_metadata(req, ref->mtime_sec, tbuf, sizeof(tbuf)) ==
++	    HTTP_STATUS_NOT_MODIFIED) {
++		kore_fileref_release(ref);
++		http_response(req, HTTP_STATUS_NOT_MODIFIED, NULL, 0);
++		return;
++	}
++	if (tbuf[0] != '\0')
++		http_response_header(req, "last-modified", tbuf);
+ 
+ 	req->status = status;
+ 	switch (req->owner->proto) {
+@@ -2676,7 +2685,7 @@
+ 	struct http_header *hdr;
+ 	size_t i;
+ 	char version, number[21];
+-	const char *conn;
++	const char *conn, *value;
+ 	int connection_close, skip;
+ 
+ 	kore_buf_reset(out);
+@@ -2727,21 +2736,30 @@
+ 		TAILQ_FOREACH(ck, &req->resp_cookies, list)
+ 			http_write_response_cookie(ck, out);
+ 		TAILQ_FOREACH(hdr, &req->resp_headers, list) {
+-			skip = 0;
++			value = hdr->value;
+ 			for (i = 0; i < count; i++) {
+ 				if (strcasecmp(extra[i].name, "set-cookie") &&
+ 				    !strcasecmp(extra[i].name, hdr->header)) {
++					value = extra[i].value;
++					break;
++				}
++			}
++			kore_buf_appendf(out, "%s: %s\r\n", hdr->header, value);
++		}
++	}
++	for (i = 0; i < count; i++) {
++		skip = 0;
++		if (req != NULL && strcasecmp(extra[i].name, "set-cookie")) {
++			TAILQ_FOREACH(hdr, &req->resp_headers, list) {
++				if (!strcasecmp(extra[i].name, hdr->header)) {
+ 					skip = 1;
+ 					break;
+ 				}
+ 			}
+-			if (!skip)
+-				kore_buf_appendf(out, "%s: %s\r\n",
+-				    hdr->header, hdr->value);
+-		}
+-	}
+-	for (i = 0; i < count; i++)
+-		kore_buf_appendf(out, "%s: %s\r\n", extra[i].name, extra[i].value);
++		}
++		if (!skip)
++			kore_buf_appendf(out, "%s: %s\r\n", extra[i].name, extra[i].value);
++	}
+ 	if (req != NULL && req->rt != NULL && req->rt->dom != NULL) {
+ 		TAILQ_FOREACH(hdr, &req->rt->dom->headers, list)
+ 			kore_buf_appendf(out, "%s: %s\r\n", hdr->header, hdr->value);
+diff --git a/include/kore/http.h b/include/kore/http.h
+--- a/include/kore/http.h
++++ b/include/kore/http.h
+@@ -396,6 +396,7 @@
+ int http_response_head_build(struct http_request *, struct connection *, int,
+     int, u_int64_t, const struct http_response_field *, size_t, struct kore_buf *);
+ int http_response_error_body(int, struct kore_buf *);
++int http_response_file_metadata(struct http_request *, time_t, char *, size_t);
+ 
+ const char	*http_method_text(int);
+ time_t		http_date_to_time(char *);

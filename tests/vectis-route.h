@@ -29,6 +29,32 @@ struct reference_app {
     size_t requests, closed;
 };
 struct reference_request;
+struct reference_mutable_bytes {
+    void *data;
+    size_t size;
+};
+struct reference_body_config {
+    void *buffer;
+    size_t buffer_size, memory_limit_bytes;
+    const char *directory, *prefix;
+};
+struct reference_body_result {
+    int kind;
+    struct reference_mutable_bytes memory;
+    char *path;
+    size_t size;
+    int owns_memory;
+};
+struct reference_body_spill_config {
+    size_t memory_limit_bytes;
+    const char *directory, *prefix;
+};
+struct reference_body_spill_result {
+    struct reference_mutable_bytes memory;
+    char *path;
+    size_t size;
+    int spooled_to_disk;
+};
 struct reference_response {
     rotmos_reply *reply;
 };
@@ -81,6 +107,25 @@ int reference_request_query_at(struct reference_request *, size_t,
                                const char **, const char **);
 reference_status reference_request_bytes(struct reference_request *,
                                          rotmos_bytes *, reference_error *);
+void reference_body_config_init(struct reference_body_config *);
+void reference_body_result_cleanup(struct reference_body_result *);
+void reference_body_spill_cleanup(struct reference_body_spill_result *);
+reference_status
+reference_body_open_reader(const struct reference_body_result *,
+                           struct reference_source **, reference_error *);
+reference_status reference_request_materialize(
+    struct reference_request *, const struct reference_body_config *,
+    struct reference_body_result *, reference_error *);
+reference_status reference_request_body_copy(struct reference_request *,
+                                             struct reference_mutable_bytes *,
+                                             reference_error *);
+reference_status reference_request_body_spill(
+    struct reference_request *, const struct reference_body_spill_config *,
+    struct reference_body_spill_result *, reference_error *);
+void reference_mutable_bytes_cleanup(struct reference_mutable_bytes *);
+reference_status reference_response_bytes(struct reference_response *, int,
+                                          const char *, rotmos_bytes,
+                                          reference_error *);
 struct reference_source *
 reference_request_body_reader(struct reference_request *);
 const char *reference_request_body_path(struct reference_request *);
