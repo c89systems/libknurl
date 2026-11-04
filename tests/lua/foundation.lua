@@ -8,11 +8,11 @@ assert(tostring(rotmos.count('18446744073709551615'))=='18446744073709551615')
 assert(rotmos.count('18446744073709551615')==rotmos.count(4294967295,4294967295))
 assert(rotmos.count('18446744073709551614')<rotmos.count('18446744073709551615'))
 assert(7<rotmos.count('18446744073709551615'))
-for _,opts in ipairs{{port=0,admission={}}, {port=0,timeouts={}}, {port=0,callbacks={on_typo=function() end}}, {port=0,on_parent_ready=false}} do
+for _,opts in ipairs{{port=0,admission={}}, {port=0,timeouts={typo=7}}, {port=0,callbacks={on_typo=function() end}}, {port=0,on_parent_ready=false}} do
   local value,why=rotmos.server(opts)
   assert(value==nil and why.status==rotmos.status.INVALID)
 end
-assert(select(1,rotmos.server{port=0,tls={}})==nil)
+assert(select(1,rotmos.server{port=0,tls={version='unknown'}})==nil)
 -- Fail allocations throughout C registration; the same owner remains usable.
 local native=require('rotmos.native')
 for n=0,18 do

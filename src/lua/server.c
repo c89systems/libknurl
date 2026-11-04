@@ -1,84 +1,4 @@
 #include "binding.h"
-struct setting {
-    const char *name;
-    size_t offset;
-    int kind;
-};
-#define SZ(t, n) {#n, offsetof(t, n), 0}
-#define UI(t, n) {#n, offsetof(t, n), 1}
-#define LG(t, n) {#n, offsetof(t, n), 2}
-#define BL(t, n) {#n, offsetof(t, n), 3}
-#define WIDE(t, n) {#n, offsetof(t, n), 4}
-#define TEXT(t, n) {#n, offsetof(t, n), 5}
-#define UL(t, n) {#n, offsetof(t, n), 6}
-static int settings(lua_State *L, int index, void *config,
-                    const struct setting *fields, size_t count)
-{
-    size_t i, n;
-    unsigned char *base = config;
-    int ok;
-    index = lua_absindex(L, index);
-    lua_pushnil(L);
-    while (lua_next(L, index)) {
-        const char *name =
-            lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : NULL;
-        for (i = 0; name != NULL && i < count; ++i)
-            if (!strcmp(name, fields[i].name))
-                break;
-        lua_pop(L, 1);
-        if (name == NULL || i == count) {
-            lua_pop(L, 1);
-            return 0;
-        }
-    }
-    for (i = 0; i < count; ++i) {
-        rl_field(L, index, fields[i].name);
-        if (!lua_isnil(L, -1)) {
-            if (fields[i].kind == 4) {
-                ok = rl_u64(L, -1, (rotmos_u64 *)(base + fields[i].offset));
-            } else if (fields[i].kind == 5) {
-                size_t length;
-                const char *text;
-                ok = lua_type(L, -1) == LUA_TSTRING;
-                if (ok) {
-                    text = lua_tolstring(L, -1, &length);
-                    ok = memchr(text, 0, length) == NULL;
-                    if (ok)
-                        *(const char **)(base + fields[i].offset) = text;
-                }
-            } else if (fields[i].kind == 3) {
-                ok = lua_isboolean(L, -1);
-                if (ok)
-                    *(int *)(base + fields[i].offset) = lua_toboolean(L, -1);
-            } else {
-                ok = rl_size(L, -1, &n);
-                if (ok) {
-                    if (fields[i].kind == 0)
-                        *(size_t *)(base + fields[i].offset) = n;
-                    else if (fields[i].kind == 1) {
-                        ok = n <= UINT_MAX;
-                        if (ok)
-                            *(unsigned int *)(base + fields[i].offset) =
-                                (unsigned int)n;
-                    } else if (fields[i].kind == 6) {
-                        *(unsigned long *)(base + fields[i].offset) =
-                            (unsigned long)n;
-                    } else {
-                        ok = n <= (size_t)LONG_MAX;
-                        if (ok)
-                            *(long *)(base + fields[i].offset) = (long)n;
-                    }
-                }
-            }
-            if (!ok) {
-                lua_pop(L, 1);
-                return 0;
-            }
-        }
-        lua_pop(L, 1);
-    }
-    return 1;
-}
 struct rl_server *rl_server(lua_State *L, int index)
 {
     return luaL_testudata(L, index, RL_SERVER);
@@ -106,8 +26,6 @@ static int l_gc(lua_State *L)
 {
     struct rl_server *s = rl_server(L, 1);
     if (s != NULL) {
-        free(s->pending_listeners);
-        s->pending_listeners = NULL;
         if (s->native != NULL &&
             rotmos_server_destroy(s->native, NULL) == ROTMOS_OK)
             s->native = NULL;
@@ -225,166 +143,19 @@ static int on_worker_exit(rotmos_server *native,
         s->callback_error = error;
     return status != ROTMOS_OK || s->callback_error.status != ROTMOS_OK;
 }
-static int config_parse(lua_State *L, int options, rotmos_server_config *c,
-                        rotmos_listener_config **allocated, rotmos_error *error)
-{
-    static const struct setting worker[] = {
-        SZ(rotmos_worker_config, count),
-        SZ(rotmos_worker_config, accept_threshold),
-        SZ(rotmos_worker_config, rlimit_nofiles),
-        LG(rotmos_worker_config, shutdown_timeout_ms),
-        BL(rotmos_worker_config, affinity_disabled)};
-    static const struct setting io[] = {
-        SZ(rotmos_io_config, chunk_bytes),
-        SZ(rotmos_io_config, input_queue_bytes),
-        SZ(rotmos_io_config, output_queue_bytes)};
-    static const struct setting limits[] = {
-        SZ(rotmos_limit_config, max_connections),
-        SZ(rotmos_limit_config, request_limit),
-        SZ(rotmos_limit_config, max_request_header_bytes),
-        SZ(rotmos_limit_config, max_response_header_bytes),
-        SZ(rotmos_limit_config, websocket_max_frame_bytes),
-        WIDE(rotmos_limit_config, default_body_bytes),
-        WIDE(rotmos_limit_config, hard_body_bytes),
-        WIDE(rotmos_limit_config, body_min_rate_bytes_per_second),
-        TEXT(rotmos_limit_config, body_spool_directory),
-        BL(rotmos_limit_config, body_min_rate_disabled)};
-    static const struct setting http[] = {
-        BL(rotmos_http_config, keepalive_disabled),
-        UI(rotmos_http_config, keepalive_max_requests),
-        UI(rotmos_http_config, socket_backlog),
-        UI(rotmos_http_config, request_process_budget_ms),
-        BL(rotmos_http_config, backend_quiet),
-        TEXT(rotmos_http_config, server_header),
-        TEXT(rotmos_http_config, access_log_path),
-        UL(rotmos_http_config, hsts_max_age_seconds),
-        UL(rotmos_http_config, backend_curl_timeout_seconds),
-        WIDE(rotmos_http_config, backend_curl_recv_max_bytes),
-        BL(rotmos_http_config, pretty_error_pages)};
-    size_t n, i, port;
-    const char *kind = NULL;
-    int table;
-    static const char *const allowed[] = {"name",    "listeners", "signals",
-                                          "workers", "io",        "limits",
-                                          "http",    "callbacks", "tls"};
-    static const char *const callbacks[] = {
-        "on_process_start",   "on_parent_prepare", "on_parent_ready",
-        "on_parent_stopping", "on_parent_stopped", "on_worker_start",
-        "on_worker_stopping", "on_worker_exit"};
-    if (!rl_fields(L, options, allowed, sizeof(allowed) / sizeof(allowed[0]),
-                   error))
-        return 0;
-    rl_field(L, options, "callbacks");
-    if (!lua_isnil(L, -1)) {
-        if (!lua_istable(L, -1))
-            goto invalid;
-        if (!rl_fields(L, -1, callbacks,
-                       sizeof(callbacks) / sizeof(callbacks[0]), error))
-            return 0;
-        for (i = 0; i < sizeof(callbacks) / sizeof(callbacks[0]); ++i) {
-            rl_field(L, -1, callbacks[i]);
-            if (!lua_isnil(L, -1) && !lua_isfunction(L, -1))
-                goto invalid;
-            lua_pop(L, 1);
-        }
-    }
-    lua_pop(L, 1);
-    if (!rl_field_string(L, options, "name", &c->name))
-        goto invalid;
-    rl_field(L, options, "tls");
-    if (!lua_isnil(L, -1)) {
-        lua_pop(L, 1);
-        rl_fail(error, ROTMOS_NOT_SUPPORTED,
-                "Lua TLS configuration is not connected yet");
-        return 0;
-    }
-    lua_pop(L, 1);
-#define GROUP(key, member, fields)                                             \
-    do {                                                                       \
-        rl_field(L, options, key);                                             \
-        if (!lua_isnil(L, -1) &&                                               \
-            (!lua_istable(L, -1) ||                                            \
-             !settings(L, -1, &c->member, fields,                              \
-                       sizeof(fields) / sizeof(fields[0]))))                   \
-            goto invalid;                                                      \
-        lua_pop(L, 1);                                                         \
-    } while (0)
-    GROUP("workers", workers, worker);
-    GROUP("io", io, io);
-    GROUP("limits", limits, limits);
-    GROUP("http", http, http);
-#undef GROUP
-    rl_field(L, options, "signals");
-    if (!lua_isnil(L, -1)) {
-        static const char *const fields[] = {"mode"};
-        if (lua_istable(L, -1) && !rl_fields(L, -1, fields, 1, error))
-            return 0;
-        if (!lua_istable(L, -1) || !rl_field_string(L, -1, "mode", &kind))
-            goto invalid;
-        if (kind != NULL) {
-            if (!strcmp(kind, "library"))
-                c->signals.mode = ROTMOS_SIGNALS_LIBRARY;
-            else if (strcmp(kind, "host"))
-                goto invalid;
-        }
-    }
-    lua_pop(L, 1);
-    rl_field(L, options, "listeners");
-    if (!lua_istable(L, -1))
-        goto invalid;
-    table = lua_absindex(L, -1);
-    n = lua_rawlen(L, table);
-    if (n == 0 || n > 255)
-        goto invalid;
-    *allocated = calloc(n, sizeof(**allocated));
-    if (*allocated == NULL) {
-        rl_fail(error, ROTMOS_NOMEM, "allocating listener declarations");
-        return 0;
-    }
-    for (i = 0; i < n; ++i) {
-        static const char *const fields[] = {"bind", "name", "port", "kind"};
-        lua_rawgeti(L, table, (lua_Integer)i + 1);
-        if (!lua_istable(L, -1))
-            goto invalid;
-        if (!rl_fields(L, -1, fields, sizeof(fields) / sizeof(fields[0]),
-                       error))
-            return 0;
-        rotmos_listener_config_init(&(*allocated)[i]);
-        port = 0;
-        kind = NULL;
-        if (!rl_field_string(L, -1, "bind", &(*allocated)[i].bind) ||
-            !rl_field_string(L, -1, "name", &(*allocated)[i].name) ||
-            !rl_field_size(L, -1, "port", &port) || port > 65535 ||
-            !rl_field_string(L, -1, "kind", &kind))
-            goto invalid;
-        if (kind != NULL && strcmp(kind, "http")) {
-            rl_fail(error, ROTMOS_NOT_SUPPORTED,
-                    "Lua HTTPS/redirect listeners are not connected yet");
-            return 0;
-        }
-        (*allocated)[i].port = (unsigned short)port;
-        lua_pop(L, 1);
-    }
-    c->listeners = *allocated;
-    c->listener_count = n;
-    lua_pop(L, 1);
-    return 1;
-invalid:
-    rl_fail(error, ROTMOS_INVALID,
-            "invalid server configuration field or integer range");
-    return 0;
-}
 static int l_new(lua_State *L)
 {
     struct rl_server *s;
     rotmos_server_config config;
     rotmos_error error;
     rotmos_status status;
+    int index;
     if (!lua_istable(L, 1))
         return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
                                     "server configuration table required"),
                             &error));
     s = lua_newuserdatauv(L, sizeof(*s), 2);
+    index = lua_absindex(L, -1);
     memset(s, 0, sizeof(*s));
     s->L = L;
     s->root = LUA_NOREF;
@@ -400,9 +171,7 @@ static int l_new(lua_State *L)
     lua_newtable(L);
     lua_setiuservalue(L, -2, 2);
     rotmos_server_config_init(&config);
-    if (!config_parse(L, 1, &config, &s->pending_listeners, &error)) {
-        free(s->pending_listeners);
-        s->pending_listeners = NULL;
+    if (!rl_config_parse(L, 1, &config, &error)) {
         return rl_error(L, &error);
     } /* No native object exists during Lua conversion. */
     config.callbacks.on_process_start = on_process_start;
@@ -417,10 +186,9 @@ static int l_new(lua_State *L)
     config.callbacks.on_request_close = rl_request_close;
     config.callbacks.userdata = s;
     status = rotmos_server_new(&config, &s->native, &error);
-    free(s->pending_listeners);
-    s->pending_listeners = NULL;
     if (status != ROTMOS_OK)
         return rl_error(L, &error);
+    lua_pushvalue(L, index);
     return 1;
 }
 static int l_run(lua_State *L)
@@ -481,6 +249,46 @@ static int l_validate(lua_State *L)
     if (rotmos_server_validate(s->native, &e) != ROTMOS_OK)
         return rl_error(L, &e);
     lua_pushboolean(L, 1);
+    return 1;
+}
+static int l_effective(lua_State *L)
+{
+    struct rl_server *s = rl_server(L, 1);
+    rotmos_server_effective effective;
+    rotmos_error error;
+    if (s == NULL || s->native == NULL)
+        return rl_error(
+            L, (rl_fail(&error, ROTMOS_STATE, "server is closed"), &error));
+    if (rotmos_server_effective_config(s->native, &effective, &error) !=
+        ROTMOS_OK)
+        return rl_error(L, &error);
+    rl_config_push(L, &effective);
+    return 1;
+}
+static int l_serving(lua_State *L)
+{
+    struct rl_server *s = rl_server(L, 1);
+    rotmos_error error;
+    if (s == NULL || s->native == NULL || !lua_isboolean(L, 2))
+        return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
+                                    "server and serving boolean required"),
+                            &error));
+    if (rotmos_server_set_serving(s->native, lua_toboolean(L, 2), &error) !=
+        ROTMOS_OK)
+        return rl_error(L, &error);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int l_state(lua_State *L)
+{
+    static const char *states[] = {"declared", "starting", "ready_paused",
+                                   "serving",  "stopping", "stopped",
+                                   "failed"};
+    struct rl_server *s = rl_server(L, 1);
+    if (s == NULL || s->native == NULL)
+        lua_pushstring(L, "closed");
+    else
+        lua_pushstring(L, states[rotmos_server_get_state(s->native)]);
     return 1;
 }
 static int l_listener(lua_State *L)
@@ -617,12 +425,6 @@ static int rule(lua_State *L, int group)
                          : sizeof(route_fields) / sizeof(route_fields[0]),
                    &e))
         return rl_error(L, &e);
-    rl_field(L, 2, "auth");
-    if (!lua_isnil(L, -1))
-        return rl_error(L, (rl_fail(&e, ROTMOS_NOT_SUPPORTED,
-                                    "Lua auth providers are not connected yet"),
-                            &e));
-    lua_pop(L, 1);
     for (i = 0; i < sizeof(hooks) / sizeof(hooks[0]); ++i) {
         rl_field(L, 2, hooks[i]);
         if (!lua_isnil(L, -1) && !lua_isfunction(L, -1))
@@ -640,6 +442,8 @@ static int rule(lua_State *L, int group)
     index = lua_absindex(L, -1);
     luaL_setmetatable(L, group ? RL_GROUP : RL_RULE);
     rl_table_copy(L, 2);
+    if (!rl_auth_prepare(L, -1, &e))
+        return rl_error(L, &e);
     lua_setiuservalue(L, index, 1);
     if (parent != NULL)
         lua_getiuservalue(L, 1, 2);
@@ -653,6 +457,7 @@ static int rule(lua_State *L, int group)
         rotmos_route_group_config_init(&gc);
         if (!rl_field_string(L, 2, "prefix", &gc.prefix))
             goto invalid;
+        gc.hooks.auth = rl_auth;
         gc.hooks.before = rl_before;
         gc.hooks.after = rl_after;
         gc.hooks.userdata = r;
@@ -682,6 +487,7 @@ static int rule(lua_State *L, int group)
         }
         config.handler = rl_handler;
         config.userdata = r;
+        config.hooks.auth = rl_auth;
         config.hooks.before = rl_before;
         config.hooks.after = rl_after;
         config.hooks.userdata = r;
@@ -739,6 +545,9 @@ void rl_servers_open(lua_State *L)
                                        {"stop", l_stop},
                                        {"close", l_close},
                                        {"validate", l_validate},
+                                       {"effective_config", l_effective},
+                                       {"set_serving", l_serving},
+                                       {"state", l_state},
                                        {"listener", l_listener},
                                        {"route", l_route},
                                        {"group", l_group},

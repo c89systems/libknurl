@@ -6,9 +6,10 @@ shared librotmos API and the same shared Lua runtime as the host. It includes no
 Kore declarations, core-private headers, alternate router or transport executor.
 `<rotmos/lua.h>` belongs to this binding product; it is absent from the C SDK.
 
-The first binding surface covers server declaration/run/stop/close, listener
-snapshots, lifecycle callbacks, route counts, ordinary routes, groups, request
-lookups, buffered bodies, staged bytes/files and live response sources. Its
+The binding covers server declaration/run/stop/close, configuration and serving
+state, manual TLS/HTTPS/redirect listeners, lifecycle callbacks, route counts,
+ordinary routes, groups, callback auth, request lookups/events, buffered bodies,
+staged bytes/files and live response sources. Its
 behavior comes from Vectis's [callback routes](../../vectis/manual/lua-app.md)
 and [existing bridge](../../vectis/src/vectis_cli.c), rather than a new server
 framework. The [integration contract](vectis-integration-contract.md) remains
@@ -75,6 +76,38 @@ behavior. The facade's default signal mode is `library`; embedding hosts owning
 signal delivery select `signals={mode="host"}`. Lifecycle callbacks receive the
 facade server and a copied public process-role snapshot.
 
+`workers`, `io`, `limits`, `http`, `timeouts`, `proxy`, `client_ip.trusted_proxies`
+and `autoblock` map directly to their public C declarations. Deadlines accept a
+nonnegative millisecond integer or `{milliseconds=..., disabled=...}`. Zero
+inherits the C default. `workers.death_policy` is `restart` or `terminate`.
+`profile="production_webserver"` applies the public production initializer before
+overrides. `server:effective_config()` copies normalized values and requested
+deadlines; editing the snapshot cannot change the server. It includes configured
+TLS memory bytes, so callers control how that configuration is handled.
+
+Listeners accept `kind="http"`, `"https"` or `"redirect"`, separate bind/presented
+ports, `redirect_https_port` and a one-based `identity_index`. `tls.identities`
+contains explicit domains and manual bundle or certificate/private-key inputs,
+optional chain/client CA, and `require_client_certificate`. A material is a file
+path string or `{kind="file", path=...}` / `{kind="memory", bytes=...}`; omitted
+kind follows the supplied path/bytes field. Identity mode defaults to manual.
+TLS versions are `default`, `both`, `1.2` and `1.3`. Validation and run use the C
+TLS material path; declaration itself opens nothing. `start_paused=true`,
+`server:state()` and `server:set_serving(boolean)` expose the public serving gate.
+
+Callback auth retains Vectis's `{kind="callback", callback=function(request)...}`
+declaration, including optional nested `provider`, purpose/realm and
+`allowed_modes`/`modes`. The callback receives authorization, purpose, resource and
+mode flags. Its decision table selects `allow`, `deny`, `required` or `redirect`,
+with optional principal/status/body/content type/location/challenge fields.
+Allow stages `cache-control: no-store` and supplies the existing ordinary-route
+principal view (at most 127 bytes). The other actions short-circuit before hooks
+or handlers, retaining 403/401/302 defaults and binary response bytes. Invalid
+decisions follow Vectis's 400 mapping; exceptions/getter/allocation errors produce
+500. The whole conversion is protected. Native credential stores and browser
+sessions stay in Vectis: it registers its existing decisions through the public
+C auth hook or a callback provider. Rotmos implements no credential/session store.
+
 ## Building and embedding
 
 ```sh
@@ -102,11 +135,16 @@ preloading and dynamic loading through a [host-owned VM](../tests/lua/host.c).
 It covers wire behavior, route/group parity, binary bodies, protected getters,
 chunk remainders, scoped invalidation, source cleanup, and allocation failure in
 registration/reply conversion/producer setup.
+The [configuration fixture](../tests/lua/config.lua) adds live mutual TLS,
+memory/file/bundle inputs, raw-target HTTPS redirects, copied/effective values,
+paused startup, trusted proxies, shared autoblock events, auth ordering/challenges
+and failures, and constructor allocation unwinding through the same installed
+preload/dynamic paths.
 
 ## Remaining binding surfaces
 
-This is the first Lua implementation slice, not replacement readiness. TLS and
-remaining policy/deadline/admission settings, auth providers, body materialization
+The binding is incomplete. TLS material openers/ACME state callbacks,
+remaining policy/admission/observation/control callbacks, body materialization
 and upload callbacks, file-backed `spooled_source`, schemas/JSON/XML, REST/OpenAPI,
 assets/WebDAV, proxy/WebSocket/SSE and direct loop/response operations still need
 their public C bindings. Known unsupported options return an error. No transport

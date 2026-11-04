@@ -25,6 +25,7 @@ local function request(handle)
   end
   out.header,out.query,out.param=lookup('header'),lookup('query'),lookup('param')
   out.body_bytes=function() return handle:body_bytes() end
+  out.event=lookup('event')
   requests[handle]=out
   return out
 end
@@ -95,6 +96,9 @@ function Server:run() return self._native:run() end
 function Server:stop() return self._native:stop() end
 function Server:close() return self._native:close() end
 function Server:validate() return self._native:validate() end
+function Server:effective_config() return self._native:effective_config() end
+function Server:set_serving(value) return self._native:set_serving(value) end
+function Server:state() return self._native:state() end
 function Server:listener(index) return self._native:listener(index) end
 function Server:route_count() return self._native:route_count() end
 function M.server(opts)

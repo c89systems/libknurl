@@ -19,7 +19,6 @@ struct rl_server {
     rotmos_server *native;
     lua_State *L;
     int root;
-    rotmos_listener_config *pending_listeners;
     rotmos_error callback_error;
 };
 struct rl_rule {
@@ -66,6 +65,11 @@ int rl_field_size(lua_State *, int, const char *, size_t *);
 int rl_field_string(lua_State *, int, const char *, const char **);
 void rl_field(lua_State *, int, const char *);
 int rl_fields(lua_State *, int, const char *const *, size_t, rotmos_error *);
+int rl_config_parse(lua_State *, int, rotmos_server_config *, rotmos_error *);
+void rl_config_push(lua_State *, const rotmos_server_effective *);
+int rl_auth_prepare(lua_State *, int, rotmos_error *);
+rotmos_status rl_auth_apply(lua_State *, int, int, rotmos_request *,
+                            rotmos_reply *, int *, rotmos_error *);
 rotmos_status rl_callback_error(lua_State *, int, rotmos_error *, const char *);
 struct rl_server *rl_server(lua_State *, int);
 struct rl_request *rl_request(lua_State *, int);
@@ -79,6 +83,8 @@ rotmos_status rl_handler(rotmos_request *, rotmos_reply *, void *,
                          rotmos_error *);
 rotmos_status rl_before(rotmos_request *, rotmos_reply *, int *, void *,
                         rotmos_error *);
+rotmos_status rl_auth(rotmos_request *, rotmos_reply *, int *, void *,
+                      rotmos_error *);
 rotmos_status rl_after(rotmos_request *, rotmos_reply *, int *, void *,
                        rotmos_error *);
 void rl_values_open(lua_State *);

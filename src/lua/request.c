@@ -11,7 +11,7 @@ static int start_trampoline(lua_State *L)
 {
     struct rl_call *c = lua_touserdata(L, 1);
     struct rl_request *r;
-    r = lua_newuserdatauv(L, sizeof(*r), 2);
+    r = lua_newuserdatauv(L, sizeof(*r), 3);
     memset(r, 0, sizeof(*r));
     r->native = c->native;
     r->root = LUA_NOREF;
@@ -81,6 +81,8 @@ static int snapshot(lua_State *L)
         return rl_error(L, &e);
     n = r->native;
     lua_createtable(L, 0, 15);
+    lua_getiuservalue(L, 1, 3);
+    lua_setfield(L, -2, "principal");
     bytes_field(L, "method", rotmos_request_method_token(n));
     bytes_field(L, "version", rotmos_request_version(n));
     bytes_field(L, "target", rotmos_request_target(n));
@@ -178,6 +180,28 @@ static int request_body(lua_State *L)
     if (rotmos_request_body_bytes(r->native, &body, &e) != ROTMOS_OK)
         return rl_error(L, &e);
     lua_pushlstring(L, body.data != NULL ? body.data : "", body.length);
+    return 1;
+}
+static int request_event(lua_State *L)
+{
+    struct rl_request *r;
+    rotmos_error error;
+    const char *name;
+    size_t length;
+    if (!valid(L, &r, &error))
+        return rl_error(L, &error);
+    if (lua_type(L, 2) != LUA_TSTRING)
+        return rl_error(
+            L, (rl_fail(&error, ROTMOS_INVALID, "event name must be a string"),
+                &error));
+    name = lua_tolstring(L, 2, &length);
+    if (memchr(name, 0, length))
+        return rl_error(
+            L, (rl_fail(&error, ROTMOS_INVALID, "event name contains NUL"),
+                &error));
+    if (rotmos_request_event(r->native, name, &error) != ROTMOS_OK)
+        return rl_error(L, &error);
+    lua_pushboolean(L, 1);
     return 1;
 }
 static rotmos_status headers_apply(lua_State *L, int table, rotmos_reply *reply,
@@ -332,6 +356,11 @@ static int route_trampoline(lua_State *L)
     lua_rawgeti(L, -1, c->rule->root);
     lua_getiuservalue(L, -1, 1);
     options = lua_absindex(L, -1);
+    if (c->hook == 3) {
+        c->status = rl_auth_apply(L, options, view, c->native, c->reply,
+                                  &c->finish, c->error);
+        return 0;
+    }
     rl_field(L, options, c->name);
     if (lua_isnil(L, -1))
         invoke = 0;
@@ -410,6 +439,11 @@ rotmos_status rl_before(rotmos_request *n, rotmos_reply *r, int *f, void *d,
 {
     return route_call(n, r, f, d, e, 1, "before");
 }
+rotmos_status rl_auth(rotmos_request *n, rotmos_reply *r, int *f, void *d,
+                      rotmos_error *e)
+{
+    return route_call(n, r, f, d, e, 3, "auth");
+}
 rotmos_status rl_after(rotmos_request *n, rotmos_reply *r, int *f, void *d,
                        rotmos_error *e)
 {
@@ -424,6 +458,7 @@ void rl_requests_open(lua_State *L)
                                        {"headers", headers},
                                        {"queries", queries},
                                        {"body_bytes", request_body},
+                                       {"event", request_event},
                                        {NULL, NULL}};
     luaL_newmetatable(L, RL_REQUEST);
     lua_pushvalue(L, -1);

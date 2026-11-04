@@ -105,3 +105,13 @@ the entire callback conversion/cleanup boundary, and rejects unbound options.
 Its installed-runtime fixture covers preload/dynamic loading and allocation
 failure without adding a private router or source queue. The remaining Lua
 families, source packaging and final consumer/artifact checks are still required.
+
+The Lua configuration surface now maps deadlines, worker death policy, production
+defaults, proxy bounds, trusted proxies and autoblock declarations to the same C
+normalization path. Manual TLS file/memory/bundle materials, mTLS, HTTPS redirects,
+effective snapshots and the serving gate are connected. Callback auth lifts the
+existing decision/principal/challenge behavior through public staged route hooks;
+credentials and sessions remain host-owned. Its combined fixture covers the live
+wire behavior, copying, invalid decisions, protected getters and constructor
+allocation unwinding. Material openers/ACME callbacks, remaining policy/control
+hooks and the other Lua families remain part of the full goal.

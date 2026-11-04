@@ -2083,8 +2083,8 @@ decision; no interpreter executable or redistributed Lua SDK is part of this
 module delivery.
 
 Expected layout is `lua/rotmos.lua`, focused `lua/rotmos/` facades, and
-`src/lua/rotmos_native.c` plus small binding-owned support files. These are planned
-sources, not existing files. `luaopen_rotmos_native` is the native module entry.
+`src/lua/rotmos_native.c` plus small binding-owned support files.
+`luaopen_rotmos_native` is the native module entry.
 Core C headers stay Lua-agnostic; `<rotmos/lua.h>` owns any public embedding or
 conversion declarations. Vectis may retain its application Lua facade while
 delegating the underlying server operations to public rotmos C APIs.

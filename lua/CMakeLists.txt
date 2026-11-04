@@ -24,7 +24,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/facade.inc"
   COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/rotmos.lua"
     "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/facade.inc" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Embed.cmake"
   DEPENDS rotmos.lua cmake/Embed.cmake VERBATIM)
-add_library(rotmos_lua SHARED ../src/lua/rotmos_native.c ../src/lua/value.c ../src/lua/server.c ../src/lua/request.c ../src/lua/source.c "${CMAKE_CURRENT_BINARY_DIR}/facade.inc")
+add_library(rotmos_lua SHARED ../src/lua/rotmos_native.c ../src/lua/value.c ../src/lua/server.c ../src/lua/config.c ../src/lua/auth.c ../src/lua/request.c ../src/lua/source.c "${CMAKE_CURRENT_BINARY_DIR}/facade.inc")
 add_library(rotmos::lua ALIAS rotmos_lua)
 set_target_properties(rotmos_lua PROPERTIES OUTPUT_NAME native PREFIX "" SUFFIX ".so" EXPORT_NAME lua C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -49,7 +49,7 @@ if(BUILD_TESTING)
     set_target_properties(rotmos_lua_${mode}_host PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
     target_compile_options(rotmos_lua_${mode}_host PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes)
     target_compile_definitions(rotmos_lua_${mode}_host PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
-    target_link_libraries(rotmos_lua_${mode}_host PRIVATE cpkt::lua_shared)
+    target_link_libraries(rotmos_lua_${mode}_host PRIVATE cpkt::lua_shared OpenSSL::SSL)
     if(mode STREQUAL "preload")
       target_link_libraries(rotmos_lua_${mode}_host PRIVATE rotmos::lua)
       target_compile_definitions(rotmos_lua_${mode}_host PRIVATE ROTMOS_PRELOAD_TEST=1)
@@ -68,8 +68,13 @@ if(BUILD_TESTING)
       "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:rotmos_lua_${mode}_host>"
       "-DSCRIPT=${rotmos_root}/tests/lua/foundation.lua" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
     set_tests_properties(rotmos.lua-${mode} PROPERTIES TIMEOUT 10)
+    add_test(NAME rotmos.lua-config-${mode} COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
+      "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:rotmos_lua_${mode}_host>"
+      "-DSCRIPT=${rotmos_root}/tests/lua/config.lua" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
+    set_tests_properties(rotmos.lua-config-${mode} PROPERTIES TIMEOUT 10)
     if(NOT ROTMOS_TARGET MATCHES "^x86_64-linux-(gnu|musl)$" OR NOT CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
       set_tests_properties(rotmos.lua-${mode} PROPERTIES DISABLED TRUE)
+      set_tests_properties(rotmos.lua-config-${mode} PROPERTIES DISABLED TRUE)
     endif()
   endforeach()
 endif()
