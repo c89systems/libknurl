@@ -26,6 +26,7 @@ struct rotmos_runtime_shared {
 };
 
 struct rotmos_delivery;
+struct rotmos_log_runtime;
 
 struct rotmos_tls_binding {
     struct kore_domain *domain;
@@ -52,6 +53,7 @@ struct rotmos_runtime {
     pid_t parent_pid;
     pthread_t owner_thread;
     struct rotmos_runtime_shared *shared;
+    struct rotmos_log_runtime *logging;
     int gate_selected;
     struct sigaction saved_signals[4];
     size_t installed_signals;

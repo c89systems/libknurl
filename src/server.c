@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "server_internal.h"
 #include "router_internal.h"
+#include "logging_internal.h"
 
 #include <fcntl.h>
 #include <stdlib.h>
@@ -75,6 +76,8 @@ rotmos_status rotmos_server_new(const rotmos_server_config *input,
     server->runtime = NULL;
     server->loop = NULL;
     server->proxy = NULL;
+    server->autoblock = NULL;
+    server->logging = NULL;
     server->notify_fd = -1;
     server->stop_requested = server->terminating_signal = 0;
     server->process.role = ROTMOS_PROCESS_PARENT;
@@ -175,6 +178,7 @@ rotmos_status rotmos_server_destroy(rotmos_server *server, rotmos_error *error)
             server->config.supervision.control_fd >= 0)
             (void)close(server->config.supervision.control_fd);
         rotmos_config_cleanup(&server->config);
+        rotmos_logging_clear(server);
         free(server);
     }
     rotmos_error_clear(error);

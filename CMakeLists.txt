@@ -48,7 +48,7 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/json.c src/json_buffer.c src/rest.c src/rest_reply.c src/openapi.c src/openapi_json.c src/openapi_yaml.c src/json_array.c src/json_route.c src/xml.c src/xml_sax.c src/xml_mapping.c src/xml_generator.c src/xml_route.c
   src/executor.c src/native_io.c src/source_native.c src/storage.c src/storage_assets.c src/storage_filesystem.c src/storage_fs_disk.c src/storage_fs_scope.c src/asset.c src/asset_filesystem.c src/static.c src/static_reply.c src/static_policy.c
   src/webdav.c src/webdav_http.c src/webdav_propfind.c src/upload.c src/upload_metadata.c src/upload_reader.c src/upload_file.c
-  src/address.c src/policy.c src/kore_policy.c src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
+  src/autoblock.c src/logging.c src/kore_logging.c src/address.c src/policy.c src/kore_policy.c src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
   src/config_normalize.c src/server.c src/router.c src/route_path.c
   src/request.c src/request_decode.c src/router_dispatch.c
   src/kore_runtime.c src/kore_http.c src/kore_loop.c src/kore_control.c
@@ -108,7 +108,7 @@ target_link_libraries(rotmos_static PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::
 target_link_libraries(rotmos_static PUBLIC lonejson::lonejson_static)
 set(rotmos_core_headers include/rotmos/common.h include/rotmos/http.h include/rotmos/rotmos.h
   include/rotmos/io.h include/rotmos/reply.h include/rotmos/tls.h
-  include/rotmos/server.h include/rotmos/openapi.h include/rotmos/router.h include/rotmos/request.h include/rotmos/kore.h
+  include/rotmos/server.h include/rotmos/pslog.h include/rotmos/openapi.h include/rotmos/router.h include/rotmos/request.h include/rotmos/kore.h
   include/rotmos/loop.h include/rotmos/response.h include/rotmos/dispatch.h
   include/rotmos/body.h include/rotmos/upload.h include/rotmos/channel.h include/rotmos/websocket.h include/rotmos/framing.h
   include/rotmos/proxy.h include/rotmos/xml.h include/rotmos/lonejson.h
@@ -116,7 +116,7 @@ set(rotmos_core_headers include/rotmos/common.h include/rotmos/http.h include/ro
 set_source_files_properties(${rotmos_core_headers} PROPERTIES LANGUAGE C HEADER_FILE_ONLY FALSE)
 add_library(rotmos_headers_c OBJECT ${rotmos_core_headers})
 target_include_directories(rotmos_headers_c PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(rotmos_headers_c PRIVATE lonejson::lonejson)
+target_link_libraries(rotmos_headers_c PRIVATE lonejson::lonejson pslog::pslog_shared)
 rotmos_c89(rotmos_headers_c)
 install(DIRECTORY include/rotmos DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/rotmos)
@@ -148,9 +148,28 @@ if(BUILD_TESTING)
   add_test(NAME rotmos.json-runtime COMMAND rotmos_json_runtime)
   add_test(NAME rotmos.json-spool-policy COMMAND rotmos_json_runtime no-spool)
   set_tests_properties(rotmos.json-runtime rotmos.json-spool-policy PROPERTIES TIMEOUT 10)
-  foreach(codec json xml xml-mapped xml-runtime asset static-runtime storage-runtime storage-filesystem webdav-runtime source-runtime upload-runtime rest-runtime openapi policy-runtime)
+  add_executable(rotmos_autoblock tests/autoblock.c)
+  target_link_libraries(rotmos_autoblock PRIVATE rotmos::static Threads::Threads)
+  target_compile_definitions(rotmos_autoblock PRIVATE $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  rotmos_c89(rotmos_autoblock)
+  rotmos_local_runtime(rotmos_autoblock)
+  add_test(NAME rotmos.autoblock COMMAND rotmos_autoblock)
+  set_tests_properties(rotmos.autoblock PROPERTIES TIMEOUT 5)
+  add_executable(rotmos_log_backend tests/log-backend.c)
+  target_include_directories(rotmos_log_backend PRIVATE "${kore_source_dir}/include/kore")
+  target_compile_definitions(rotmos_log_backend PRIVATE $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
+  target_link_libraries(rotmos_log_backend PRIVATE rotmos::static pslog::pslog_static OpenSSL::SSL CURL::libcurl)
+  add_dependencies(rotmos_log_backend kore-source)
+  rotmos_c89(rotmos_log_backend)
+  rotmos_local_runtime(rotmos_log_backend)
+  add_test(NAME rotmos.log-backend COMMAND rotmos_log_backend)
+  set_tests_properties(rotmos.log-backend PROPERTIES TIMEOUT 5)
+  foreach(codec json xml xml-mapped xml-runtime asset static-runtime storage-runtime storage-filesystem webdav-runtime source-runtime upload-runtime rest-runtime openapi policy-runtime policy-logs-runtime)
     add_executable(rotmos_${codec} "tests/${codec}.c")
     target_link_libraries(rotmos_${codec} PRIVATE rotmos::shared Threads::Threads)
+    if(codec STREQUAL "policy-logs-runtime")
+      target_link_libraries(rotmos_${codec} PRIVATE pslog::pslog_shared)
+    endif()
     target_compile_definitions(rotmos_${codec} PRIVATE
       $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
     rotmos_c89(rotmos_${codec})
@@ -376,7 +395,7 @@ if(BUILD_TESTING)
   rotmos_local_runtime(rotmos_foundation)
   add_test(NAME rotmos.foundation COMMAND rotmos_foundation)
   add_executable(rotmos_headers_cpp tests/headers.cpp)
-  target_link_libraries(rotmos_headers_cpp PRIVATE rotmos::shared)
+  target_link_libraries(rotmos_headers_cpp PRIVATE rotmos::shared pslog::pslog_shared)
   set_target_properties(rotmos_headers_cpp PROPERTIES CXX_STANDARD 98 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
   target_compile_options(rotmos_headers_cpp PRIVATE -Wall -Wextra -Wpedantic -Werror)
   rotmos_local_runtime(rotmos_headers_cpp)
@@ -416,7 +435,7 @@ if(BUILD_TESTING)
     kore.upgrade PROPERTIES TIMEOUT 60)
   if(NOT rotmos_can_run)
     set_tests_properties(rotmos.acme-state rotmos.auxiliary-runtime rotmos.auxiliary-restart rotmos.auxiliary-terminate rotmos.process-runtime rotmos.process-backend rotmos.tls-runtime rotmos.channel-runtime rotmos.channel-backend rotmos.body-runtime rotmos.response-runtime rotmos.loop-smoke rotmos.server-runtime rotmos.kore-runtime
-      rotmos.source-runtime rotmos.upload-runtime rotmos.rest-runtime rotmos.openapi rotmos.policy-runtime
+      rotmos.source-runtime rotmos.upload-runtime rotmos.rest-runtime rotmos.openapi rotmos.policy-runtime rotmos.policy-logs-runtime rotmos.autoblock rotmos.log-backend
       rotmos.declarations rotmos.reply rotmos.kore-port rotmos.foundation
       rotmos.headers.cpp PROPERTIES DISABLED TRUE)
   endif()

@@ -4,6 +4,8 @@
 
 #include <arpa/inet.h>
 #include <fnmatch.h>
+#include <fcntl.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,6 +27,15 @@ void rotmos_kore_listener_domains(struct rotmos_runtime *runtime,
         domain = kore_domain_new(identity != NULL ? identity->domains[i] : "*");
         if (!kore_domain_attach(domain, server))
             fatal("cannot attach listener domain");
+        if (runtime->server->config.http.access_log_path != NULL) {
+            domain->accesslog =
+                open(runtime->server->config.http.access_log_path,
+                     O_CREAT | O_APPEND | O_WRONLY | O_CLOEXEC, 0644);
+            if (domain->accesslog < 0)
+                fatal("cannot open access log %s: %s",
+                      runtime->server->config.http.access_log_path,
+                      strerror(errno));
+        }
         if (identity != NULL) {
             runtime->tls_bindings[runtime->tls_binding_count].domain = domain;
             runtime->tls_bindings[runtime->tls_binding_count++].identity =

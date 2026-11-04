@@ -138,9 +138,10 @@ startup cancellation and repeated runs. The installed-consumer check repeats the
 HTTP fixture through both static and shared imported targets after relocating
 the library and its three released dependency prefixes.
 
-This is partial runtime coverage. Preflight explicitly rejects
-access logs, trusted proxies, autoblock,
-low-level JSON and upload policy values without a corresponding facade.
+This is partial runtime coverage. [Admission/address policy](policy.md),
+process-shared autoblock and [access logging](logging.md) are connected.
+Preflight still rejects low-level JSON and upload policy values without a
+corresponding facade.
 Producer trailer declarations and gate observations,
 complete fatal/allocation-failure unwinding, the protocol and
 provider helpers, the opt-in native declaration component, and the Lua product
@@ -211,6 +212,12 @@ when the selected target matches the execution host; other configurations supply
 compile/link evidence. Full runtime and artifact validation follows the larger
 implementation surfaces. The [implementation constraints](implementation-plan.md)
 record this scope and cadence.
+
+Some user-mode QEMU builds return `ENOSYS` for `get_robust_list`; that prevents
+preparation of the required robust shared autoblock lock. Those emulated runs
+can prove log transport but cannot supply autoblock runtime evidence. Use a
+Linux execution environment with robust-list support for that check; the
+library retains its worker-death recovery requirement.
 
 ## Source ownership
 

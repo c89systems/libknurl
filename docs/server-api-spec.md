@@ -1300,8 +1300,10 @@ userdata is independent of dispatch-plan callback userdata; private route plans
 cannot displace the host association. Global start follows identity resolution;
 global close follows response/plan cleanup and final observation, including
 resolver/start/admission failures before dispatch. Parser failures before managed
-request initialization remain transport-only events. Process-shared autoblock
-and pslog/access configuration retain their separate implementation obligations.
+request initialization remain transport-only events. The same implementation
+now supplies the process-shared autoblock engine and production profile;
+[logging](logging.md) connects public pslog configuration and independent file
+access output to the existing backend formatter and bounded IPC.
 
 The pslog integration accepts a borrowed native logger and copied access-log
 rules, with trace/warn/error categories and exact status overrides including
@@ -2350,6 +2352,8 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0054 | Prepare private ACME work after key-manager IPC setup; persist complete initial keys and install acknowledged candidates before distribution; preserve in-memory manual identities; update every matching listener context through cached policy hooks; capture ACME transport policy; reset/free ACME globals; release transient TLS references, clear expected PEM EOF errors and disable accept only when registered during shutdown |
 | 0055 | Wait for HTTP-worker challenge installation acknowledgements; replay account state after ACME restart; deduplicate domain orders across listeners; own order/signing timers and references; advance completed steps immediately and retry unavailable account/directory services; classify account-not-found by problem type; remove stale parent IPC cache references and restrict HTTP-worker broadcasts |
 | 0056 | Clear event readiness when allocating/reusing a connection, preventing stale error/half-close flags from terminating a new managed channel or WebSocket |
+| 0057 | Bound and validate worker logs; account for access-record headers, skip contended worker buffers in parent drain and flush file logs before worker mappings are released |
+| 0058 | Reuse the native access formatter with a retained peer address, including completion after the native connection has gone away |
 
 ## 22. Investigation references
 

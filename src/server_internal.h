@@ -8,6 +8,8 @@
 
 struct rotmos_runtime;
 struct rotmos_proxy_worker;
+struct rotmos_autoblock;
+struct rotmos_logging;
 
 struct rotmos_server {
     rotmos_server_config config;
@@ -19,6 +21,8 @@ struct rotmos_server {
     struct rotmos_runtime *runtime;
     rotmos_loop *loop;
     struct rotmos_proxy_worker *proxy;
+    struct rotmos_autoblock *autoblock;
+    struct rotmos_logging *logging;
     volatile sig_atomic_t notify_fd;
     volatile sig_atomic_t stop_requested;
     volatile sig_atomic_t terminating_signal;

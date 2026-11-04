@@ -2,6 +2,7 @@
 #include "server_internal.h"
 #include "response_internal.h"
 #include "loop_internal.h"
+#include "autoblock_internal.h"
 #include <stdlib.h>
 #include <string.h>
 void rotmos_policy_observe(rotmos_request *r, rotmos_observation_kind kind,
@@ -79,6 +80,8 @@ rotmos_status rotmos_request_event(rotmos_request *r, const char *name,
         if ((unsigned char)name[i] < 32 || (unsigned char)name[i] == 127)
             return rotmos_fail(error, ROTMOS_INVALID, "request_event",
                                "event name contains a control byte");
+    rotmos_autoblock_note(r->server, r->effective_address,
+                          ROTMOS_OBSERVE_APPLICATION, 0, name);
     rotmos_policy_observe(r, ROTMOS_OBSERVE_APPLICATION, name, 0, ROTMOS_OK);
     rotmos_error_clear(error);
     return ROTMOS_OK;
@@ -90,7 +93,18 @@ rotmos_status rotmos_policy_admit(rotmos_request *r, int *handled,
     rotmos_reply *reply;
     rotmos_status status;
     rotmos_admission_action action = ROTMOS_ADMISSION_ALLOW;
+    rotmos_bytes empty = {0};
     *handled = 0;
+    if (!rotmos_autoblock_allowed(r->server, r->effective_address)) {
+        *handled = 1;
+        r->response->close_connection = 1;
+        status =
+            rotmos_response_bytes(r->response, 403, "text/plain", empty, error);
+        if (status == ROTMOS_OK)
+            rotmos_policy_observe(r, ROTMOS_OBSERVE_REQUEST_REJECTED, NULL, 403,
+                                  ROTMOS_OK);
+        return status;
+    }
     if (config->on_request == NULL)
         return ROTMOS_OK;
     status = rotmos_reply_new(&reply, error);
@@ -142,6 +156,9 @@ void rotmos_policy_closed(rotmos_request *r)
 {
     if (!r->lifecycle_started)
         return;
+    rotmos_autoblock_note(r->server, r->effective_address,
+                          ROTMOS_OBSERVE_HTTP_STATUS,
+                          r->outcome.response.status, NULL);
     rotmos_policy_observe(r, ROTMOS_OBSERVE_REQUEST_COMPLETE, NULL,
                           r->outcome.response.status, r->outcome.cause);
     if (r->server->config.callbacks.on_request_close != NULL)

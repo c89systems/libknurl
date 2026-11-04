@@ -63,7 +63,7 @@ conditions, quotas, collections, copy/move and recovery, with incremental PUT
 transactions and a shared worker pool. The [WebDAV facade](webdav.md) now connects
 filesystem/read-only/custom mounts, staged middleware, scoped owner-loop authorization,
 conditional/range file replies, incremental PUT and bounded PROPFIND. Next connect
-the Lua product, process-shared autoblock/logging and the remaining conveniences. The
+the Lua product and the remaining conveniences. The
 [source execution surface](responses.md) connects native readers to the existing
 bounded executor and public source readiness. The [upload stream facade](uploads.md)
 connects Vectis's callback lifecycle to managed STREAM input and ordinary hooks.
@@ -76,8 +76,20 @@ The [address/admission/observation surface](policy.md) lifts Vectis's trusted-pr
 resolution and typed transport hooks, with generic application admission,
 request association/cleanup and truthful terminal snapshots. Global application
 state remains independent of dispatch-plan state, including early failures.
+The shared autoblock table now lifts Vectis's capacity/window rules and
+Linux/Darwin worker-death lock recovery, enabling the production profile.
+[Logging](logging.md) now supplies borrowed pslog roots, copied access rules,
+native formatter reuse and independent file draining, including restart and
+bounded malformed-worker-log coverage.
 Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memory
 measurements for the combined proxy review. Retain the
+automatic 100 Continue wire-accounting check in that review: the inherited
+native send path still needs alignment with the managed interim counters.
+One installed-SDK run also failed the existing storage timeout assertion;
+the executable passed in isolation and the SDK retry passed. Retain a targeted
+storage deadline/completion ordering check under scheduler delay in the fault
+review, rather than treating the successful retry as proof of that invariant.
+Retain the
 remaining ACME in-flight fault and final integration checks for the combined
 review rather than repeating the full protocol matrix for each new surface.
 

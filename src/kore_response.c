@@ -232,12 +232,15 @@ static void terminal(struct rotmos_delivery *delivery)
     native->total = native->end - native->start;
     native->ms = native->total;
     rotmos_response_terminal(response);
+    native->content_length =
+        ((u_int64_t)response->outcome.body_bytes.high << 32) |
+        response->outcome.body_bytes.low;
     rotmos_kore_request_closed(request);
     rotmos_kore_websocket_handshake(request, upgraded);
     rotmos_channel_release(request->channel, restore_channel);
     request->channel = NULL;
     if (native->rt->dom->accesslog || kore_accesslog_enabled())
-        kore_accesslog(native);
+        kore_accesslog_snapshot(native, request->peer.address.data);
     native->flags &= ~HTTP_REQUEST_LIBRARY_MANAGED;
     http_request_wakeup(native);
     slot = &delivery->runtime->responses;

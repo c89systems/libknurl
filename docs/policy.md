@@ -89,6 +89,45 @@ upload open, independent application/plan state, callback ordering, response
 replacement, interim output, post-commit abort and transport stalls/status.
 The [TLS fixture](../tests/tls-runtime.c) covers handshake failures and redirect
 accounting. The public policy fixture also runs against relocated static/shared
-SDKs. Process-shared autoblock, pslog/access configuration and production profile
-defaults remain in the [implementation goal](implementation-plan.md); enabling
-the unfinished autoblock/access-file configurations fails explicitly.
+SDKs. [Structured and file access logging](logging.md) use the same resolved
+identity without retaining application-owned request state.
+
+## Process-shared autoblock
+
+`config.autoblock` lifts Vectis's fixed-window table. Zero durations/capacity
+inherit 1800 seconds, 3600 seconds and 8192 addresses. The existing limits are
+16 status rules, 16 named-event rules and 65536 entries. Enabled configuration
+allocates the table during run preparation, before workers fork. Construction
+and validation do not map a table. Each new run starts empty; HTTP workers and
+their replacements share the current run's counts and blocks.
+
+TCP stalls, TLS failures and malformed transport statuses use the real peer.
+Request statuses and `rotmos_request_event` use the resolved effective address.
+Native 100 Continue also uses that resolved request key. Managed final status
+counts once at close, retaining replacement-before-commit and abort semantics.
+The engine works without an observation callback. Blocked accepted peers close
+before TLS; blocked effective addresses receive a bounded empty 403 before body
+storage or route dispatch. Application admission cannot override an existing block.
+
+Reaching a positive threshold blocks the address for the configured duration.
+Counters reset when the window elapses and saturate rather than wrapping.
+Expiry makes an address available again. New addresses use a vacant entry or
+the oldest unblocked entry; a full table never evicts an actively blocked entry.
+Time uses monotonic wide milliseconds. As in Vectis, unavailable clock/lock
+information allows admission and does not invent a block.
+
+Linux uses a process-shared robust mutex. Recovery after owner death clears the
+potentially partial table before marking the mutex consistent. Darwin retains
+Vectis's process-local mutex plus an unlinked-file POSIX record lock, released
+by the kernel when a worker dies. The parent destroys the mapping after workers
+are reaped. There is no per-address heap allocation on the HTTP loop.
+
+`rotmos_server_config_init_production_webserver` enables the mechanism with
+Vectis's thresholds: 20 TCP stalls, 10 TLS failures, 10 responses each for
+401/403, 50 for 404 and five for 429. It retains the default positive body
+ceiling. Routes, authentication, TLS, persistence and application event rules
+remain explicit declarations. The [table fixture](../tests/autoblock.c) covers
+shared counters, capacity, expiry/window reset, wide duration, saturation,
+worker-death recovery and fresh-table reuse. The
+[public live fixture](../tests/policy-logs-runtime.c) covers blocking and identity,
+including 100 Continue, with no observer installed.

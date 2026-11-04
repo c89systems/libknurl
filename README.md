@@ -81,6 +81,7 @@ upstream upgrades and local changes separate.
 - [Upload callbacks](docs/uploads.md)
 - [Source execution and response delivery](docs/responses.md)
 - [Address policy, admission and observations](docs/policy.md)
+- [Structured and file access logging](docs/logging.md)
 - [Application WebSocket API](docs/websockets.md)
 - [HTTP framing and proxy core](docs/proxy-core.md)
 - [HTTP/SSE reverse proxy routes](docs/proxy-http.md)

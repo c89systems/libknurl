@@ -1,4 +1,6 @@
 #include "kore_internal.h"
+#include "autoblock_internal.h"
+#include "policy_internal.h"
 #include <string.h>
 struct connection_snapshot {
     rotmos_connection_info info;
@@ -54,7 +56,9 @@ int rotmos_kore_accept(void *data, struct connection *connection)
         return 1;
     observe(runtime, &copy.info, ROTMOS_OBSERVE_CONNECTION_ACCEPTED, 0,
             ROTMOS_OK);
-    if (config->on_connection != NULL)
+    if (!rotmos_autoblock_allowed(runtime->server, copy.info.peer.address))
+        action = ROTMOS_ADMISSION_CLOSE;
+    else if (config->on_connection != NULL)
         status = config->on_connection(runtime->server, &copy.info, &action,
                                        config->userdata, &error);
     if (status != ROTMOS_OK || action != ROTMOS_ADMISSION_ALLOW) {
@@ -69,8 +73,11 @@ static void event(void *data, struct connection *connection,
 {
     struct rotmos_runtime *runtime = data;
     struct connection_snapshot copy;
-    if (snapshot(runtime, connection, &copy))
+    if (snapshot(runtime, connection, &copy)) {
+        rotmos_autoblock_note(runtime->server, copy.info.peer.address, kind,
+                              status, NULL);
         observe(runtime, &copy.info, kind, status, cause);
+    }
 }
 void rotmos_kore_tcp_stall(void *data, struct connection *connection)
 {
@@ -85,6 +92,17 @@ void rotmos_kore_tls_failure(void *data, struct connection *connection)
 void rotmos_kore_http_status(void *data, struct http_request *request,
                              int status)
 {
+    rotmos_request *managed = request->hdlr_extra;
+    if (managed != NULL && managed->lifecycle_started) {
+        /* Managed final status is counted once at close. Native 100 Continue
+         * still uses the already resolved request identity, never the proxy. */
+        if (status < 200)
+            rotmos_autoblock_note(managed->server, managed->effective_address,
+                                  ROTMOS_OBSERVE_HTTP_STATUS, status, NULL);
+        rotmos_policy_observe(managed, ROTMOS_OBSERVE_HTTP_STATUS, NULL, status,
+                              ROTMOS_OK);
+        return;
+    }
     event(data, request->owner, ROTMOS_OBSERVE_HTTP_STATUS, status, ROTMOS_OK);
 }
 void rotmos_kore_connection_status(void *data, struct connection *connection,

@@ -1,5 +1,6 @@
 #include <rotmos/rotmos.h>
 #include <rotmos/lonejson.h>
+#include <rotmos/pslog.h>
 
 int main()
 {

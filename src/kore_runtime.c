@@ -4,6 +4,8 @@
 #include "executor_internal.h"
 #include "storage_internal.h"
 #include "body_internal.h"
+#include "autoblock_internal.h"
+#include "logging_internal.h"
 
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -326,11 +328,6 @@ static rotmos_status validate_config(rotmos_server *server, rotmos_error *error)
         return rotmos_fail(
             error, ROTMOS_STATE, "server_validate",
             "supervised rerun requires a fresh control descriptor");
-    if (server->config.autoblock.enabled ||
-        server->config.http.access_log_path != NULL)
-        return rotmos_fail(
-            error, ROTMOS_NOT_SUPPORTED, "server_validate",
-            "Access logs and process-shared autoblock are not connected yet");
     for (i = 0; i < server->router->count; ++i) {
         route = &server->router->routes[i]->config;
         if (route->on_headers != NULL)
@@ -615,6 +612,11 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
         if (runtime->status == ROTMOS_OK)
             runtime->status = rotmos_runtime_hook(
                 runtime, server->config.callbacks.on_parent_prepare);
+        if (runtime->status == ROTMOS_OK)
+            runtime->status = rotmos_autoblock_open(server, &runtime->error);
+        if (runtime->status == ROTMOS_OK)
+            runtime->status =
+                rotmos_kore_logging_start(runtime, &runtime->error);
         runtime->cancelled = startup_cancel(runtime);
         if (runtime->status == ROTMOS_OK && !runtime->cancelled)
             runtime->status = rotmos_tls_prepare(
@@ -681,6 +683,9 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
                             "server_start",
                             "required worker did not initialize");
             }
+            if (runtime->status == ROTMOS_OK &&
+                server->config.http.access_log_path != NULL)
+                kore_timer_add(kore_accesslog_run, 10, NULL, 0);
             runtime->cancelled = startup_cancel(runtime);
         }
         if (runtime->status == ROTMOS_OK && !runtime->cancelled) {
@@ -723,6 +728,8 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
         kore_curl_recv_max = runtime->curl_recv_max;
     } else
         rotmos_kore_loop_shutdown(runtime);
+    rotmos_autoblock_close(server);
+    rotmos_kore_logging_finish(runtime);
     rotmos_kore_loop_finish(runtime);
     rotmos_tls_prepared_clear(&runtime->tls);
     rotmos_kore_acme_clear(runtime);
