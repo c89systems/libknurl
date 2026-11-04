@@ -27,8 +27,9 @@ typedef enum rotmos_material_kind {
     ROTMOS_MATERIAL_CALLBACK
 } rotmos_material_kind;
 
-/* A successful open transfers one source. It is never called by construction.
- */
+/* A successful open transfers one source. Construction never calls it.
+ * validate/run consume bounded material synchronously to EOF; AGAIN is STATE.
+ * Manual identities are parsed in memory without temporary key files. */
 typedef rotmos_status (*rotmos_material_open_fn)(rotmos_source **out,
                                                  void *userdata,
                                                  rotmos_error *error);

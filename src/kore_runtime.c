@@ -258,7 +258,7 @@ static int worker_pending(void *userdata)
     return rotmos_loop_pending(runtime->server->loop);
 }
 
-rotmos_status rotmos_server_validate(rotmos_server *server, rotmos_error *error)
+static rotmos_status validate_config(rotmos_server *server, rotmos_error *error)
 {
     size_t i;
     rotmos_status status;
@@ -280,20 +280,17 @@ rotmos_status rotmos_server_validate(rotmos_server *server, rotmos_error *error)
         return rotmos_fail(
             error, ROTMOS_STATE, "server_validate",
             "supervised rerun requires a fresh control descriptor");
-    if (server->config.tls.identity_count != 0 ||
-        server->config.callbacks.on_worker_event != NULL ||
+    if (server->config.callbacks.on_worker_event != NULL ||
         server->config.autoblock.enabled ||
         server->config.client_ip.trusted_proxy_count != 0 ||
         server->config.http.access_log_path != NULL)
-        return rotmos_fail(
-            error, ROTMOS_NOT_SUPPORTED, "server_validate",
-            "TLS, worker observations, access logs and admission "
-            "policy are unavailable in the current runtime");
-    for (i = 0; i < server->config.listener_count; ++i)
-        if (server->config.listeners[i].kind != ROTMOS_LISTENER_HTTP)
-            return rotmos_fail(
-                error, ROTMOS_NOT_SUPPORTED, "server_validate",
-                "the current runtime supports cleartext HTTP listeners");
+        return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "server_validate",
+                           "Worker observations, access logs and admission "
+                           "policy are unavailable in the current runtime");
+    for (i = 0; i < server->config.tls.identity_count; ++i)
+        if (server->config.tls.identities[i].mode != ROTMOS_TLS_MANUAL)
+            return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "server_validate",
+                               "ACME identity activation is not connected yet");
     for (i = 0; i < server->router->count; ++i) {
         route = &server->router->routes[i]->config;
         if (route->on_headers != NULL)
@@ -319,6 +316,19 @@ rotmos_status rotmos_server_validate(rotmos_server *server, rotmos_error *error)
     }
     rotmos_error_clear(error);
     return ROTMOS_OK;
+}
+
+rotmos_status rotmos_server_validate(rotmos_server *server, rotmos_error *error)
+{
+    struct rotmos_tls_prepared tls;
+    rotmos_status status;
+    status = validate_config(server, error);
+    if (status != ROTMOS_OK)
+        return status;
+    status = rotmos_tls_prepare(&server->config.tls, KORE_DEFAULT_CIPHER_LIST,
+                                &tls, error);
+    rotmos_tls_prepared_clear(&tls);
+    return status;
 }
 
 static void configure(struct rotmos_runtime *runtime)
@@ -391,8 +401,6 @@ static void bind_listeners(struct rotmos_runtime *runtime)
 {
     const rotmos_listener_config *config;
     struct kore_server *server;
-    struct kore_domain *domain;
-    struct kore_route *route;
     struct listener *listener;
     struct sockaddr_storage address;
     struct sockaddr_in *ipv4;
@@ -415,7 +423,7 @@ static void bind_listeners(struct rotmos_runtime *runtime)
         (void)snprintf(port, sizeof(port), "%u", (unsigned int)config->port);
         server = kore_server_create(name);
         runtime->native_servers[i] = server;
-        server->tls = 0;
+        server->tls = config->kind == ROTMOS_LISTENER_HTTPS;
         if (!kore_server_bind(server, config->bind, port, NULL))
             fatal("cannot bind listener %s", name);
         listener = LIST_FIRST(&server->listeners);
@@ -436,16 +444,7 @@ static void bind_listeners(struct rotmos_runtime *runtime)
         runtime->bound[i].name = config->name;
         runtime->bound[i].address = rotmos_view(runtime->addresses[i]);
         ++runtime->bound_count;
-        domain = kore_domain_new("*");
-        if (!kore_domain_attach(domain, server))
-            fatal("cannot attach listener domain");
-        route = kore_route_create(domain, "^/", HANDLER_TYPE_DYNAMIC);
-        if (route == NULL)
-            fatal("cannot install public router adapter");
-        route->func = kore_strdup("rotmos dispatcher");
-        route->rcall = kore_runtime_native(&runtime->callbacks);
-        route->on_prebody = rotmos_kore_prebody;
-        route->on_free = kore_runtime_native(&runtime->callbacks);
+        rotmos_kore_listener_domains(runtime, server, config);
     }
 }
 
@@ -505,7 +504,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
         out->reason = ROTMOS_RUN_STARTUP_FAILURE;
         out->signal_number = out->escalated = 0;
     }
-    status = rotmos_server_validate(server, error);
+    status = validate_config(server, error);
     if (status != ROTMOS_OK)
         return status;
     runtime = calloc(1, sizeof(*runtime));
@@ -568,6 +567,10 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             runtime->status = rotmos_runtime_hook(
                 runtime, server->config.callbacks.on_parent_prepare);
         runtime->cancelled = startup_cancel(runtime);
+        if (runtime->status == ROTMOS_OK && !runtime->cancelled)
+            runtime->status = rotmos_tls_prepare(
+                &server->config.tls, KORE_DEFAULT_CIPHER_LIST, &runtime->tls,
+                &runtime->error);
         if (runtime->status == ROTMOS_OK && !runtime->cancelled) {
             hooks.arg = runtime;
             hooks.fatal = fatal_error;
@@ -594,6 +597,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             runtime->callbacks.http_request = rotmos_kore_dispatch;
             runtime->callbacks.http_request_free = rotmos_kore_request_free;
             bind_listeners(runtime);
+            rotmos_tls_prepared_clear(&runtime->tls);
             if (!kore_library_parent_start()) {
                 runtime->cancelled = startup_cancel(runtime);
                 if (!runtime->cancelled)
@@ -642,6 +646,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
     } else
         rotmos_kore_loop_shutdown(runtime);
     rotmos_kore_loop_finish(runtime);
+    rotmos_tls_prepared_clear(&runtime->tls);
     while (runtime->installed_signals != 0) {
         --runtime->installed_signals;
         (void)sigaction(handled_signals[runtime->installed_signals],

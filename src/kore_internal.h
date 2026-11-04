@@ -7,6 +7,7 @@
 #include "server_internal.h"
 #include "request_internal.h"
 #include "loop_internal.h"
+#include "tls_internal.h"
 
 #include <setjmp.h>
 #include <pthread.h>
@@ -49,6 +50,7 @@ struct rotmos_runtime {
     struct rotmos_delivery *response_head;
     struct rotmos_delivery *response_tail;
     size_t response_count;
+    struct rotmos_tls_prepared tls;
 };
 
 rotmos_status rotmos_runtime_hook(struct rotmos_runtime *runtime,
@@ -95,5 +97,9 @@ int rotmos_kore_channel_flush_http(rotmos_request *request);
 void rotmos_kore_channel_http_progress(struct connection *connection,
                                        size_t amount);
 void rotmos_kore_channels_stopping(struct rotmos_runtime *runtime);
+void rotmos_kore_listener_domains(struct rotmos_runtime *runtime,
+                                  struct kore_server *server,
+                                  const rotmos_listener_config *listener);
+int rotmos_kore_redirect(rotmos_request *request);
 
 #endif

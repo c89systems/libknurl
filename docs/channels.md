@@ -69,8 +69,10 @@ progress resets activity timers; wake events do not.
 The TLS adapter retains retry storage and calculates read/write readiness
 separately, following OpenSSL's [read](https://docs.openssl.org/3.6/man3/SSL_read/),
 [write](https://docs.openssl.org/3.6/man3/SSL_write/) and
-[shutdown](https://docs.openssl.org/3.6/man3/SSL_shutdown/) contracts. Public TLS
-listener availability and the remaining TLS execution evidence are recorded in
+[shutdown](https://docs.openssl.org/3.6/man3/SSL_shutdown/) contracts. The
+[TLS fixture](../tests/tls-runtime.c) exercises a public HTTPS channel with early
+input, bounded output and orderly half-close. Forced cross-direction retries and
+slow/disconnected TLS peers remain integration coverage under
 [development](development.md).
 
 The [public fixture](../tests/channel-runtime.c) demonstrates takeover, raw

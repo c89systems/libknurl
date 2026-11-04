@@ -124,6 +124,11 @@ static rotmos_status metadata(struct rotmos_runtime *runtime,
         request->headers[i].name = rotmos_view(header->header);
         request->headers[i++].value = rotmos_view(header->value);
     }
+    /* Redirects preserve the raw target, including encoded path separators;
+     * routing decoders must not reject or rewrite that URI. */
+    if (runtime->server->config.listeners[request->listener].kind ==
+        ROTMOS_LISTENER_REDIRECT)
+        return ROTMOS_OK;
     return rotmos_request_decode(request, error);
 }
 
@@ -284,6 +289,9 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
         if (expect > 1 || !rotmos_text_equal_case(value.data, "100-continue"))
             return reject(native, 417);
     }
+    if (runtime->server->config.listeners[request->listener].kind ==
+        ROTMOS_LISTENER_REDIRECT)
+        return rotmos_kore_redirect(request);
     status = rotmos_kore_response_create(runtime, request, &error);
     if (status != ROTMOS_OK)
         return reject(native, 500);

@@ -49,3 +49,4 @@
 0049-response-lifetime-and-progress.patch
 0050-managed-body-surplus.patch
 0051-bounded-pipeline-restoration.patch
+0052-prepared-tls-contexts.patch

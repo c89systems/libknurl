@@ -62,8 +62,17 @@ separate from output completion. Logical readiness and terminal notifications
 run on the owner loop; channel close precedes request close. The public and
 private queue fixtures cover raw chunked input, early frames, queue pressure,
 half-close, idle timeout and pipeline tails larger than the native header buffer.
-TLS retry directions and retained buffers are implemented in the adapter;
-end-to-end TLS-channel evidence follows the public TLS listener integration.
+The TLS fixture exercises the same channel over a public HTTPS listener,
+including early bytes, bounded output and orderly TLS half-close. Forced TLS
+retry-direction faults and slow/disconnected peers remain final integration
+coverage.
+
+[TLS listeners](tls.md) support manual identities from bounded files, copied
+memory and synchronous source callbacks, including bundles, extra server chains
+and independent client-auth trust. Preparation checks key pairs and protocol/
+cipher policy before forks and installs in-memory contexts without temporary key
+files. HTTPS domains, SNI, required/optional mTLS and checked 308 redirects use
+the configured listener identity. ACME activation remains separate work.
 
 Parent and HTTP-worker loops expose borrowed FD watches, monotonic wide timers,
 deferred callbacks and coalescing wakers. Readiness is dispatched after native
@@ -80,7 +89,7 @@ startup cancellation and repeated runs. The installed-consumer check repeats the
 HTTP fixture through both static and shared imported targets after relocating
 the library and its three released dependency prefixes.
 
-This is partial runtime coverage. Preflight explicitly rejects configured TLS,
+This is partial runtime coverage. Preflight explicitly rejects ACME identities,
 worker observations, access logs, trusted proxies, autoblock,
 typed JSON and native-reader upload facades until those paths are connected.
 Native-reader sources require an executor that is not connected yet. Interim

@@ -2219,6 +2219,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0049 | Retain managed requests through asynchronous response drain and connection removal; retire library requests before native HTTP pools; report actual output progress and retained TLS retries through typed private hooks |
 | 0050 | Preserve prebody-owned pipelined surplus through a private typed wrapper around Kore's existing pipeline retention; managed body delivery bypasses automatic buffering/storage |
 | 0051 | Prepend returned framer tails to retained pipeline data and restore/read only bounded prefixes; allow channel tails larger than the native header receive buffer without loss or overflow |
+| 0052 | Install prepared in-memory manual TLS contexts; select the accepting listener's initial identity and derive SNI/HTTP client-auth policy from its context, including optional client certificates and an explicit verification store |
 
 ## 22. Investigation references
 

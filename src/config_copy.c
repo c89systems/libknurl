@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <openssl/crypto.h>
 
 static void free_list(const char *const *list, size_t count)
 {
@@ -59,6 +60,8 @@ static rotmos_status copy_list(const char *const *input, size_t count,
 static void material_free(rotmos_tls_material *material)
 {
     free((void *)material->path);
+    if (material->bytes.data != NULL)
+        OPENSSL_cleanse((void *)material->bytes.data, material->bytes.length);
     free((void *)material->bytes.data);
     rotmos_tls_material_init(material);
 }

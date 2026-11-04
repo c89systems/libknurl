@@ -82,6 +82,9 @@ static rotmos_status tls_validate(rotmos_tls_config *config,
         return invalid(error, "unknown TLS protocol version selection");
     if (config->max_material_bytes == 0)
         config->max_material_bytes = 1024UL * 1024UL;
+    if (config->max_material_bytes > INT_MAX - 1UL)
+        return invalid(error,
+                       "TLS material bound exceeds OpenSSL's input range");
     if (!optional_text(config->cipher_list) ||
         !optional_text(config->acme.email) ||
         !optional_text(config->acme.directory_url) ||
