@@ -113,6 +113,8 @@ Use the `rotmos_` symbol prefix and these header families:
 | `<rotmos/websocket.h>` | Bounded application-frame connections |
 | `<rotmos/router.h>` | Route registration, captures, groups/prefixes and dispatch |
 | `<rotmos/proxy.h>` | Generic reverse-proxy configuration and public hook views |
+| `<rotmos/executor.h>` | Bounded post-fork native jobs and acknowledged cancellation |
+| `<rotmos/storage.h>` | Asynchronous provider operations, retained resources and explicit commit outcomes |
 | `<rotmos/asset.h>` | Read-only opened asset providers, metadata, listing and bounded range sources |
 | `<rotmos/static.h>` | Static file/directory/provider registration and HTTP cache/range policy |
 | `<rotmos/webdav.h>` | WebDAV mounts, filesystem provider and storage/auth interfaces |
@@ -1939,6 +1941,10 @@ write. Do not emulate atomic conditional mutation as an unlocked stat-then-write
 sequence over an incapable remote provider. Listing/mutation allocation and
 temporary files are explicitly bounded. Any retained legacy materialized PUT
 path is named and capped; a streaming upload path never collects the whole file.
+
+The [storage operation/executor implementation](storage.md) supplies this public
+contract and a read-only asset adapter; mutable filesystem/DAV integration remains
+part of the complete implementation goal.
 
 Each provider call receives an opaque `rotmos_storage_operation` and immutable
 arguments. OK completes synchronously; AGAIN transfers completion responsibility

@@ -64,7 +64,14 @@ struct rotmos_loop_backend {
     void (*wake)(void *);
 };
 
+struct rotmos_executor;
+struct rotmos_storage_operation;
 struct rotmos_loop {
+    unsigned long identity;
+    struct rotmos_executor *executors;
+    struct rotmos_storage_operation *storage_operations;
+    size_t executor_count, storage_count;
+    int executor_stopping, http_worker;
     long process_id;
     pthread_t owner;
     pthread_mutex_t mutex;

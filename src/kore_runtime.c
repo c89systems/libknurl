@@ -1,6 +1,8 @@
 #define _GNU_SOURCE 1
 #define _POSIX_C_SOURCE 200809L
 #include "kore_internal.h"
+#include "executor_internal.h"
+#include "storage_internal.h"
 #include "body_internal.h"
 
 #include <sys/mman.h>
@@ -218,6 +220,7 @@ static int worker_start(void *userdata)
     runtime->worker_started = 1;
     if (runtime->server->process.role != ROTMOS_PROCESS_HTTP)
         return 1;
+    runtime->server->loop->http_worker = 1;
     rotmos_kore_tls_worker(runtime, runtime->server->process.worker_index, 1);
     return rotmos_runtime_hook(
                runtime, runtime->server->config.callbacks.on_worker_start) ==
@@ -235,6 +238,8 @@ static void worker_stopping(void *userdata)
             runtime, runtime->server->config.callbacks.on_worker_stopping);
         rotmos_kore_channels_stopping(runtime);
         rotmos_kore_websockets_stopping(runtime);
+        rotmos_storage_stopping(runtime->server->loop);
+        rotmos_executors_stopping(runtime->server->loop);
     }
 }
 

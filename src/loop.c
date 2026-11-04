@@ -41,6 +41,10 @@ rotmos_status rotmos_loop_create(const struct rotmos_loop_backend *backend,
         return rotmos_fail(error, ROTMOS_IO, "loop_create",
                            "cannot initialize loop wake lock");
     }
+    {
+        static unsigned long identity;
+        loop->identity = __atomic_add_fetch(&identity, 1UL, __ATOMIC_RELAXED);
+    }
     loop->process_id = (long)getpid();
     loop->owner = pthread_self();
     loop->backend = *backend;

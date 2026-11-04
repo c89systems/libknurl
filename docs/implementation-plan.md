@@ -55,8 +55,11 @@ limits and context-local parser controls, with a bounded resumable libxml2 outpu
 generator, synchronous sink and explicitly materialized serializers. The
 [read-only asset/static surface](assets.md) now connects filesystem roots,
 custom packed providers, incremental listing, validators/ranges and static route
-semantics. Next connect asynchronous storage operations/native jobs, WebDAV
-mutations and REST/OpenAPI.
+semantics. The [storage/executor surface](storage.md) now supplies copied/pinned operation
+arguments, provider capability checks, resources/results and acknowledged
+cancellation, plus a bounded post-fork native job pool and read-only adapter.
+Next connect mutable filesystem transactions, WebDAV, live native-reader
+adapters and REST/OpenAPI.
 Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memory
 measurements for the combined proxy review. Retain the
 remaining ACME in-flight fault and final integration checks for the combined

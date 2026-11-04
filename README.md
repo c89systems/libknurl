@@ -85,6 +85,7 @@ upstream upgrades and local changes separate.
 - [LoneJSON codecs and typed routes](docs/json.md)
 - [XML mapping, routes, DOM and SAX](docs/xml.md)
 - [Assets and static serving](docs/assets.md)
+- [Storage operations and native jobs](docs/storage.md)
 - [Server API specification](docs/server-api-spec.md)
 - [Vectis integration contract](docs/vectis-integration-contract.md)
 - [Ownership boundary](docs/extraction.md)

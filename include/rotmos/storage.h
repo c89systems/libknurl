@@ -1,0 +1,192 @@
+#ifndef ROTMOS_STORAGE_H
+#define ROTMOS_STORAGE_H
+#include <rotmos/asset.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct rotmos_storage_provider rotmos_storage_provider;
+typedef struct rotmos_storage_operation rotmos_storage_operation;
+typedef struct rotmos_storage_resource rotmos_storage_resource;
+typedef enum rotmos_storage_code {
+    ROTMOS_STORAGE_OK = 0,
+    ROTMOS_STORAGE_NOT_FOUND,
+    ROTMOS_STORAGE_EXISTS,
+    ROTMOS_STORAGE_INVALID,
+    ROTMOS_STORAGE_LIMIT,
+    ROTMOS_STORAGE_IO,
+    ROTMOS_STORAGE_NOMEM,
+    ROTMOS_STORAGE_CONFLICT,
+    ROTMOS_STORAGE_TOMBSTONED,
+    ROTMOS_STORAGE_PRECONDITION,
+    ROTMOS_STORAGE_NOT_SUPPORTED,
+    ROTMOS_STORAGE_END
+} rotmos_storage_code;
+typedef enum rotmos_storage_action {
+    ROTMOS_STORAGE_STAT = 0,
+    ROTMOS_STORAGE_OPEN_READ,
+    ROTMOS_STORAGE_LIST_OPEN,
+    ROTMOS_STORAGE_LIST_NEXT,
+    ROTMOS_STORAGE_PUT_BEGIN,
+    ROTMOS_STORAGE_PUT_WRITE,
+    ROTMOS_STORAGE_PUT_FINISH,
+    ROTMOS_STORAGE_PUT_ABORT,
+    ROTMOS_STORAGE_DELETE,
+    ROTMOS_STORAGE_MKCOL,
+    ROTMOS_STORAGE_COPY,
+    ROTMOS_STORAGE_MOVE
+} rotmos_storage_action;
+typedef enum rotmos_storage_resource_kind {
+    ROTMOS_STORAGE_LIST = 0,
+    ROTMOS_STORAGE_WRITE = 1
+} rotmos_storage_resource_kind;
+#define ROTMOS_STORAGE_CAN_WRITE 1u
+#define ROTMOS_STORAGE_CAN_CONDITIONAL 2u
+#define ROTMOS_STORAGE_CAN_COPY 4u
+#define ROTMOS_STORAGE_CAN_MOVE 8u
+#define ROTMOS_STORAGE_ATOMIC_CROSS_RESOURCE 16u
+#define ROTMOS_STORAGE_DURABLE_COMMIT 32u
+#define ROTMOS_STORAGE_CHUNK_MAX 65536u
+#define ROTMOS_STORAGE_CONDITION_MAX 65536u
+#define ROTMOS_STORAGE_MAX_OPERATIONS 256u
+#define ROTMOS_STORAGE_MAX_RESOURCES 256u
+typedef struct rotmos_storage_arguments {
+    rotmos_storage_action action;
+    const char *path, *destination, *if_match, *if_none_match;
+    rotmos_storage_resource *resource;
+    rotmos_bytes bytes;
+    int overwrite, depth, atomic_cross_resource_required;
+} rotmos_storage_arguments;
+typedef struct rotmos_storage_result {
+    rotmos_storage_code code;
+    rotmos_error error;
+    rotmos_asset_info info;
+    rotmos_asset_entry entry;
+    rotmos_asset *asset;
+    rotmos_storage_resource *resource;
+    size_t accepted;
+    const char *recovery_path;
+    int has_info, has_entry, committed, partial;
+} rotmos_storage_result;
+typedef struct rotmos_storage_outcome {
+    rotmos_status cause;
+    const rotmos_storage_result *result;
+    int cancelled;
+} rotmos_storage_outcome;
+typedef rotmos_status (*rotmos_storage_invoke_fn)(
+    rotmos_storage_operation *, const rotmos_storage_arguments *, void *,
+    rotmos_error *);
+typedef void (*rotmos_storage_provider_retire_fn)(
+    rotmos_storage_operation *, const rotmos_storage_outcome *, void *);
+typedef struct rotmos_storage_provider_config {
+    unsigned int capabilities;
+    const char *commit_description;
+    rotmos_storage_invoke_fn invoke;
+    rotmos_storage_invoke_fn cancel;
+    rotmos_storage_provider_retire_fn retired;
+    rotmos_retire_fn close;
+    void *userdata;
+} rotmos_storage_provider_config;
+typedef void (*rotmos_storage_complete_fn)(rotmos_storage_operation *,
+                                           const rotmos_storage_outcome *,
+                                           void *);
+typedef void (*rotmos_storage_interrupt_fn)(rotmos_storage_operation *,
+                                            rotmos_status, void *);
+typedef void (*rotmos_storage_retire_fn)(const rotmos_storage_outcome *,
+                                         void *);
+typedef struct rotmos_storage_operation_config {
+    rotmos_storage_complete_fn completed;
+    rotmos_storage_interrupt_fn interrupted;
+    rotmos_storage_retire_fn retired;
+    void *userdata;
+    long timeout_ms;
+    int timeout_disabled;
+} rotmos_storage_operation_config;
+typedef struct rotmos_storage_resource_config {
+    rotmos_storage_resource_kind kind;
+    void *userdata;
+    rotmos_retire_fn close;
+} rotmos_storage_resource_config;
+ROTMOS_API void
+rotmos_storage_provider_config_init(rotmos_storage_provider_config *);
+ROTMOS_API void
+rotmos_storage_operation_config_init(rotmos_storage_operation_config *);
+ROTMOS_API void rotmos_storage_arguments_init(rotmos_storage_arguments *);
+ROTMOS_API void rotmos_storage_result_init(rotmos_storage_result *);
+ROTMOS_API void
+rotmos_storage_resource_config_init(rotmos_storage_resource_config *);
+ROTMOS_API const char *rotmos_storage_code_string(rotmos_storage_code);
+/* Inert declaration copy. Cancel is required: OK acknowledges cancellation,
+ * AGAIN promises later acknowledgement through operation_complete. A cancel
+ * error does not acknowledge or release pending arguments. Provider callbacks
+ * run on one bound owner loop; resources may be closed on that thread after
+ * the run. No reuse of bound providers across loop/run boundaries. */
+ROTMOS_API rotmos_status
+rotmos_storage_provider_new(const rotmos_storage_provider_config *,
+                            rotmos_storage_provider **, rotmos_error *);
+ROTMOS_API unsigned int
+rotmos_storage_provider_capabilities(const rotmos_storage_provider *);
+ROTMOS_API const char *
+rotmos_storage_provider_commit_description(const rotmos_storage_provider *);
+ROTMOS_API rotmos_status
+rotmos_storage_provider_close(rotmos_storage_provider *, rotmos_error *);
+/* Active HTTP worker loop only (on_worker_start or later). Success accepts
+ * one operation and owns one terminal retirement, even when
+ * invoke completes synchronously or reports a domain/protocol failure. Bad
+ * declarations/capabilities/allocation failures before invoke take nothing.
+ * Provider invoke returns OK synchronously or AGAIN with responsibility for
+ * later completion. Staged results and callbacks are always delivered later.
+ * Arguments/chunks are copied and pinned through provider acknowledgement.
+ * Timeout zero selects 30000 ms, including queue/lock wait. */
+ROTMOS_API rotmos_status rotmos_storage_operation_start(
+    rotmos_storage_provider *, rotmos_loop *, const rotmos_storage_arguments *,
+    const rotmos_storage_operation_config *, rotmos_storage_operation **,
+    rotmos_error *);
+/* Owner-loop only, including during invoke/cancel. Copies metadata and takes
+ * asset/resource results only on success. Failure takes nothing and permits
+ * retry. A successful completion acknowledges that no job still uses the
+ * operation/arguments; completion occurs once. Native work publishes through
+ * its owner-loop completion callback or a public waker, never directly. */
+ROTMOS_API rotmos_status rotmos_storage_operation_complete(
+    rotmos_storage_operation *, const rotmos_storage_result *, rotmos_error *);
+ROTMOS_API rotmos_loop *
+rotmos_storage_operation_loop(const rotmos_storage_operation *);
+ROTMOS_API const rotmos_storage_arguments *
+rotmos_storage_operation_arguments(const rotmos_storage_operation *);
+ROTMOS_API void *
+rotmos_storage_operation_userdata(const rotmos_storage_operation *);
+ROTMOS_API rotmos_status rotmos_storage_operation_set_userdata(
+    rotmos_storage_operation *, void *, rotmos_error *);
+/* Cooperative native-thread check. Explicit cancellation revokes consumer
+ * callbacks immediately. Timeout/shutdown may first deliver interrupted on the
+ * owner loop. Retirement still waits for acknowledgement and preserves actual
+ * committed/partial/recovery results. No rollback is implied by cancellation.
+ */
+ROTMOS_API int
+rotmos_storage_operation_cancelled(const rotmos_storage_operation *);
+ROTMOS_API rotmos_status
+rotmos_storage_operation_cancel(rotmos_storage_operation *, rotmos_error *);
+ROTMOS_API rotmos_status rotmos_storage_operation_take_asset(
+    rotmos_storage_operation *, rotmos_asset **, rotmos_error *);
+ROTMOS_API rotmos_status rotmos_storage_operation_take_resource(
+    rotmos_storage_operation *, rotmos_storage_resource **, rotmos_error *);
+/* Provider-owned resource constructors run on the operation's loop. An open
+ * operation retains its argument resource after its caller closes that owner.
+ * Returned resources transfer through operation_complete/take_resource. */
+ROTMOS_API rotmos_status rotmos_storage_resource_new(
+    rotmos_storage_operation *, const rotmos_storage_resource_config *,
+    rotmos_storage_resource **, rotmos_error *);
+ROTMOS_API void *
+rotmos_storage_resource_userdata(const rotmos_storage_resource *);
+ROTMOS_API rotmos_storage_resource_kind
+rotmos_storage_resource_type(const rotmos_storage_resource *);
+ROTMOS_API rotmos_status
+rotmos_storage_resource_close(rotmos_storage_resource *, rotmos_error *);
+/* Read-only adapter over a borrowed asset provider. No new packed format or
+ * Vectis object is introduced. Caller retains the asset provider through close.
+ */
+ROTMOS_API rotmos_status rotmos_storage_provider_assets(
+    rotmos_asset_provider *, rotmos_storage_provider **, rotmos_error *);
+#ifdef __cplusplus
+}
+#endif
+#endif

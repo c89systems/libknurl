@@ -14,6 +14,8 @@ struct rotmos_asset {
     rotmos_asset_entry entry;
     rotmos_status failure;
     int busy, ended;
+    rotmos_retire_fn retained_release;
+    void *retained_data;
 };
 int rotmos_asset_compare(rotmos_u64 a, rotmos_u64 b)
 {
@@ -67,7 +69,7 @@ static int bounded(const char *s, size_t bound)
             return 1;
     return 0;
 }
-static int child_valid(const char *name)
+int rotmos_asset_child_valid(const char *name)
 {
     size_t n;
     if (name == NULL || name[0] == 0 || strcmp(name, ".") == 0 ||
@@ -97,15 +99,16 @@ static int tag(const char *s)
     }
     return s[1] == 0;
 }
-static void info_free(rotmos_asset_info *info)
+void rotmos_asset_info_clear(rotmos_asset_info *info)
 {
     free((void *)info->etag);
     free((void *)info->content_type);
     free((void *)info->last_modified);
     memset(info, 0, sizeof(*info));
 }
-static rotmos_status info_copy(const rotmos_asset_info *input,
-                               rotmos_asset_info *out, rotmos_error *error)
+rotmos_status rotmos_asset_info_copy(const rotmos_asset_info *input,
+                                     rotmos_asset_info *out,
+                                     rotmos_error *error)
 {
     memset(out, 0, sizeof(*out));
     if (input == NULL ||
@@ -136,7 +139,7 @@ static rotmos_status info_copy(const rotmos_asset_info *input,
     if ((input->etag != NULL && out->etag == NULL) ||
         (input->content_type != NULL && out->content_type == NULL) ||
         (input->last_modified != NULL && out->last_modified == NULL)) {
-        info_free(out);
+        rotmos_asset_info_clear(out);
         return failure(error, ROTMOS_NOMEM, "copying asset metadata");
     }
     return ROTMOS_OK;
@@ -161,7 +164,7 @@ rotmos_status rotmos_asset_new(const rotmos_asset_config *config,
     a = calloc(1, sizeof(*a));
     if (a == NULL)
         return failure(error, ROTMOS_NOMEM, "allocating asset");
-    status = info_copy(&config->info, &a->config.info, error);
+    status = rotmos_asset_info_copy(&config->info, &a->config.info, error);
     if (status != ROTMOS_OK) {
         free(a);
         return status;
@@ -261,7 +264,7 @@ rotmos_status rotmos_asset_list_next(rotmos_asset *a, rotmos_asset_entry *out,
     if (a->ended)
         return ROTMOS_EOF;
     free((void *)a->entry.name);
-    info_free(&a->entry.info);
+    rotmos_asset_info_clear(&a->entry.info);
     memset(&a->entry, 0, sizeof(a->entry));
     memset(&entry, 0, sizeof(entry));
     a->busy = 1;
@@ -279,11 +282,11 @@ rotmos_status rotmos_asset_list_next(rotmos_asset *a, rotmos_asset_entry *out,
         return status;
     }
     if (status == ROTMOS_OK) {
-        if (!child_valid(entry.name))
+        if (!rotmos_asset_child_valid(entry.name))
             status =
                 failure(error, ROTMOS_INVALID, "invalid asset list child name");
         else
-            status = info_copy(&entry.info, &a->entry.info, error);
+            status = rotmos_asset_info_copy(&entry.info, &a->entry.info, error);
         if (status == ROTMOS_OK) {
             a->entry.name = rotmos_copy_text(entry.name);
             if (a->entry.name == NULL)
@@ -327,10 +330,12 @@ rotmos_status rotmos_asset_close(rotmos_asset *a, rotmos_error *error)
     a->busy = 1;
     if (a->config.close != NULL)
         a->config.close(a->config.userdata);
-    info_free(&a->config.info);
-    info_free(&a->entry.info);
+    rotmos_asset_info_clear(&a->config.info);
+    rotmos_asset_info_clear(&a->entry.info);
     free((void *)a->entry.name);
     provider_unref(a->provider);
+    if (a->retained_release != NULL)
+        a->retained_release(a->retained_data);
     free(a);
     rotmos_error_clear(error);
     return ROTMOS_OK;
@@ -574,4 +579,25 @@ rotmos_status rotmos_asset_provider_close(rotmos_asset_provider *p,
     provider_unref(p);
     rotmos_error_clear(error);
     return ROTMOS_OK;
+}
+
+rotmos_status rotmos_asset_claim(rotmos_asset *asset, void *owner,
+                                 rotmos_retire_fn release, void *data,
+                                 rotmos_error *error)
+{
+    rotmos_status status = access(asset, NULL, error);
+    if (status != ROTMOS_OK)
+        return status;
+    if (asset->retained_release != NULL)
+        return failure(error, ROTMOS_STATE,
+                       "storage result must be a new unclaimed asset");
+    asset->owner = owner;
+    asset->retained_release = release;
+    asset->retained_data = data;
+    return ROTMOS_OK;
+}
+void rotmos_asset_unclaim(rotmos_asset *asset, void *owner)
+{
+    if (asset != NULL && asset->owner == owner)
+        asset->owner = NULL;
 }
