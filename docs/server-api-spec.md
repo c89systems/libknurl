@@ -1773,6 +1773,17 @@ nil/string/response-table hook ordering; its custom error envelopes, auth policy
 and outbound REST/HTTP clients remain host-owned. Buffered REST remains distinct
 from typed-record fast routes and live response producers.
 
+The [buffered REST C implementation](rest.md) supplies public decode, validation,
+handler/error and release callbacks through `<rotmos/lonejson.h>`, with owner-loop
+execution, retained decoded values through source cleanup and bounded materialized
+JSON replies. Its default decoder supplies a public LoneJSON JSON value; the Lua
+binding may provide its own public callback adapters. The [OpenAPI implementation](openapi.md)
+attaches copied metadata to the router, borrows immutable maps through router
+destruction and emits bounded owned JSON/YAML. Recursive schema collection is
+iterative. Overlapping path/method annotations, duplicate response statuses and
+conflicting schema names fail explicitly. Lua policy/facade integration and final
+combined transport/fault coverage remain part of the full implementation goal.
+
 ### Server-sent events
 
 Provide public `rotmos_sse_event_init`, `rotmos_sse_encode` and

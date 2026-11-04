@@ -7,6 +7,7 @@
 #include <rotmos/reply.h>
 #include <rotmos/server.h>
 #include <rotmos/router.h>
+#include <rotmos/openapi.h>
 #include <rotmos/request.h>
 #include <rotmos/loop.h>
 #include <rotmos/response.h>

@@ -319,49 +319,12 @@ rotmos_status rotmos_reply_json(rotmos_reply *reply, int code,
     return status;
 }
 
-struct materialized_json {
-    rotmos_owned_bytes bytes;
-    size_t capacity;
-    size_t bound;
-    rotmos_status failure;
-};
-static lonejson_status json_sink(void *data, const void *bytes, size_t count,
-                                 lonejson_error *error)
-{
-    struct materialized_json *s;
-    size_t capacity;
-    void *grown;
-    (void)error;
-    s = data;
-    if (count > s->bound - s->bytes.length) {
-        s->failure = ROTMOS_LIMIT;
-        return LONEJSON_STATUS_OVERFLOW;
-    }
-    if (count > s->capacity - s->bytes.length) {
-        capacity = s->capacity == 0 ? 1024 : s->capacity;
-        while (capacity < s->bytes.length + count)
-            capacity = capacity > s->bound / 2 ? s->bound : capacity * 2;
-        if (capacity > s->bound)
-            capacity = s->bound;
-        grown = realloc(s->bytes.data, capacity);
-        if (grown == NULL) {
-            s->failure = ROTMOS_NOMEM;
-            return LONEJSON_STATUS_ALLOCATION_FAILED;
-        }
-        s->bytes.data = grown;
-        s->capacity = capacity;
-    }
-    if (count != 0)
-        memcpy((unsigned char *)s->bytes.data + s->bytes.length, bytes, count);
-    s->bytes.length += count;
-    return LONEJSON_STATUS_OK;
-}
 rotmos_status
 rotmos_json_serialize_materialized(const lonejson_schema_view *schema,
                                    const void *record, size_t max_bytes,
                                    rotmos_owned_bytes *out, rotmos_error *error)
 {
-    struct materialized_json sink;
+    struct rotmos_json_buffer sink;
     lonejson *runtime;
     lonejson_status code;
     lonejson_error native;
@@ -380,8 +343,8 @@ rotmos_json_serialize_materialized(const lonejson_schema_view *schema,
         return status;
     memset(&sink, 0, sizeof(sink));
     sink.bound = max_bytes != 0 ? max_bytes : 10485760UL;
-    code = lonejson_serialize_sink(runtime, schema->map, record, json_sink,
-                                   &sink, &native);
+    code = lonejson_serialize_sink(runtime, schema->map, record,
+                                   rotmos_json_buffer_write, &sink, &native);
     status = rotmos_json_error(code, &native, error);
     if (sink.failure != ROTMOS_OK)
         status =

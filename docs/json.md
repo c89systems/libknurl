@@ -94,3 +94,8 @@ Lua table preparation, mutation/GC/reentry and buffered external-record cases
 remain the facade's required integration work under the
 [complete specification](server-api-spec.md#fast-typed-json-and-xmllibxml2-routes).
 They use these public schema/record and release boundaries.
+
+[Buffered REST](rest.md) adds generic decode/validate/error policy over ordinary
+staged routes and explicit materialized replies. [OpenAPI](openapi.md) projects
+borrowed LoneJSON maps into router-owned document annotations. Both retain the
+public schema/dependency boundary.

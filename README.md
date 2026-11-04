@@ -85,6 +85,8 @@ upstream upgrades and local changes separate.
 - [HTTP/SSE reverse proxy routes](docs/proxy-http.md)
 - [WebSocket/WSS reverse proxy relays](docs/proxy-websocket.md)
 - [LoneJSON codecs and typed routes](docs/json.md)
+- [Buffered REST routes](docs/rest.md)
+- [OpenAPI document generation](docs/openapi.md)
 - [XML mapping, routes, DOM and SAX](docs/xml.md)
 - [Assets and static serving](docs/assets.md)
 - [Storage providers, transactions and native jobs](docs/storage.md)

@@ -23,6 +23,7 @@ struct rotmos_route_group {
 };
 
 struct rotmos_router {
+    struct rotmos_openapi_entry *openapi;
     rotmos_route **routes;
     size_t count;
     rotmos_route_group *groups;

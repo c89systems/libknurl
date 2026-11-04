@@ -1,4 +1,5 @@
 #include "router_internal.h"
+#include "openapi_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -77,6 +78,7 @@ rotmos_status rotmos_router_new(rotmos_router **out, rotmos_error *error)
     if (router == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "router_new",
                            "cannot allocate router");
+    router->openapi = NULL;
     router->routes = NULL;
     router->count = 0;
     router->groups = NULL;
@@ -101,6 +103,7 @@ void rotmos_router_release(rotmos_router *router)
                 router->routes[i]->config.userdata);
         free(router->routes[i]);
     }
+    rotmos_openapi_clear(router);
     free(router->routes);
     for (group = router->groups; group != NULL; group = next) {
         next = group->next;

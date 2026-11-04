@@ -63,12 +63,15 @@ conditions, quotas, collections, copy/move and recovery, with incremental PUT
 transactions and a shared worker pool. The [WebDAV facade](webdav.md) now connects
 filesystem/read-only/custom mounts, staged middleware, scoped owner-loop authorization,
 conditional/range file replies, incremental PUT and bounded PROPFIND. Next connect
-REST/OpenAPI and the Lua product. The
+the Lua product, admission/address/logging surfaces and the remaining conveniences. The
 [source execution surface](responses.md) connects native readers to the existing
 bounded executor and public source readiness. The [upload stream facade](uploads.md)
 connects Vectis's callback lifecycle to managed STREAM input and ordinary hooks.
 Native reader and file helpers now share its transport, with copied metadata,
 bounded pipe queues and native acknowledgement before result publication.
+[Buffered REST](rest.md) connects decode, validation, handler/error callbacks and
+bounded synchronous JSON replies to the same staged route chain. [OpenAPI](openapi.md)
+connects copied router annotations, LoneJSON maps and JSON/YAML document generation.
 Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memory
 measurements for the combined proxy review. Retain the
 remaining ACME in-flight fault and final integration checks for the combined

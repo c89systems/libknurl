@@ -86,7 +86,10 @@ pull generator. Per-request record owners survive output and staged replacement.
 Selected-array input uses incremental item callbacks. [XML codecs](xml.md) expose
 mapped records/routes, resumable libxml2 output, owned confined DOM/views and
 incremental SAX parsing without libxml2 types in public headers. Their API and
-wire fixtures also run as relocated static/shared consumers. Mapped input
+wire fixtures also run as relocated static/shared consumers. [Buffered REST](rest.md)
+adds generic decode/validate/error callbacks and bounded JSON reply composition.
+[OpenAPI](openapi.md) adds copied annotations and JSON/YAML generation from the
+same router and borrowed maps, with iterative schema collection. Mapped input
 currently uses completed body readers; live upload-reader parser adapters remain pending.
 
 [Read-only assets and static routes](assets.md) connect pinned filesystem roots

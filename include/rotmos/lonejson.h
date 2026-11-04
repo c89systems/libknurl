@@ -122,6 +122,74 @@ ROTMOS_API rotmos_status rotmos_route_group_json_route(
 ROTMOS_API rotmos_status rotmos_route_group_json_typed_route(
     rotmos_route_group *group, const rotmos_json_typed_route_config *config,
     rotmos_route **out, rotmos_error *error);
+/* Buffered REST conveniences. Decoded values are borrowed through response
+ * completion. Default decoding owns a LoneJSON JSON value (cast decoded to
+ * const lonejson_json_value *); empty input and decode_disabled produce NULL.
+ * A custom decoder instead owns its successful result until release; failure
+ * cleans its own partial result. All callbacks execute on the owner loop. */
+typedef enum rotmos_rest_phase {
+    ROTMOS_REST_DECODE = 0,
+    ROTMOS_REST_VALIDATE,
+    ROTMOS_REST_HANDLER
+} rotmos_rest_phase;
+typedef rotmos_status (*rotmos_rest_decode_fn)(rotmos_request *, rotmos_bytes,
+                                               void **decoded, void *userdata,
+                                               rotmos_error *);
+typedef void (*rotmos_rest_release_fn)(void *decoded, void *userdata);
+typedef rotmos_status (*rotmos_rest_validate_fn)(rotmos_request *, const void *,
+                                                 rotmos_reply *, int *finish,
+                                                 void *userdata,
+                                                 rotmos_error *);
+typedef rotmos_status (*rotmos_rest_handler_fn)(rotmos_request *, const void *,
+                                                rotmos_reply *, void *userdata,
+                                                rotmos_error *);
+typedef rotmos_status (*rotmos_rest_error_fn)(rotmos_request *,
+                                              rotmos_rest_phase,
+                                              const rotmos_error *cause,
+                                              rotmos_reply *, void *userdata,
+                                              rotmos_error *);
+typedef struct rotmos_rest_route_config {
+    rotmos_http_method method;
+    rotmos_http_methods methods;
+    const char *path;
+    rotmos_route_path_kind path_kind;
+    rotmos_body_policy body;
+    rotmos_route_hooks hooks;
+    rotmos_rest_decode_fn decode;
+    rotmos_rest_release_fn release;
+    rotmos_rest_validate_fn validate;
+    rotmos_rest_handler_fn handler;
+    rotmos_rest_error_fn on_error;
+    void *userdata;
+    int decode_disabled;
+} rotmos_rest_route_config;
+typedef struct rotmos_rest_reply_config {
+    int status;
+    const char *content_type;
+    size_t max_bytes;
+    int newline_disabled;
+} rotmos_rest_reply_config;
+ROTMOS_API void rotmos_rest_route_config_init(rotmos_rest_route_config *);
+ROTMOS_API void rotmos_rest_reply_config_init(rotmos_rest_reply_config *);
+ROTMOS_API rotmos_status
+rotmos_router_rest_route(rotmos_router *, const rotmos_rest_route_config *,
+                         rotmos_route **, rotmos_error *);
+ROTMOS_API rotmos_status rotmos_route_group_rest_route(
+    rotmos_route_group *, const rotmos_rest_route_config *, rotmos_route **,
+    rotmos_error *);
+/* Synchronous bounded JSON composition; copies before returning. Defaults:
+ * 200, application/json; charset=utf-8, 10 MiB and a trailing newline. Failure
+ * preserves the existing staged reply. Header composition uses reply helpers.
+ */
+ROTMOS_API rotmos_status
+rotmos_reply_rest_json(rotmos_reply *, const lonejson_json_value *,
+                       const rotmos_rest_reply_config *, rotmos_error *);
+/* Generic default envelope; callers can instead own their error policy through
+ * on_error. Zero status derives 400/409/501/504/500 from the cause. */
+ROTMOS_API rotmos_status rotmos_reply_error_json(rotmos_reply *, int status,
+                                                 const char *kind,
+                                                 const rotmos_error *cause,
+                                                 rotmos_error *);
 #ifdef __cplusplus
 }
 #endif
