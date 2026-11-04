@@ -22,10 +22,13 @@ API and Kore backend architecture are correct; they do not require this redesign
 
 ## Surface and architecture review
 
-The standalone public framer has test callers but no production caller here.
-The public executor/job API has internal production consumers, without a shown
-need for a separate general-purpose SDK. Review/narrow these public surfaces;
-keep genuinely required native execution and proxy framing internals.
+The standalone public framer had test callers but no production caller here;
+its wrapper, public header and wrapper-only tests have been removed. The lifted
+private proxy framer and its invariant checks remain. The executor/job interface
+now lives in a private header and has no shared-library exports. Its native I/O
+and filesystem consumers stay internal; job/storage ownership tests link the
+internal static library instead of posing as installed SDK consumers. Installed
+storage/filesystem/WebDAV tests continue using public APIs.
 
 Review response/channel/loop machinery, asynchronous storage operations and ACME
 generation publication against baseline adapter needs. Existing functionality

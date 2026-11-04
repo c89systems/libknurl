@@ -1,7 +1,7 @@
 #ifndef ROTMOS_STORAGE_FS_DISK_H
 #define ROTMOS_STORAGE_FS_DISK_H
 #include <rotmos/storage.h>
-#include <rotmos/executor.h>
+#include "executor.h"
 #include <sys/stat.h>
 #include <stdint.h>
 #define ROTMOS_FS_PATH_MAX 1024u

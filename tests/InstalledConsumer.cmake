@@ -13,7 +13,7 @@ file(COPY "${ROTMOS_ROOT}/tests/consumer/CMakeLists.txt"
   "${ROTMOS_ROOT}/tests/json-runtime.c"
   "${ROTMOS_ROOT}/tests/vectis-forward.c" "${ROTMOS_ROOT}/tests/vectis-forward.h"
   "${ROTMOS_ROOT}/tests/asset.c" "${ROTMOS_ROOT}/tests/static-runtime.c"
-  "${ROTMOS_ROOT}/tests/storage-runtime.c" "${ROTMOS_ROOT}/tests/storage-filesystem.c" "${ROTMOS_ROOT}/tests/webdav-runtime.c"
+  "${ROTMOS_ROOT}/tests/storage-filesystem.c" "${ROTMOS_ROOT}/tests/webdav-runtime.c"
   "${ROTMOS_ROOT}/tests/source-runtime.c" "${ROTMOS_ROOT}/tests/upload-runtime.c" "${ROTMOS_ROOT}/tests/rest-runtime.c" "${ROTMOS_ROOT}/tests/openapi.c" "${ROTMOS_ROOT}/tests/policy-runtime.c"
   "${ROTMOS_ROOT}/tests/policy-logs-runtime.c"
   DESTINATION "${TEST_ROOT}/source")
@@ -25,6 +25,11 @@ function(run)
   endif()
 endfunction()
 run("${CMAKE_COMMAND}" --install "${ROTMOS_BINARY}" --prefix "${TEST_ROOT}/installed")
+foreach(private_header executor.h framing.h)
+  if(EXISTS "${TEST_ROOT}/installed/include/rotmos/${private_header}")
+    message(FATAL_ERROR "Private machinery leaked into the SDK: ${private_header}")
+  endif()
+endforeach()
 foreach(provider cpkt lonejson pslog)
   file(COPY "${ROTMOS_SDK_ROOT}/${provider}" DESTINATION "${TEST_ROOT}/installed/providers")
 endforeach()
@@ -49,7 +54,6 @@ foreach(variant static shared)
     run("${TEST_ROOT}/${variant}/xml-runtime_consumer")
     run("${TEST_ROOT}/${variant}/asset_consumer")
     run("${TEST_ROOT}/${variant}/static-runtime_consumer")
-    run("${TEST_ROOT}/${variant}/storage-runtime_consumer")
     run("${TEST_ROOT}/${variant}/storage-filesystem_consumer")
     run("${TEST_ROOT}/${variant}/storage-filesystem_consumer" managed)
     run("${TEST_ROOT}/${variant}/webdav-runtime_consumer")

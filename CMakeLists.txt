@@ -57,7 +57,7 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/file.c src/dispatch.c src/kore_body.c src/body_reader.c
   src/channel.c src/channel_upgrade.c src/kore_channel.c
   src/websocket.c src/websocket_frame.c src/kore_websocket.c src/websocket_route.c
-  src/framing.c src/proxy_common.c src/proxy_framing.c src/proxy_headers.c
+  src/proxy_common.c src/proxy_framing.c src/proxy_headers.c
   src/proxy_transport.c
   src/proxy_route.c src/proxy_runtime.c src/proxy_ws_runtime.c
   src/proxy_upload.c src/proxy_http.c src/proxy_http_upstream.c src/proxy_http_wire.c
@@ -110,9 +110,9 @@ set(rotmos_core_headers include/rotmos/common.h include/rotmos/http.h include/ro
   include/rotmos/io.h include/rotmos/reply.h include/rotmos/tls.h
   include/rotmos/server.h include/rotmos/pslog.h include/rotmos/openapi.h include/rotmos/router.h include/rotmos/request.h include/rotmos/kore.h
   include/rotmos/loop.h include/rotmos/response.h include/rotmos/dispatch.h
-  include/rotmos/body.h include/rotmos/upload.h include/rotmos/channel.h include/rotmos/websocket.h include/rotmos/framing.h
+  include/rotmos/body.h include/rotmos/upload.h include/rotmos/channel.h include/rotmos/websocket.h
   include/rotmos/proxy.h include/rotmos/xml.h include/rotmos/lonejson.h
-  include/rotmos/asset.h include/rotmos/static.h include/rotmos/executor.h include/rotmos/storage.h include/rotmos/webdav.h)
+  include/rotmos/asset.h include/rotmos/static.h include/rotmos/storage.h include/rotmos/webdav.h)
 set_source_files_properties(${rotmos_core_headers} PROPERTIES LANGUAGE C HEADER_FILE_ONLY FALSE)
 add_library(rotmos_headers_c OBJECT ${rotmos_core_headers})
 target_include_directories(rotmos_headers_c PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -139,6 +139,9 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_test(NAME rotmos.public-boundary COMMAND "${CMAKE_COMMAND}"
+    "-DNM=${CMAKE_NM}" "-DLIBRARY=$<TARGET_FILE:rotmos_shared>"
+    "-DPLATFORM=${CMAKE_SYSTEM_NAME}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/PublicBoundary.cmake")
   add_executable(rotmos_json_runtime tests/json-runtime.c tests/vectis-forward.c)
   target_link_libraries(rotmos_json_runtime PRIVATE rotmos::shared)
   target_compile_definitions(rotmos_json_runtime PRIVATE
@@ -169,7 +172,13 @@ if(BUILD_TESTING)
     if(codec STREQUAL "xml-runtime")
       target_sources(rotmos_${codec} PRIVATE tests/vectis-forward.c)
     endif()
-    target_link_libraries(rotmos_${codec} PRIVATE rotmos::shared Threads::Threads)
+    if(codec STREQUAL "storage-runtime")
+      # Internal native-job coverage is not an installed SDK consumer.
+      target_include_directories(rotmos_${codec} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+      target_link_libraries(rotmos_${codec} PRIVATE rotmos::static Threads::Threads)
+    else()
+      target_link_libraries(rotmos_${codec} PRIVATE rotmos::shared Threads::Threads)
+    endif()
     if(codec STREQUAL "policy-logs-runtime")
       target_link_libraries(rotmos_${codec} PRIVATE pslog::pslog_shared)
     endif()
@@ -201,11 +210,6 @@ if(BUILD_TESTING)
   rotmos_local_runtime(rotmos_proxy_runtime)
   add_test(NAME rotmos.proxy-runtime COMMAND rotmos_proxy_runtime)
   set_tests_properties(rotmos.proxy-runtime PROPERTIES TIMEOUT 10)
-  add_executable(rotmos_framing tests/framing.c)
-  target_link_libraries(rotmos_framing PRIVATE rotmos::shared)
-  rotmos_c89(rotmos_framing)
-  rotmos_local_runtime(rotmos_framing)
-  add_test(NAME rotmos.framing COMMAND rotmos_framing)
   foreach(surface framing headers upload http http-upstream http-wire url director response local ws-handshake ws-wire ws-rejection transport)
     string(REPLACE "-" "_" target "rotmos_proxy_${surface}")
     add_executable(${target} "tests/proxy-${surface}.c")

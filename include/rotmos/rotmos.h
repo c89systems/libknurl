@@ -16,10 +16,8 @@
 #include <rotmos/upload.h>
 #include <rotmos/channel.h>
 #include <rotmos/websocket.h>
-#include <rotmos/framing.h>
 #include <rotmos/proxy.h>
 #include <rotmos/xml.h>
-#include <rotmos/executor.h>
 #include <rotmos/storage.h>
 #include <rotmos/webdav.h>
 #include <rotmos/asset.h>

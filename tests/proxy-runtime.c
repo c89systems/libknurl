@@ -37,6 +37,7 @@ static int modified;
 static int gateway_errors;
 static int interim_closes;
 static int finish_trailers;
+static int request_trailers;
 static rotmos_status empty_complete(rotmos_request *, void *, rotmos_error *);
 
 static rotmos_bytes view(const char *s)
@@ -151,36 +152,11 @@ static int read_chunk(int fd, char *body, size_t capacity, size_t *length,
             line[used] = 0;
             if (strcmp(line, "X-Finish: yes\r\n") == 0)
                 ++finish_trailers;
+            if (strcmp(line, "X-Req: yes\r\n") == 0)
+                ++request_trailers;
         } while (used != 2);
     }
     return 0;
-}
-
-struct decode {
-    size_t count;
-    int trailer;
-};
-static rotmos_status receive_body(rotmos_bytes bytes, size_t *consumed,
-                                  void *data, rotmos_error *error)
-{
-    struct decode *d;
-    (void)error;
-    d = data;
-    d->count += bytes.length;
-    *consumed = bytes.length;
-    return ROTMOS_OK;
-}
-static rotmos_status receive_trailer(rotmos_header h, void *data,
-                                     rotmos_error *error)
-{
-    struct decode *d;
-    (void)error;
-    d = data;
-    if (h.name.length != 5 || memcmp(h.name.data, "X-Req", 5) != 0 ||
-        h.value.length != 3 || memcmp(h.value.data, "yes", 3) != 0)
-        return ROTMOS_INVALID;
-    ++d->trailer;
-    return ROTMOS_OK;
 }
 
 static int origin(int listener, int control)
@@ -189,15 +165,11 @@ static int origin(int listener, int control)
     char buffer[1024];
     char command;
     size_t count;
-    size_t consumed;
+    size_t total;
     size_t remaining;
     ssize_t got;
     int fd;
-    int finish;
-    rotmos_framer_config config;
-    rotmos_framer *framer;
-    rotmos_status status;
-    struct decode d;
+    int finish, done;
     for (;;) {
         fd = accept(listener, NULL, NULL);
         CHECK(fd >= 0);
@@ -264,22 +236,14 @@ static int origin(int listener, int control)
             CHECK(strncmp(metadata, "POST ", 5) == 0 &&
                   (strstr(metadata, "Transfer-Encoding: chunked") != NULL ||
                    strstr(metadata, "transfer-encoding: chunked") != NULL));
-            memset(&d, 0, sizeof(d));
-            rotmos_framer_config_init(&config);
-            config.chunked = 1;
-            config.on_body = receive_body;
-            config.on_trailer = receive_trailer;
-            config.userdata = &d;
-            CHECK(rotmos_framer_new(&config, &framer, NULL) == ROTMOS_OK);
+            total = 0;
+            request_trailers = 0;
             do {
-                got = read(fd, buffer, sizeof(buffer));
-                CHECK(got > 0);
-                status = rotmos_framer_feed(framer, buffer, (size_t)got,
-                                            &consumed, NULL);
-                CHECK(status == ROTMOS_OK || status == ROTMOS_EOF);
-            } while (status != ROTMOS_EOF);
-            CHECK(d.count == 5 && d.trailer == 1 &&
-                  rotmos_framer_destroy(framer, NULL) == ROTMOS_OK);
+                CHECK(read_chunk(fd, buffer, sizeof(buffer), &count, &done) ==
+                      0);
+                total += count;
+            } while (!done);
+            CHECK(total == 5 && request_trailers == 1);
         }
         if (strstr(metadata, " /alt/echo%2Fraw?a=1&a=2 ") != NULL) {
             CHECK(strstr(metadata, "Host: selected.test") != NULL &&

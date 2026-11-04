@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <rotmos/rotmos.h>
+#include "executor.h"
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/wait.h>

@@ -3,7 +3,7 @@
 
 #include "internal.h"
 #include <rotmos/io.h>
-#include <rotmos/executor.h>
+#include "executor.h"
 
 struct rotmos_source {
     rotmos_source_config config;

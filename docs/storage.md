@@ -1,12 +1,15 @@
-# Storage operations and native jobs
+# Storage operations and filesystem execution
 
 > Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
 
 
 [`<rotmos/storage.h>`](../include/rotmos/storage.h) defines provider operations,
 resource handles and acknowledged cancellation without Vectis, Lua, filesystem or
-backend layouts. [`<rotmos/executor.h>`](../include/rotmos/executor.h) runs bounded
-native work after an HTTP worker's final fork. Both are ordinary umbrella headers.
+backend layouts. The native worker executor is private supporting machinery in
+[executor.h](../src/executor.h); no job/pool SDK is installed or exported.
+Storage providers own their execution policy and report completion through the
+public storage operations. Built-in filesystem and upload/source helpers use the
+private post-fork executor.
 
 A provider declaration copies its callbacks, capability bits and commit description
 without invoking work. Its first accepted operation binds it to one process,
@@ -85,7 +88,7 @@ through operation_complete. Immutable operation arguments and cancellation check
 may be used by independently retained native work; no live request handle is
 part of that context.
 
-`rotmos_executor_new` explicitly starts detached default-stack threads in an
+The private executor explicitly starts detached default-stack threads in an
 active post-fork HTTP worker. Parent creation is rejected. Default bounds are two
 threads, 32 accepted jobs and 64 KiB copied arguments/results. Bounds may select
 up to eight threads, 256 jobs and one MiB per argument/result, with at most four
@@ -124,15 +127,16 @@ ownership. The filesystem provider below supplies mutable transactions. The
 use the same public runtime. Native upload-reader/file helpers use the shared I/O
 executor; their direct file artifacts retain Vectis's partial-output semantics.
 
-The [public fixture](../tests/storage-runtime.c) drives the real server and
+The [internal fixture](../tests/storage-runtime.c) drives the real server and
 post-fork executor: copied arguments/chunks, native versus owner thread callbacks,
 queue admission, queued cancellation, synchronous/deferred results, duplicate and
 malformed completion, provider capability rejection, partial writes, provider and
 resource retention, iterator AGAIN, metadata/result transfer, deadlines and
 cancellation before/after a reported commit. Independent HTTP requests complete
 while native work is held. A separate short abandonment case verifies parent
-escalation for an uncooperative thread. The ordinary fixture also runs against
-relocated static/shared SDKs and on musl default worker-thread stacks.
+escalation for an uncooperative thread. This fixture runs against the internal
+static library, including musl default worker-thread stacks. Separate installed
+static/shared filesystem and WebDAV consumers verify their public operations.
 
 ## Filesystem provider
 

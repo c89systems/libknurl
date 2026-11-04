@@ -3,42 +3,16 @@
 > Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
 
 
-The [public framer](../include/rotmos/framing.h) incrementally decodes fixed-length
-or chunked HTTP request bodies. It reuses the proxy framing implementation from
-Vectis commit `6b1e263e0436687f68a7768ca55f4361a6e59e19`, whose MIT notice is the
-same as this repository's [license](../LICENSE). It has no transport dependency,
-creates no threads, and never collects a complete body.
+Proxy framing stays private in [proxy_framing.c](../src/proxy_framing.c), lifted
+from Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19` under the repository's
+[MIT license](../LICENSE). The unused standalone public framer and its wrapper
+have been removed. Callers register proxy routes through the public proxy API;
+their adapters own fixed/chunked body decoding, backpressure and trailers.
+The [private framing fixture](../tests/proxy-framing.c) retains protocol and
+partial-progress coverage. The installed wire fixture uses its own existing
+small HTTP peer reader, so it does not depend on the implementation under test.
 
-Initialize `rotmos_framer_config`, set the framing/length already validated from
-request headers, and register a body callback. Constructor success copies this
-configuration and borrows userdata until destruction. The callback receives a
-borrowed byte span and reports its accepted prefix. OK requires positive
-progress; AGAIN accepts nothing. A short accepted prefix also pauses the framer.
-The caller waits for its consumer's capacity before feeding the retained suffix.
-
-`rotmos_framer_feed` reports the exact consumed input prefix, including framing.
-OK means more input is needed; AGAIN means consumer backpressure; EOF identifies
-the complete message boundary. Any trailing bytes remain untouched. For a
-[connection channel](channels.md), give precisely that suffix to
-`rotmos_channel_body_complete`. An optional synchronous trailer callback receives
-borrowed validated fields; it returns OK or a terminal failure. Declaration
-policy stays with the caller, as it does in the proxy upload adapter.
-
-Chunk-size lines are bounded at 128 bytes. Trailer limits are 8192 bytes per
-line, 16384 per block and 100 fields. Forbidden trailer fields, malformed CRLF,
-invalid extensions and overflowing chunk sizes fail. An optional checked wide
-body limit can reject an offered body span before its callback. Zero body limit
-permits an arbitrary checked 64-bit length while memory remains bounded.
-Fixed-length limits are checked before construction. Framer state occupies a
-bounded heap allocation; no body storage is allocated.
-
-`rotmos_framer_finish` declares transport EOF: only an already complete body
-succeeds. Truncation and callback/protocol failures are sticky. Destruction and
-recursive feed/finish from a callback return STATE. The
-[public fixture](../tests/framing.c) demonstrates partial progress, pipeline
-suffixes, trailers, reentrancy rejection, body limits and wide lengths.
-
-The private proxy core also lifts Vectis's reusable server mechanisms:
+The private proxy core lifts Vectis's reusable server mechanisms:
 
 - Bounded ordered headers, framing validation, sanitization and declared trailers.
 - Raw URL/path validation, configured-target selection, sticky rewrite edits,

@@ -45,3 +45,6 @@ serialization and hook ordering share the C path. Acquire/release retain Lua
 records through response cleanup or native acknowledgement on cancellation.
 The adapter is partial: the remaining operation families and known gaps above
 still need their corresponding forwarding/parity cases.
+The unused standalone framer has been removed. Native executor/job declarations
+are private, with export/installed-header checks; the proxy framer and native
+I/O/filesystem mechanisms retain their internal callers and invariant coverage.
