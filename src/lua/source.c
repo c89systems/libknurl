@@ -118,7 +118,6 @@ static int source_trampoline(lua_State *L)
             lua_pushnil(L);
             lua_setiuservalue(L, view, 2);
             s->offset = 0;
-            s->initial_reset = 0;
         }
     }
     return 0;
@@ -152,14 +151,6 @@ static rotmos_status read_source(void *buffer, size_t capacity,
     c.produced = produced;
     c.name = "read";
     c.error = error;
-    if (c.source->initial_reset) {
-        rotmos_status status;
-        c.name = "reset";
-        status = call_source(&c);
-        if (status != ROTMOS_OK)
-            return status;
-        c.name = "read";
-    }
     return call_source(&c);
 }
 static rotmos_status reset_source(void *data, rotmos_error *error)
@@ -241,10 +232,10 @@ rotmos_status rl_source_create(lua_State *L, int index, int legacy,
         lua_setfield(L, callbacks, names[i]);
     }
     lua_setiuservalue(L, -2, 1);
-    s->initial_reset = s->legacy && s->resettable;
     rotmos_source_config_init(&config);
     config.read = read_source;
     config.reset = s->resettable ? reset_source : NULL;
+    config.reset_before_reply = s->legacy;
     config.close = close_source;
     config.userdata = s;
     status = rotmos_source_new(&config, &s->native, error);

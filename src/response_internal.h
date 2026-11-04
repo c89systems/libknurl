@@ -79,6 +79,7 @@ void rotmos_response_sent(rotmos_response *response, size_t offset,
 void rotmos_response_shift(rotmos_response *response);
 void rotmos_response_terminal(rotmos_response *response);
 void rotmos_response_release(rotmos_response *response);
+const char *rotmos_response_reason(int status);
 rotmos_status rotmos_response_upgrade_headers(rotmos_response *response,
                                               const rotmos_header *headers,
                                               size_t count,

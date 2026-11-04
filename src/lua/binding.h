@@ -66,7 +66,6 @@ struct rl_source {
     rotmos_source *native;
     lua_State *L;
     int root, owned, legacy, resettable;
-    int initial_reset;
     rotmos_source *delegate;
     struct rl_request *request_body;
     struct rl_body_result *result_body;

@@ -65,11 +65,11 @@ static rotmos_status prepare_type(rotmos_reply *reply, int status,
     result = mutable(reply, error);
     if (result != ROTMOS_OK)
         return result;
-    if (status < 200 || status > 599 ||
+    if (status < 100 || status > 599 ||
         !rotmos_header_value_valid(content_type) || content_type[0] == '\0')
         return rotmos_fail(
             error, ROTMOS_INVALID, "reply",
-            "provide final status 200..599 and a nonempty content type");
+            "provide status 100..599 and a nonempty content type");
     *copy = rotmos_copy_text(content_type);
     if (*copy == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "reply",
@@ -87,6 +87,22 @@ static void select_payload(rotmos_reply *reply, int status,
     reply->kind = kind;
     reply->content_type = type;
     reply->busy = 0;
+}
+
+/* Vectis's handler-error response is raw diagnostic bytes, with no application
+ * headers or synthesized content type. The caller supplies a fresh builder. */
+rotmos_status rotmos_reply_failure(rotmos_reply *reply, int code,
+                                   const char *message)
+{
+    rotmos_status status;
+    if (message == NULL || *message == '\0')
+        return rotmos_reply_status(reply, code, NULL);
+    status = rotmos_reply_text(reply, code, "text/plain", message, NULL);
+    if (status == ROTMOS_OK) {
+        free(reply->content_type);
+        reply->content_type = NULL;
+    }
+    return status;
 }
 
 rotmos_status rotmos_reply_new(rotmos_reply **out, rotmos_error *error)
@@ -163,9 +179,9 @@ rotmos_status rotmos_reply_status(rotmos_reply *reply, int status,
     result = mutable(reply, error);
     if (result != ROTMOS_OK)
         return result;
-    if (status < 200 || status > 599)
+    if (status < 100 || status > 599)
         return rotmos_fail(error, ROTMOS_INVALID, "reply_status",
-                           "final status must be 200..599");
+                           "status must be 100..599");
     select_payload(reply, status, ROTMOS_REPLY_EMPTY, NULL);
     rotmos_error_clear(error);
     return ROTMOS_OK;

@@ -63,8 +63,8 @@ typedef struct rotmos_error {
     rotmos_error_source source;
     long native_code;
     char operation[48];
-    char message[192];
-    char detail[128];
+    char message[256];
+    char detail[256];
 } rotmos_error;
 
 typedef struct rotmos_bytes {

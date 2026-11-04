@@ -42,3 +42,12 @@ copied declarations, baseline timeout saturation and foreground/supervised worke
 lifecycle. A supervised host attaches its control FD and signal policy after
 translation. Successful construction transfers that FD; shutdown closes it.
 This is configuration/lifecycle evidence, not a completed application adapter.
+
+[vectis-route.c](../tests/vectis-route.c) adds the ordinary app/request/response
+callback shape, status/error translation, NUL-terminated request strings and
+host-source vtable forwarding. Request associations and route callback owners are
+the only retained adapter state. Source reset/read/close, live delivery, spooling,
+reply replacement and HTTP error selection stay in public library operations.
+The [runtime case](../tests/vectis-route-runtime.c) checks duplicate query/headers,
+captures, binary input, 255-byte diagnostics, source ownership and hook/reset/
+suppression/failure timing. No Lockd SDK or sibling source is a build input.

@@ -59,7 +59,7 @@ static int trailer_forbidden(const char *name)
 
 static int bodyless(rotmos_response *r)
 {
-    return r->outcome.status == 101 || r->request->method == ROTMOS_HTTP_HEAD ||
+    return r->outcome.status < 200 || r->request->method == ROTMOS_HTTP_HEAD ||
            r->outcome.status == 204 || r->outcome.status == 205 ||
            r->outcome.status == 304;
 }
@@ -489,7 +489,7 @@ rotmos_status rotmos_response_begin(rotmos_response *r, rotmos_error *error)
     if (strcmp(version, "HTTP/1.0") == 0)
         r->close_connection = 1;
     length = 128;
-    for (i = 0; i < r->headers->header_count; ++i)
+    for (i = 0; r->outcome.status != 100 && i < r->headers->header_count; ++i)
         length += r->headers->headers[i].name.length +
                   r->headers->headers[i].value.length + 4;
     if (r->trailer_names != NULL)
@@ -501,10 +501,12 @@ rotmos_status rotmos_response_begin(rotmos_response *r, rotmos_error *error)
     if (data == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "response_begin",
                            "cannot allocate response headers");
-    offset = (size_t)sprintf(
-        (char *)data, "%s %d %s\r\n", version, r->outcome.status,
-        r->outcome.status == 101 ? "Switching Protocols"
-                                 : (r->outcome.status >= 400 ? "Error" : "OK"));
+    offset = (size_t)sprintf((char *)data, "%s %d %s\r\n", version,
+                             r->outcome.status,
+                             rotmos_response_reason(r->outcome.status));
+    /* Kore's existing status-100 response is the bare Continue head. */
+    if (r->outcome.status == 100)
+        goto finish_headers;
     for (i = 0; i < r->headers->header_count; ++i)
         offset +=
             (size_t)sprintf((char *)data + offset, "%s: %s\r\n",
@@ -513,7 +515,8 @@ rotmos_status rotmos_response_begin(rotmos_response *r, rotmos_error *error)
     if (r->outcome.status == 205) {
         offset +=
             (size_t)sprintf((char *)data + offset, "content-length: 0\r\n");
-    } else if (r->has_length && r->outcome.status != 204) {
+    } else if (r->has_length && r->outcome.status >= 200 &&
+               r->outcome.status != 204) {
         (void)rotmos_u64_format_decimal(r->length, decimal, sizeof(decimal),
                                         &decimal_length, NULL);
         offset += (size_t)sprintf((char *)data + offset,
@@ -528,6 +531,7 @@ rotmos_status rotmos_response_begin(rotmos_response *r, rotmos_error *error)
     if (r->close_connection)
         offset +=
             (size_t)sprintf((char *)data + offset, "connection: close\r\n");
+finish_headers:
     memcpy(data + offset, "\r\n", 2);
     offset += 2;
     status = enqueue(r, data, offset, 0, 0, error);
@@ -1051,7 +1055,14 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
     if (status == ROTMOS_OK) {
         if (reply->kind == ROTMOS_REPLY_SOURCE) {
             reply->source->owner = NULL;
-            status = rotmos_response_producer(r, reply->source, error);
+            if (reply->source->config.reset_before_reply &&
+                reply->source->config.reset != NULL && !bodyless(r)) {
+                r->busy = reply->busy = 1;
+                status = rotmos_source_reset(reply->source, error);
+                r->busy = reply->busy = 0;
+            }
+            if (status == ROTMOS_OK)
+                status = rotmos_response_producer(r, reply->source, error);
             if (status != ROTMOS_OK)
                 reply->source->owner = reply;
         } else if (reply->kind == ROTMOS_REPLY_FILE) {
@@ -1306,6 +1317,15 @@ void rotmos_response_terminal(rotmos_response *r)
         r->phase = ROTMOS_RESPONSE_COMPLETE;
     r->busy = 1;
     rotmos_reply_retire(r->request->reply);
+    /* Failed/unselected staged sources were never transferred to r->source.
+     * Close them while request metadata/application associations still live. */
+    if (r->request->reply != NULL && r->request->reply->source != NULL) {
+        rotmos_source *source = r->request->reply->source;
+        r->request->reply->source = NULL;
+        rotmos_source_release(source, source->failure != ROTMOS_OK
+                                          ? source->failure
+                                          : ROTMOS_CANCELLED);
+    }
     clear_producer(r, r->outcome.cause != ROTMOS_OK
                           ? r->outcome.cause
                           : (r->suppressed ? ROTMOS_CANCELLED : ROTMOS_OK));

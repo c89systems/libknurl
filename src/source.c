@@ -10,6 +10,7 @@ void rotmos_source_config_init(rotmos_source_config *config)
         return;
     config->read = NULL;
     config->reset = NULL;
+    config->reset_before_reply = 0;
     config->close = NULL;
     config->userdata = NULL;
     config->execution = ROTMOS_SOURCE_OWNER_LOOP;

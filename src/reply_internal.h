@@ -2,7 +2,10 @@
 #define ROTMOS_REPLY_INTERNAL_H
 
 #include "source_internal.h"
+
 #include <rotmos/reply.h>
+
+rotmos_status rotmos_reply_failure(rotmos_reply *, int, const char *);
 
 struct rotmos_reply {
     int selected;

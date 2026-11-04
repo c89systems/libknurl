@@ -29,8 +29,10 @@ static rotmos_status facade_complete(rotmos_request *request, void *userdata,
 {
     rotmos_status status;
     rotmos_reply *reply;
+    rotmos_reply *failure;
     rotmos_response *response;
     int code;
+    int handler_failed;
     (void)userdata;
     status = rotmos_reply_new(&request->reply, error);
     if (status != ROTMOS_OK)
@@ -39,6 +41,7 @@ static rotmos_status facade_complete(rotmos_request *request, void *userdata,
     reply->owner = request;
     response = request->response;
     status = rotmos_router_invoke(request, error);
+    handler_failed = status != ROTMOS_OK;
     if (status == ROTMOS_OK) {
         if (response->phase == ROTMOS_RESPONSE_BUILDING)
             status = rotmos_response_submit(response, reply, error);
@@ -51,10 +54,17 @@ static rotmos_status facade_complete(rotmos_request *request, void *userdata,
     code = status == ROTMOS_INVALID
                ? 400
                : (status == ROTMOS_NOT_SUPPORTED ? 501 : 500);
-    if (rotmos_response_replace_uncommitted(response, NULL) == ROTMOS_OK) {
-        (void)rotmos_reply_status(reply, code, NULL);
-        if (rotmos_response_submit(response, reply, error) == ROTMOS_OK)
+    if (rotmos_reply_new(&failure, NULL) == ROTMOS_OK) {
+        if (rotmos_response_replace_uncommitted(response, NULL) == ROTMOS_OK &&
+            rotmos_reply_failure(failure, code,
+                                 handler_failed && error != NULL
+                                     ? error->message
+                                     : NULL) == ROTMOS_OK &&
+            rotmos_response_submit(response, failure, NULL) == ROTMOS_OK) {
+            (void)rotmos_reply_destroy(failure, NULL);
             return ROTMOS_OK;
+        }
+        (void)rotmos_reply_destroy(failure, NULL);
     }
     (void)rotmos_response_abort(response, status, NULL);
     return status;

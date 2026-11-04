@@ -67,3 +67,9 @@ uses only installed public SDKs and the included concrete toolchain selector;
 LuaRocks cache/temp/tree stay under build. Final/nested byte and reconstruction
 checks complement the existing binding workflow tests. Full release artifact
 validation and the complete Vectis adapter remain open.
+Ordinary-route forwarding now includes baseline status/errors, request string
+conversion and host-source callback/ownership adaptation. Delayed live reset is
+an explicit public C option shared by Lua. Its parity case also exposed and
+corrected cleanup after request-close on reset failure. Next address baseline
+JSON/buffered body-policy spill and disabled-spill timing, then remaining route,
+provider, proxy/TLS and lifecycle operation forwarding coverage.

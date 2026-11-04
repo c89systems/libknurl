@@ -10,6 +10,13 @@ replace it, and the router submits the final declaration after the chain returns
 Use low-level response operations for explicit bounded delivery. Mixing a
 selected staged reply with a begun low-level response is a conflict.
 
+Staged replies preserve Vectis's accepted 100..599 status range. Output suppresses
+the body for 1xx/204/205/304 and HEAD; status 100 retains Kore's bare Continue head.
+Reason phrases come from the backend's existing status table. Handler/hook failure
+discards staged application headers/payload and emits its diagnostic bytes with
+400 for INVALID, 501 for NOT_SUPPORTED, otherwise 500. Unselected success is 204.
+The public error message/detail capacities are 256 bytes each, including NUL.
+
 Set status, copied headers, optional known length, and writable/close callbacks
 before `rotmos_response_begin`. Begin queues headers without claiming delivery.
 Header setters reject transport-owned framing and connection fields. The finite
@@ -46,6 +53,15 @@ source's independent userdata until close; request close does not free it.
 Owner-loop source close runs before request views expire. HEAD and bodyless
 responses never start a native read. Explicit resume also preserves readiness
 arriving before an in-flight native callback returns AGAIN.
+
+`rotmos_source_config.reset_before_reply` selects Vectis's delayed reset contract
+for a staged live source: reset once on the owner loop after after-hooks and
+before headers, when a reset callback exists. Suppressed output never resets or
+reads it. Reset failure produces an uncommitted empty 500; failed/unselected
+sources close before request-close callbacks. Reset callbacks cannot mutate the
+busy reply. The default remains false; manual, parsing and spooled consumers retain
+their explicit reset policy. Lua legacy stream declarations use this same C
+option; their separate first-read reset path has been removed.
 
 `rotmos_response_file_take` takes an open regular-file descriptor on success and
 checks its offset and length against the target's actual seek representation.

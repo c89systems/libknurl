@@ -6,6 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+const char *rotmos_response_reason(int status)
+{
+    return http_status_text(status);
+}
+
 struct rotmos_delivery {
     struct rotmos_runtime *runtime;
     rotmos_response *response;

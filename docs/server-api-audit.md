@@ -86,13 +86,31 @@ range/conditional handling, binary data, bounded reads, listing and read-only
 mutation rejection. Packed lookup stays in the host; no second HTTP/DAV engine
 or application filesystem type enters the binding.
 
+The ordinary-route reference now exercises baseline callback/error shapes,
+request strings and borrowed/taken host sources. It exposed corrected failures:
+staged 1xx rejection, shortened diagnostics, dropped HTTP error messages,
+non-baseline reason phrases and a Lua-only delayed reset. The public C source
+configuration now carries that explicit reset option. A failed staged source
+also outlived request-close notification; terminal cleanup now closes it while
+the host request association is still valid.
+
+Body-policy translation remains open: baseline JSON/BUFFERED modes may spill
+after their memory threshold, whereas the current generic BUFFERED mode requires
+its whole admitted limit to fit memory and JSON is rejected at raw admission.
+Check those baseline policies and disabled-spill failure timing in the next
+adapter batch; do not implement a collector or spooler in the adapter.
+File-reply timing also needs its baseline case: Vectis copies the path in
+vectis_response_file and opens it in the backend after hooks; the current
+rotmos_reply_file pins it during selection. Cover replacement/path changes and
+missing-file status before choosing the library correction.
+
 ## Evidence limits and work state
 
 No runtime edits or test runs were made during the stop-and-audit. The repository
 has selected toolchains and build state for all seven targets, public-header
 binding imports and installed consumers. Prior per-slice checks do not prove
 Vectis parity. The complete installed Vectis reference adapter is still partial;
-source/rock packaging and final compatibility/artifact
+Lua source/rock packaging has landed, while final compatibility/artifact
 checks remain incomplete. The [implementation plan](implementation-plan.md)
 orders correction work under the revised active implementation goal.
 

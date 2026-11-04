@@ -34,6 +34,11 @@ typedef struct rotmos_source_config {
     rotmos_source_execution execution;
     rotmos_u64 length;
     int has_length;
+    /* A selected live reply resets once on the owner loop after hooks and
+     * before headers, when
+     * reset is supplied. Suppressed output (HEAD/1xx/204/205/304) does not
+     * reset/read. Other source consumers retain their explicit reset policy. */
+    int reset_before_reply;
 } rotmos_source_config;
 
 ROTMOS_API void rotmos_source_config_init(rotmos_source_config *config);
