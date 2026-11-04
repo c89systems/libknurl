@@ -160,3 +160,13 @@ fixture covers real HTTP/mTLS connections, frame replay/output pressure, SSE
 pause/resume, fork scope, callback failures and allocation unwinding.
 Custom/packed asset/storage providers, typed routes and the other remaining
 binding/packaging surfaces are still required.
+
+Lua JSON/XML writer bindings now reuse the public materialized serializers and
+pull generators, with LoneJSON's separately built released Lua provider supplying
+public schema/record interop. Table inputs are assigned into private records;
+callback/source output retains them through native cleanup. Buffered serializers
+also accept external mutable records, preserving Vectis's established distinction.
+The short installed fixture ports mutation, collection, reentry and private
+spooled-input cases and adds bounded pulls, cancellation, wire output, sink errors
+and allocation unwinding. Typed Lua routes, mapped parsing, XML DOM/SAX and the
+other remaining binding/packaging surfaces remain part of the full goal.

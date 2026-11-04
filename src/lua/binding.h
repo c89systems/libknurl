@@ -66,6 +66,8 @@ struct rl_source {
     rotmos_source *delegate;
     struct rl_request *request_body;
     struct rl_body_result *result_body;
+    int delegated;
+    lua_CFunction retire;
     size_t offset;
     rotmos_error error;
 };
@@ -129,6 +131,9 @@ void rl_values_open(lua_State *);
 void rl_servers_open(lua_State *);
 void rl_requests_open(lua_State *);
 void rl_sources_open(lua_State *);
+void rl_codecs_open(lua_State *);
+struct rl_source *rl_source_native_new(lua_State *, int, lua_CFunction,
+                                       rotmos_error *);
 void rl_bodies_open(lua_State *);
 void rl_replies_open(lua_State *);
 void rl_reply_view_push(lua_State *, struct rl_call *);

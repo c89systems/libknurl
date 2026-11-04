@@ -100,10 +100,12 @@ overflowing input, after-hook replacement, auth short circuit, per-response outp
 schemas, a 64 KiB reply borrowing its input record, and startup spool policy.
 Both also run against relocated static/shared SDKs.
 
-Lua table preparation, mutation/GC/reentry and buffered external-record cases
-remain the facade's required integration work under the
+The [Lua codecs](lua.md) now bind materialized serialization and generated
+Source/callback output through these public operations and released LoneJSON
+interop. Their private table preparation, mutation/GC/reentry, spooled input and
+buffered external-record cases preserve Vectis's writer policy. Typed Lua routes
+and input parsing remain required by the
 [complete specification](server-api-spec.md#fast-typed-json-and-xmllibxml2-routes).
-They use these public schema/record and release boundaries.
 
 [Buffered REST](rest.md) adds generic decode/validate/error policy over ordinary
 staged routes and explicit materialized replies. [OpenAPI](openapi.md) projects

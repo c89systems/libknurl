@@ -16,6 +16,7 @@ endif
 BUILD_DIR ?= build/$(if $(filter $(TARGET),$(DEFAULT_TARGET)),,$(TARGET)/)$(CONFIG)
 TOOLCHAIN := cmake/toolchains/selected.cmake
 PREFIX ?= $(CURDIR)/build/install/$(TARGET)/$(CONFIG)
+DEPENDENCY_CACHE := $(if $(CPKT_DEPENDENCY_CACHE),$(CPKT_DEPENDENCY_CACHE),$(CURDIR)/.cache/deps)
 
 .PHONY: help deps deps-all toolchain toolchains configure build build-all lua lua-all prepare-kore test install format format-check update-kore clean
 .NOTPARALLEL:
@@ -61,6 +62,10 @@ build: configure
 
 lua: build
 	"$(CMAKE)" --install '$(BUILD_DIR)' --prefix '$(CURDIR)/$(BUILD_DIR)/lua-core-sdk'
+	bash scripts/deps.sh '$(TARGET)' lua
+	"$(CMAKE)" -S lua/dependencies/lonejson -B '$(BUILD_DIR)/lua-deps/lonejson' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DROTMOS_TARGET='$(TARGET)' -DROTMOS_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)' -DLONEJSON_LUA_SOURCE='$(DEPENDENCY_CACHE)/sources/lonejson-lua-0.45.0' -DCMAKE_INSTALL_PREFIX='$(CURDIR)/.cache/sdk/$(TARGET)/lonejson-lua'
+	"$(CMAKE)" --build '$(BUILD_DIR)/lua-deps/lonejson' --parallel '$(JOBS)'
+	"$(CMAKE)" --install '$(BUILD_DIR)/lua-deps/lonejson'
 	"$(CMAKE)" -S lua -B '$(BUILD_DIR)/lua' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DROTMOS_TARGET='$(TARGET)' -DROTMOS_CORE_PREFIX='$(CURDIR)/$(BUILD_DIR)/lua-core-sdk' -DROTMOS_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)'
 	"$(CMAKE)" --build '$(BUILD_DIR)/lua' --parallel '$(JOBS)'
 

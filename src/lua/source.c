@@ -19,6 +19,16 @@ static int source_trampoline(lua_State *L)
     else
         lua_rawgeti(L, LUA_REGISTRYINDEX, s->root);
     view = lua_absindex(L, -1);
+    if (s->delegated) {
+        if (s->retire != NULL) {
+            lua_pushcfunction(L, s->retire);
+            lua_getiuservalue(L, view, 1);
+            lua_call(L, 1, 0);
+        }
+        lua_pushnil(L);
+        lua_setiuservalue(L, view, 1);
+        return 0;
+    }
     if (!strcmp(c->name, "read")) {
         lua_getiuservalue(L, view, 2);
         if (lua_type(L, -1) == LUA_TSTRING)
@@ -166,7 +176,7 @@ static void close_source(void *data, rotmos_status cause)
     rotmos_error error;
     rotmos_status status;
     s->native = NULL;
-    if (s->request_body != NULL || s->result_body != NULL) {
+    if (s->delegated || s->request_body != NULL || s->result_body != NULL) {
         if (s->delegate != NULL)
             rotmos_source_destroy(s->delegate, NULL);
         s->delegate = NULL;
@@ -174,7 +184,8 @@ static void close_source(void *data, rotmos_status cause)
             rl_body_result_retire(s->result_body);
         s->result_body = NULL;
         s->request_body = NULL;
-        goto unroot;
+        if (!s->delegated)
+            goto unroot;
     }
     memset(&c, 0, sizeof(c));
     c.source = s;
@@ -343,9 +354,10 @@ void rl_source_expire(struct rl_source *s)
 }
 static rotmos_status reader_ready(struct rl_source *s, rotmos_error *error)
 {
-    if (s->delegate == NULL ||
-        (s->request_body != NULL && s->request_body->native == NULL))
+    if (s->request_body != NULL && s->request_body->native == NULL)
         return rl_fail(error, ROTMOS_STATE, "request body scope has closed");
+    if (s->delegate == NULL)
+        return rl_fail(error, ROTMOS_STATE, "source is closed");
     return ROTMOS_OK;
 }
 static rotmos_status reader_read(void *buffer, size_t capacity,
@@ -364,6 +376,30 @@ static rotmos_status reader_reset(void *data, rotmos_error *error)
     rotmos_status status = reader_ready(s, error);
     return status == ROTMOS_OK ? rotmos_source_reset(s->delegate, error)
                                : status;
+}
+struct rl_source *rl_source_native_new(lua_State *L, int owner,
+                                       lua_CFunction retire,
+                                       rotmos_error *error)
+{
+    struct rl_source *s;
+    rotmos_source_config config;
+    owner = lua_absindex(L, owner);
+    s = lua_newuserdatauv(L, sizeof(*s), 2);
+    memset(s, 0, sizeof(*s));
+    s->L = L;
+    s->root = LUA_NOREF;
+    s->owned = s->delegated = 1;
+    s->retire = retire;
+    luaL_setmetatable(L, RL_SOURCE);
+    lua_pushvalue(L, owner);
+    lua_setiuservalue(L, -2, 1);
+    rotmos_source_config_init(&config);
+    config.read = reader_read;
+    config.close = close_source;
+    config.userdata = s;
+    if (rotmos_source_new(&config, &s->native, error) != ROTMOS_OK)
+        return NULL;
+    return s;
 }
 int rl_source_wrap_reader(lua_State *L, int owner, struct rl_request *request,
                           struct rl_body_result *result,

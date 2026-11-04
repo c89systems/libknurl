@@ -352,10 +352,49 @@ cancellation/retirement, fork invalidation and callback/registration allocation
 failure with live SSE pause/resume and WebSocket HTTP/mTLS echo, frame replay,
 atomic backpressure, copied handshake fields and terminal callback errors.
 
+`rotmos.json` and `rotmos.xml` expose `serialize(options)`, `source(options)`
+and `write(options, sink)`. They use the installed C codecs and LoneJSON's
+released public Lua interop. Options select `schema` and `value`/`table` input;
+the explicitly materialized `serialize` also accepts external `record` userdata
+and a finite `max_bytes` (zero selects the C default, 10 MiB). XML mapping options
+match the public C config, including root/text/attribute names and limits.
+
+The callback and source forms assign tables into private records before output,
+preserving Vectis's writer contract. Mutating the caller's table/options or an
+unrelated record, collecting objects, or running an independent writer cannot
+change an active producer. Spooled fields use public schema assignment to prepare
+private input storage. Output is generated in bounded chunks, without collecting
+or staging the whole output. Mutable external records are rejected with the
+existing direction to use buffered serialization.
+
+`write` synchronously delivers chunks of at most 4096 bytes to a function or
+`{write=function(bytes) ... end}` and returns `true, byte_count`. It borrows the
+sink without closing it. Exceptions, false and `nil, error` stop generation,
+return a structured error and release the private input. `source` returns the
+ordinary public Source wrapper; pass it as `stream_source` in a response, read
+it manually, or close it to cancel. Its schema/record owners survive until native
+producer cleanup. It is not resettable. The
+[writer fixture](../tests/lua/codecs.lua) ports Vectis's mutation/GC/reentry,
+spooled-input and mutable-record cases, adding small pulls, cancellation, wire
+GET/HEAD delivery, sink failures and allocation unwinding.
+Like Vectis, option getters and a table sink's `write` function are snapshotted
+before output; malformed assignment or throwing preparation getters raise Lua
+errors. Sink invocation failures return the structured result described above.
+
+`make lua` acquires matching checksum-pinned LoneJSON and pslog Lua source
+products into the checkout's dependency cache. The LoneJSON provider is compiled
+with the selected lifecycle toolchain into its own dependency SDK prefix,
+`.cache/sdk/<target>/lonejson-lua`, against the installed shared C SDK and cpkt's
+shared Lua. Its normal `lonejson.core` loader and the rotmos C binding use one
+shared provider instance. No dependency Lua source or interop header is added to
+the C-only rotmos SDK. Standalone hosts add the provider's installed facade and
+module search paths; preloading rotmos does not change host package paths.
+
 ## Remaining binding surfaces
 
 The binding is incomplete. TLS material openers/ACME state callbacks,
-remaining policy/admission/observation/control callbacks, schemas/JSON/XML,
+remaining policy/admission/observation/control callbacks, typed JSON/XML routes,
+mapped parsing, selected-array input, XML DOM/SAX,
 REST/OpenAPI, custom asset/storage providers and packed mounts,
 remaining direct dispatch/response operations still need
 their public C bindings. Known unsupported options return an error. No transport

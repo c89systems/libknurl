@@ -272,6 +272,35 @@ static int spawn(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+static int spawn_codecs(lua_State *L)
+{
+    int failed;
+    unsigned short port = (unsigned short)luaL_checkinteger(L, 1);
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        failed =
+            rotmos_lua_test_exchange(port, "GET", "/json", "", 0, 200,
+                                     "{\"text\":\"wire\",\"@id\":null}", 26);
+        if (!failed)
+            failed = rotmos_lua_test_exchange(port, "HEAD", "/json", "", 0, 200,
+                                              "", 0);
+        if (!failed)
+            failed = rotmos_lua_test_exchange(port, "GET", "/xml", "", 0, 200,
+                                              "<writer>wire</writer>", 21);
+        if (!failed)
+            failed = rotmos_lua_test_exchange(port, "GET", "/stop", "", 0, 200,
+                                              "ok", 2);
+        if (failed)
+            kill(getppid(), SIGTERM);
+        _exit(failed);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
 static int join(lua_State *L)
 {
     int status;
@@ -1070,14 +1099,15 @@ int main(int argc, char **argv)
     if (rotmos_lua_preload(L, &error) != ROTMOS_OK ||
         rotmos_lua_preload(L, &error) != ROTMOS_OK)
         return 5;
-#else
+#endif
     lua_getglobal(L, "package");
-    lua_pushfstring(L, "%s/share/lua/5.5/?.lua", argv[2]);
+    lua_pushfstring(L, "%s/share/lua/5.5/?.lua;%s/share/lua/5.5/?/init.lua",
+                    argv[2], ROTMOS_LONEJSON_LUA_PREFIX);
     lua_setfield(L, -2, "path");
-    lua_pushfstring(L, "%s/lib/lua/5.5/?.so", argv[2]);
+    lua_pushfstring(L, "%s/lib/lua/5.5/?.so;%s/lib/lua/5.5/?.so", argv[2],
+                    ROTMOS_LONEJSON_LUA_PREFIX);
     lua_setfield(L, -2, "cpath");
     lua_pop(L, 1);
-#endif
     lua_newtable(L);
     lua_pushcfunction(L, spawn);
     lua_setfield(L, -2, "spawn");
@@ -1113,6 +1143,8 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "events_cleanup");
     lua_pushcfunction(L, spawn_events);
     lua_setfield(L, -2, "spawn_events");
+    lua_pushcfunction(L, spawn_codecs);
+    lua_setfield(L, -2, "spawn_codecs");
     lua_pushstring(L, argv[2]);
     lua_setfield(L, -2, "root");
     if (argc == 4) {

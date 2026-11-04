@@ -42,6 +42,7 @@ local function request(handle)
   return out
 end
 M.source=native.source
+M.json,M.xml=native.json,native.xml
 local function options(opts,handler,body_mode)
   opts=copy(opts)
   local fn=handler or opts.handler
