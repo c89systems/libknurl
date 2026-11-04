@@ -19,6 +19,8 @@ static int l_close(lua_State *L)
     lua_setiuservalue(L, 1, 1);
     lua_pushnil(L);
     lua_setiuservalue(L, 1, 2);
+    lua_pushnil(L);
+    lua_setiuservalue(L, 1, 3);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -49,6 +51,8 @@ static int process_trampoline(lua_State *L)
 {
     struct rl_call *c = lua_touserdata(L, 1);
     int root;
+    if (!strcmp(c->name, "on_process_start"))
+        rl_loops_process_start(L, c->server);
     lua_rawgeti(L, LUA_REGISTRYINDEX, c->server->root);
     root = lua_gettop(L);
     lua_getiuservalue(L, root, 1);
@@ -94,6 +98,8 @@ static rotmos_status on_process_start(rotmos_server *server,
                                       const rotmos_process_context *process,
                                       void *data, rotmos_error *error)
 {
+    struct rl_server *owner = data;
+    owner->process_id = process->process_id;
     return process_call(server, process, data, error, "on_process_start");
 }
 static rotmos_status on_parent_prepare(rotmos_server *server,
@@ -154,7 +160,7 @@ static int l_new(lua_State *L)
         return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
                                     "server configuration table required"),
                             &error));
-    s = lua_newuserdatauv(L, sizeof(*s), 2);
+    s = lua_newuserdatauv(L, sizeof(*s), 3);
     index = lua_absindex(L, -1);
     memset(s, 0, sizeof(*s));
     s->L = L;
@@ -170,6 +176,8 @@ static int l_new(lua_State *L)
     lua_setiuservalue(L, -2, 1);
     lua_newtable(L);
     lua_setiuservalue(L, -2, 2);
+    lua_newtable(L);
+    lua_setiuservalue(L, -2, 3);
     rotmos_server_config_init(&config);
     if (!rl_config_parse(L, 1, &config, &error)) {
         return rl_error(L, &error);
@@ -207,6 +215,7 @@ static int l_run(lua_State *L)
     lua_pushvalue(L, 1);
     s->root = luaL_ref(L, LUA_REGISTRYINDEX);
     s->L = L;
+    ++s->run_epoch;
     rotmos_error_clear(&s->callback_error);
     status = rotmos_server_run(s->native, &result, &error);
     luaL_unref(L, LUA_REGISTRYINDEX, s->root);
@@ -479,7 +488,7 @@ struct rl_rule *rl_rule_new(lua_State *L, rotmos_error *error)
         }
         lua_pop(L, 1);
     }
-    rule = lua_newuserdatauv(L, sizeof(*rule), 2);
+    rule = lua_newuserdatauv(L, sizeof(*rule), 3);
     memset(rule, 0, sizeof(*rule));
     rule->root = LUA_NOREF;
     rule->server = server;
@@ -688,6 +697,12 @@ void rl_servers_open(lua_State *L)
         {"static_directory", rl_static_directory},
         {"webdav", rl_webdav},
         {"proxy", rl_proxy},
+        {"websocket", rl_websocket},
+        {"defer", rl_defer},
+        {"timer", rl_timer},
+        {"watch", rl_watch},
+        {"waker", rl_waker},
+        {"now", rl_now},
         {"group", l_group},
         {"route_count", l_route_count},
         {NULL, NULL}};

@@ -151,5 +151,12 @@ argument failures latch in the binding without private proxy access. HTTP/SSE/
 WebSocket forwarding and upstream TLS remain in the existing C engine. The short
 installed fixture covers callback workflows, actual upload flow before EOF,
 mutual TLS, metadata edits, scope expiry, local responses and failure mappings.
-Custom/packed asset/storage providers, standalone WebSocket/SSE, typed routes and
-the other remaining binding/packaging surfaces are still required.
+Standalone Lua WebSocket and SSE routes now use public acceptance, frame/send,
+event encoding and live source operations. Public loop defer/timer/watch/waker
+registrations provide owner-thread readiness without a second scheduler.
+Userdata roots retire with their native operation; inherited parent loop tokens
+are invalidated before child callbacks can access discarded handles. The combined
+fixture covers real HTTP/mTLS connections, frame replay/output pressure, SSE
+pause/resume, fork scope, callback failures and allocation unwinding.
+Custom/packed asset/storage providers, typed routes and the other remaining
+binding/packaging surfaces are still required.

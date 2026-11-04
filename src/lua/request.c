@@ -249,6 +249,17 @@ static int request_body_resume(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+static int producer_resume(lua_State *L)
+{
+    struct rl_request *request;
+    rotmos_error error;
+    if (!valid(L, &request, &error) ||
+        rotmos_response_producer_resume(
+            rotmos_request_response(request->native), &error) != ROTMOS_OK)
+        return rl_error(L, &error);
+    lua_pushboolean(L, 1);
+    return 1;
+}
 static int request_event(lua_State *L)
 {
     struct rl_request *r;
@@ -271,8 +282,8 @@ static int request_event(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
-static rotmos_status headers_apply(lua_State *L, int table, rotmos_reply *reply,
-                                   rotmos_error *error)
+rotmos_status rl_reply_headers(lua_State *L, int table, rotmos_reply *reply,
+                               rotmos_error *error)
 {
     const char *key, *value;
     size_t n, m, i, count;
@@ -380,7 +391,7 @@ rotmos_status rl_reply(lua_State *L, int index, rotmos_reply *reply,
         if (!lua_istable(L, -1))
             return rl_fail(error, ROTMOS_INVALID,
                            "response headers must be a table");
-        status = headers_apply(L, -1, reply, error);
+        status = rl_reply_headers(L, -1, reply, error);
         if (status != ROTMOS_OK)
             return status;
     }
@@ -560,6 +571,7 @@ void rl_requests_open(lua_State *L)
         {"body_copy", rl_request_body_copy},
         {"body_spill", rl_request_body_spill},
         {"body_resume", request_body_resume},
+        {"producer_resume", producer_resume},
         {"event", request_event},
         {NULL, NULL}};
     luaL_newmetatable(L, RL_REQUEST);

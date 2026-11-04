@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <lua.h>
+#include "events.h"
 #include <lauxlib.h>
 #include <lualib.h>
 #if defined(ROTMOS_PRELOAD_TEST)
@@ -22,6 +23,7 @@
 static pid_t child;
 static pid_t proxy_origin;
 static int proxy_shutdown = -1;
+static int event_pipe[2] = {-1, -1};
 static int progress_read = -1, progress_write = -1;
 struct allocator {
     size_t after;
@@ -74,9 +76,10 @@ static const char *required_header;
 static const char *request_headers = "", *required_body;
 static const char *forwarded_address = "198.51.100.7";
 static SSL_CTX *client_context;
-static int exchange(unsigned short port, const char *method, const char *path,
-                    const void *body, size_t length, int status,
-                    const void *expected, size_t expected_length)
+int rotmos_lua_test_exchange(unsigned short port, const char *method,
+                             const char *path, const void *body, size_t length,
+                             int status, const void *expected,
+                             size_t expected_length)
 {
     int fd = -1, failed = 1;
     SSL *ssl = NULL;
@@ -214,7 +217,7 @@ static int drive(unsigned short port)
     memcpy(spooled + 20001, "123", 3);
 #define REQ(m, p, b, l, s, e, n)                                               \
     do {                                                                       \
-        if (exchange(port, m, p, b, l, s, e, n)) {                             \
+        if (rotmos_lua_test_exchange(port, m, p, b, l, s, e, n)) {             \
             failed = 1;                                                        \
             goto done;                                                         \
         }                                                                      \
@@ -305,32 +308,40 @@ static int drive_body(unsigned short port)
     char path[64];
     size_t i;
     int failed;
-    failed = exchange(port, "POST", "/materialized", "A\0BCDE", 6, 200,
-                      "A\0BCDE", 6);
+    failed = rotmos_lua_test_exchange(port, "POST", "/materialized", "A\0BCDE",
+                                      6, 200, "A\0BCDE", 6);
     if (!failed)
-        failed = exchange(port, "GET", "/saved", "", 0, 200, "A\0BCDE", 6);
+        failed = rotmos_lua_test_exchange(port, "GET", "/saved", "", 0, 200,
+                                          "A\0BCDE", 6);
     if (!failed)
-        failed = exchange(port, "GET", "/check-saved", "", 0, 200, "ok", 2);
+        failed = rotmos_lua_test_exchange(port, "GET", "/check-saved", "", 0,
+                                          200, "ok", 2);
+    if (!failed)
+        failed = rotmos_lua_test_exchange(port, "POST", "/upload/live",
+                                          "A\0BCDE", 6, 200, "6", 1);
     if (!failed)
         failed =
-            exchange(port, "POST", "/upload/live", "A\0BCDE", 6, 200, "6", 1);
+            rotmos_lua_test_exchange(port, "POST", "/empty", "", 0, 204, "", 0);
     if (!failed)
-        failed = exchange(port, "POST", "/empty", "", 0, 204, "", 0);
-    if (!failed)
-        failed = exchange(port, "POST", "/paused", "A\0BCDE", 6, 200, "6", 1);
+        failed = rotmos_lua_test_exchange(port, "POST", "/paused", "A\0BCDE", 6,
+                                          200, "6", 1);
     for (i = 0; !failed && i < sizeof(failures) / sizeof(failures[0]); ++i) {
         snprintf(path, sizeof(path), "/failure/%s", failures[i]);
-        failed = exchange(port, "POST", path, "A\0BCDE", 6, 500, "", 0);
+        failed = rotmos_lua_test_exchange(port, "POST", path, "A\0BCDE", 6, 500,
+                                          "", 0);
     }
     if (!failed)
-        failed = exchange(port, "POST", "/failure/invalid", "A\0BCDE", 6, 500,
-                          "", 0);
+        failed = rotmos_lua_test_exchange(port, "POST", "/failure/invalid",
+                                          "A\0BCDE", 6, 500, "", 0);
     if (!failed)
-        failed = exchange(port, "POST", "/limit", "ABC", 3, 413, "", 0);
+        failed = rotmos_lua_test_exchange(port, "POST", "/limit", "ABC", 3, 413,
+                                          "", 0);
     if (!failed)
-        failed = exchange(port, "POST", "/denied", "ABC", 3, 403, "", 0);
+        failed = rotmos_lua_test_exchange(port, "POST", "/denied", "ABC", 3,
+                                          403, "", 0);
     if (!failed)
-        failed = exchange(port, "GET", "/stop", "", 0, 200, "ok", 2);
+        failed =
+            rotmos_lua_test_exchange(port, "GET", "/stop", "", 0, 200, "ok", 2);
     return failed;
 }
 static int spawn_body(lua_State *L)
@@ -361,7 +372,8 @@ static int drive_routes(unsigned short port)
     int failed = 0;
 #define R(method, path, body, length, status, expected, size)                  \
     if (!failed)                                                               \
-    failed = exchange(port, method, path, body, length, status, expected, size)
+    failed = rotmos_lua_test_exchange(port, method, path, body, length,        \
+                                      status, expected, size)
     R("GET", "/file", "", 0, 200, "A\0B", 3);
     required_header = "content-length: 3\r\n";
     R("HEAD", "/file", "", 0, 200, "", 0);
@@ -684,7 +696,8 @@ static int drive_proxy(unsigned short port)
     int failed = 0;
 #define P(method, path, body, length, status, expected, size)                  \
     if (!failed)                                                               \
-    failed = exchange(port, method, path, body, length, status, expected, size)
+    failed = rotmos_lua_test_exchange(port, method, path, body, length,        \
+                                      status, expected, size)
     P("GET", "/proxy/plain?client=1", "", 0, 201, "origin", 6);
     P("POST", "/proxy/echo", "A\0BCDE", 6, 201, "A\0BCDE", 6);
     required_header = "X-Proxy: rotmos\r\n";
@@ -749,54 +762,108 @@ static int spawn_proxy(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+static int events_pipe(lua_State *L)
+{
+    if (pipe(event_pipe) || fcntl(event_pipe[0], F_SETFL, O_NONBLOCK))
+        return luaL_error(L, "event pipe failed");
+    lua_pushinteger(L, event_pipe[0]);
+    lua_pushinteger(L, event_pipe[1]);
+    return 2;
+}
+static int events_read(lua_State *L)
+{
+    char byte;
+    if (read(event_pipe[0], &byte, 1) != 1 || byte != 'w')
+        return luaL_error(L, "event pipe read failed");
+    return 0;
+}
+static int events_cleanup(lua_State *L)
+{
+    (void)L;
+    close(event_pipe[0]);
+    close(event_pipe[1]);
+    event_pipe[0] = event_pipe[1] = -1;
+    return 0;
+}
+static int spawn_events(lua_State *L)
+{
+    int status;
+    unsigned short http = (unsigned short)lua_tointeger(L, 1),
+                   tls = (unsigned short)lua_tointeger(L, 2);
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        status =
+            rotmos_lua_test_events(http, tls, client_context, event_pipe[1]);
+        if (status)
+            kill(getppid(), SIGTERM);
+        _exit(status);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
 static int drive_policy(unsigned short http, unsigned short tls,
                         unsigned short redirect)
 {
     int failed;
     encrypted = 1;
     required_header = NULL;
-    failed = exchange(tls, "GET", "/tls", "", 0, 200, "tls", 3);
+    failed = rotmos_lua_test_exchange(tls, "GET", "/tls", "", 0, 200, "tls", 3);
     encrypted = 0;
     required_header = "location: https://localhost:9443/raw%2Fpath?x=%2F\r\n";
     if (!failed)
-        failed =
-            exchange(redirect, "GET", "/raw%2Fpath?x=%2F", "", 0, 308, "", 0);
+        failed = rotmos_lua_test_exchange(redirect, "GET", "/raw%2Fpath?x=%2F",
+                                          "", 0, 308, "", 0);
     required_header = "cache-control: no-store\r\n";
     if (!failed)
-        failed = exchange(http, "GET", "/allow", "", 0, 200, "allowed", 7);
+        failed = rotmos_lua_test_exchange(http, "GET", "/allow", "", 0, 200,
+                                          "allowed", 7);
     if (!failed)
-        failed =
-            exchange(http, "GET", "/principal", "", 0, 200, "principal", 9);
+        failed = rotmos_lua_test_exchange(http, "GET", "/principal", "", 0, 200,
+                                          "principal", 9);
     required_header = "www-authenticate: Basic realm=\"fixture\"\r\n";
     if (!failed)
-        failed = exchange(http, "GET", "/required", "", 0, 401,
-                          "authentication required\n", 24);
+        failed = rotmos_lua_test_exchange(http, "GET", "/required", "", 0, 401,
+                                          "authentication required\n", 24);
     required_header = "location: /login\r\n";
     if (!failed)
-        failed = exchange(http, "GET", "/redirect", "", 0, 302,
-                          "authentication required\n", 24);
+        failed = rotmos_lua_test_exchange(http, "GET", "/redirect", "", 0, 302,
+                                          "authentication required\n", 24);
     required_header = NULL;
     if (!failed)
-        failed = exchange(http, "GET", "/deny", "", 0, 403, "A\0B", 3);
+        failed = rotmos_lua_test_exchange(http, "GET", "/deny", "", 0, 403,
+                                          "A\0B", 3);
     if (!failed)
-        failed = exchange(http, "GET", "/auth-error", "", 0, 500, "", 0);
+        failed = rotmos_lua_test_exchange(http, "GET", "/auth-error", "", 0,
+                                          500, "", 0);
     if (!failed)
-        failed = exchange(http, "GET", "/auth-invalid", "", 0, 400, "", 0);
+        failed = rotmos_lua_test_exchange(http, "GET", "/auth-invalid", "", 0,
+                                          400, "", 0);
     if (!failed)
-        failed = exchange(http, "GET", "/auth-getter", "", 0, 500, "", 0);
+        failed = rotmos_lua_test_exchange(http, "GET", "/auth-getter", "", 0,
+                                          500, "", 0);
     if (!failed)
-        failed = exchange(http, "GET", "/auth-oom", "", 0, 500, "", 0);
+        failed = rotmos_lua_test_exchange(http, "GET", "/auth-oom", "", 0, 500,
+                                          "", 0);
     if (!failed)
-        failed = exchange(http, "GET", "/guard/entry", "", 0, 200, "group", 5);
+        failed = rotmos_lua_test_exchange(http, "GET", "/guard/entry", "", 0,
+                                          200, "group", 5);
     if (!failed)
-        failed = exchange(http, "GET", "/event", "", 0, 200, "event", 5);
+        failed = rotmos_lua_test_exchange(http, "GET", "/event", "", 0, 200,
+                                          "event", 5);
     if (!failed)
-        failed = exchange(http, "GET", "/event", "", 0, 200, "event", 5);
+        failed = rotmos_lua_test_exchange(http, "GET", "/event", "", 0, 200,
+                                          "event", 5);
     if (!failed)
-        failed = exchange(http, "GET", "/blocked", "", 0, 403, "", 0);
+        failed = rotmos_lua_test_exchange(http, "GET", "/blocked", "", 0, 403,
+                                          "", 0);
     forwarded_address = "203.0.113.9";
     if (!failed)
-        failed = exchange(http, "GET", "/stop", "", 0, 200, "stopped", 7);
+        failed = rotmos_lua_test_exchange(http, "GET", "/stop", "", 0, 200,
+                                          "stopped", 7);
     return failed;
 }
 static int spawn_policy(lua_State *L)
@@ -1038,6 +1105,14 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "proxy_join");
     lua_pushcfunction(L, spawn_proxy);
     lua_setfield(L, -2, "spawn_proxy");
+    lua_pushcfunction(L, events_pipe);
+    lua_setfield(L, -2, "events_pipe");
+    lua_pushcfunction(L, events_read);
+    lua_setfield(L, -2, "events_read");
+    lua_pushcfunction(L, events_cleanup);
+    lua_setfield(L, -2, "events_cleanup");
+    lua_pushcfunction(L, spawn_events);
+    lua_setfield(L, -2, "spawn_events");
     lua_pushstring(L, argv[2]);
     lua_setfield(L, -2, "root");
     if (argc == 4) {

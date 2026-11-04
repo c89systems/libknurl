@@ -10,8 +10,8 @@ The binding covers server declaration/run/stop/close, configuration and serving
 state, manual TLS/HTTPS/redirect listeners, lifecycle callbacks, route counts,
 ordinary routes, groups, callback auth, request lookups/events, buffered bodies,
 body readers/materialization, live and file uploads, static files/directories,
-filesystem WebDAV, reverse-proxy configuration/callbacks, staged bytes/files and
-live response sources. Its
+filesystem WebDAV, reverse-proxy configuration/callbacks, WebSockets, SSE,
+loop registrations, staged bytes/files and live response sources. Its
 behavior comes from Vectis's [callback routes](../../vectis/manual/lua-app.md)
 and [existing bridge](../../vectis/src/vectis_cli.c), rather than a new server
 framework. The [integration contract](vectis-integration-contract.md) remains
@@ -159,6 +159,65 @@ the binding adds no second mount auth gate. Request principal metadata refreshes
 after mount authorization and retains the WebDAV public 254-byte bound. Native
 storage work never accesses Lua. Route hooks may inspect/replace staged results.
 
+`server:websocket{path=..., connect=..., message=..., disconnect=...}` retains
+Vectis's callback shape; `handler` aliases `message`. Message is required.
+The binding registers a GET headers handler and calls public
+`rotmos_websocket_accept`, rooting connection userdata before acceptance. Failed
+acceptance releases that root; successful acceptance keeps it until terminal
+close. Path kind, protocol, copied handshake headers, maximum frame/output queue
+sizes and close timeout map to the public WebSocket configuration. The path kind
+defaults to literal. This raw headers route does not implicitly run ordinary
+auth/before/after middleware, matching the public C route contract.
+
+The connection exposes `send(opcode, payload)`, `send_text`, `send_binary`,
+`close(code, reason)`, `resume`, `state` and `queued_bytes`. Constants are under
+`rotmos.websocket`. Sends accept an entire frame or return `nil, rotmos.AGAIN`
+without queuing it. Optional `writable(ws)` retries after native capacity becomes
+available. `message(ws, opcode, payload)` consumes on nil/true, or holds the
+complete frame on `nil, rotmos.AGAIN`; `resume()` schedules redelivery.
+`disconnect(ws, outcome)` retains the legacy first argument and adds the copied
+public terminal outcome, including any first callback error. The same userdata
+can be retained during its connection lifetime and becomes inert after terminal
+close. Closed sends/resumes fail with STATE; orderly close is idempotent.
+Callback exceptions/OOM follow native connection failure and cleanup; no framing,
+message assembly or output queue is implemented in Lua.
+
+`server:sse{path=..., open=..., read=..., close=...}` is the existing ordinary-route
+facade over a live source. `open(request)` supplies state (nil when omitted),
+`read(state, capacity)` returns a string/event or nil/false EOF, and `close(state)`
+runs when the selected source closes. Normal methods/auth/before/after hooks also
+apply, including `group:sse`. The default type is
+`text/event-stream; charset=utf-8`; absent cache-control/accel-buffering headers
+receive `no-cache`/`no`, including with ordered header arrays. Status/type/header
+overrides retain the ordinary response contract.
+
+`rotmos.sse_encode(event, capacity)` calls public `rotmos_sse_encode` with one
+bounded output buffer. Strings/numbers become data; event tables accept comment,
+id, event, exact unsigned retry, data or a preformatted frame. Frame takes
+precedence without reading other getters. An oversized event fails instead of
+splitting it across producer reads. This buffers one bounded event, never the
+stream. Optional `nil, rotmos.AGAIN` from read pauses; a loop callback can use the
+still-live request's `producer_resume()` to schedule another pull.
+
+`server:defer`, `timer`, `watch` and `waker` bind public loop registrations. They
+accept `{callback=..., retired=...}`; timer adds `delay_ms`/`repeat_ms`, and watch
+requires `fd` with optional `interest`. Defer/waker also accept a callback
+function directly. Registrations return an owned token with `close()`/`cancel()`;
+watches add `update(interest)`, wakers add `signal()`. Flags are under
+`rotmos.loop`, and `server:now()` returns the exact public monotonic count.
+Descriptors remain caller-owned and must already suit nonblocking delivery.
+Callback arguments are token (plus ready flags for a watch). Exceptions cancel
+that registration and preserve the first error. `retired(token, error_or_nil)`
+runs at actual native retirement, under protection. A later token close returns
+the preserved error when present. Deferred cancellation suppresses its Lua
+delivery while retaining ownership through the scheduled C retirement.
+
+Loop tokens stay rooted through retirement and fail cleanly beyond their owner
+process/run. The process-start hook invalidates inherited parent registrations
+and releases their copied roots after the C engine discards the parent loop;
+it does not replay parent retirement callbacks in the worker. Process/run checks
+precede native handle access. There is no Lua scheduler or separate event queue.
+
 `server:proxy{path=..., target=...}` binds public `rotmos_router_proxy` and
 Vectis's [proxy callback contract](../../vectis/src/vectis_cli_proxy_lua.c).
 It accepts method(s), explicit `path_kind` (default literal), up to 15
@@ -288,13 +347,17 @@ query/method/header edits, copied declarations, mutual TLS upstreams, SSE,
 WebSocket preflight rejection, binary local replies and metadata scope expiry.
 It withholds the rest of an upload until the origin receives the first chunk,
 and checks ignored setter failures, protected getters/OOM and gateway fallback.
+The [events fixture](../tests/lua/events.lua) combines loop registration,
+cancellation/retirement, fork invalidation and callback/registration allocation
+failure with live SSE pause/resume and WebSocket HTTP/mTLS echo, frame replay,
+atomic backpressure, copied handshake fields and terminal callback errors.
 
 ## Remaining binding surfaces
 
 The binding is incomplete. TLS material openers/ACME state callbacks,
 remaining policy/admission/observation/control callbacks, schemas/JSON/XML,
 REST/OpenAPI, custom asset/storage providers and packed mounts,
-standalone WebSocket/SSE and remaining direct loop/response operations still need
+remaining direct dispatch/response operations still need
 their public C bindings. Known unsupported options return an error. No transport
 or application mechanism belongs in a temporary Vectis adapter to fill those
 gaps. Lua source archive, rockspec/source-rock packaging and final installed

@@ -1,5 +1,6 @@
 local native = require('rotmos.native')
 local M = { AGAIN = native.AGAIN, EOF = native.EOF, count = native.count, status = native.status }
+M.websocket,M.loop,M.sse_encode=native.websocket,native.loop,native.sse_encode
 local Server, Group = {}, {}
 Server.__index, Group.__index = Server, Group
 local requests = setmetatable({}, {__mode='k'})
@@ -35,6 +36,7 @@ local function request(handle)
     end
   end
   out.body_resume=function() return handle:body_resume() end
+  out.producer_resume=function() return handle:producer_resume() end
   out.event=lookup('event')
   requests[handle]=out
   return out
@@ -165,6 +167,64 @@ function Server:proxy(opts)
   if not handle then return nil,err end
   return true
 end
+function Server:websocket(opts)
+  if type(opts)~='table' then return invalid('websocket declaration table required') end
+  opts=copy(opts)
+  opts.message=first(opts.message,opts.handler);opts.handler=nil
+  local handle,err=self._native:websocket(opts)
+  if not handle then return nil,err end
+  return true
+end
+for _,name in ipairs{'defer','timer','watch','waker'} do
+  Server[name]=function(self,opts)
+    if type(opts)=='function' then opts={callback=opts} end
+    return self._native[name](self._native,opts)
+  end
+end
+function Server:now() return self._native:now() end
+local function sse(self,opts)
+  if type(opts)~='table' or type(opts.read)~='function' then return invalid('SSE declaration and read callback required') end
+  opts=copy(opts)
+  local allowed={path=true,path_kind=true,method=true,methods=true,body=true,auth=true,before=true,after=true,
+    open=true,read=true,close=true,headers=true,status=true,status_code=true,content_type=true}
+  for key in pairs(opts) do if not allowed[key] then return invalid('unknown SSE field: '..tostring(key)) end end
+  for _,name in ipairs{'open','close'} do
+    if opts[name]~=nil and type(opts[name])~='function' then return invalid('SSE '..name..' must be a function') end
+  end
+  if opts.headers~=nil and type(opts.headers)~='table' then return invalid('SSE headers table required') end
+  local headers=copy(opts.headers)
+  for name,value in pairs{['cache-control']='no-cache',['x-accel-buffering']='no'} do
+    local found=false
+    for key,item in pairs(headers) do
+      local field=type(key)=='string' and key or type(item)=='table' and item.name
+      if type(field)=='string' and field:lower()==name then found=true end
+    end
+    if not found then
+      if #headers>0 then headers[#headers+1]={name=name,value=value} else headers[name]=value end
+    end
+  end
+  local route_opts={}
+  for _,name in ipairs{'path','path_kind','method','methods','auth','before','after'} do route_opts[name]=opts[name] end
+  route_opts.body='none'
+  route_opts.handler=function(req)
+    local state
+    if opts.open then state=opts.open(req) end
+    local status=opts.status_code
+    if status==nil or status==0 then status=opts.status or 200 end
+    return {status_code=status,content_type=opts.content_type or 'text/event-stream; charset=utf-8',headers=headers,
+      stream_source={
+        read=function(capacity)
+          local event,err=opts.read(state,capacity)
+          if err~=nil then return nil,err end
+          if event==nil or event==false then return nil end
+          return native.sse_encode(event,capacity)
+        end,
+        close=function() if opts.close then opts.close(state) end end,
+      }}
+  end
+  return self:route(route_opts)
+end
+Server.sse,Group.sse=sse,sse
 function M.server(opts)
   if opts~=nil and type(opts)~='table' then return invalid('server configuration table required') end
   opts=copy(opts)

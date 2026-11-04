@@ -17,6 +17,8 @@
 #define RL_COUNT "rotmos.count"
 #define RL_BODY_RESULT "rotmos.body_result"
 #define RL_REPLY "rotmos.reply"
+#define RL_LOOP_ITEM "rotmos.loop_item"
+#define RL_WEBSOCKET "rotmos.websocket"
 struct rl_reply_view {
     rotmos_reply *native;
     rotmos_request *request;
@@ -37,6 +39,8 @@ struct rl_server {
     lua_State *L;
     int root;
     rotmos_error callback_error;
+    long process_id;
+    unsigned long run_epoch;
 };
 struct rl_rule {
     struct rl_server *server;
@@ -111,6 +115,8 @@ void rl_request_close(rotmos_server *, rotmos_request *,
                       const rotmos_request_outcome *, void *);
 rotmos_status rl_reply(lua_State *, int, rotmos_reply *, rotmos_request *,
                        rotmos_error *);
+rotmos_status rl_reply_headers(lua_State *, int, rotmos_reply *,
+                               rotmos_error *);
 rotmos_status rl_handler(rotmos_request *, rotmos_reply *, void *,
                          rotmos_error *);
 rotmos_status rl_before(rotmos_request *, rotmos_reply *, int *, void *,
@@ -141,6 +147,16 @@ int rl_static_directory(lua_State *);
 int rl_upload_file(lua_State *);
 int rl_webdav(lua_State *);
 int rl_proxy(lua_State *);
+int rl_defer(lua_State *);
+int rl_timer(lua_State *);
+int rl_watch(lua_State *);
+int rl_waker(lua_State *);
+int rl_now(lua_State *);
+int rl_websocket(lua_State *);
+void rl_loops_open(lua_State *);
+void rl_loops_process_start(lua_State *, struct rl_server *);
+void rl_websockets_open(lua_State *);
+int rl_sse_encode(lua_State *);
 void rl_body_result_retire(struct rl_body_result *);
 int rl_request_body_reader(lua_State *);
 int rl_request_body_materialize(lua_State *);

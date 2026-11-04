@@ -79,10 +79,10 @@ install: build
 	"$(CMAKE)" --install '$(BUILD_DIR)' --prefix '$(PREFIX)'
 
 format:
-	clang-format -i include/rotmos/*.h src/*.c src/*.h src/lua/*.c src/lua/*.h lua/include/rotmos/*.h tests/*.c tests/*.h tests/*.cpp tests/lua/*.c
+	clang-format -i include/rotmos/*.h src/*.c src/*.h src/lua/*.c src/lua/*.h lua/include/rotmos/*.h tests/*.c tests/*.h tests/*.cpp tests/lua/*.c tests/lua/*.h
 
 format-check:
-	clang-format --dry-run --Werror include/rotmos/*.h src/*.c src/*.h src/lua/*.c src/lua/*.h lua/include/rotmos/*.h tests/*.c tests/*.h tests/*.cpp tests/lua/*.c
+	clang-format --dry-run --Werror include/rotmos/*.h src/*.c src/*.h src/lua/*.c src/lua/*.h lua/include/rotmos/*.h tests/*.c tests/*.h tests/*.cpp tests/lua/*.c tests/lua/*.h
 
 update-kore:
 	bash scripts/update-kore.sh '$(KORE_REVISION)'
