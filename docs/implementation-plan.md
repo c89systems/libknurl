@@ -37,7 +37,13 @@ ping/pong, validated close and separate handshake/connection lifetimes. The
 initial application path rejects continuation and fragmented data frames;
 transparent tunnels retain opaque fragmentation, as specified. Plain/TLS
 fixtures cover ownership, protocol failure and shutdown without Kore types.
-Continue with the upstream HTTP/framing/proxy surface and provider/codecs. Retain the
+The [HTTP framer and proxy core](proxy-core.md) now lift Vectis's generic
+headers, framing, upload/response parsing, policy views and WebSocket wire/rejection
+machinery. An owner-loop curl transport runs independently of Kore through public
+watches/timers, with bounded live-transfer coverage. The body framer is public;
+proxy declarations remain private until route execution is wired. Next connect
+the proxy route adapter, managed interim responses, error/commitment handling and
+HTTP/SSE plus WebSocket/WSS relays, then continue with providers/codecs. Retain the
 remaining ACME in-flight fault and final integration checks for the combined
 review rather than repeating the full protocol matrix for each new surface.
 

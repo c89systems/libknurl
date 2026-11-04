@@ -920,6 +920,9 @@ over a producer; the core producer starts at the supplied position.
 
 ## 10. Exclusive connection handoff and duplex I/O
 
+The reusable [HTTP body framer](proxy-core.md) supports the incremental body
+boundary and suffix handoff described below without collecting the body.
+
 This interface is required for the Vectis replacement, not an optional future
 escape hatch:
 

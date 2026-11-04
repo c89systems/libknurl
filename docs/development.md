@@ -54,6 +54,12 @@ distinguish successful input completion, cancelled unread input and failure.
 requests during a pause, deferred replies, deadlines, file/result ownership and
 callback failure. Immediate and ordinary replies preserve pipelined surplus.
 
+[HTTP framing and proxy core](proxy-core.md) provide a public incremental
+fixed/chunked body decoder and Vectis's lifted generic proxy validators,
+upload/response parsing and policy machinery. Private curl pools use public
+loop watches/timers, with a live bounded transfer fixture. Proxy route execution
+and full HTTP/SSE/WebSocket relays remain to be connected.
+
 [Connection channels](channels.md) add exclusive headers-time takeover, bounded
 raw HTTP input, explicit tail return and restoration, and validated WebSocket
 tunnel upgrades. Tunnel output uses bounded copied prefixes, preserves earlier

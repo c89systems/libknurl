@@ -14,5 +14,6 @@
 #include <rotmos/body.h>
 #include <rotmos/channel.h>
 #include <rotmos/websocket.h>
+#include <rotmos/framing.h>
 
 #endif
