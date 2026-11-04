@@ -1,0 +1,6 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(rotmos @PROJECT_VERSION@ EXACT CONFIG REQUIRED COMPONENTS shared)
+find_dependency(Lua 5.5.1 EXACT CONFIG REQUIRED)
+include("${CMAKE_CURRENT_LIST_DIR}/rotmosLuaTargets.cmake")
+check_required_components(rotmos_lua)

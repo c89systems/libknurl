@@ -144,8 +144,9 @@ Preflight still rejects low-level JSON and upload policy values without a
 corresponding facade.
 Producer trailer declarations and gate observations,
 complete fatal/allocation-failure unwinding, the protocol and
-provider helpers, the opt-in native declaration component, and the Lua product
-remain implementation work. [Process observations](processes.md) cover child
+provider helpers, the opt-in native declaration component, and the remaining Lua
+families and packaging remain implementation work.
+[Process observations](processes.md) cover child
 start/exit/restart/escalation, returned hook errors, abandonment and bounded
 failure/recovery results. Native key-manager/ACME loops use the same loop and
 teardown hooks; their fixture proves auxiliary restart/terminate policy. A
@@ -177,6 +178,8 @@ make help
 make toolchain             # Explicit provisioning; unnecessary when already prepared.
 make build                 # Compile the selected x86_64-linux-gnu target in build/debug.
 make build-all             # Compile the full seven-target matrix, serially.
+make lua                   # Build the separate Lua facade/binding against the installed shared core.
+make lua-all               # Compile both products for all seven targets, serially.
 make build-all CONFIG=release
 make test                  # Run checks for the selected toolchain target.
 make install               # Install to owned build/install/<target>/debug by default.
@@ -199,6 +202,11 @@ that target. The default is `x86_64-linux-gnu`, with `build/debug` and
 `build/debug/compile_commands.json`, matching `.clangd`; the ordinary build
 prepares its actual dependencies and generated headers. There is no host-based
 product selection.
+
+The [Lua product](lua.md) uses its own `build/debug/lua/compile_commands.json`;
+`.clangd` selects it for binding sources, embedding headers and Lua host fixtures.
+Run `make lua` once to prepare those installed public SDK inputs before editing
+the binding. Core C headers/installations remain independent of Lua.
 
 The full matrix is GNU/musl Linux for x86_64, aarch64 and armhf, plus arm64 Apple
 Darwin. `make build TARGET=<target> CONFIG=release` selects one concrete build;

@@ -1,0 +1,122 @@
+local rotmos=require('rotmos')
+assert(host_marker=='preserved')
+local function ok(value,err) assert(value,err and (err.message..' '..err.detail));return value end
+local invalid,err=rotmos.server{port=-1}
+assert(invalid==nil and err.status and err.operation and err.source)
+assert(rotmos.count('18446744073709551615').high==4294967295)
+assert(tostring(rotmos.count('18446744073709551615'))=='18446744073709551615')
+assert(rotmos.count('18446744073709551615')==rotmos.count(4294967295,4294967295))
+assert(rotmos.count('18446744073709551614')<rotmos.count('18446744073709551615'))
+assert(7<rotmos.count('18446744073709551615'))
+for _,opts in ipairs{{port=0,admission={}}, {port=0,timeouts={}}, {port=0,callbacks={on_typo=function() end}}, {port=0,on_parent_ready=false}} do
+  local value,why=rotmos.server(opts)
+  assert(value==nil and why.status==rotmos.status.INVALID)
+end
+assert(select(1,rotmos.server{port=0,tls={}})==nil)
+-- Fail allocations throughout C registration; the same owner remains usable.
+local native=require('rotmos.native')
+for n=0,18 do
+  local owner=ok(native.server{listeners={{port=0}}})
+  local spec={path='/allocation',method='GET',handler=function() return 'ok' end}
+  fixture.fail_call(n,function() return owner:route(spec) end)
+  assert(owner:route_count()<=1)
+  ok(owner:close());ok(owner:close())
+end
+collectgarbage('collect')
+local closed,calls,retained,source_closed,skipped=0,0,nil,0,0
+local server=ok(rotmos.server{
+  port=0,workers={count=1,affinity_disabled=true},http={backend_quiet=true},io={chunk_bytes=7},
+  on_parent_ready=function(s,process)
+    assert(process.role=='parent' and process.process_id>0)
+    ok(fixture.spawn(ok(s:listener()).port))
+  end,
+  on_worker_exit=function()
+    assert(source_closed==2 and skipped==0)
+  end,
+})
+assert(calls==0)
+ok(server:get('/text',function(req)
+  calls=calls+1;retained=req
+  assert(req.method=='GET' and req.path=='/text' and req.ip=='127.0.0.1')
+  assert(req.header('absent')==nil and req.header('X-Test')=='value')
+  assert(#req.headers>=3 and req.body=='')
+  assert(req.body_spooled==false)
+  return 'hello'
+end))
+ok(server:get('/nil',function() end))
+ok(server:post('/echo',function(req) assert(req.body_size==3);return {status=201,body=req.body} end,{body={mode='buffered',max_bytes=16}}))
+local group=ok(server:group('/group',{before=function(req) req.group_seen=true end}))
+ok(group:get('/value/:id',function(req)
+  assert(req.group_seen and req.query('x')=='' and #req.queries==2)
+  return req.param('id')
+end))
+local value,why=server:route{path='/literal/:value',path_kind='literal',handler=function() end}
+assert(value==nil and why.status==rotmos.status.INVALID)
+ok(server:get('/before',function() skipped=skipped+1 end,{before=function() return {status=403,body='blocked'} end,after=function() error('after short circuit') end}))
+ok(server:get('/after',function() return {body='original',headers={['X-First']='one'}} end,{after=function(_,reply) reply.status=202;reply.body='changed';reply.headers['X-After']='yes' end}))
+ok(server:get('/throw',function() error('expected protected handler error') end))
+ok(server:get('/stream',function()
+  local state={n=0}
+  return {stream_source={
+    reset=function() assert(state.n==0);state.reset=true end,
+    read=function(capacity)
+      assert(capacity<=7 and state.reset);state.n=state.n+1
+      if state.n==1 then return string.rep('s',1000) end
+      if state.n==2 then return 123 end
+      if state.n==3 then return '' end
+      error('source read past EOF')
+    end,
+    close=function() source_closed=source_closed+1;assert(state.n==3) end,
+  }}
+end))
+ok(server:get('/source-error',function() return {stream_source={read=function() error('expected source failure') end,close=function() source_closed=source_closed+1 end}} end))
+ok(server:get('/getter-error',function() return setmetatable({},{__index=function() error('expected getter failure') end}) end))
+local reply={body='cannot allocate this reply'}
+ok(server:get('/oom-reply',function() fixture.fail_next();return reply end))
+ok(server:get('/oom-source',function()
+  return {stream_source=setmetatable({},{__index=function(_,key)
+    if key=='read' then fixture.fail_next();return function() return nil end end
+  end})}
+end))
+local untouched={stream_source=setmetatable({},{__index=function() error('unselected source getter') end})}
+ok(server:get('/discard',function() return untouched end,{after=function(_,value)
+  assert(value==untouched)
+  return {status_code=203,status=599,body='replacement',headers={['X-Number']=17}}
+end}))
+assert(server:group{
+  path_prefix='/table-group',method='GET',body=false,
+  before=function(req) req.default_seen=true end,
+  routes={
+    {path='entry',handler=function(req) assert(req.default_seen);return 'default' end},
+    {path='other',methods={'POST','PUT'},before=function(req) assert(not req.default_seen) end,
+     handler=function() return 'override' end},
+  },
+}==true)
+ok(server:get('/verify',function()
+  local value,expired=retained.header('x')
+  assert(value==nil and expired.kind=='invalid state')
+  assert(calls==1 and source_closed==2 and skipped==0)
+  return 'verified'
+end))
+ok(server:get('/stop',function() ok(server:stop());return 'stopped' end))
+assert(server:route_count()==17)
+local value,why=server:route{path='/bad-method',method='BOGUS',handler=function() end}
+assert(value==nil and why.status==rotmos.status.INVALID and server:route_count()==17)
+value,why=server:route{path='/auth',auth={},handler=function() end}
+assert(value==nil and why.status==rotmos.status.NOT_SUPPORTED)
+ok(server:validate())
+ok(server:run())
+ok(fixture.join())
+ok(server:close());ok(server:close())
+local value,expired=server:get('/closed',function() end)
+assert(value==nil and expired.status)
+-- GC closes an untransferred provider once, without invoking read.
+do
+  local src=ok(rotmos.source{read=function() error('read during GC') end,close=function() closed=closed+1 end})
+  src=nil
+end
+collectgarbage('collect');collectgarbage('collect');assert(closed==1)
+local broken=ok(rotmos.source{read=function() return nil,rotmos.EOF end,close=function() error('expected close failure') end})
+local value,why=broken:close()
+assert(value==nil and why.message:find('expected close failure',1,true))
+assert(host_marker=='preserved')

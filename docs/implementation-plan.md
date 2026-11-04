@@ -97,3 +97,11 @@ HTTP framing, WebDAV, REST/OpenAPI/assets, JSON/XML2 codecs, admission/logging,
 the native-reader executor, Lua facade/public C binding, installed-consumer
 coverage and final lifecycle/packaging proof. ACME progress does not narrow that
 scope or establish Vectis replacement readiness.
+
+The initial [Lua facade/binding](lua.md) now lifts Vectis's ordinary route,
+group/default, request-table and live-source contracts through the installed
+public shared C API. It uses the host VM and public process snapshots, protects
+the entire callback conversion/cleanup boundary, and rejects unbound options.
+Its installed-runtime fixture covers preload/dynamic loading and allocation
+failure without adding a private router or source queue. The remaining Lua
+families, source packaging and final consumer/artifact checks are still required.

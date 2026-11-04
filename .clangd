@@ -1,2 +1,7 @@
 CompileFlags:
   CompilationDatabase: build/debug
+---
+If:
+  PathMatch: (src/lua/.*|lua/include/.*|tests/lua/.*)
+CompileFlags:
+  CompilationDatabase: build/debug/lua
