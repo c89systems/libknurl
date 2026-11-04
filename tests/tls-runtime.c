@@ -474,6 +474,13 @@ static int exchange(struct fixture *fixture, int index, const char *sni,
                       reply);
     CHECK(expected == NULL ? strstr(reply, "200 ") == NULL
                            : strstr(reply, expected) != NULL);
+    if (strstr(reply, "\r\n\r\n") != NULL) {
+        CHECK(strstr(reply, "server: vectis-header-fixture\r\n") != NULL);
+        CHECK(ssl != NULL
+                  ? strstr(reply, "strict-transport-security: max-age=997; "
+                                  "includeSubDomains\r\n") != NULL
+                  : strstr(reply, "strict-transport-security:") == NULL);
+    }
     SSL_free(ssl);
     SSL_CTX_free(ctx);
     CHECK(close(fd) == 0);
@@ -699,6 +706,8 @@ static int run(struct fixture *fixture)
     config.listener_count = 7;
     config.workers.count = 1;
     config.workers.affinity_disabled = config.http.backend_quiet = 1;
+    config.http.server_header = "vectis-header-fixture";
+    config.http.hsts_max_age_seconds = 997;
     config.workers.shutdown_timeout_ms = 1000;
     config.tls.identities = identities;
     config.tls.identity_count = 4;

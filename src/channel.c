@@ -466,7 +466,8 @@ rotmos_status rotmos_channel_close(rotmos_channel *c, rotmos_status cause,
     if (cause == ROTMOS_OK &&
         (c->queued != 0 ||
          (c->phase == ROTMOS_CHANNEL_TUNNEL &&
-          ((c->response != NULL && c->response->head != NULL) ||
+          ((c->response != NULL &&
+            (c->response->head != NULL || c->response->pending_head != NULL)) ||
            (c->shutdown_requested && !c->outcome.write_shutdown))) ||
          (c->phase == ROTMOS_CHANNEL_HTTP_INPUT && !c->input_complete)))
         return rotmos_fail(

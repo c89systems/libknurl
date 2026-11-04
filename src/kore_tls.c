@@ -179,6 +179,8 @@ int rotmos_kore_redirect(rotmos_request *request)
                      ? request->target.data
                      : "/";
         bound = request->server->config.limits.max_response_header_bytes;
+        if (bound == 0)
+            bound = (size_t)-1;
         length = 8 + strlen(host) + strlen(port);
         if (length >= bound || strlen(target) >= bound - length)
             status = 414;

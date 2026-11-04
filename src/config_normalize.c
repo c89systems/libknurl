@@ -200,7 +200,6 @@ rotmos_status rotmos_config_normalize(rotmos_server_config *config,
     DEFAULT_FIELD(limits.max_connections, 1024);
     DEFAULT_FIELD(limits.request_limit, config->limits.max_connections);
     DEFAULT_FIELD(limits.max_request_header_bytes, 65536UL);
-    DEFAULT_FIELD(limits.max_response_header_bytes, 65536UL);
     DEFAULT_FIELD(limits.websocket_max_frame_bytes, 16384);
     DEFAULT_FIELD(http.keepalive_max_requests, 100);
     DEFAULT_FIELD(http.socket_backlog, 5000);
@@ -238,7 +237,8 @@ rotmos_status rotmos_config_normalize(rotmos_server_config *config,
         config->http.backend_curl_timeout_seconds > 65535 ||
         config->http.socket_backlog > INT_MAX ||
         config->limits.max_request_header_bytes < 1024 ||
-        config->limits.max_response_header_bytes < 1024)
+        (config->limits.max_response_header_bytes != 0 &&
+         config->limits.max_response_header_bytes < 1024))
         return invalid(error, "connection, worker, backlog, header or curl "
                               "limit exceeds backend range");
     if ((config->dispatch.mode != ROTMOS_DISPATCH_ROUTER &&

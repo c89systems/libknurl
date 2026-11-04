@@ -6,9 +6,85 @@
 #include <stdlib.h>
 #include <string.h>
 
-const char *rotmos_response_reason(int status)
+static rotmos_status copy_buffer(struct kore_buf *buffer,
+                                 rotmos_owned_bytes *out, rotmos_error *error)
 {
-    return http_status_text(status);
+    out->data = malloc(buffer->offset);
+    if (out->data == NULL)
+        return rotmos_fail(error, ROTMOS_NOMEM, "response_head",
+                           "cannot copy backend output");
+    memcpy(out->data, buffer->data, buffer->offset);
+    out->length = buffer->offset;
+    return ROTMOS_OK;
+}
+rotmos_status rotmos_response_head(rotmos_response *r, rotmos_owned_bytes *out,
+                                   rotmos_error *error)
+{
+    struct http_request *native = r->request->native;
+    struct http_response_field *fields;
+    struct kore_buf buffer;
+    size_t count, i;
+    int flags, closed;
+    u_int64_t length;
+    rotmos_status status;
+    rotmos_owned_bytes_init(out);
+    fields = malloc((r->headers->header_count + 2) * sizeof(*fields));
+    if (fields == NULL)
+        return rotmos_fail(error, ROTMOS_NOMEM, "response_head",
+                           "cannot allocate header views");
+    count = r->headers->header_count;
+    for (i = 0; i < count; ++i) {
+        fields[i].name = r->headers->headers[i].name.data;
+        fields[i].value = r->headers->headers[i].value.data;
+    }
+    if (r->chunked) {
+        fields[count].name = "transfer-encoding";
+        fields[count++].value = "chunked";
+    }
+    if (r->trailer_names != NULL && *r->trailer_names != '\0') {
+        fields[count].name = "trailer";
+        fields[count++].value = r->trailer_names;
+    }
+    flags = HTTP_RESPONSE_HEAD_COUNTED;
+    if (r->close_connection)
+        flags |= HTTP_RESPONSE_HEAD_CLOSE;
+    if (!r->has_length && r->outcome.status != 205)
+        flags |= HTTP_RESPONSE_HEAD_NO_LENGTH;
+    if (r->outcome.status == 101)
+        flags |= HTTP_RESPONSE_HEAD_UPGRADE;
+    length = r->outcome.status == 205
+                 ? 0
+                 : ((u_int64_t)r->length.high << 32) | r->length.low;
+    kore_buf_init(&buffer, 1024);
+    closed = http_response_head_build(native, native->owner, r->outcome.status,
+                                      flags, length, fields, count, &buffer);
+    free(fields);
+    if (buffer.offset > r->header_bound)
+        status = rotmos_fail(error, ROTMOS_LIMIT, "response_head",
+                             "response header limit exceeded");
+    else
+        status = copy_buffer(&buffer, out, error);
+    kore_buf_cleanup(&buffer);
+    if (status == ROTMOS_OK) {
+        r->close_connection = closed;
+        native->status = r->outcome.status;
+        native->content_length = r->has_length ? length : 0;
+    }
+    return status;
+}
+rotmos_status rotmos_response_pretty(int code, rotmos_owned_bytes *out,
+                                     rotmos_error *error)
+{
+    struct kore_buf buffer;
+    rotmos_status status = ROTMOS_OK;
+    rotmos_owned_bytes_init(out);
+    if (!http_pretty_error || code < 400)
+        return ROTMOS_OK;
+    kore_buf_init(&buffer, 1024);
+    if (http_response_error_body(code, &buffer))
+        status = copy_buffer(&buffer, out, error);
+    kore_buf_cleanup(&buffer);
+    return status;
 }
 
 struct rotmos_delivery {
@@ -71,9 +147,6 @@ rotmos_status rotmos_kore_response_create(struct rotmos_runtime *runtime,
     struct rotmos_delivery *delivery;
     struct http_request *native;
     rotmos_status status;
-    rotmos_bytes value;
-    size_t i;
-    const char *text;
     delivery = calloc(1, sizeof(*delivery));
     if (delivery == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "response",
@@ -101,37 +174,6 @@ rotmos_status rotmos_kore_response_create(struct rotmos_runtime *runtime,
     kore_platform_schedule_write(native->owner->fd, native->owner);
     native->owner->evt.flags &= ~KORE_EVENT_READ;
     ++native->owner->http_response_count;
-    request->response->close_connection =
-        !http_keepalive_time ||
-        (http_keepalive_max_requests > 0 &&
-         native->owner->http_response_count >= http_keepalive_max_requests);
-    for (i = 0; i < request->header_count; ++i) {
-        if (!rotmos_text_equal_case(request->headers[i].name.data,
-                                    "connection"))
-            continue;
-        value = request->headers[i].value;
-        text = value.data;
-        while (value.length != 0) {
-            size_t count;
-            while (value.length &&
-                   (*text == ' ' || *text == '\t' || *text == ',')) {
-                ++text;
-                --value.length;
-            }
-            count = 0;
-            while (count < value.length && text[count] != ',')
-                ++count;
-            if (count >= 5 && (text[0] == 'c' || text[0] == 'C') &&
-                (text[1] == 'l' || text[1] == 'L') &&
-                (text[2] == 'o' || text[2] == 'O') &&
-                (text[3] == 's' || text[3] == 'S') &&
-                (text[4] == 'e' || text[4] == 'E') &&
-                (count == 5 || text[5] == ' ' || text[5] == '\t'))
-                request->response->close_connection = 1;
-            text += count;
-            value.length -= count;
-        }
-    }
     return ROTMOS_OK;
 }
 
@@ -292,7 +334,7 @@ static void advance(struct rotmos_delivery *delivery)
     }
     if (response->phase == ROTMOS_RESPONSE_COMPLETE &&
         (connection == NULL || connection->state == CONN_STATE_DISCONNECTING)) {
-        if (response->head == NULL) {
+        if (response->head == NULL && response->pending_head == NULL) {
             terminal(delivery);
             return;
         }
@@ -334,7 +376,8 @@ static void advance(struct rotmos_delivery *delivery)
     if (request->websocket != NULL &&
         response->phase == ROTMOS_RESPONSE_FINISHING &&
         response->outcome.status == 101 && response->head == NULL &&
-        !response->inflight && TAILQ_EMPTY(&connection->send_queue) &&
+        response->pending_head == NULL && !response->inflight &&
+        TAILQ_EMPTY(&connection->send_queue) &&
         request->channel->phase == ROTMOS_CHANNEL_TUNNEL)
         response->phase = ROTMOS_RESPONSE_COMPLETE;
     if (((response->phase == ROTMOS_RESPONSE_FINISHING &&
@@ -342,7 +385,7 @@ static void advance(struct rotmos_delivery *delivery)
            request->channel->phase != ROTMOS_CHANNEL_TUNNEL)) ||
          (response->phase == ROTMOS_RESPONSE_COMPLETE &&
           request->channel != NULL)) &&
-        response->head == NULL) {
+        response->head == NULL && response->pending_head == NULL) {
         terminal(delivery);
         return;
     }

@@ -378,7 +378,7 @@ static int client(unsigned short port)
                    201, "replaced", 0, 0) == 0);
     CHECK(exchange(port, "/deny", "<", 403, "denied", 0, 0) == 0);
     CHECK(exchange(port, "/limit", "<doc><message>too large</message></doc>",
-                   413, "", 0, 0) == 0);
+                   413, "request body exceeds route limit", 0, 0) == 0);
     CHECK(exchange(port, "/api/echo",
                    "<!DOCTYPE doc [<!ENTITY x "
                    "'entity'>]><doc><message>&x;</message></doc>",

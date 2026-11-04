@@ -75,6 +75,15 @@ forwarding now covers threshold spill and disabled-spill/I/O failure timing,
 intrinsic/server-limit registration checks, borrowed readers and deferred file
 opening after hooks. Remaining route/provider, proxy/TLS and lifecycle operation
 forwarding and the broader surface audit remain open.
-Next review response head generation against Kore: server-header/HSTS settings
-are configured but bypassed by the current custom head writer. Use the backend's
-existing behavior and prove the configured wire output before expanding adapters.
+Managed and ordinary Kore responses now share the backend head codec through an
+external patch. Configured Server/HSTS, keep-alive metadata/request budgets,
+native cookies/headers and optional error pages are preserved. Default response
+headers have no added size ceiling; pending heads drain within the output queue.
+The public reference fixture checks large heads, manual backpressure/replacement,
+HEAD/304 and configured error output. TLS/native backend cases check HSTS and
+cookie/header merging. Next resolve the remaining ordinary-file behavior from
+Kore fileref (Last-Modified and conditional replies), and review staged header
+forwarding: Vectis filters Content-Length/Transfer-Encoding, while submission
+currently drops the additional connection/trailer/upgrade fields rejected by
+the low-level sender. Then continue the remaining adapter families and broader
+surface audit.

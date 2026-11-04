@@ -323,6 +323,7 @@ static void events(rotmos_channel *channel, unsigned int ready, void *userdata)
 static void upgrade(rotmos_timer *timer, void *userdata)
 {
     struct context *c;
+    char padding[1201];
     rotmos_header fields[5];
     const char *names[] = {"Upgrade", "Connection", "Sec-WebSocket-Accept",
                            "Sec-WebSocket-Protocol", "Connection"};
@@ -367,6 +368,11 @@ static void upgrade(rotmos_timer *timer, void *userdata)
     }
     OBSERVE(rotmos_response_header_set(rotmos_request_response(c->request),
                                        "X-Upgrade-Context", "retained",
+                                       NULL) == ROTMOS_OK);
+    memset(padding, 'Z', sizeof(padding) - 1);
+    padding[sizeof(padding) - 1] = '\0';
+    OBSERVE(rotmos_response_header_set(rotmos_request_response(c->request),
+                                       "X-Upgrade-Queue", padding,
                                        NULL) == ROTMOS_OK);
     OBSERVE(rotmos_channel_upgrade(c->channel, fields, 5, NULL) == ROTMOS_OK);
     OBSERVE(rotmos_channel_upgrade(c->channel, fields, 5, NULL) ==
@@ -702,6 +708,20 @@ static int echo_tunnel(unsigned short port, const char *path, int prefix)
           strstr(response, "transfer-encoding:") == NULL);
     CHECK(strstr(response, "Sec-WebSocket-Protocol: chat\r\n") != NULL);
     CHECK(strstr(response, "X-Upgrade-Context: retained\r\n") != NULL);
+#ifdef ROTMOS_CHANNEL_BACKEND_TEST
+    if (prefix == 1) {
+        CHECK(strstr(response, "X-Escape-Context: retained\r\n") != NULL);
+        CHECK(strstr(response, "set-cookie: escape=kept; Domain=localhost; "
+                               "HttpOnly; Secure\r\n") != NULL);
+    }
+#endif
+    end = strstr(response, "X-Upgrade-Queue: ");
+    CHECK(end != NULL);
+    end += strlen("X-Upgrade-Queue: ");
+    for (i = 0; i < 1200; ++i)
+        CHECK(end[i] == 'Z');
+    CHECK(memcmp(end + 1200, "\r\n", 2) == 0);
+    end = strstr(response, "\r\n\r\n");
     received = used - (size_t)(end + 4 - response);
     for (i = 0; i < received; ++i)
         CHECK((unsigned char)end[4 + i] == (unsigned char)('a' + i % 26));
@@ -864,6 +884,7 @@ int main(void)
     config.dispatch.on_headers = headers;
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
     config.io.chunk_bytes = 1024;
+    config.io.output_queue_bytes = 1024;
     config.timeouts.connection_idle.milliseconds = 250;
     config.callbacks.on_parent_ready = ready;
     config.callbacks.userdata = &fixture;

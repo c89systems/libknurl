@@ -58,3 +58,10 @@ upload spill behavior, defaults and registration failures, disabled spilling,
 spool I/O failure and cleanup, then after-hook file creation/replacement/removal
 and final 404/HEAD/bodyless handling. The adapter never collects input or opens
 reply files; those operations remain in librotmos.
+
+[vectis-response-head.c](../tests/vectis-response-head.c) uses the baseline server
+translation to check configured Server, keep-alive timeout/budget, ordinary error
+pages, HEAD/304, optional header limits and large-head queueing/replacement.
+Kore's head codec is shared through an external patch; the adapter adds no encoder.
+The TLS/backend cases separately cover HSTS and native cookies/header merging.
+Ordinary-file Last-Modified/conditional behavior is still an open parity gap.

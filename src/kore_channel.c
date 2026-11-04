@@ -284,7 +284,9 @@ static void interest(rotmos_channel *channel)
         wanted |=
             backend->managed_wait ? backend->managed_wait : ROTMOS_WRITABLE;
     } else if (channel->phase == ROTMOS_CHANNEL_TUNNEL &&
-               (channel->response == NULL || channel->response->head == NULL)) {
+               (channel->response == NULL ||
+                (channel->response->head == NULL &&
+                 channel->response->pending_head == NULL))) {
         if (channel->head != NULL)
             wanted |=
                 channel->write_wait ? channel->write_wait : ROTMOS_WRITABLE;
@@ -363,7 +365,9 @@ static void pump(rotmos_channel *channel)
             return;
     }
     if (channel->phase != ROTMOS_CHANNEL_TUNNEL ||
-        (channel->response != NULL && channel->response->head != NULL))
+        (channel->response != NULL &&
+         (channel->response->head != NULL ||
+          channel->response->pending_head != NULL)))
         return;
     if (!backend->handshake_drained) {
         backend->handshake_drained = 1;

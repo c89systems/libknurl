@@ -83,7 +83,7 @@ void rotmos_server_config_init(rotmos_server_config *config)
     config->limits.max_connections = 1024;
     config->limits.request_limit = 0;
     config->limits.max_request_header_bytes = 65536UL;
-    config->limits.max_response_header_bytes = 65536UL;
+    config->limits.max_response_header_bytes = 0;
     config->limits.default_body_bytes.high = 0;
     config->limits.default_body_bytes.low = 10UL * 1024UL * 1024UL;
     config->limits.hard_body_bytes.high = config->limits.hard_body_bytes.low =

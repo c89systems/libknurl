@@ -94,6 +94,9 @@ static void clear_queue(rotmos_response *r)
 {
     while (r->head != NULL)
         rotmos_response_shift(r);
+    free(r->pending_head);
+    r->pending_head = NULL;
+    r->pending_head_length = r->pending_head_position = 0;
 }
 
 static void retire_source(rotmos_response *r, rotmos_status cause)
@@ -144,6 +147,8 @@ rotmos_status rotmos_response_create(rotmos_request *request,
     r->bound = request->server->config.io.output_queue_bytes;
     r->chunk = request->server->config.io.chunk_bytes;
     r->header_bound = request->server->config.limits.max_response_header_bytes;
+    if (r->header_bound == 0)
+        r->header_bound = (size_t)-1;
     status = rotmos_reply_new(&r->headers, error);
     if (status != ROTMOS_OK) {
         free(r);
@@ -468,15 +473,41 @@ rotmos_status rotmos_response_interim(rotmos_response *r, int code,
     return status;
 }
 
+static rotmos_status flush_head(rotmos_response *r, rotmos_error *error)
+{
+    unsigned char *copy;
+    size_t count;
+    rotmos_status status;
+    if (r->pending_head == NULL)
+        return ROTMOS_OK;
+    count = r->pending_head_length - r->pending_head_position;
+    if (count > r->bound - r->queued)
+        count = r->bound - r->queued;
+    if (count == 0)
+        return ROTMOS_AGAIN;
+    copy = malloc(count);
+    if (copy == NULL)
+        return rotmos_fail(error, ROTMOS_NOMEM, "response_head",
+                           "cannot queue response headers");
+    memcpy(copy, r->pending_head + r->pending_head_position, count);
+    status = enqueue(r, copy, count, 0, 0, error);
+    if (status != ROTMOS_OK) {
+        free(copy);
+        return status;
+    }
+    r->pending_head_position += count;
+    if (r->pending_head_position == r->pending_head_length) {
+        free(r->pending_head);
+        r->pending_head = NULL;
+        r->pending_head_length = r->pending_head_position = 0;
+    }
+    return ROTMOS_OK;
+}
+
 rotmos_status rotmos_response_begin(rotmos_response *r, rotmos_error *error)
 {
     rotmos_status status;
-    unsigned char *data;
-    size_t length;
-    size_t offset;
-    size_t i;
-    char decimal[21];
-    size_t decimal_length;
+    rotmos_owned_bytes head;
     const char *version;
     status = building(r, error);
     if (status != ROTMOS_OK)
@@ -491,58 +522,20 @@ rotmos_status rotmos_response_begin(rotmos_response *r, rotmos_error *error)
         !r->suppressed && !r->has_length && strcmp(version, "HTTP/1.1") == 0;
     if (strcmp(version, "HTTP/1.0") == 0)
         r->close_connection = 1;
-    length = 128;
-    for (i = 0; r->outcome.status != 100 && i < r->headers->header_count; ++i)
-        length += r->headers->headers[i].name.length +
-                  r->headers->headers[i].value.length + 4;
-    if (r->trailer_names != NULL)
-        length += strlen(r->trailer_names) + 11;
-    if (length > r->header_bound || length > r->bound)
-        return rotmos_fail(error, ROTMOS_LIMIT, "response_begin",
-                           "response headers cannot fit their finite bound");
-    data = malloc(length);
-    if (data == NULL)
-        return rotmos_fail(error, ROTMOS_NOMEM, "response_begin",
-                           "cannot allocate response headers");
-    offset = (size_t)sprintf((char *)data, "%s %d %s\r\n", version,
-                             r->outcome.status,
-                             rotmos_response_reason(r->outcome.status));
-    /* Kore's existing status-100 response is the bare Continue head. */
-    if (r->outcome.status == 100)
-        goto finish_headers;
-    for (i = 0; i < r->headers->header_count; ++i)
-        offset +=
-            (size_t)sprintf((char *)data + offset, "%s: %s\r\n",
-                            (const char *)r->headers->headers[i].name.data,
-                            (const char *)r->headers->headers[i].value.data);
-    if (r->outcome.status == 205) {
-        offset +=
-            (size_t)sprintf((char *)data + offset, "content-length: 0\r\n");
-    } else if (r->has_length && r->outcome.status >= 200 &&
-               r->outcome.status != 204) {
-        (void)rotmos_u64_format_decimal(r->length, decimal, sizeof(decimal),
-                                        &decimal_length, NULL);
-        offset += (size_t)sprintf((char *)data + offset,
-                                  "content-length: %s\r\n", decimal);
-    } else if (r->chunked) {
-        offset += (size_t)sprintf((char *)data + offset,
-                                  "transfer-encoding: chunked\r\n");
-    }
-    if (r->trailer_names != NULL && r->trailer_names[0] != '\0')
-        offset += (size_t)sprintf((char *)data + offset, "trailer: %s\r\n",
-                                  r->trailer_names);
-    if (r->close_connection)
-        offset +=
-            (size_t)sprintf((char *)data + offset, "connection: close\r\n");
-finish_headers:
-    memcpy(data + offset, "\r\n", 2);
-    offset += 2;
-    status = enqueue(r, data, offset, 0, 0, error);
-    if (status != ROTMOS_OK) {
-        free(data);
+    status = rotmos_response_head(r, &head, error);
+    if (status != ROTMOS_OK)
+        return status;
+    r->pending_head = head.data;
+    r->pending_head_length = head.length;
+    status = flush_head(r, error);
+    if (status != ROTMOS_OK && status != ROTMOS_AGAIN) {
+        free(r->pending_head);
+        r->pending_head = NULL;
+        r->pending_head_length = r->pending_head_position = 0;
         return status;
     }
     r->phase = ROTMOS_RESPONSE_ACTIVE;
+    r->schedule(r);
     rotmos_error_clear(error);
     return ROTMOS_OK;
 }
@@ -571,6 +564,12 @@ static rotmos_status write_body(rotmos_response *r, const void *data,
     if (length == 0) {
         rotmos_error_clear(error);
         return ROTMOS_OK;
+    }
+    if (r->pending_head != NULL) {
+        r->blocked = 1;
+        r->writable_need = 1;
+        rotmos_error_clear(error);
+        return ROTMOS_AGAIN;
     }
     capacity = r->bound - r->queued;
     if (capacity <= 32) {
@@ -738,6 +737,13 @@ static rotmos_status end_response(rotmos_response *r,
                    : ROTMOS_STATE;
     }
     if (length != 0) {
+        if (r->pending_head != NULL) {
+            free(ending);
+            r->blocked = 1;
+            r->writable_need = 1;
+            rotmos_error_clear(error);
+            return ROTMOS_AGAIN;
+        }
         copy = malloc(length);
         if (copy == NULL) {
             free(ending);
@@ -813,6 +819,9 @@ rotmos_status rotmos_response_replace_uncommitted(rotmos_response *r,
         }
     }
     clear_producer(r, ROTMOS_CANCELLED);
+    free(r->pending_head);
+    r->pending_head = NULL;
+    r->pending_head_length = r->pending_head_position = 0;
     (void)rotmos_reply_destroy(r->headers, NULL);
     r->headers = headers;
     free(r->trailer_names);
@@ -1022,10 +1031,12 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
     int saved_close;
     size_t i;
     rotmos_u64 representation;
+    rotmos_owned_bytes pretty;
     int has_representation;
     status = available_producer(r, error);
     if (status != ROTMOS_OK)
         return status;
+    rotmos_owned_bytes_init(&pretty);
     saved = r->headers;
     saved_status = r->outcome.status;
     saved_length = r->length;
@@ -1083,8 +1094,20 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
                         r, reply->file, zero, reply->file_length, error);
             }
         } else {
-            r->has_length = !bodyless(r) || reply->body_length != 0;
+            r->has_length = !status_bodyless(r->outcome.status);
             (void)rotmos_u64_from_size(reply->body_length, &r->length, NULL);
+        }
+    }
+    if (status_bodyless(r->outcome.status))
+        r->has_length = 0;
+    if (status == ROTMOS_OK && r->outcome.status >= 400 &&
+        reply->kind != ROTMOS_REPLY_SOURCE && reply->body_length == 0 &&
+        (reply->kind != ROTMOS_REPLY_FILE ||
+         (r->file_remaining.high == 0 && r->file_remaining.low == 0))) {
+        status = rotmos_response_pretty(r->outcome.status, &pretty, error);
+        if (status == ROTMOS_OK && pretty.data != NULL) {
+            r->has_length = 1;
+            status = rotmos_u64_from_size(pretty.length, &r->length, error);
         }
     }
     if (status == ROTMOS_OK && has_representation) {
@@ -1094,6 +1117,7 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
     if (status == ROTMOS_OK)
         status = rotmos_response_begin(r, error);
     if (status != ROTMOS_OK) {
+        rotmos_owned_bytes_cleanup(&pretty);
         if (r->source != NULL) {
             r->source->owner = reply;
             r->source->resume = NULL;
@@ -1117,11 +1141,16 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
     else if (reply->kind == ROTMOS_REPLY_FILE && r->file == reply->file &&
              r->file != -1)
         reply->file = -1;
-    else {
+    else if (pretty.data == NULL) {
         r->memory = reply->body;
         r->memory_length = reply->body_length;
         reply->body = NULL;
         reply->body_length = 0;
+        r->producer = 1;
+    }
+    if (pretty.data != NULL) {
+        r->memory = pretty.data;
+        r->memory_length = pretty.length;
         r->producer = 1;
     }
     return ROTMOS_OK;
@@ -1145,24 +1174,15 @@ void rotmos_response_error_message(rotmos_response *r, rotmos_status cause,
     if (!r->outcome.committed && !r->inflight) {
         retire_source(r, cause);
         if (rotmos_response_replace_uncommitted(r, NULL) == ROTMOS_OK) {
-            if (message != NULL && *message != '\0') {
-                status = rotmos_reply_new(&failure, NULL);
-                if (status == ROTMOS_OK) {
-                    status = rotmos_reply_failure(failure, code, message);
-                    if (status == ROTMOS_OK)
-                        status = rotmos_response_submit(r, failure, NULL);
-                    (void)rotmos_reply_destroy(failure, NULL);
-                    if (status == ROTMOS_OK)
-                        return;
-                }
-                (void)rotmos_response_abort(r, cause, NULL);
-                return;
+            status = rotmos_reply_new(&failure, NULL);
+            if (status == ROTMOS_OK) {
+                status = rotmos_reply_failure(failure, code, message);
+                if (status == ROTMOS_OK)
+                    status = rotmos_response_submit(r, failure, NULL);
+                (void)rotmos_reply_destroy(failure, NULL);
+                if (status == ROTMOS_OK)
+                    return;
             }
-            r->outcome.status = code;
-            r->has_length = 1;
-            if (rotmos_response_begin(r, NULL) == ROTMOS_OK &&
-                end_response(r, NULL, 0, NULL) == ROTMOS_OK)
-                return;
         }
     }
     (void)rotmos_response_abort(r, cause, NULL);
@@ -1189,6 +1209,15 @@ void rotmos_response_step(rotmos_response *r)
         r->busy = 1;
         rotmos_source_release(retired, retired->failure);
         r->busy = 0;
+    }
+    if (r->pending_head != NULL && r->phase != ROTMOS_RESPONSE_ABORTED) {
+        status = flush_head(r, NULL);
+        if (status != ROTMOS_OK && status != ROTMOS_AGAIN) {
+            rotmos_response_fail(r, status);
+            return;
+        }
+        if (r->pending_head != NULL)
+            return;
     }
     if (r->blocked &&
         (r->phase == ROTMOS_RESPONSE_ACTIVE ||
@@ -1228,7 +1257,8 @@ void rotmos_response_step(rotmos_response *r)
     buffer = NULL;
     count = 0;
     status = ROTMOS_EOF;
-    if (r->source != NULL || r->file != -1) {
+    if (r->source != NULL ||
+        (r->file != -1 && (r->file_remaining.high || r->file_remaining.low))) {
         buffer = malloc(capacity);
         if (buffer == NULL) {
             rotmos_response_fail(r, ROTMOS_NOMEM);

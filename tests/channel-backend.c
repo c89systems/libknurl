@@ -76,6 +76,8 @@ int rotmos_test_prefix(rotmos_request *request)
     if (!clean_connection_events() || !retained_frame_budget())
         return 0;
     native = rotmos_kore_request(request);
+    http_response_header(native, "X-Escape-Context", "retained");
+    http_response_cookie(native, "escape", "kept", NULL, 0, 0, NULL);
     completions = failed = 0;
     size = 4096;
     if (setsockopt(native->owner->fd, SOL_SOCKET, SO_SNDBUF, &size,

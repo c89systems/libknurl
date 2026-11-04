@@ -32,6 +32,9 @@ struct rotmos_response {
     char *trailer_names;
     unsigned char *ending;
     size_t ending_length;
+    unsigned char *pending_head;
+    size_t pending_head_length;
+    size_t pending_head_position;
     struct rotmos_response_segment *head;
     struct rotmos_response_segment *tail;
     size_t queued;
@@ -81,7 +84,9 @@ void rotmos_response_sent(rotmos_response *response, size_t offset,
 void rotmos_response_shift(rotmos_response *response);
 void rotmos_response_terminal(rotmos_response *response);
 void rotmos_response_release(rotmos_response *response);
-const char *rotmos_response_reason(int status);
+rotmos_status rotmos_response_head(rotmos_response *, rotmos_owned_bytes *,
+                                   rotmos_error *);
+rotmos_status rotmos_response_pretty(int, rotmos_owned_bytes *, rotmos_error *);
 rotmos_status rotmos_response_upgrade_headers(rotmos_response *response,
                                               const rotmos_header *headers,
                                               size_t count,

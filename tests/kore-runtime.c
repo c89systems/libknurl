@@ -30,8 +30,38 @@ static void backend_fatal(void *userdata, const char *message)
 
 static int serve(struct http_request *request)
 {
+    struct kore_buf head;
+    struct http_response_field fields[3];
+    unsigned int counted;
+    int failed;
+    http_response_cookie(request, "session", "native", "/", 0, 0, NULL);
+    http_response_header(request, "x-backend", "retained");
+    http_response_header(request, "x-overridden", "native");
+    http_response_header(request, "set-cookie", "first=one");
+    fields[0].name = "x-overridden";
+    fields[0].value = "staged";
+    fields[1].name = fields[2].name = "set-cookie";
+    fields[1].value = "second=two";
+    fields[2].value = "third=three";
+    counted = request->owner->http_response_count;
+    kore_buf_init(&head, 1024);
+    (void)http_response_head_build(request, request->owner, 200,
+                                   HTTP_RESPONSE_HEAD_COUNTED, 6, fields, 3,
+                                   &head);
+    (void)kore_buf_stringify(&head, NULL);
+    failed = request->owner->http_response_count != counted ||
+             strstr((char *)head.data, "x-backend: retained\r\n") == NULL ||
+             strstr((char *)head.data, "x-overridden: staged\r\n") == NULL ||
+             strstr((char *)head.data, "x-overridden: native\r\n") != NULL ||
+             strstr((char *)head.data,
+                    "set-cookie: session=native; Path=/; "
+                    "Domain=localhost; HttpOnly; Secure\r\n") == NULL ||
+             strstr((char *)head.data, "set-cookie: first=one\r\n") == NULL ||
+             strstr((char *)head.data, "set-cookie: second=two\r\n") == NULL ||
+             strstr((char *)head.data, "set-cookie: third=three\r\n") == NULL;
+    kore_buf_cleanup(&head);
     http_response_header(request, "content-type", "text/plain");
-    http_response(request, 200, "alive\n", 6);
+    http_response(request, failed ? 500 : 200, "alive\n", 6);
     kore_shutdown();
     return KORE_RESULT_OK;
 }
@@ -71,6 +101,9 @@ static int client(unsigned short port)
     (void)close(fd);
     response[used] = '\0';
     if (strstr(response, "HTTP/1.1 200") == NULL ||
+        strstr(response, "set-cookie: session=native; Path=/; "
+                         "Domain=localhost; HttpOnly; Secure\r\n") == NULL ||
+        strstr(response, "x-backend: retained\r\n") == NULL ||
         strstr(response, "\r\n\r\nalive\n") == NULL)
         return 5;
     return 0;

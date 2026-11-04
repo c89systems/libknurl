@@ -123,7 +123,7 @@ int main(void)
     REQUIRE(effective.requested_timeouts.request_header.milliseconds == 1001);
     REQUIRE(effective.config.timeouts.request_body_idle.disabled);
     REQUIRE(effective.config.timeouts.request_body_idle.milliseconds == 0);
-    REQUIRE(effective.config.limits.max_response_header_bytes == 65536UL);
+    REQUIRE(effective.config.limits.max_response_header_bytes == 0);
     REQUIRE(effective.max_header_fields == 23 &&
             effective.config.autoblock.status_rule_count == 4);
     REQUIRE(rotmos_server_get_state(server) == ROTMOS_SERVER_DECLARED);

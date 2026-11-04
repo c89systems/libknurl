@@ -105,11 +105,17 @@ reference checks atomic path replacement, creation/removal, reply replacement,
 missing-path 404, HEAD length and bodyless suppression. Explicit pinned Sources
 and completed generated/spooled file replies retain their own semantics.
 
-The remaining response audit has a concrete wire gap: server-header and HSTS
-configuration reaches Kore globals, while rotmos_response_begin writes its own
-head without using Kore's configured header generation. Check the backend head
-builder, keep-alive metadata and response bounds next; preserve configuration on
-the wire without adding HTTP encoding work to the application adapter.
+The response head gap is corrected: managed and normal Kore replies share a
+private backend codec, extracted by an external patch. Configured Server/HSTS,
+keep-alive metadata/budgets, native cookies/headers and optional error pages now
+reach the wire. The public reference case covers a 70 KB header in a 128-byte
+queue, manual backpressure/replacement, HEAD/304 and configured errors; TLS and
+native backend cases check HSTS and cookie/header merging. Default response-head
+size is unrestricted as in Vectis; a nonzero caller ceiling remains available.
+Ordinary file parity still needs Kore fileref's Last-Modified/conditional behavior.
+Staged header submission also still filters more fields than Vectis's bridge:
+Connection/Keep-Alive/Trailer/Upgrade are discarded with framing fields. Review
+that ordinary-builder behavior separately from low-level sender validation.
 
 ## Evidence limits and work state
 

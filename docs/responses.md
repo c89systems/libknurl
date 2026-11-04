@@ -12,17 +12,26 @@ selected staged reply with a begun low-level response is a conflict.
 
 Staged replies preserve Vectis's accepted 100..599 status range. Output suppresses
 the body for 1xx/204/205/304 and HEAD; status 100 retains Kore's bare Continue head.
-Reason phrases come from the backend's existing status table. Handler/hook failure
-discards staged application headers/payload and emits its diagnostic bytes with
-400 for INVALID, 501 for NOT_SUPPORTED, otherwise 500. Unselected success is 204.
+Final heads use Kore's shared private codec: configured Server/HSTS, keep-alive
+metadata and request budgets, native cookies/headers and reason phrases. The
+pristine vendor tree stays unchanged; the codec extraction is an external patch.
+Handler/hook failure discards staged application headers/payload and emits its
+diagnostic bytes with 400 for INVALID, 501 for NOT_SUPPORTED, otherwise 500.
+Unselected success is 204.
 The public error message/detail capacities are 256 bytes each, including NUL.
+Configured pretty error pages use Kore's template for empty staged error replies,
+missing/empty files and empty internal errors. Explicit diagnostic/body bytes
+remain the payload. HEAD suppresses the HTML while retaining its length.
 
 Set status, copied headers, optional known length, and writable/close callbacks
 before `rotmos_response_begin`. Begin queues headers without claiming delivery.
-Header setters reject transport-owned framing and connection fields. The finite
-`limits.max_response_header_bytes` bounds headers and trailers independently of
-request headers. Any complete header/trailer set must also fit
-`io.output_queue_bytes`; impossible sets return LIMIT.
+Header setters reject transport-owned framing and connection fields.
+`limits.max_response_header_bytes` defaults to zero (no additional ceiling),
+matching Vectis. A nonzero value bounds the complete backend head and trailers
+independently of request headers. Headers are materialized metadata, drained in
+bounded queue segments before body writes or producer reads. They can exceed
+`io.output_queue_bytes`; end trailers and individual interim heads must still fit
+that queue. Replacement/cancellation releases pending metadata.
 
 `rotmos_response_write` accepts a bounded prefix and reports its length.
 AGAIN always accepts zero bytes. Retain the unaccepted suffix and continue from
@@ -57,8 +66,9 @@ arriving before an in-flight native callback returns AGAIN.
 `rotmos_source_config.reset_before_reply` selects Vectis's delayed reset contract
 for a staged live source: reset once on the owner loop after after-hooks and
 before headers, when a reset callback exists. Suppressed output never resets or
-reads it. Reset failure produces an uncommitted empty 500; failed/unselected
-sources close before request-close callbacks. Reset callbacks cannot mutate the
+reads it. Reset failure produces an uncommitted 500 (with Kore's error page when
+configured); failed/unselected sources close before request-close callbacks.
+Reset callbacks cannot mutate the
 busy reply. The default remains false; manual, parsing and spooled consumers retain
 their explicit reset policy. Lua legacy stream declarations use this same C
 option; their separate first-read reset path has been removed.
@@ -69,9 +79,10 @@ It uses bounded pread on the owner loop: filesystem I/O can block. It neither
 maps nor materializes the complete file. Failed registration retains caller
 ownership. `rotmos_reply_file` instead copies a path at selection and opens/pins
 it at submission after hooks. A hook may create, replace or remove that path or
-replace the reply altogether. Missing/unreadable final paths produce an empty
-404 while retaining staged headers/type. HEAD resolves the representation;
-1xx/204/205/304 do not open the path. Generated/spooled private-file replies have
+replace the reply altogether. Missing/unreadable final paths produce a 404 while
+retaining staged headers/type, with Kore's configured error page. HEAD resolves
+the representation; 1xx/204/205/304 do not open the path.
+Generated/spooled private-file replies have
 already finished their file before returning and retain their existing FD.
 
 `rotmos_source_file(path)` opens a regular file once at its current length and
