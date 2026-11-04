@@ -14,6 +14,10 @@
 
 struct rotmos_runtime_shared {
     int serving;
+    struct {
+        int valid;
+        rotmos_error error;
+    } failures[KORE_WORKER_MAX];
 };
 
 struct rotmos_delivery;
@@ -51,6 +55,10 @@ struct rotmos_runtime {
     struct rotmos_delivery *response_tail;
     size_t response_count;
     struct rotmos_tls_prepared tls;
+    int has_failure;
+    rotmos_worker_event last_failure;
+    rotmos_u64 recovered_failures;
+    int recovery_pending[KORE_WORKER_MAX];
 };
 
 rotmos_status rotmos_runtime_hook(struct rotmos_runtime *runtime,
@@ -101,5 +109,10 @@ void rotmos_kore_listener_domains(struct rotmos_runtime *runtime,
                                   struct kore_server *server,
                                   const rotmos_listener_config *listener);
 int rotmos_kore_redirect(rotmos_request *request);
+void rotmos_kore_child_failure(struct rotmos_runtime *runtime,
+                               const rotmos_error *error);
+void rotmos_kore_worker_event(void *userdata, const struct kore_worker *child,
+                              int kind, int status, int expected,
+                              int abandoned);
 
 #endif

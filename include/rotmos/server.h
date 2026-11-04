@@ -33,12 +33,6 @@ typedef enum rotmos_run_reason {
     ROTMOS_RUN_BACKEND_FAILURE
 } rotmos_run_reason;
 
-typedef struct rotmos_run_result {
-    rotmos_run_reason reason;
-    int signal_number;
-    int escalated;
-} rotmos_run_result;
-
 typedef struct rotmos_bound_listener {
     const char *name;
     rotmos_bytes address;
@@ -162,7 +156,18 @@ typedef struct rotmos_worker_event {
     int exit_status;
     int signal_number;
     int abandoned;
+    int expected;
+    rotmos_error error;
 } rotmos_worker_event;
+
+typedef struct rotmos_run_result {
+    rotmos_run_reason reason;
+    int signal_number;
+    int escalated;
+    int has_failure;
+    rotmos_worker_event last_failure;
+    rotmos_u64 recovered_failures;
+} rotmos_run_result;
 
 typedef void (*rotmos_worker_event_fn)(rotmos_server *server,
                                        const rotmos_worker_event *event,

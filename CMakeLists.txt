@@ -53,7 +53,7 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/response.c src/kore_response.c src/body.c src/body_materialize.c
   src/file.c src/dispatch.c src/kore_body.c src/body_reader.c
   src/channel.c src/channel_upgrade.c src/kore_channel.c
-  src/tls.c src/tls_material.c src/kore_tls.c)
+  src/tls.c src/tls_material.c src/kore_tls.c src/kore_process.c)
 target_include_directories(rotmos_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(rotmos_objects PRIVATE "${kore_source_dir}/include/kore")
 target_link_libraries(rotmos_objects PRIVATE OpenSSL::SSL CURL::libcurl lonejson::lonejson pslog::pslog_shared)
@@ -68,7 +68,8 @@ rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_response.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_body.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_channel.c"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_tls.c")
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_tls.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_process.c")
 rotmos_c89(rotmos_objects)
 foreach(variant static shared)
   string(TOUPPER "${variant}" kind)
@@ -119,6 +120,40 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_auxiliary_runtime tests/auxiliary-runtime.c)
+  add_dependencies(rotmos_auxiliary_runtime kore-source)
+  target_include_directories(rotmos_auxiliary_runtime PRIVATE "${kore_source_dir}/include/kore")
+  target_compile_definitions(rotmos_auxiliary_runtime PRIVATE
+    $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
+  rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/auxiliary-runtime.c")
+  target_link_libraries(rotmos_auxiliary_runtime PRIVATE rotmos::static Threads::Threads
+    OpenSSL::SSL CURL::libcurl lonejson::lonejson_static pslog::pslog_static)
+  rotmos_c89(rotmos_auxiliary_runtime)
+  rotmos_local_runtime(rotmos_auxiliary_runtime)
+  add_test(NAME rotmos.auxiliary-runtime COMMAND rotmos_auxiliary_runtime)
+  add_test(NAME rotmos.auxiliary-restart COMMAND rotmos_auxiliary_runtime restart)
+  add_test(NAME rotmos.auxiliary-terminate COMMAND rotmos_auxiliary_runtime terminate)
+  set_tests_properties(rotmos.auxiliary-runtime rotmos.auxiliary-restart rotmos.auxiliary-terminate PROPERTIES TIMEOUT 8)
+  add_executable(rotmos_process_runtime tests/process-runtime.c)
+  target_link_libraries(rotmos_process_runtime PRIVATE rotmos::shared Threads::Threads)
+  rotmos_c89(rotmos_process_runtime)
+  rotmos_local_runtime(rotmos_process_runtime)
+  add_test(NAME rotmos.process-runtime COMMAND rotmos_process_runtime)
+  set_tests_properties(rotmos.process-runtime PROPERTIES TIMEOUT 8)
+  add_executable(rotmos_process_backend tests/process-runtime.c tests/process-backend.c)
+  add_dependencies(rotmos_process_backend kore-source)
+  target_include_directories(rotmos_process_backend PRIVATE "${kore_source_dir}/include/kore")
+  target_compile_definitions(rotmos_process_backend PRIVATE ROTMOS_PROCESS_BACKEND_TEST=1
+    $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
+  rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/process-backend.c")
+  target_link_libraries(rotmos_process_backend PRIVATE rotmos::static Threads::Threads
+    OpenSSL::SSL CURL::libcurl lonejson::lonejson_static pslog::pslog_static)
+  rotmos_c89(rotmos_process_backend)
+  rotmos_local_runtime(rotmos_process_backend)
+  add_test(NAME rotmos.process-backend COMMAND rotmos_process_backend)
+  set_tests_properties(rotmos.process-backend PROPERTIES TIMEOUT 8)
   add_executable(rotmos_tls_runtime tests/tls-runtime.c)
   target_link_libraries(rotmos_tls_runtime PRIVATE rotmos::shared cpkt::openssl_ssl_shared Threads::Threads)
   rotmos_c89(rotmos_tls_runtime)
@@ -250,7 +285,7 @@ if(BUILD_TESTING)
   set_tests_properties(kore.patch-replay kore.preparation kore.build-invalidation
     kore.upgrade PROPERTIES TIMEOUT 60)
   if(NOT rotmos_can_run)
-    set_tests_properties(rotmos.tls-runtime rotmos.channel-runtime rotmos.channel-backend rotmos.body-runtime rotmos.response-runtime rotmos.loop-smoke rotmos.server-runtime rotmos.kore-runtime
+    set_tests_properties(rotmos.auxiliary-runtime rotmos.auxiliary-restart rotmos.auxiliary-terminate rotmos.process-runtime rotmos.process-backend rotmos.tls-runtime rotmos.channel-runtime rotmos.channel-backend rotmos.body-runtime rotmos.response-runtime rotmos.loop-smoke rotmos.server-runtime rotmos.kore-runtime
       rotmos.declarations rotmos.reply rotmos.kore-port rotmos.foundation
       rotmos.headers.cpp PROPERTIES DISABLED TRUE)
   endif()

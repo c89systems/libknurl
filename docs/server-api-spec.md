@@ -362,8 +362,8 @@ Provide typed hook slots, not string-to-function or void-pointer symbol tables:
 | `on_parent_prepare` | Runtime parent, before any backend fork; inert application declarations only |
 | `on_parent_ready` | Parent, after bind and initialization acknowledgements from required workers; includes actual listener addresses |
 | `on_worker_start` | Each HTTP worker after its final fork and before accepting requests; create worker clients/resources here |
-| `on_worker_stopping` | Worker before teardown; request cancellation without blocking, then retire post-fork application work during bounded drain |
-| `on_worker_exit` | Worker after backend teardown; no request, channel, timer, backend allocator or TLS access; returns child exit status |
+| `on_worker_stopping` | Each owned child before teardown, including partial returned initialization failures; request cancellation without blocking, then retire post-fork application work during bounded drain |
+| `on_worker_exit` | Each owned child after backend teardown; no request, channel, timer, backend allocator or TLS access; returns child exit status |
 | `on_worker_event` | Parent observation of owned child start, exit, restart and escalation; distinguishes HTTP/key-manager/ACME roles |
 | `on_parent_stopping` / `on_parent_stopped` | Parent; stop intake first, then release parent resources after child reaping |
 
@@ -374,6 +374,17 @@ thread-quiescent while future worker replacement forks are possible. Worker
 threads may be created only after that worker's last fork. The library cannot
 prove arbitrary application quiescence; document it as a precondition and do not
 add thread/process scanners.
+
+Observations include an independent `expected` shutdown flag, actual exit/signal
+status, abandonment and a bounded `rotmos_error`. Returned child hook errors keep
+their status and diagnostic in the parent. The run result retains `has_failure`,
+`last_failure` and wide `recovered_failures`; a successfully restarted child
+increments recovery after its initialization acknowledgement. A later normal
+requested stop preserves that evidence and returns its normal stop reason.
+Unexpected exit status zero still applies the configured death policy. Explicit
+child shutdown-hook/exit failures propagate rather than appearing as successful
+cleanup. Stopping can run after a returned process-start failure even when the
+HTTP start hook was never reached.
 
 Worker stopping keeps wake/completion delivery available while accepted work
 drains or acknowledges cancellation. Join only threads already known to have
@@ -2220,6 +2231,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0050 | Preserve prebody-owned pipelined surplus through a private typed wrapper around Kore's existing pipeline retention; managed body delivery bypasses automatic buffering/storage |
 | 0051 | Prepend returned framer tails to retained pipeline data and restore/read only bounded prefixes; allow channel tails larger than the native header receive buffer without loss or overflow |
 | 0052 | Install prepared in-memory manual TLS contexts; select the accepting listener's initial identity and derive SNI/HTTP client-auth policy from its context, including optional client certificates and an explicit verification store |
+| 0053 | Parent observations of owned child start/exit/restart/escalation; auxiliary loop/teardown hooks and restart policy; cleanup after returned initialization errors; atomic child-operation deadlines with an IPC wake and shutdown enforcement; bounded auxiliary accept-control indexing |
 
 ## 22. Investigation references
 

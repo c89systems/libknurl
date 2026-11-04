@@ -26,11 +26,18 @@ rotmos_status rotmos_runtime_hook(struct rotmos_runtime *runtime,
     rotmos_error_clear(&error);
     status = function(runtime->server, &runtime->server->process,
                       runtime->server->config.callbacks.userdata, &error);
-    if (status != ROTMOS_OK && error.status == ROTMOS_OK)
+    if (status < ROTMOS_OK || status == ROTMOS_AGAIN || status == ROTMOS_EOF ||
+        status > ROTMOS_BACKEND)
+        status = ROTMOS_INVALID;
+    if (status != ROTMOS_OK && error.status != status)
         (void)rotmos_fail(&error, status, "server_hook",
                           "server lifecycle callback failed");
     if (status != ROTMOS_OK && runtime->status == ROTMOS_OK)
         runtime->error = error;
+    if (status != ROTMOS_OK && getpid() != runtime->parent_pid) {
+        runtime->status = status;
+        rotmos_kore_child_failure(runtime, &error);
+    }
     return status;
 }
 
@@ -38,8 +45,15 @@ static void fatal_error(void *userdata, const char *message)
 {
     struct rotmos_runtime *runtime;
     runtime = userdata;
-    if (getpid() != runtime->parent_pid)
+    if (getpid() != runtime->parent_pid) {
+        if (runtime->error.status == ROTMOS_OK) {
+            (void)rotmos_fail(&runtime->error, ROTMOS_BACKEND, "kore_worker",
+                              message);
+            runtime->error.source = ROTMOS_ERROR_BACKEND;
+        }
+        rotmos_kore_child_failure(runtime, &runtime->error);
         _exit(70);
+    }
     runtime->status =
         rotmos_fail(&runtime->error, ROTMOS_BACKEND, "kore_runtime", message);
     runtime->error.source = ROTMOS_ERROR_BACKEND;
@@ -184,6 +198,7 @@ static int child_start(void *userdata, struct kore_worker *child)
         return 0;
     if (rotmos_kore_loop_create(runtime, &runtime->error) != ROTMOS_OK)
         return 0;
+    runtime->worker_started = 1;
     return rotmos_runtime_hook(
                runtime, runtime->server->config.callbacks.on_process_start) ==
            ROTMOS_OK;
@@ -194,10 +209,15 @@ static int worker_start(void *userdata)
     struct rotmos_runtime *runtime;
     runtime = userdata;
     kore_platform_event_level_read(runtime->wake[0], &runtime->wake_event);
-    if (rotmos_loop_activate(runtime->server->loop, &runtime->error) !=
-        ROTMOS_OK)
+    runtime->status =
+        rotmos_loop_activate(runtime->server->loop, &runtime->error);
+    if (runtime->status != ROTMOS_OK) {
+        rotmos_kore_child_failure(runtime, &runtime->error);
         return 0;
+    }
     runtime->worker_started = 1;
+    if (runtime->server->process.role != ROTMOS_PROCESS_HTTP)
+        return 1;
     return rotmos_runtime_hook(
                runtime, runtime->server->config.callbacks.on_worker_start) ==
            ROTMOS_OK;
@@ -219,8 +239,18 @@ static void worker_stopping(void *userdata)
 static int startup_cancel(void *userdata)
 {
     struct rotmos_runtime *runtime;
+    size_t i;
     runtime = userdata;
-    return runtime->server->stop_requested ||
+    if (!runtime->ready && runtime->status == ROTMOS_OK) {
+        for (i = 0; i < KORE_WORKER_MAX; ++i)
+            if (__atomic_load_n(&runtime->shared->failures[i].valid,
+                                __ATOMIC_ACQUIRE)) {
+                runtime->error = runtime->shared->failures[i].error;
+                runtime->status = runtime->error.status;
+                break;
+            }
+    }
+    return runtime->status != ROTMOS_OK || runtime->server->stop_requested ||
            runtime->server->terminating_signal;
 }
 
@@ -248,6 +278,12 @@ static int worker_exit(void *userdata)
         status = runtime->server->config.callbacks.on_worker_exit(
             runtime->server, &runtime->server->process,
             runtime->server->config.callbacks.userdata);
+    if (status == 0 && runtime->status != ROTMOS_OK)
+        status = 70;
+    if (runtime->status != ROTMOS_OK)
+        rotmos_kore_child_failure(runtime, &runtime->error);
+    if (worker != NULL)
+        __atomic_store_n(&worker->library_clean, 1, __ATOMIC_RELEASE);
     return status;
 }
 
@@ -280,12 +316,11 @@ static rotmos_status validate_config(rotmos_server *server, rotmos_error *error)
         return rotmos_fail(
             error, ROTMOS_STATE, "server_validate",
             "supervised rerun requires a fresh control descriptor");
-    if (server->config.callbacks.on_worker_event != NULL ||
-        server->config.autoblock.enabled ||
+    if (server->config.autoblock.enabled ||
         server->config.client_ip.trusted_proxy_count != 0 ||
         server->config.http.access_log_path != NULL)
         return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "server_validate",
-                           "Worker observations, access logs and admission "
+                           "Access logs and admission "
                            "policy are unavailable in the current runtime");
     for (i = 0; i < server->config.tls.identity_count; ++i)
         if (server->config.tls.identities[i].mode != ROTMOS_TLS_MANUAL)
@@ -501,6 +536,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
     rotmos_status status;
     rotmos_status stopped_status;
     if (out != NULL) {
+        memset(out, 0, sizeof(*out));
         out->reason = ROTMOS_RUN_STARTUP_FAILURE;
         out->signal_number = out->escalated = 0;
     }
@@ -589,6 +625,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             hooks.worker_cleanup = rotmos_kore_loop_shutdown;
             hooks.request_release = rotmos_kore_response_release;
             hooks.net_progress = rotmos_kore_response_progress;
+            hooks.worker_event = rotmos_kore_worker_event;
             runtime->initialized = 1;
             runtime->curl_timeout = kore_curl_timeout;
             runtime->curl_recv_max = kore_curl_recv_max;
@@ -601,10 +638,15 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             if (!kore_library_parent_start()) {
                 runtime->cancelled = startup_cancel(runtime);
                 if (!runtime->cancelled)
-                    runtime->status = rotmos_fail(
-                        &runtime->error, ROTMOS_BACKEND, "server_start",
-                        "required worker did not initialize");
+                    if (runtime->status == ROTMOS_OK)
+                        runtime->status = rotmos_fail(
+                            &runtime->error,
+                            kore_library_startup_timed_out ? ROTMOS_TIMEOUT
+                                                           : ROTMOS_BACKEND,
+                            "server_start",
+                            "required worker did not initialize");
             }
+            runtime->cancelled = startup_cancel(runtime);
         }
         if (runtime->status == ROTMOS_OK && !runtime->cancelled) {
             kore_platform_event_level_read(runtime->wake[0],
@@ -654,9 +696,15 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
                         NULL);
     }
     if (runtime->ready && kore_quit == KORE_QUIT_FATAL &&
-        runtime->status == ROTMOS_OK)
-        runtime->status = rotmos_fail(&runtime->error, ROTMOS_BACKEND,
-                                      "server_run", "backend or worker failed");
+        runtime->status == ROTMOS_OK) {
+        if (runtime->has_failure) {
+            runtime->error = runtime->last_failure.error;
+            runtime->status = runtime->error.status;
+        } else
+            runtime->status =
+                rotmos_fail(&runtime->error, ROTMOS_BACKEND, "server_run",
+                            "backend or worker failed");
+    }
     stopped_status = rotmos_runtime_hook(
         runtime, server->config.callbacks.on_parent_stopped);
     if (runtime->status == ROTMOS_OK && stopped_status != ROTMOS_OK)
@@ -671,6 +719,9 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
                                  : ROTMOS_RUN_REQUESTED_STOP);
         out->signal_number = (int)server->terminating_signal;
         out->escalated = runtime->initialized && kore_library_escalated;
+        out->has_failure = runtime->has_failure;
+        out->last_failure = runtime->last_failure;
+        out->recovered_failures = runtime->recovered_failures;
     }
     status = runtime->status;
     if (error != NULL)

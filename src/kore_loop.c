@@ -148,7 +148,7 @@ void rotmos_kore_loop_turn(void *userdata)
             runtime->status = loop->failure.status;
             runtime->error = loop->failure;
             if (worker != NULL)
-                kore_msg_send(KORE_MSG_PARENT, KORE_MSG_FATALX, NULL, 0);
+                rotmos_kore_child_failure(runtime, &runtime->error);
             kore_quit = KORE_QUIT_FATAL;
         }
     }

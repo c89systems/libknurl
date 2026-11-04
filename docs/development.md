@@ -90,15 +90,19 @@ HTTP fixture through both static and shared imported targets after relocating
 the library and its three released dependency prefixes.
 
 This is partial runtime coverage. Preflight explicitly rejects ACME identities,
-worker observations, access logs, trusted proxies, autoblock,
+access logs, trusted proxies, autoblock,
 typed JSON and native-reader upload facades until those paths are connected.
 Native-reader sources require an executor that is not connected yet. Interim
 responses, producer trailer declarations, application WebSockets, HTTP framing helpers and gate observations,
-complete startup/failure unwinding, auxiliary-worker lifecycle, the protocol and
+complete fatal/allocation-failure unwinding, the protocol and
 provider helpers, the opt-in native declaration component, and the Lua product
-remain implementation work. Worker failure,
-replacement, deadline escalation and allocation-failure coverage remain part of
-the later runtime review. The contract is in the
+remain implementation work. [Process observations](processes.md) cover child
+start/exit/restart/escalation, returned hook errors, abandonment and bounded
+failure/recovery results. Native key-manager/ACME loops use the same loop and
+teardown hooks; their fixture proves auxiliary restart/terminate policy. A
+dedicated child-operation budget wakes the parent and remains enforced during
+shutdown. ACME persistence must connect that primitive before activation is
+enabled. The contract is in the
 [server API specification](server-api-spec.md) and
 [Vectis integration contract](vectis-integration-contract.md).
 

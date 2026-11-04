@@ -50,3 +50,4 @@
 0050-managed-body-surplus.patch
 0051-bounded-pipeline-restoration.patch
 0052-prepared-tls-contexts.patch
+0053-owned-child-lifecycle.patch
