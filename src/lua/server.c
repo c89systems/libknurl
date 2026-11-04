@@ -770,6 +770,7 @@ void rl_servers_open(lua_State *L)
         {"upload_file", rl_upload_file},
         {"static_file", rl_static_file},
         {"static_directory", rl_static_directory},
+        {"static_assets", rl_static_assets},
         {"webdav", rl_webdav},
         {"proxy", rl_proxy},
         {"websocket", rl_websocket},
@@ -813,6 +814,8 @@ void rl_servers_open(lua_State *L)
     lua_setfield(L, -2, "static_file");
     lua_pushcfunction(L, rl_static_directory);
     lua_setfield(L, -2, "static_directory");
+    lua_pushcfunction(L, rl_static_assets);
+    lua_setfield(L, -2, "static_assets");
     lua_pushcfunction(L, rl_webdav);
     lua_setfield(L, -2, "webdav");
     lua_pop(L, 1);

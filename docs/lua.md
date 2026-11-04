@@ -548,11 +548,32 @@ The [ported XML fixture](../tests/lua/xml.lua) covers those workflows, bounded
 delivery beyond 16 MiB, callbacks/reentry, both collectors, owner release and
 allocation failures.
 
-## Remaining binding surfaces
+## Host providers and remaining work
 
-The binding is incomplete. Custom asset/storage providers, packed mounts and
-remaining direct dispatch/response operations still need
-their public C bindings. Known unsupported options return an error. No transport
-or application mechanism belongs in a temporary Vectis adapter to fill those
-gaps. Lua source archive, rockspec/source-rock packaging and final installed
-consumer/artifact checks remain part of the active implementation goal.
+Hosts wrap public asset/storage providers with `rotmos_lua_push_asset_provider`
+and `rotmos_lua_push_storage_provider` from the installed Lua interop header.
+Success pushes one opaque value, retaining the optional Lua owner; failure
+preserves the stack. The provider stays borrowed, and the binding never closes
+it. Keep it usable through every borrowing server's destruction. Host teardown
+closes providers after servers; owner finalizers can handle the final release.
+
+`server:static_assets{path='/assets',provider=assets,...}` and its group helper
+bind the public static-asset registration. `server:webdav{provider=storage,...}`
+selects the host storage provider instead of constructing a filesystem provider.
+The route declaration pins the opaque value and owner until server close. Path,
+method, index, type/cache, auth and hook options retain the ordinary C behavior.
+The host supplies packed lookup and durable-store adapters; C handles ranges,
+conditions, source output, DAV operations and listing.
+
+The [public host module](../tests/lua/providers.c) supplies generated and memory
+assets plus the C read-only storage adapter, using only public headers. Its
+[mount fixture](../tests/lua/providers.lua) checks scoped ownership, registration
+failure, binary data, grouped mounts, ranges without prefix reads, conditions,
+HEAD suppression, bounded reads, PROPFIND and read-only mutation rejection.
+An [isolated consumer](../tests/lua/consumer/CMakeLists.txt) builds that same
+module against installed C/Lua SDKs and selected toolchains.
+
+Remaining direct dispatch/response bindings require concrete baseline consumer
+coverage before expansion. Lua source archive, rockspec/source-rock packaging,
+the full Vectis reference adapter and final compatibility/artifact checks remain
+part of the active implementation goal.

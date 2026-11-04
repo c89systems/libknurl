@@ -51,3 +51,7 @@ I/O/filesystem mechanisms retain their internal callers and invariant coverage.
 Lua server logging now forwards public pslog owner references and access policy
 through the C logging registration. The released pslog Lua provider shares the
 host VM/C SDK; application seed/category policy stays outside librotmos.
+Host asset/storage providers now enter Lua through public borrowed-provider
+interop values. Static-assets and WebDAV registrations retain the host owner and
+use the existing C engines. The host-module fixture builds against installed
+C/Lua SDKs on all seven targets; GNU/musl preload/dynamic workflows are exercised.

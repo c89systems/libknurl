@@ -151,6 +151,10 @@ local function convenience(self,name,opts)
     opts.root_dir=first(opts.root_dir,opts.root,opts.dir)
     opts.index_enabled=first(opts.index_enabled,opts.index)
     opts.path_prefix,opts.prefix,opts.root,opts.dir,opts.index=nil,nil,nil,nil,nil
+  elseif name=='static_assets' then
+    opts.path=first(opts.path,opts.path_prefix,opts.prefix) or '/'
+    opts.index_enabled=first(opts.index_enabled,opts.index)
+    opts.path_prefix,opts.prefix,opts.index=nil,nil,nil
   elseif name=='webdav' then
     opts.path_prefix=first(opts.path_prefix,opts.prefix) or '/'
     opts.prefix=nil
@@ -161,7 +165,7 @@ local function convenience(self,name,opts)
   opts=options(opts,nil,name=='upload_file' and native.BODY_STREAMING_UPLOAD or nil)
   return register(self,name,opts,name=='upload_file' and 'POST' or name=='webdav' and 'ANY' or {'GET','HEAD'})
 end
-for _,name in ipairs{'static_file','static_directory','upload_file','webdav'} do
+for _,name in ipairs{'static_file','static_directory','static_assets','upload_file','webdav'} do
   Server[name]=function(self,opts) return convenience(self,name,opts) end
   Group[name]=Server[name]
 end

@@ -70,14 +70,21 @@ derived sub=http and independent file access logs. Preload/dynamic checks cover
 owner retention/release and coroutine collection. All seven target bindings use
 the pinned shared Lua providers and C SDKs; no core-private headers are imported.
 The remaining surface review and full reference adapter are still open.
+Host asset/storage providers now have public Lua interop values for static-assets
+and WebDAV mounts. They retain an optional owner without taking or closing the
+provider. The isolated C host module compiles against installed public C/Lua
+headers on all seven targets. GNU/musl preload/dynamic runs cover ownership,
+range/conditional handling, binary data, bounded reads, listing and read-only
+mutation rejection. Packed lookup stays in the host; no second HTTP/DAV engine
+or application filesystem type enters the binding.
 
 ## Evidence limits and work state
 
 No runtime edits or test runs were made during the stop-and-audit. The repository
 has selected toolchains and build state for all seven targets, public-header
 binding imports and installed consumers. Prior per-slice checks do not prove
-Vectis parity. The concrete installed Vectis reference adapter is missing; Lua
-provider operations, source/rock packaging and final compatibility/artifact
+Vectis parity. The complete installed Vectis reference adapter is still partial;
+source/rock packaging and final compatibility/artifact
 checks remain incomplete. The [implementation plan](implementation-plan.md)
 orders correction work under the revised active implementation goal.
 

@@ -1,13 +1,13 @@
 #include "binding.h"
 #define N(a) (sizeof(a) / sizeof((a)[0]))
-static int static_route(lua_State *L, int directory)
+static int static_route(lua_State *L, int kind)
 {
     static const char *const fields[] = {
         "path",          "file_path",      "root_dir",
         "content_type",  "cache_control",  "index_file",
         "index_enabled", "not_found_body", "not_found_content_type",
         "method",        "methods",        "auth",
-        "before",        "after"};
+        "before",        "after",          "provider"};
     struct rl_rule *rule;
     rotmos_static_config config;
     rotmos_error error;
@@ -18,6 +18,14 @@ static int static_route(lua_State *L, int directory)
                                     "invalid static declaration fields"),
                             &error));
     rotmos_static_config_init(&config);
+    rl_field(L, 2, "provider");
+    config.provider = rl_asset_provider(L, -1);
+    if ((kind == 2 && config.provider == NULL) ||
+        (kind != 2 && !lua_isnil(L, -1)))
+        return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
+                                    "static_assets requires an asset provider"),
+                            &error));
+    lua_pop(L, 1);
     if (!rl_field_string(L, 2, "path", &config.path) ||
         !rl_field_string(L, 2, "file_path", &config.file_path) ||
         !rl_field_string(L, 2, "root_dir", &config.root_dir) ||
@@ -40,22 +48,28 @@ static int static_route(lua_State *L, int directory)
     rl_rule_hooks(&config.hooks, rule);
     root = rl_rule_root(L, index, rule);
     if (rule->group != NULL)
-        status = directory
+        status = kind == 2 ? rotmos_route_group_static_assets(
+                                 rule->group, &config, NULL, &error)
+                 : kind == 1
                      ? rotmos_route_group_static_directory(rule->group, &config,
                                                            NULL, &error)
                      : rotmos_route_group_static_file(rule->group, &config,
                                                       NULL, &error);
     else
-        status = directory ? rotmos_router_static_directory(
-                                 rotmos_server_router(rule->server->native),
-                                 &config, NULL, &error)
-                           : rotmos_router_static_file(
-                                 rotmos_server_router(rule->server->native),
-                                 &config, NULL, &error);
+        status = kind == 2   ? rotmos_router_static_assets(
+                                   rotmos_server_router(rule->server->native),
+                                   &config, NULL, &error)
+                 : kind == 1 ? rotmos_router_static_directory(
+                                   rotmos_server_router(rule->server->native),
+                                   &config, NULL, &error)
+                             : rotmos_router_static_file(
+                                   rotmos_server_router(rule->server->native),
+                                   &config, NULL, &error);
     return rl_rule_finish(L, index, root, rule, status, &error);
 }
 int rl_static_file(lua_State *L) { return static_route(L, 0); }
 int rl_static_directory(lua_State *L) { return static_route(L, 1); }
+int rl_static_assets(lua_State *L) { return static_route(L, 2); }
 int rl_upload_file(lua_State *L)
 {
     static const char *const fields[] = {
@@ -169,6 +183,7 @@ int rl_webdav(lua_State *L)
                                          "cache_dir",
                                          "site_id",
                                          "root_dir",
+                                         "provider",
                                          "max_file_bytes",
                                          "max_total_bytes",
                                          "max_resources",
@@ -193,6 +208,13 @@ int rl_webdav(lua_State *L)
                                     "invalid WebDAV declaration fields"),
                             &error));
     rotmos_webdav_config_init(&config);
+    rl_field(L, 2, "provider");
+    if (!lua_isnil(L, -1)) {
+        config.provider = rl_storage_provider(L, -1);
+        if (config.provider == NULL)
+            goto invalid;
+    }
+    lua_pop(L, 1);
     if (!rl_field_string(L, 2, "path_prefix", &config.path_prefix) ||
         !rl_field_string(L, 2, "cache_dir", &config.storage.cache_dir) ||
         !rl_field_string(L, 2, "site_id", &config.storage.site_id) ||

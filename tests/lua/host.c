@@ -300,6 +300,69 @@ static int spawn_logging(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+static int drive_providers(unsigned short port)
+{
+    char *large;
+    int failed;
+    if (rotmos_lua_test_exchange(port, "GET", "/pack/asset", "", 0, 200,
+                                 "packed", 6))
+        return 1;
+    request_headers = "Range: bytes=2-4\r\n";
+    required_header = "content-range: bytes 2-4/6";
+    failed = rotmos_lua_test_exchange(port, "GET", "/pack/asset", "", 0, 206,
+                                      "cke", 3);
+    request_headers = "If-None-Match: \"pack\"\r\n";
+    required_header = NULL;
+    if (failed ||
+        rotmos_lua_test_exchange(port, "GET", "/pack/asset", "", 0, 304, "", 0))
+        return 1;
+    request_headers = "";
+    if (rotmos_lua_test_exchange(port, "HEAD", "/pack/large", "", 0, 200, "",
+                                 0) ||
+        rotmos_lua_test_exchange(port, "GET", "/group/pack/asset", "", 0, 200,
+                                 "packed", 6) ||
+        rotmos_lua_test_exchange(port, "GET", "/pack/binary", "", 0, 200,
+                                 "A\0B", 3) ||
+        rotmos_lua_test_exchange(port, "GET", "/dav/asset", "", 0, 200,
+                                 "packed", 6))
+        return 1;
+    request_headers = "Depth: 1\r\n";
+    required_body = "asset";
+    failed = rotmos_lua_test_exchange(port, "PROPFIND", "/dav/", "", 0, 207,
+                                      NULL, 0);
+    request_headers = "";
+    required_body = NULL;
+    if (failed || rotmos_lua_test_exchange(port, "PUT", "/dav/asset", "new", 3,
+                                           405, "", 0))
+        return 1;
+    large = malloc(131072);
+    if (large == NULL)
+        return 1;
+    memset(large, 'p', 131072);
+    failed = rotmos_lua_test_exchange(port, "GET", "/pack/large", "", 0, 200,
+                                      large, 131072);
+    free(large);
+    return failed || rotmos_lua_test_exchange(port, "GET", "/stop", "", 0, 200,
+                                              "stopped", 7);
+}
+static int spawn_providers(lua_State *L)
+{
+    unsigned short port = (unsigned short)lua_tointeger(L, 1);
+    int failed;
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        failed = drive_providers(port);
+        if (failed)
+            kill(getppid(), SIGTERM);
+        _exit(failed);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
 static int spawn_codecs(lua_State *L)
 {
     int failed;
@@ -1417,8 +1480,10 @@ int main(int argc, char **argv)
                     ROTMOS_PSLOG_LUA_PREFIX);
     lua_setfield(L, -2, "path");
     lua_pushfstring(
-        L, "%s/lib/lua/5.5/?.so;%s/lib/lua/5.5/?.so;%s/lib/lua/5.5/?.so",
-        argv[2], ROTMOS_LONEJSON_LUA_PREFIX, ROTMOS_PSLOG_LUA_PREFIX);
+        L,
+        "%s/lib/lua/5.5/?.so;%s/lib/lua/5.5/?.so;%s/lib/lua/5.5/?.so;%s/?.so",
+        argv[2], ROTMOS_LONEJSON_LUA_PREFIX, ROTMOS_PSLOG_LUA_PREFIX,
+        ROTMOS_TEST_MODULE_DIR);
     lua_setfield(L, -2, "cpath");
     lua_pop(L, 1);
     lua_newtable(L);
@@ -1426,6 +1491,8 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "spawn");
     lua_pushcfunction(L, spawn_logging);
     lua_setfield(L, -2, "spawn_logging");
+    lua_pushcfunction(L, spawn_providers);
+    lua_setfield(L, -2, "spawn_providers");
     lua_pushcfunction(L, join);
     lua_setfield(L, -2, "join");
     lua_pushcfunction(L, fail_next);

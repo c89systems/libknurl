@@ -60,6 +60,12 @@ and `root_dir` for `rotmos_router_static_directory`, or `path` and a borrowed
 `provider` for `rotmos_router_static_assets`. Enabling indexes selects `index.html`
 unless `index_file` is supplied. Strings/options are copied during registration.
 Custom providers and hook userdata remain borrowed through router destruction.
+The Lua facade accepts host providers through public Lua interop values for
+`static_assets` and `webdav` declarations. Each value pins its optional Lua owner,
+and copied route declarations retain it through server close. The binding does
+not close borrowed providers. Packed lookup stays with the host, while these
+mounts use the same C static/storage/WebDAV implementation. See the
+[host-provider workflow](lua.md#host-providers-and-remaining-work).
 Literal route groups provide the corresponding convenience registrations.
 Filesystem single-file registration preserves Vectis's configured GET/HEAD masks,
 so a separate POST route can use the same literal path. Directory/asset mounts
