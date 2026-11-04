@@ -9,6 +9,7 @@ struct rotmos_route {
     rotmos_route_config config;
     regex_t pattern;
     int has_pattern;
+    int raw_path;
     rotmos_route_group *group;
     void (*release_userdata)(void *);
 };

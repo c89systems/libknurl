@@ -114,6 +114,8 @@ void rotmos_server_config_init(rotmos_server_config *config)
     config->http.backend_curl_recv_max_bytes.low = 0;
     config->http.backend_quiet = config->http.pretty_error_pages = 0;
     config->io.chunk_bytes = 8192;
+    config->proxy.active_exchanges = 0;
+    config->proxy.idle_connections = 0;
     config->io.input_queue_bytes = config->io.output_queue_bytes = 262144UL;
     rotmos_tls_config_init(&config->tls);
     config->signals.mode = ROTMOS_SIGNALS_HOST;

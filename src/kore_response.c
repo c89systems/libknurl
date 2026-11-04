@@ -356,9 +356,9 @@ void rotmos_kore_responses_turn(struct rotmos_runtime *runtime)
          delivery = delivery->next) {
         rotmos_kore_body_timeout(delivery->response->request);
         rotmos_channel_check_timeout(delivery->response->request->channel);
-        timeout = delivery->response->phase == ROTMOS_RESPONSE_BUILDING
-                      ? runtime->server->config.timeouts.deferred_response
-                      : runtime->server->config.timeouts.response_write_idle;
+        timeout = pending_output(delivery)
+                      ? runtime->server->config.timeouts.response_write_idle
+                      : runtime->server->config.timeouts.deferred_response;
         if (!timeout.disabled &&
             ((delivery->response->phase == ROTMOS_RESPONSE_BUILDING &&
               delivery->response->request->outcome.body_complete) ||
@@ -401,14 +401,13 @@ u_int64_t rotmos_kore_responses_wait(struct rotmos_runtime *runtime,
                 delivery->response->request->channel) < maximum)
             maximum = (u_int64_t)rotmos_channel_wait(
                 delivery->response->request->channel);
-        timeout = delivery->response->phase == ROTMOS_RESPONSE_BUILDING
-                      ? runtime->server->config.timeouts.deferred_response
-                      : runtime->server->config.timeouts.response_write_idle;
+        timeout = pending_output(delivery)
+                      ? runtime->server->config.timeouts.response_write_idle
+                      : runtime->server->config.timeouts.deferred_response;
         if (timeout.disabled ||
-            (delivery->response->phase == ROTMOS_RESPONSE_BUILDING &&
-             !delivery->response->request->outcome.body_complete) ||
-            (delivery->response->phase != ROTMOS_RESPONSE_BUILDING &&
-             !pending_output(delivery)) ||
+            (!pending_output(delivery) &&
+             (delivery->response->phase != ROTMOS_RESPONSE_BUILDING ||
+              !delivery->response->request->outcome.body_complete)) ||
             delivery->response->phase >= ROTMOS_RESPONSE_COMPLETE)
             continue;
         elapsed = now - delivery->last_progress;

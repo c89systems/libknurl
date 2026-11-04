@@ -312,9 +312,12 @@ static rotmos_status enqueue(rotmos_response *r, unsigned char *data,
                              size_t body_length, rotmos_error *error)
 {
     struct rotmos_response_segment *segment;
-    if (length > r->bound - r->queued)
+    if (length > r->bound - r->queued) {
+        r->blocked = 1;
+        r->writable_need = length;
         return rotmos_fail(error, ROTMOS_AGAIN, "response_queue",
                            "wait for output capacity");
+    }
     segment = malloc(sizeof(*segment));
     if (segment == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "response_queue",
@@ -324,6 +327,7 @@ static rotmos_status enqueue(rotmos_response *r, unsigned char *data,
     segment->length = length;
     segment->body_start = body_start;
     segment->body_length = body_length;
+    segment->interim = 0;
     if (r->tail != NULL)
         r->tail->next = segment;
     else
@@ -332,6 +336,131 @@ static rotmos_status enqueue(rotmos_response *r, unsigned char *data,
     r->queued += length;
     r->schedule(r);
     return ROTMOS_OK;
+}
+
+rotmos_status rotmos_response_interim(rotmos_response *r, int code,
+                                      const rotmos_header *fields, size_t count,
+                                      rotmos_error *error)
+{
+    rotmos_status status;
+    rotmos_reply *copy;
+    unsigned char *data;
+    const char *line;
+    char *name;
+    char *value;
+    size_t total;
+    size_t offset;
+    size_t i;
+    size_t bound;
+    status = building(r, error);
+    if (status != ROTMOS_OK)
+        return status;
+    if ((code != 100 && code != 103) || (count != 0 && fields == NULL))
+        return rotmos_fail(error, ROTMOS_INVALID, "response_interim",
+                           "provide bounded HTTP 100/103 metadata");
+    if (memcmp(r->request->version.data, "HTTP/1.1", 8) != 0)
+        return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "response_interim",
+                           "interim responses require HTTP/1.1");
+    if (r->interim_count >= 16 || count > 100)
+        return rotmos_fail(error, ROTMOS_LIMIT, "response_interim",
+                           "interim response count exceeded");
+    line = code == 100 ? "HTTP/1.1 100 Continue\r\n"
+                       : "HTTP/1.1 103 Early Hints\r\n";
+    total = strlen(line) + 2;
+    bound = r->header_bound < r->bound ? r->header_bound : r->bound;
+    if (total > bound)
+        return rotmos_fail(error, ROTMOS_LIMIT, "response_interim",
+                           "interim head cannot fit its bound");
+    status = rotmos_reply_new(&copy, error);
+    if (status != ROTMOS_OK)
+        return status;
+    for (i = 0; i < count; ++i) {
+        if (fields[i].name.data == NULL || fields[i].name.length == 0 ||
+            (fields[i].value.data == NULL && fields[i].value.length != 0)) {
+            status = rotmos_fail(error, ROTMOS_INVALID, "response_interim",
+                                 "invalid or oversized interim fields");
+            break;
+        }
+        if (fields[i].name.length > bound - 4 ||
+            fields[i].value.length > bound - 4 - fields[i].name.length ||
+            total >
+                bound - 4 - fields[i].name.length - fields[i].value.length) {
+            status = rotmos_fail(error, ROTMOS_LIMIT, "response_interim",
+                                 "interim fields cannot fit their bound");
+            break;
+        }
+        if (memchr(fields[i].name.data, 0, fields[i].name.length) != NULL ||
+            (fields[i].value.length != 0 &&
+             memchr(fields[i].value.data, 0, fields[i].value.length) != NULL)) {
+            status = rotmos_fail(error, ROTMOS_INVALID, "response_interim",
+                                 "interim field contains NUL");
+            break;
+        }
+        name = malloc(fields[i].name.length + 1);
+        value = malloc(fields[i].value.length + 1);
+        if (name == NULL || value == NULL) {
+            free(name);
+            free(value);
+            status = rotmos_fail(error, ROTMOS_NOMEM, "response_interim",
+                                 "cannot copy interim fields");
+            break;
+        }
+        memcpy(name, fields[i].name.data, fields[i].name.length);
+        name[fields[i].name.length] = 0;
+        if (fields[i].value.length != 0)
+            memcpy(value, fields[i].value.data, fields[i].value.length);
+        value[fields[i].value.length] = 0;
+        if (forbidden(name))
+            status = rotmos_fail(error, ROTMOS_INVALID, "response_interim",
+                                 "interim field is transport-owned");
+        else
+            status = rotmos_reply_header_add(copy, name, value, error);
+        free(name);
+        free(value);
+        if (status != ROTMOS_OK)
+            break;
+        total += fields[i].name.length + fields[i].value.length + 4;
+    }
+    data = NULL;
+    if (status == ROTMOS_OK && (total > r->header_bound || total > r->bound ||
+                                total > 131072UL - r->interim_bytes))
+        status = rotmos_fail(error, ROTMOS_LIMIT, "response_interim",
+                             "interim response exceeds finite budget");
+    if (status == ROTMOS_OK) {
+        data = malloc(total);
+        if (data == NULL)
+            status = rotmos_fail(error, ROTMOS_NOMEM, "response_interim",
+                                 "cannot allocate interim response");
+    }
+    if (status == ROTMOS_OK) {
+        offset = strlen(line);
+        memcpy(data, line, offset);
+        for (i = 0; i < copy->header_count; ++i) {
+            memcpy(data + offset, copy->headers[i].name.data,
+                   copy->headers[i].name.length);
+            offset += copy->headers[i].name.length;
+            memcpy(data + offset, ": ", 2);
+            offset += 2;
+            memcpy(data + offset, copy->headers[i].value.data,
+                   copy->headers[i].value.length);
+            offset += copy->headers[i].value.length;
+            memcpy(data + offset, "\r\n", 2);
+            offset += 2;
+        }
+        memcpy(data + offset, "\r\n", 2);
+        status = enqueue(r, data, total, 0, 0, error);
+        if (status == ROTMOS_OK) {
+            r->tail->interim = 1;
+            ++r->interim_count;
+            r->interim_bytes += total;
+        }
+    }
+    if (status != ROTMOS_OK)
+        free(data);
+    (void)rotmos_reply_destroy(copy, NULL);
+    if (status == ROTMOS_OK)
+        rotmos_error_clear(error);
+    return status;
 }
 
 rotmos_status rotmos_response_begin(rotmos_response *r, rotmos_error *error)
@@ -437,6 +566,7 @@ static rotmos_status write_body(rotmos_response *r, const void *data,
     capacity = r->bound - r->queued;
     if (capacity <= 32) {
         r->blocked = 1;
+        r->writable_need = 33;
         rotmos_error_clear(error);
         return ROTMOS_AGAIN;
     }
@@ -649,13 +779,30 @@ rotmos_status rotmos_response_replace_uncommitted(rotmos_response *r,
         return rotmos_fail(
             error, ROTMOS_STATE, "response_replace",
             "accepted WebSocket owns the handshake; abort to cancel");
-    if (r->outcome.committed || r->inflight)
+    if (r->outcome.committed ||
+        (r->inflight && (r->head == NULL || !r->head->interim)))
         return rotmos_fail(error, ROTMOS_STATE, "response_replace",
                            "transport has committed or holds an active buffer");
     status = rotmos_reply_new(&headers, error);
     if (status != ROTMOS_OK)
         return status;
-    clear_queue(r);
+    {
+        struct rotmos_response_segment **slot;
+        struct rotmos_response_segment *segment;
+        slot = &r->head;
+        r->tail = NULL;
+        while ((segment = *slot) != NULL) {
+            if (segment->interim) {
+                r->tail = segment;
+                slot = &segment->next;
+            } else {
+                *slot = segment->next;
+                r->queued -= segment->length;
+                free(segment->data);
+                free(segment);
+            }
+        }
+    }
     clear_producer(r, ROTMOS_CANCELLED);
     (void)rotmos_reply_destroy(r->headers, NULL);
     r->headers = headers;
@@ -987,6 +1134,18 @@ void rotmos_response_step(rotmos_response *r)
         rotmos_source_release(retired, retired->failure);
         r->busy = 0;
     }
+    if (r->blocked &&
+        (r->phase == ROTMOS_RESPONSE_ACTIVE ||
+         r->phase == ROTMOS_RESPONSE_BUILDING) &&
+        r->bound - r->queued >= r->writable_need) {
+        r->blocked = 0;
+        if (r->writable != NULL)
+            r->writable(r, r->userdata);
+        if ((r->phase == ROTMOS_RESPONSE_ACTIVE ||
+             r->phase == ROTMOS_RESPONSE_BUILDING) &&
+            r->request->plan.on_writable != NULL)
+            r->request->plan.on_writable(r->request, r->request->userdata);
+    }
     if (r->phase != ROTMOS_RESPONSE_ACTIVE &&
         !(r->phase == ROTMOS_RESPONSE_FINISHING && r->complete_reply &&
           r->ending == NULL))
@@ -995,17 +1154,6 @@ void rotmos_response_step(rotmos_response *r)
         r->eof = 1;
         (void)end_response(r, NULL, 0, NULL);
         return;
-    }
-    if (r->blocked && r->phase == ROTMOS_RESPONSE_ACTIVE &&
-        r->bound - r->queued > 32) {
-        r->blocked = 0;
-        if (r->writable != NULL)
-            r->writable(r, r->userdata);
-        if (r->phase == ROTMOS_RESPONSE_ACTIVE &&
-            r->request->plan.on_writable != NULL)
-            r->request->plan.on_writable(r->request, r->request->userdata);
-        if (r->phase != ROTMOS_RESPONSE_ACTIVE)
-            return;
     }
     if (!r->producer || r->paused)
         return;
@@ -1085,13 +1233,21 @@ void rotmos_response_sent(rotmos_response *r, size_t offset, size_t count,
     size_t end;
     struct rotmos_response_segment *segment;
     segment = r->head;
-    if (count != 0 || retry)
+    if (!segment->interim && (count != 0 || retry))
         r->outcome.committed = 1;
     if (add_size(r->outcome.wire_bytes, count, &r->outcome.wire_bytes) !=
         ROTMOS_OK) {
         (void)rotmos_response_abort(r, ROTMOS_OVERFLOW, NULL);
         return;
     }
+    if (segment->interim &&
+        add_size(r->outcome.interim_wire_bytes, count,
+                 &r->outcome.interim_wire_bytes) != ROTMOS_OK) {
+        (void)rotmos_response_abort(r, ROTMOS_OVERFLOW, NULL);
+        return;
+    }
+    if (count != 0 && r->progress != NULL)
+        r->progress(r->progress_data, count);
     start = offset > segment->body_start ? offset : segment->body_start;
     end = offset + count < segment->body_start + segment->body_length
               ? offset + count

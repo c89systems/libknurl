@@ -1,5 +1,5 @@
 #include "proxy_common.h"
-#include "proxy.h"
+#include <rotmos/proxy.h>
 #include <string.h>
 
 int rotmos_proxy_format_length(uint64_t value, char *text)

@@ -19,6 +19,12 @@ typedef struct rotmos_proxy_upload_buffer {
     size_t begin;
     size_t end;
     size_t fixed_reservation;
+    /* Set once after init and before feed. Zero permits arbitrary checked
+     * lengths; this is the server's explicit hard limit, not its soft default.
+     */
+    uint64_t body_limit;
+    uint64_t body_accepted;
+    rotmos_status failure;
     void (*on_consume)(void *userdata, size_t amount);
     void *consume_userdata;
     int complete;

@@ -187,6 +187,7 @@ static rotmos_status route_add(rotmos_router *router,
     route->config.methods = methods;
     route->config.path = rotmos_copy_text(input->path);
     route->has_pattern = 0;
+    route->raw_path = 0;
     route->group = group;
     route->release_userdata = NULL;
     if (route->config.path == NULL) {

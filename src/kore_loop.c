@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "kore_internal.h"
+#include "proxy_runtime.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -182,6 +183,7 @@ void rotmos_kore_loop_shutdown(void *userdata)
 {
     struct rotmos_runtime *runtime;
     runtime = userdata;
+    rotmos_proxy_worker_clear(runtime->server);
     rotmos_kore_responses_shutdown(runtime);
     rotmos_kore_websockets_shutdown(runtime);
     rotmos_loop_shutdown(runtime->server->loop);

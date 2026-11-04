@@ -1,7 +1,7 @@
 #ifndef ROTMOS_PROXY_ROUTE_INTERNAL_H
 #define ROTMOS_PROXY_ROUTE_INTERNAL_H
 
-#include "proxy.h"
+#include <rotmos/proxy.h>
 
 typedef struct rotmos_proxy_route_data {
     char *path;

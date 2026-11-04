@@ -20,6 +20,7 @@ typedef struct rotmos_response_outcome {
     int status;
     int committed;
     rotmos_u64 wire_bytes;
+    rotmos_u64 interim_wire_bytes;
     rotmos_u64 body_bytes;
     rotmos_u64 duration_ms;
 } rotmos_response_outcome;
@@ -57,6 +58,14 @@ ROTMOS_API rotmos_status rotmos_response_trailers_enable(
     rotmos_error *error);
 ROTMOS_API rotmos_status rotmos_response_begin(rotmos_response *response,
                                                rotmos_error *error);
+/* BUILDING only, HTTP/1.1 100/103. Copies bounded fields into the ordered
+ * output queue without committing the later final response. AGAIN takes
+ * nothing. At most 16 interim blocks / 128 KiB per request. */
+ROTMOS_API rotmos_status rotmos_response_interim(rotmos_response *response,
+                                                 int status,
+                                                 const rotmos_header *headers,
+                                                 size_t count,
+                                                 rotmos_error *error);
 /* Accepts a bounded prefix. AGAIN always accepts zero bytes. */
 ROTMOS_API rotmos_status rotmos_response_write(rotmos_response *response,
                                                const void *data, size_t length,

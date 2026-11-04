@@ -4,7 +4,7 @@
 #include "proxy_framing.h"
 #include "proxy_http_wire.h"
 
-#include "proxy.h"
+#include <rotmos/proxy.h>
 
 typedef enum rotmos_proxy_ws_rejection_mode {
     ROTMOS_PROXY_WS_REJECTION_HEAD = 0,

@@ -70,11 +70,10 @@ The lifted unit fixtures cover validators, upload framing, HTTP/trailers,
 rewrite/response/local policy, and WebSocket handshakes/rejections. Wide wire
 lengths format through the C89 public wide-integer implementation.
 
-The proxy declaration/hook views remain private until the route adapter is
-connected. `rotmos_router_proxy`, managed 100/103 forwarding, downstream
-commitment/error handling, worker-owned admission configuration and full HTTP/SSE
-and WebSocket/WSS relays remain required implementation work. This core and its
-fixtures do not establish reverse-proxy route availability or Vectis cutover
-readiness. The next adapter reuses these components and the existing public
-request/channel/response contracts; it must preserve the complete
+The [public HTTP/SSE route adapter](proxy-http.md) connects these components to
+request takeover, managed 100/103 output, final-response commitment and worker
+admission. Configuration and opaque hook views are installed in
+[`<rotmos/proxy.h>`](../include/rotmos/proxy.h). WebSocket/WSS relay execution
+remains the next implementation surface; its validators and wire machinery are
+already available privately. Vectis cutover still requires the complete
 [proxy specification](server-api-spec.md#reverse-proxy).

@@ -28,9 +28,16 @@ static size_t rotmos_proxy_upload_accept(void *userdata,
     available = upload->capacity - upload->end;
     if (length > available)
         length = available;
+    if ((uint64_t)length > ((uint64_t)-1) - upload->body_accepted ||
+        (upload->body_limit != 0u &&
+         (uint64_t)length > upload->body_limit - upload->body_accepted)) {
+        upload->failure = ROTMOS_LIMIT;
+        return 0u;
+    }
     if (length != 0u) {
         memcpy(upload->bytes + upload->end, data, length);
         upload->end += length;
+        upload->body_accepted += (uint64_t)length;
     }
     return length;
 }
@@ -118,6 +125,10 @@ rotmos_proxy_upload_feed(rotmos_proxy_upload_buffer *upload,
     result = rotmos_proxy_body_framer_feed(&upload->framer, data, length,
                                            consumed, rotmos_proxy_upload_accept,
                                            rotmos_proxy_upload_trailer, upload);
+    if (upload->failure != ROTMOS_OK) {
+        upload->framer.phase = ROTMOS_PROXY_PHASE_INVALID;
+        return ROTMOS_PROXY_FRAME_INVALID;
+    }
     if (result == ROTMOS_PROXY_FRAME_COMPLETE)
         upload->complete = 1;
     return result;
@@ -167,7 +178,15 @@ rotmos_proxy_upload_commit_fixed(rotmos_proxy_upload_buffer *upload,
         (uint64_t)length > upload->framer.remaining)
         return ROTMOS_PROXY_FRAME_INVALID;
     upload->fixed_reservation = 0u;
+    if ((uint64_t)length > ((uint64_t)-1) - upload->body_accepted ||
+        (upload->body_limit != 0u &&
+         (uint64_t)length > upload->body_limit - upload->body_accepted)) {
+        upload->failure = ROTMOS_LIMIT;
+        upload->framer.phase = ROTMOS_PROXY_PHASE_INVALID;
+        return ROTMOS_PROXY_FRAME_INVALID;
+    }
     upload->end += length;
+    upload->body_accepted += (uint64_t)length;
     upload->framer.remaining -= (uint64_t)length;
     if (upload->framer.remaining == 0u) {
         upload->framer.phase = ROTMOS_PROXY_PHASE_COMPLETE;
@@ -185,7 +204,7 @@ size_t rotmos_proxy_upload_read(char *buffer, size_t size, size_t count,
     size_t capacity;
 
     upload = (rotmos_proxy_upload_buffer *)userdata;
-    if (upload == NULL || buffer == NULL ||
+    if (upload == NULL || upload->failure != ROTMOS_OK || buffer == NULL ||
         (size != 0u && count > ((size_t)-1) / size))
         return CURL_READFUNC_ABORT;
     capacity = size * count;

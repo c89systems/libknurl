@@ -31,16 +31,14 @@ typedef struct rotmos_proxy_local_response rotmos_proxy_local_response;
  * excluding 101; 204, 205, and 304 require an empty body. A failed edit is
  * sticky and rejects the callback result even when its error is ignored.
  */
-rotmos_status rotmos_proxy_local_respond(rotmos_proxy_local_response *response,
-                                         int status, const void *body,
-                                         size_t body_length,
-                                         rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_local_respond(
+    rotmos_proxy_local_response *response, int status, const void *body,
+    size_t body_length, rotmos_error *error);
 
 /** Add a copied end-to-end response header after setting the local status. */
-rotmos_status
-rotmos_proxy_local_add_header(rotmos_proxy_local_response *response,
-                              const char *name, const char *value,
-                              rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_local_add_header(
+    rotmos_proxy_local_response *response, const char *name, const char *value,
+    rotmos_error *error);
 
 /**
  * Headers-time admission hook. The inbound view is borrowed and has no body.
@@ -75,67 +73,64 @@ typedef rotmos_status (*rotmos_proxy_rewrite_fn)(
     void *userdata, rotmos_error *error);
 
 /** Return the inbound method; the view is borrowed for the callback. */
-rotmos_http_method rotmos_proxy_inbound_method(const rotmos_proxy_inbound *in);
+ROTMOS_API rotmos_http_method
+rotmos_proxy_inbound_method(const rotmos_proxy_inbound *in);
 /** Return the validated raw path, borrowed until the callback returns. */
-const char *rotmos_proxy_inbound_path(const rotmos_proxy_inbound *in);
+ROTMOS_API const char *
+rotmos_proxy_inbound_path(const rotmos_proxy_inbound *in);
 /** Return the raw query, or NULL when absent; borrowed for the callback. */
-const char *rotmos_proxy_inbound_query(const rotmos_proxy_inbound *in);
+ROTMOS_API const char *
+rotmos_proxy_inbound_query(const rotmos_proxy_inbound *in);
 /** Return the inbound Host value, borrowed until the callback returns. */
-const char *rotmos_proxy_inbound_host(const rotmos_proxy_inbound *in);
+ROTMOS_API const char *
+rotmos_proxy_inbound_host(const rotmos_proxy_inbound *in);
 /** Return nonzero when this request is a validated WebSocket upgrade. */
-int rotmos_proxy_inbound_websocket(const rotmos_proxy_inbound *in);
-/** Return a borrowed route capture, or NULL when the name is unmatched. */
-rotmos_bytes rotmos_proxy_inbound_path_param(const rotmos_proxy_inbound *in,
-                                             const char *name);
+ROTMOS_API int rotmos_proxy_inbound_websocket(const rotmos_proxy_inbound *in);
+/** Return a borrowed route capture, or an empty view when unmatched. */
+ROTMOS_API rotmos_bytes rotmos_proxy_inbound_path_param(
+    const rotmos_proxy_inbound *in, const char *name);
 /** Return the number of inbound request header fields, including repeats. */
-size_t rotmos_proxy_inbound_header_count(const rotmos_proxy_inbound *in);
+ROTMOS_API size_t
+rotmos_proxy_inbound_header_count(const rotmos_proxy_inbound *in);
 /** Read one inbound header; output strings are borrowed for the callback. */
-rotmos_status rotmos_proxy_inbound_header_at(const rotmos_proxy_inbound *in,
-                                             size_t index, const char **name,
-                                             const char **value);
+ROTMOS_API rotmos_status
+rotmos_proxy_inbound_header_at(const rotmos_proxy_inbound *in, size_t index,
+                               const char **name, const char **value);
 
 /**
  * Select the configured target at index zero or an alternate in registration
  * order. An unconfigured index fails admission even if the error is ignored.
  */
-rotmos_status rotmos_proxy_outbound_select_target(rotmos_proxy_outbound *out,
-                                                  size_t index,
-                                                  rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_outbound_select_target(
+    rotmos_proxy_outbound *out, size_t index, rotmos_error *error);
 /** Set the forwarded method; WebSocket upgrades must retain GET. */
-rotmos_status rotmos_proxy_outbound_set_method(rotmos_proxy_outbound *out,
-                                               rotmos_http_method method,
-                                               rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_outbound_set_method(
+    rotmos_proxy_outbound *out, rotmos_http_method method, rotmos_error *error);
 /** Copy a validated raw origin-form path for the upstream request. */
-rotmos_status rotmos_proxy_outbound_set_path(rotmos_proxy_outbound *out,
-                                             const char *raw_path,
-                                             rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_outbound_set_path(
+    rotmos_proxy_outbound *out, const char *raw_path, rotmos_error *error);
 /** Copy the raw query; NULL removes it. Final target validation still applies.
  */
-rotmos_status rotmos_proxy_outbound_set_query(rotmos_proxy_outbound *out,
-                                              const char *raw_query,
-                                              rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_outbound_set_query(
+    rotmos_proxy_outbound *out, const char *raw_query, rotmos_error *error);
 /** Copy an explicit Host value; NULL restores the selected target authority. */
-rotmos_status rotmos_proxy_outbound_set_host(rotmos_proxy_outbound *out,
-                                             const char *host,
-                                             rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_outbound_set_host(
+    rotmos_proxy_outbound *out, const char *host, rotmos_error *error);
 /** Append a copied end-to-end request header, preserving repeated fields. */
-rotmos_status rotmos_proxy_outbound_add_header(rotmos_proxy_outbound *out,
-                                               const char *name,
-                                               const char *value,
-                                               rotmos_error *error);
+ROTMOS_API rotmos_status
+rotmos_proxy_outbound_add_header(rotmos_proxy_outbound *out, const char *name,
+                                 const char *value, rotmos_error *error);
 /** Replace all fields with this name by one copied end-to-end header.
  * Name and value may be borrowed from header_at(); successful replacement
  * invalidates strings borrowed from the removed fields. */
-rotmos_status rotmos_proxy_outbound_set_header(rotmos_proxy_outbound *out,
-                                               const char *name,
-                                               const char *value,
-                                               rotmos_error *error);
+ROTMOS_API rotmos_status
+rotmos_proxy_outbound_set_header(rotmos_proxy_outbound *out, const char *name,
+                                 const char *value, rotmos_error *error);
 /** Remove all fields with this name, which may be borrowed from header_at().
  * Removed fields' borrowed strings become invalid. Transport, forwarding,
  * and handshake fields are owned by librotmos. */
-rotmos_status rotmos_proxy_outbound_remove_header(rotmos_proxy_outbound *out,
-                                                  const char *name,
-                                                  rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_outbound_remove_header(
+    rotmos_proxy_outbound *out, const char *name, rotmos_error *error);
 
 /**
  * Synchronous final-response metadata hook, before downstream headers are
@@ -149,38 +144,35 @@ typedef rotmos_status (*rotmos_proxy_modify_response_fn)(
     rotmos_proxy_response *response, void *userdata, rotmos_error *error);
 
 /** Return the current downstream final status before headers are committed. */
-int rotmos_proxy_response_status(const rotmos_proxy_response *response);
+ROTMOS_API int
+rotmos_proxy_response_status(const rotmos_proxy_response *response);
 /** Return the number of sanitized downstream response header fields. */
-size_t
+ROTMOS_API size_t
 rotmos_proxy_response_header_count(const rotmos_proxy_response *response);
 /** Read one response header; output strings are borrowed for the callback. */
-rotmos_status
-rotmos_proxy_response_header_at(const rotmos_proxy_response *response,
-                                size_t index, const char **name,
-                                const char **value);
+ROTMOS_API rotmos_status rotmos_proxy_response_header_at(
+    const rotmos_proxy_response *response, size_t index, const char **name,
+    const char **value);
 
 /**
  * Set a final non-101 status without changing whether the upstream body can be
  * sent. HEAD and 204/205/304 body rules remain in force. Failed edits are
  * sticky even if the response hook ignores their error.
  */
-rotmos_status rotmos_proxy_response_set_status(rotmos_proxy_response *response,
-                                               int status, rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_response_set_status(
+    rotmos_proxy_response *response, int status, rotmos_error *error);
 /** Append a copied end-to-end response header, preserving repeated fields. */
-rotmos_status rotmos_proxy_response_add_header(rotmos_proxy_response *response,
-                                               const char *name,
-                                               const char *value,
-                                               rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_response_add_header(
+    rotmos_proxy_response *response, const char *name, const char *value,
+    rotmos_error *error);
 /** Replace all fields with this name by one copied end-to-end header. */
-rotmos_status rotmos_proxy_response_set_header(rotmos_proxy_response *response,
-                                               const char *name,
-                                               const char *value,
-                                               rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_response_set_header(
+    rotmos_proxy_response *response, const char *name, const char *value,
+    rotmos_error *error);
 /** Remove all fields with this name; transport, forwarding, and handshake
  * fields are owned by librotmos. */
-rotmos_status
-rotmos_proxy_response_remove_header(rotmos_proxy_response *response,
-                                    const char *name, rotmos_error *error);
+ROTMOS_API rotmos_status rotmos_proxy_response_remove_header(
+    rotmos_proxy_response *response, const char *name, rotmos_error *error);
 
 /**
  * Registration input for one in-process reverse proxy route.
@@ -253,7 +245,13 @@ typedef struct rotmos_proxy_config {
 } rotmos_proxy_config;
 
 /** Set the documented zero-value defaults. NULL is ignored. */
-void rotmos_proxy_config_init(rotmos_proxy_config *config);
+ROTMOS_API void rotmos_proxy_config_init(rotmos_proxy_config *config);
+
+/* Registration copies strings, targets, TLS material and callbacks. */
+ROTMOS_API rotmos_status rotmos_router_proxy(rotmos_router *router,
+                                             const rotmos_proxy_config *config,
+                                             rotmos_route **route,
+                                             rotmos_error *error);
 
 #ifdef __cplusplus
 }

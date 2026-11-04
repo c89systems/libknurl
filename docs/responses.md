@@ -45,18 +45,35 @@ and 205 sends zero length. Large already-materialized staged payloads transfer
 their existing allocation and drain in bounded chunks without another whole copy.
 
 BUILDING, ACTIVE, FINISHING and terminal state are separate from the irreversible
-commitment latch. Replacement requires an untouched response with no active
-transport buffer. Actual positive output or a retained TLS retry commits it.
+commitment latch. Replacement requires an untouched final response with no
+active final transport buffer. Actual positive final output or a retained TLS
+retry commits it.
 A producer failure before commitment selects a bounded 500; after commitment it
 aborts without a second status or successful final chunk. Writable/close
 callbacks and source pulls run on the owner loop. Terminal notification reports
 the selected status, cause, commitment, actual wire/body counts and elapsed
 monotonic milliseconds. Handles expire after terminal callbacks return.
 
+`rotmos_response_interim` queues copied HTTP/1.1 100 or 103 metadata while the
+response is BUILDING. Each block has at most 100 fields and must fit both the
+response-header bound and output queue. Each request accepts at most 16 blocks
+and 128 KiB of serialized interim output. AGAIN accepts nothing; the writable
+callback waits until the failed operation can fit. Invalid fields and
+transport-owned headers fail without publishing a partial block.
+
+Interim bytes preserve output ordering and count in both `wire_bytes` and
+`interim_wire_bytes`. Sending an interim or retaining its TLS retry leaves the
+final response replaceable. Replacement preserves queued interim blocks and any
+native buffer referencing them while removing untouched final output. The
+interim budget remains cumulative after replacement. Pending interim output uses
+the ordinary response write-idle deadline.
+
 The [focused wire fixture](../tests/response-runtime.c) demonstrates manual
 bounded writes, source resume, trailers, large staged replies and wide file
-ranges. Interim responses, producer-supplied trailer configuration, native-reader
-execution and the remaining protocol helpers are separate implementation surfaces
+ranges. The [proxy fixture](../tests/proxy-runtime.c) covers interim queue
+pressure, forwarding and subsequent final-response replacement.
+Producer-supplied trailer configuration, native-reader execution and the
+remaining protocol helpers are separate implementation surfaces
 under the [complete specification](server-api-spec.md).
 [Connection channels](channels.md) support validated WebSocket tunnel upgrades
 and bounded duplex output.

@@ -1,4 +1,6 @@
 #include "request_internal.h"
+#include "server_internal.h"
+#include "proxy_common.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -68,10 +70,24 @@ rotmos_status rotmos_request_decode(rotmos_request *request,
     rotmos_header *next;
     rotmos_status status;
     status = decode(request->raw_path, 0, &request->path, error);
-    if (status != ROTMOS_OK)
-        return status;
-    status = rotmos_route_path_validate(request->path.data, ROTMOS_PATH_LITERAL,
-                                        error);
+    if (status == ROTMOS_OK)
+        status = rotmos_route_path_validate(request->path.data,
+                                            ROTMOS_PATH_LITERAL, error);
+    if (status == ROTMOS_INVALID && request->server != NULL &&
+        rotmos_proxy_validate_path(request->raw_path.data, NULL) == ROTMOS_OK) {
+        free((void *)request->path.data);
+        request->path.data = rotmos_copy_text(request->raw_path.data);
+        request->path.length = request->raw_path.length;
+        if (request->path.data == NULL)
+            return rotmos_fail(error, ROTMOS_NOMEM, "request_decode",
+                               "cannot copy raw proxy path");
+        status =
+            rotmos_router_select_raw(request->server->router, request, error);
+        if (status == ROTMOS_EOF)
+            status = ROTMOS_INVALID;
+        if (status == ROTMOS_OK)
+            request->raw_selected = 1;
+    }
     if (status != ROTMOS_OK)
         return status;
     cursor = request->query.data;

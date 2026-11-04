@@ -57,8 +57,12 @@ callback failure. Immediate and ordinary replies preserve pipelined surplus.
 [HTTP framing and proxy core](proxy-core.md) provide a public incremental
 fixed/chunked body decoder and Vectis's lifted generic proxy validators,
 upload/response parsing and policy machinery. Private curl pools use public
-loop watches/timers, with a live bounded transfer fixture. Proxy route execution
-and full HTTP/SSE/WebSocket relays remain to be connected.
+loop watches/timers, with a live bounded transfer fixture. The
+[public proxy facade](proxy-http.md) registers copied routes and executes bounded
+HTTP/SSE duplex exchanges with interim responses, trailers, progress/total
+deadlines and shared worker admission. Its live fixture also runs against the
+relocated static and shared SDKs. WebSocket/WSS relay execution remains to be
+connected.
 
 [Connection channels](channels.md) add exclusive headers-time takeover, bounded
 raw HTTP input, explicit tail return and restoration, and validated WebSocket

@@ -40,10 +40,14 @@ fixtures cover ownership, protocol failure and shutdown without Kore types.
 The [HTTP framer and proxy core](proxy-core.md) now lift Vectis's generic
 headers, framing, upload/response parsing, policy views and WebSocket wire/rejection
 machinery. An owner-loop curl transport runs independently of Kore through public
-watches/timers, with bounded live-transfer coverage. The body framer is public;
-proxy declarations remain private until route execution is wired. Next connect
-the proxy route adapter, managed interim responses, error/commitment handling and
-HTTP/SSE plus WebSocket/WSS relays, then continue with providers/codecs. Retain the
+watches/timers, with bounded live-transfer coverage. The body framer and proxy
+declarations are public. The [HTTP/SSE adapter](proxy-http.md) connects copied
+route registrations, raw-path fallback, 100/103 output, duplex/trailer delivery,
+error/commitment handling and worker admission. The next slice connects
+WebSocket/WSS relays using the same worker admission policy and existing raw
+channel/curl handoff, then continues with providers/codecs. Retain upstream
+TLS/HTTP2 live coverage, forced transport faults and slow-peer memory measurements
+for the combined proxy review. Retain the
 remaining ACME in-flight fault and final integration checks for the combined
 review rather than repeating the full protocol matrix for each new surface.
 

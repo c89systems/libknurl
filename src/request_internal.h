@@ -45,6 +45,7 @@ struct rotmos_request {
     rotmos_request_outcome outcome;
     int dispatch_started;
     int router_dispatched;
+    int raw_selected;
     int close_notified;
     int rejection_status;
     int in_headers;
@@ -57,6 +58,8 @@ void rotmos_request_cleanup(rotmos_request *request);
 rotmos_status rotmos_router_select(rotmos_router *router,
                                    rotmos_request *request,
                                    rotmos_error *error);
+rotmos_status rotmos_router_select_raw(rotmos_router *, rotmos_request *,
+                                       rotmos_error *);
 rotmos_status rotmos_router_invoke(rotmos_request *request,
                                    rotmos_error *error);
 

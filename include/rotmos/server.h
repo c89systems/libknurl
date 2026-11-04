@@ -232,6 +232,12 @@ typedef struct rotmos_autoblock_config {
     size_t event_rule_count;
 } rotmos_autoblock_config;
 
+typedef struct rotmos_proxy_resource_config {
+    /* Zero inherits 16 active exchanges and four idle connections per pool. */
+    size_t active_exchanges;
+    size_t idle_connections;
+} rotmos_proxy_resource_config;
+
 typedef struct rotmos_server_config {
     const char *name;
     const rotmos_listener_config *listeners;
@@ -241,6 +247,7 @@ typedef struct rotmos_server_config {
     rotmos_timeout_config timeouts;
     rotmos_http_config http;
     rotmos_io_config io;
+    rotmos_proxy_resource_config proxy;
     rotmos_tls_config tls;
     rotmos_signal_config signals;
     rotmos_server_callbacks callbacks;

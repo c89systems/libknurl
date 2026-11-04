@@ -11,6 +11,7 @@ struct rotmos_response_segment {
     size_t length;
     size_t body_start;
     size_t body_length;
+    int interim;
 };
 
 struct rotmos_response {
@@ -37,6 +38,10 @@ struct rotmos_response {
     size_t bound;
     size_t chunk;
     size_t header_bound;
+    size_t interim_bytes;
+    unsigned int interim_count;
+    void (*progress)(void *, size_t);
+    void *progress_data;
     rotmos_source *source;
     rotmos_source *retired;
     unsigned char *memory;
@@ -50,6 +55,7 @@ struct rotmos_response {
     int busy;
     int inflight;
     int blocked;
+    size_t writable_need;
     int terminal_notified;
     rotmos_response_writable_fn writable;
     rotmos_response_close_fn closed;

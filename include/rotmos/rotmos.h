@@ -15,5 +15,6 @@
 #include <rotmos/channel.h>
 #include <rotmos/websocket.h>
 #include <rotmos/framing.h>
+#include <rotmos/proxy.h>
 
 #endif

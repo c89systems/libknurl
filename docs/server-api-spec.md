@@ -1861,6 +1861,8 @@ outbound/response/local-reply views and public accessors/edit operations. Lift t
 generic selector/director hooks, headers/framing validation, curl pools, upload
 framer, HTTP/SSE transport, WebSocket/WSS relay and response-rejection handling.
 No public proxy declaration leaks curl/Kore/OpenSSL layouts.
+The current [HTTP/SSE implementation](proxy-http.md) documents the installed
+facade, ownership, limits and remaining relay coverage.
 
 Preserve configured HTTP/HTTPS targets and allowed alternates; raw path/query
 rewrites; explicit Host and forwarding behavior; request preflight; rewrite;
@@ -1876,6 +1878,11 @@ range, a shared 16-active-exchange worker admission default and four retained
 idle connections per curl pool. Expose resource policy explicitly; raising a
 limit does not inherit an unmeasured RSS guarantee. Admission precedes exchange
 buffer/upstream allocation and is shared across HTTP and WebSocket routes.
+`rotmos_server_config.proxy` contains `rotmos_proxy_resource_config` with
+`active_exchanges` and `idle_connections`; initialized zero values inherit those
+defaults. Effective configuration exposes the resolved values. An exchange holds
+its admission slot through downstream completion, even after its upstream has
+finished.
 
 Preserve HTTPS HTTP/2 preference/fallback, HTTP/1.1 cleartext and WebSocket,
 same-exchange duplex upload/download, SSE progress, upload/response trailers,

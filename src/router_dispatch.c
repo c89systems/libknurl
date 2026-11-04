@@ -114,8 +114,9 @@ static rotmos_status params_match(rotmos_route *route, rotmos_request *request,
     return ROTMOS_OK;
 }
 
-rotmos_status rotmos_router_select(rotmos_router *router,
-                                   rotmos_request *request, rotmos_error *error)
+static rotmos_status select_route(rotmos_router *router,
+                                  rotmos_request *request, int raw,
+                                  rotmos_error *error)
 {
     size_t i;
     rotmos_route *route;
@@ -129,6 +130,8 @@ rotmos_status rotmos_router_select(rotmos_router *router,
                            "unknown HTTP method");
     for (i = 0; i < router->count; ++i) {
         route = router->routes[i];
+        if (raw && !route->raw_path)
+            continue;
         if ((route->config.methods &
              ROTMOS_HTTP_METHOD_MASK(request->method)) == 0)
             continue;
@@ -155,6 +158,19 @@ rotmos_status rotmos_router_select(rotmos_router *router,
     }
     rotmos_error_clear(error);
     return ROTMOS_EOF;
+}
+
+rotmos_status rotmos_router_select(rotmos_router *router,
+                                   rotmos_request *request, rotmos_error *error)
+{
+    return select_route(router, request, request->raw_selected, error);
+}
+
+rotmos_status rotmos_router_select_raw(rotmos_router *router,
+                                       rotmos_request *request,
+                                       rotmos_error *error)
+{
+    return select_route(router, request, 1, error);
 }
 
 static rotmos_status hook(rotmos_route_hook_fn function,

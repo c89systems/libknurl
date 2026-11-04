@@ -280,6 +280,14 @@ rotmos_status rotmos_config_normalize(rotmos_server_config *config,
         return invalid(
             error,
             "response write-idle timeout exceeds backend milliseconds range");
+    if (config->proxy.active_exchanges > LONG_MAX ||
+        config->proxy.idle_connections > LONG_MAX)
+        return invalid(
+            error, "proxy resource limits exceed the transport representation");
+    if (config->proxy.active_exchanges == 0)
+        config->proxy.active_exchanges = 16;
+    if (config->proxy.idle_connections == 0)
+        config->proxy.idle_connections = 4;
     status = tls_validate(&config->tls, error);
     if (status != ROTMOS_OK)
         return status;

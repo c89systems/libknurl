@@ -7,6 +7,7 @@ file(COPY "${ROTMOS_ROOT}/tests/consumer/CMakeLists.txt"
   "${ROTMOS_ROOT}/tests/foundation.c" "${ROTMOS_ROOT}/tests/reply.c"
   "${ROTMOS_ROOT}/tests/declarations.c"
   "${ROTMOS_ROOT}/tests/server-runtime.c"
+  "${ROTMOS_ROOT}/tests/proxy-runtime.c"
   DESTINATION "${TEST_ROOT}/source")
 file(STRINGS "${ROTMOS_ROOT}/VERSION" version LIMIT_COUNT 1)
 function(run)
@@ -29,6 +30,8 @@ foreach(variant static shared)
   if(ROTMOS_CAN_RUN)
     run("${TEST_ROOT}/${variant}/foundation_consumer")
     run("${TEST_ROOT}/${variant}/reply_consumer")
+    run("${TEST_ROOT}/${variant}/declarations_consumer")
     run("${TEST_ROOT}/${variant}/server-runtime_consumer")
+    run("${TEST_ROOT}/${variant}/proxy-runtime_consumer")
   endif()
 endforeach()

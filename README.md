@@ -80,6 +80,7 @@ upstream upgrades and local changes separate.
 - [Build availability, commands and backend maintenance](docs/development.md)
 - [Application WebSocket API](docs/websockets.md)
 - [HTTP framing and proxy core](docs/proxy-core.md)
+- [HTTP/SSE reverse proxy routes](docs/proxy-http.md)
 - [Server API specification](docs/server-api-spec.md)
 - [Vectis integration contract](docs/vectis-integration-contract.md)
 - [Ownership boundary](docs/extraction.md)
