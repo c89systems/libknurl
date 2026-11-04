@@ -545,7 +545,7 @@ void rl_rule_options(lua_State *L, struct rl_rule *rule)
 }
 static int rule(lua_State *L, int kind_id)
 {
-    int group = kind_id == 1, upload = kind_id == 2;
+    int group = kind_id == 1, upload = kind_id == 2, codec = kind_id >= 3;
     struct rl_server *s = rl_server(L, 1);
     struct rl_rule *parent = NULL, *r;
     rotmos_error e;
@@ -554,11 +554,25 @@ static int rule(lua_State *L, int kind_id)
     rotmos_route_group_config gc;
     rotmos_upload_stream_config uc;
     int root, index;
+    size_t output_limit = 0;
     static const char *const route_fields[] = {
         "path",    "path_kind", "method", "methods", "body",
         "handler", "before",    "after",  "auth"};
     static const char *const group_fields[] = {"prefix", "before", "after",
                                                "auth"};
+    static const char *const codec_fields[] = {"path",
+                                               "path_kind",
+                                               "method",
+                                               "methods",
+                                               "body",
+                                               "handler",
+                                               "before",
+                                               "after",
+                                               "auth",
+                                               "input_schema",
+                                               "output_schema",
+                                               "xml",
+                                               "max_output_bytes"};
     static const char *const upload_fields[] = {
         "path",        "path_kind", "method",       "methods",       "body",
         "before",      "after",     "auth",         "open",          "on_chunk",
@@ -579,9 +593,11 @@ static int rule(lua_State *L, int kind_id)
                             &e));
     if (!rl_fields(L, 2,
                    group    ? group_fields
+                   : codec  ? codec_fields
                    : upload ? upload_fields
                             : route_fields,
                    group    ? sizeof(group_fields) / sizeof(group_fields[0])
+                   : codec  ? sizeof(codec_fields) / sizeof(codec_fields[0])
                    : upload ? sizeof(upload_fields) / sizeof(upload_fields[0])
                             : sizeof(route_fields) / sizeof(route_fields[0]),
                    &e))
@@ -598,6 +614,24 @@ static int rule(lua_State *L, int kind_id)
     lua_getiuservalue(L, index, 2);
     lua_getiuservalue(L, -1, 2);
     root = lua_absindex(L, -1);
+    if (codec) {
+        if (!rl_codec_route_check(L, 2, kind_id == 5, &e))
+            goto failed;
+        if (!rl_field_size(L, 2, "max_output_bytes", &output_limit))
+            goto invalid;
+        rl_field(L, 2, "max_output_bytes");
+        if (kind_id != 3 && !lua_isnil(L, -1))
+            goto invalid;
+        lua_pop(L, 1);
+        rl_field(L, 2, "output_schema");
+        if (kind_id != 3 && !lua_isnil(L, -1))
+            goto invalid;
+        lua_pop(L, 1);
+        rl_field(L, 2, "xml");
+        if (kind_id != 5 && !lua_isnil(L, -1))
+            goto invalid;
+        lua_pop(L, 1);
+    }
     if (group) {
         rotmos_route_group_config_init(&gc);
         if (!rl_field_string(L, 2, "prefix", &gc.prefix))
@@ -612,10 +646,13 @@ static int rule(lua_State *L, int kind_id)
                                      &r->group, &e);
     } else {
         rotmos_route_config_init(&config);
+        if (codec)
+            rotmos_body_policy_init_materialized(&config.body);
         if (!rl_route_path(L, 2, &config) ||
             !rl_methods(L, 2,
-                        ROTMOS_HTTP_METHOD_MASK(upload ? ROTMOS_HTTP_POST
-                                                       : ROTMOS_HTTP_GET),
+                        ROTMOS_HTTP_METHOD_MASK((upload || codec)
+                                                    ? ROTMOS_HTTP_POST
+                                                    : ROTMOS_HTTP_GET),
                         &config.methods))
             goto invalid;
         config.handler = rl_handler;
@@ -649,6 +686,13 @@ static int rule(lua_State *L, int kind_id)
             !rl_body_policy(L, -1, &config.body, upload, &e))
             goto failed;
         lua_pop(L, 1);
+        if (codec) {
+            rl_field(L, 2, "input_schema");
+            if (!lua_isnil(L, -1) && config.body.mode != ROTMOS_BODY_BUFFERED &&
+                config.body.mode != ROTMOS_BODY_MATERIALIZED)
+                goto invalid;
+            lua_pop(L, 1);
+        }
         lua_pushvalue(L, index);
         r->root = luaL_ref(L, root);
         if (upload) {
@@ -679,6 +723,9 @@ failed:
 static int l_route(lua_State *L) { return rule(L, 0); }
 static int l_group(lua_State *L) { return rule(L, 1); }
 static int l_upload(lua_State *L) { return rule(L, 2); }
+static int l_json_route(lua_State *L) { return rule(L, 3); }
+static int l_json_typed_route(lua_State *L) { return rule(L, 4); }
+static int l_xml_route(lua_State *L) { return rule(L, 5); }
 void rl_servers_open(lua_State *L)
 {
     static const luaL_Reg methods[] = {
@@ -691,6 +738,9 @@ void rl_servers_open(lua_State *L)
         {"state", l_state},
         {"listener", l_listener},
         {"route", l_route},
+        {"json_route", l_json_route},
+        {"json_typed_route", l_json_typed_route},
+        {"xml_route", l_xml_route},
         {"upload", l_upload},
         {"upload_file", rl_upload_file},
         {"static_file", rl_static_file},
@@ -718,6 +768,12 @@ void rl_servers_open(lua_State *L)
     lua_setfield(L, -2, "__index");
     lua_pushcfunction(L, l_route);
     lua_setfield(L, -2, "route");
+    lua_pushcfunction(L, l_json_route);
+    lua_setfield(L, -2, "json_route");
+    lua_pushcfunction(L, l_json_typed_route);
+    lua_setfield(L, -2, "json_typed_route");
+    lua_pushcfunction(L, l_xml_route);
+    lua_setfield(L, -2, "xml_route");
     lua_pushcfunction(L, l_upload);
     lua_setfield(L, -2, "upload");
     lua_pushcfunction(L, rl_upload_file);

@@ -381,6 +381,64 @@ Like Vectis, option getters and a table sink's `write` function are snapshotted
 before output; malformed assignment or throwing preparation getters raise Lua
 errors. Sink invocation failures return the structured result described above.
 
+Both codecs also expose `parse(options)` and `parse_record(options)`. Supply
+`schema` and a `data` string (or `json`/`xml` for the selected codec), or `path`.
+File input uses the public pinned-file Source and bounded reads. Parsing owns a
+complete typed record under its field/spill limits; `parse` additionally converts
+that record to a Lua table. `parse_record` returns independent LoneJSON userdata,
+including spooled fields and captured JSON values, with no intermediate table or
+JSON text round trip. XML mapping options retain Vectis's semantics and defaults.
+`strict_unknown`, when present, takes precedence over `skip_unknown`.
+
+Active requests expose `json_record(schema)` and `xml_record(options)`, with
+`schema` included in XML options. These operate on completed BUFFERED/MATERIALIZED
+bodies and rewind before and after parsing, including ordinary parse failure.
+The returned record remains valid after request close; saved request methods
+return STATE. JSON uses the provider's public Lua-owned record parser over the
+public body reader, retaining its captured-value and spool policy. XML fills
+Lua-owned record storage through the public request codec.
+
+Servers and groups expose `json_route`, `json_typed_route` and `xml_route`.
+Declarations use ordinary path/method/body/hooks, optional `input_schema`, and
+`handler(request, input_record, ...)`. Their default method is POST and body mode
+MATERIALIZED; the normal explicit body/spool validation applies. Schema arguments
+are checked during registration. Auth and before hooks finish before decoding;
+ordinary after hooks see the response declaration before final conversion.
+
+`json_route` additionally accepts `output_schema` and `max_output_bytes`. Its
+handler receives `handler(request, input_record, output_record)` and populates
+the output with LoneJSON's public operations. A successful handler selects a 200
+materialized JSON reply, or 204 without an output schema. Zero/omitted output
+bound selects 10 MiB. The input/output records can use different schemas. The
+explicit materialized reply finishes serialization before asynchronous delivery,
+so retaining or later mutating a Lua record cannot change the selected bytes.
+No record-to-table conversion is required by the binding.
+
+`json_typed_route` and `xml_route` return ordinary response declarations, choosing
+schemas per response. XML declarations accept an `xml` mapping-options table.
+Any ordinary or typed handler may select `{json={schema=...,value=...}}` or
+`{xml={schema=...,value=...}}` for bounded live output from privately assigned table
+input. Explicit `{json_materialized={schema=...,record=...}}` and
+`{xml_materialized={schema=...,record=...}}` accept mutable records or value tables,
+plus `max_bytes`; they serialize synchronously with the same finite default bound.
+Status, content type and headers remain ordinary response fields. Nil from a
+general typed handler selects 204. Codec conversion waits for the final selected
+reply, so after-hook replacement does not prepare an unused producer.
+
+```lua
+server:json_route{
+  path='/echo', input_schema=request_schema, output_schema=response_schema,
+  handler=function(request, input, output)
+    response_schema:assign(output, {message=input.message})
+  end,
+}
+```
+
+The [typed fixture](../tests/lua/typed.lua) covers records, captured JSON,
+file/spooled input, repeated body decoding, owner lifetime, copied declarations,
+group/hook order, auth short circuit, multiple output schemas, mapped XML,
+bounded live output, malformed input, allocation failures and staged replacement.
+
 `make lua` acquires matching checksum-pinned LoneJSON and pslog Lua source
 products into the checkout's dependency cache. The LoneJSON provider is compiled
 with the selected lifecycle toolchain into its own dependency SDK prefix,
@@ -393,8 +451,7 @@ module search paths; preloading rotmos does not change host package paths.
 ## Remaining binding surfaces
 
 The binding is incomplete. TLS material openers/ACME state callbacks,
-remaining policy/admission/observation/control callbacks, typed JSON/XML routes,
-mapped parsing, selected-array input, XML DOM/SAX,
+remaining policy/admission/observation/control callbacks, selected-array input, XML DOM/SAX,
 REST/OpenAPI, custom asset/storage providers and packed mounts,
 remaining direct dispatch/response operations still need
 their public C bindings. Known unsupported options return an error. No transport

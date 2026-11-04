@@ -45,6 +45,12 @@ ROTMOS_API rotmos_status rotmos_source_new(const rotmos_source_config *config,
 ROTMOS_API rotmos_status rotmos_source_bytes(rotmos_bytes bytes,
                                              rotmos_source **out,
                                              rotmos_error *error);
+/* Opens and pins a regular file at its current length. Reads/reset use an
+ * independent cursor; close releases the FD and never unlinks the path.
+ * Later growth is excluded; truncation before the declared end fails. */
+ROTMOS_API rotmos_status rotmos_source_file(const char *path,
+                                            rotmos_source **out,
+                                            rotmos_error *error);
 /* Manual access is available before ownership passes to a reply/runtime.
  * A native upload handler may also read its borrowed source as documented in
  * upload.h; that view rejects reset, destroy and ownership transfer.

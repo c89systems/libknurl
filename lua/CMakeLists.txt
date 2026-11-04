@@ -98,6 +98,11 @@ if(BUILD_TESTING)
       "-DSCRIPT=${rotmos_root}/tests/lua/codecs.lua" "-DWORKSPACE=${CMAKE_CURRENT_BINARY_DIR}/tests/codecs"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
     set_tests_properties(rotmos.lua-codecs-${mode} PROPERTIES TIMEOUT 10)
+    add_test(NAME rotmos.lua-typed-${mode} COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
+      "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:rotmos_lua_${mode}_host>"
+      "-DSCRIPT=${rotmos_root}/tests/lua/typed.lua" "-DWORKSPACE=${CMAKE_CURRENT_BINARY_DIR}/tests/typed"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
+    set_tests_properties(rotmos.lua-typed-${mode} PROPERTIES TIMEOUT 10)
     if(NOT ROTMOS_TARGET MATCHES "^x86_64-linux-(gnu|musl)$" OR NOT CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
       set_tests_properties(rotmos.lua-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-config-${mode} PROPERTIES DISABLED TRUE)
@@ -106,6 +111,7 @@ if(BUILD_TESTING)
       set_tests_properties(rotmos.lua-proxy-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-events-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-codecs-${mode} PROPERTIES DISABLED TRUE)
+      set_tests_properties(rotmos.lua-typed-${mode} PROPERTIES DISABLED TRUE)
     endif()
   endforeach()
 endif()

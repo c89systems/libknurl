@@ -381,6 +381,12 @@ if(BUILD_TESTING)
   rotmos_c89(rotmos_reply_test)
   rotmos_local_runtime(rotmos_reply_test)
   add_test(NAME rotmos.reply COMMAND rotmos_reply_test)
+  add_executable(rotmos_source_file_test tests/source-file.c)
+  target_link_libraries(rotmos_source_file_test PRIVATE rotmos::shared)
+  rotmos_c89(rotmos_source_file_test)
+  rotmos_local_runtime(rotmos_source_file_test)
+  add_test(NAME rotmos.source-file COMMAND rotmos_source_file_test)
+  set_tests_properties(rotmos.source-file PROPERTIES TIMEOUT 5)
   add_executable(rotmos_kore_port tests/kore-port.c "${kore_source_dir}/src/sha2.c")
   add_dependencies(rotmos_kore_port kore-source)
   target_compile_definitions(rotmos_kore_port PRIVATE _GNU_SOURCE=1 TLS_BACKEND_OPENSSL)
@@ -436,7 +442,7 @@ if(BUILD_TESTING)
   if(NOT rotmos_can_run)
     set_tests_properties(rotmos.acme-state rotmos.auxiliary-runtime rotmos.auxiliary-restart rotmos.auxiliary-terminate rotmos.process-runtime rotmos.process-backend rotmos.tls-runtime rotmos.channel-runtime rotmos.channel-backend rotmos.body-runtime rotmos.response-runtime rotmos.loop-smoke rotmos.server-runtime rotmos.kore-runtime
       rotmos.source-runtime rotmos.upload-runtime rotmos.rest-runtime rotmos.openapi rotmos.policy-runtime rotmos.policy-logs-runtime rotmos.autoblock rotmos.log-backend rotmos.storage-deadline
-      rotmos.declarations rotmos.reply rotmos.reply-spooled rotmos.kore-port rotmos.foundation
+      rotmos.declarations rotmos.reply rotmos.reply-spooled rotmos.source-file rotmos.kore-port rotmos.foundation
       rotmos.headers.cpp PROPERTIES DISABLED TRUE)
   endif()
 endif()

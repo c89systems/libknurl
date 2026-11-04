@@ -88,6 +88,7 @@ int rotmos_lua_test_exchange(unsigned short port, const char *method,
     char head[1024], framing[64], prefix[32], *reply = NULL, *payload, *cursor,
                                               *end, *decoded = NULL;
     size_t used = 0, n = 0, chunk;
+    const size_t capacity = 262144;
     ssize_t count;
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)
@@ -144,13 +145,13 @@ int rotmos_lua_test_exchange(unsigned short port, const char *method,
         if (count != (ssize_t)length)
             goto done;
     }
-    reply = malloc(65536);
-    decoded = malloc(65536);
+    reply = malloc(capacity);
+    decoded = malloc(capacity);
     if (reply == NULL || decoded == NULL)
         goto done;
-    while (used < 65535) {
-        count = ssl ? SSL_read(ssl, reply + used, (int)(65535 - used))
-                    : read(fd, reply + used, 65535 - used);
+    while (used < capacity - 1) {
+        count = ssl ? SSL_read(ssl, reply + used, (int)(capacity - 1 - used))
+                    : read(fd, reply + used, capacity - 1 - used);
         if (count <= 0)
             break;
         used += (size_t)count;
@@ -173,7 +174,7 @@ int rotmos_lua_test_exchange(unsigned short port, const char *method,
             cursor = end + 2;
             if (chunk == 0)
                 break;
-            if (chunk > 65535 - n || cursor + chunk + 2 > reply + used)
+            if (chunk > capacity - 1 - n || cursor + chunk + 2 > reply + used)
                 goto done;
             memcpy(decoded + n, cursor, chunk);
             n += chunk;
@@ -291,6 +292,75 @@ static int spawn_codecs(lua_State *L)
         if (!failed)
             failed = rotmos_lua_test_exchange(port, "GET", "/xml", "", 0, 200,
                                               "<writer>wire</writer>", 21);
+        if (!failed)
+            failed = rotmos_lua_test_exchange(port, "GET", "/stop", "", 0, 200,
+                                              "ok", 2);
+        if (failed)
+            kill(getppid(), SIGTERM);
+        _exit(failed);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int spawn_typed(lua_State *L)
+{
+    static const struct {
+        const char *method, *path, *input;
+        int status;
+        const char *output;
+    } cases[] = {
+        {"POST", "/fixed", "{\"text\":\"one\"}", 202, "{\"text\":\"one\"}"},
+        {"POST", "/group/typed", "{\"text\":\"existing\"}", 409,
+         "{\"code\":\"existing\"}"},
+        {"POST", "/echo", "{\"text\":\"direct\"}", 200,
+         "{\"text\":\"direct\"}"},
+        {"GET", "/retained", "", 200, "ok"},
+        {"POST", "/xml", "<doc id=\"7\">xml</doc>", 200,
+         "<doc id=\"7\">xml</doc>"},
+        {"POST", "/xml-live", "<doc id=\"7\">xml</doc>", 200,
+         "<doc id=\"7\">xml</doc>"},
+        {"POST", "/malformed", "{\"text\":", 400, NULL},
+        {"POST", "/malformed", "{}", 400, NULL},
+        {"POST", "/denied", "{", 403, NULL},
+        {"POST", "/blocked", "{", 403, "blocked"},
+        {"POST", "/empty", "", 204, ""},
+        {"POST", "/captured", "{\"payload\":{\"n\":1}}", 200,
+         "{\"payload\":{\"n\":1}}"},
+        {"GET", "/discard", "", 200, "discarded"},
+        {"GET", "/bad-codec", "", 500, NULL}};
+    unsigned short port = (unsigned short)luaL_checkinteger(L, 1);
+    size_t i, length = 65536 + 11;
+    char *large;
+    int failed = 0;
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        for (i = 0; !failed && i < sizeof(cases) / sizeof(cases[0]); ++i) {
+            required_header =
+                strcmp(cases[i].path, "/echo") == 0
+                    ? "content-type: application/vnd.rotmos+json\r\n"
+                    : NULL;
+            failed = rotmos_lua_test_exchange(
+                port, cases[i].method, cases[i].path, cases[i].input,
+                strlen(cases[i].input), cases[i].status, cases[i].output,
+                cases[i].output != NULL ? strlen(cases[i].output) : 0);
+        }
+        required_header = NULL;
+        large = malloc(length + 1);
+        if (large == NULL)
+            failed = 1;
+        else {
+            memcpy(large, "{\"text\":\"", 9);
+            memset(large + 9, 'x', 65536);
+            memcpy(large + 65536 + 9, "\"}", 3);
+            if (!failed)
+                failed = rotmos_lua_test_exchange(port, "POST", "/large", large,
+                                                  length, 200, large, length);
+            free(large);
+        }
         if (!failed)
             failed = rotmos_lua_test_exchange(port, "GET", "/stop", "", 0, 200,
                                               "ok", 2);
@@ -1145,6 +1215,8 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "spawn_events");
     lua_pushcfunction(L, spawn_codecs);
     lua_setfield(L, -2, "spawn_codecs");
+    lua_pushcfunction(L, spawn_typed);
+    lua_setfield(L, -2, "spawn_typed");
     lua_pushstring(L, argv[2]);
     lua_setfield(L, -2, "root");
     if (argc == 4) {

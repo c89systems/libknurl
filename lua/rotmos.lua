@@ -29,7 +29,7 @@ local function request(handle)
   end
   out.header,out.query,out.param=lookup('header'),lookup('query'),lookup('param')
   out.body_bytes=function() return handle:body_bytes() end
-  for _,name in ipairs{'body_reader','body_materialize','body_spill','body_copy'} do
+  for _,name in ipairs{'body_reader','body_materialize','body_spill','body_copy','json_record','xml_record'} do
     out[name]=function(a,b)
       if a==out then a=b end
       return handle[name](handle,a)
@@ -78,6 +78,41 @@ local function route(self,path,handler,opts)
   return true
 end
 Server.route,Group.route=route,route
+local function typed_route(self,kind,declaration)
+  if type(declaration)~='table' or type(declaration.handler)~='function' then
+    return invalid(kind..' declaration and handler required')
+  end
+  local opts=copy(declaration)
+  local handler,input_schema,output_schema=opts.handler,opts.input_schema,opts.output_schema
+  local output_limit=opts.max_output_bytes
+  local xml=type(opts.xml)=='table' and copy(opts.xml) or opts.xml
+  opts.xml=xml
+  opts=options(opts,function(req)
+    local input,err
+    if input_schema~=nil then
+      if kind=='xml_route' then
+        local config=copy(xml);config.schema=input_schema
+        input,err=req.xml_record(config)
+      else input,err=req.json_record(input_schema) end
+      if not input then return nil,err end
+    end
+    if kind=='json_route' then
+      local output=output_schema and output_schema:new_record() or nil
+      local _,failure=handler(req,input,output)
+      if failure~=nil then return nil,failure end
+      if output then return {json_materialized={schema=output_schema,record=output,max_bytes=output_limit}} end
+      return nil
+    end
+    return handler(req,input)
+  end,native.BODY_MATERIALIZED)
+  local handle,err=self._native[kind](self._native,opts)
+  if not handle then return nil,err end
+  return true
+end
+for _,name in ipairs{'json_route','json_typed_route','xml_route'} do
+  Server[name]=function(self,opts) return typed_route(self,name,opts) end
+  Group[name]=Server[name]
+end
 local function first(a,b,c)
   if a~=nil then return a end
   if b~=nil then return b end

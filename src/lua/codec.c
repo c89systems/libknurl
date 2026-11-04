@@ -1,6 +1,7 @@
 #include "binding.h"
 #include <rotmos/lonejson.h>
 #include <lonejson_lua.h>
+#include <errno.h>
 
 #define RL_CODEC "rotmos.codec_owner"
 struct codec {
@@ -8,6 +9,7 @@ struct codec {
     lonejson_record_view record;
     rotmos_xml_config xml;
     rotmos_owned_bytes bytes;
+    rotmos_source *input;
     size_t max_bytes;
     int private_record;
 };
@@ -22,42 +24,93 @@ static void record_init(lonejson_record_view *view)
 static rotmos_status json_error(rotmos_error *error,
                                 const lonejson_error *cause)
 {
-    rl_fail(error,
-            cause->code == LONEJSON_STATUS_ALLOCATION_FAILED ? ROTMOS_NOMEM
-                                                             : ROTMOS_INVALID,
+    rotmos_status status = ROTMOS_INVALID;
+    if (cause->code == LONEJSON_STATUS_ALLOCATION_FAILED)
+        status = ROTMOS_NOMEM;
+    else if (cause->code == LONEJSON_STATUS_IO_ERROR)
+        status = ROTMOS_IO;
+    else if (cause->code == LONEJSON_STATUS_OVERFLOW ||
+             cause->code == LONEJSON_STATUS_TRUNCATED)
+        status = ROTMOS_LIMIT;
+    else if (cause->code == LONEJSON_STATUS_UNSUPPORTED)
+        status = ROTMOS_NOT_SUPPORTED;
+    else if (cause->code == LONEJSON_STATUS_INTERNAL_ERROR)
+        status = ROTMOS_BACKEND;
+    rl_fail(error, status,
             cause->message[0] ? cause->message
                               : "invalid LoneJSON schema/record");
     error->source = ROTMOS_ERROR_LONEJSON;
     error->native_code = (long)cause->code;
+    snprintf(error->detail, sizeof(error->detail),
+             "line %lu, column %lu, offset %lu, errno %d",
+             (unsigned long)cause->line, (unsigned long)cause->column,
+             (unsigned long)cause->offset, cause->system_errno);
     return error->status;
 }
-static int codec_close(lua_State *L)
+static void cleanup(lua_State *L, int owner, struct codec *c)
 {
-    struct codec *c = luaL_testudata(L, 1, RL_CODEC);
-    if (c == NULL)
-        return 0;
     rotmos_owned_bytes_cleanup(&c->bytes);
+    rotmos_source_destroy(c->input, NULL);
+    c->input = NULL;
     if (c->private_record) {
-        lua_getiuservalue(L, 1, 2);
+        lua_getiuservalue(L, owner, 2);
         (void)lonejson_lua_clear_record(L, -1, NULL);
         lua_pop(L, 1);
         c->private_record = 0;
     }
+}
+static int codec_close(lua_State *L)
+{
+    struct codec *c = luaL_testudata(L, 1, RL_CODEC);
+    if (c != NULL)
+        cleanup(L, 1, c);
     return 0;
 }
-static struct codec *prepare(lua_State *L, int options, int xml, int callback,
+static int xml_options(lua_State *L, int options, rotmos_xml_config *xml)
+{
+    int skip = 1, strict = 0;
+    if (!rl_field_string(L, options, "root_element", &xml->root_element) ||
+        !rl_field_string(L, options, "text_key", &xml->text_key) ||
+        !rl_field_string(L, options, "attribute_prefix",
+                         &xml->attribute_prefix) ||
+        !rl_field_bool(L, options, "trim_text", &xml->trim_text) ||
+        !rl_field_bool(L, options, "skip_unknown", &skip) ||
+        !rl_field_bool(L, options, "strict_unknown", &strict) ||
+        !rl_field_size(L, options, "max_depth", &xml->max_depth) ||
+        !rl_field_size(L, options, "max_text_bytes", &xml->max_text_bytes))
+        return 0;
+    xml->skip_unknown_disabled = !skip;
+    rl_field(L, options, "strict_unknown");
+    if (!lua_isnil(L, -1))
+        xml->skip_unknown_disabled = strict;
+    lua_pop(L, 1);
+    return 1;
+}
+static struct codec *prepare(lua_State *L, int options, int xml, int mode,
                              rotmos_error *error)
 {
-    static const char *const names[] = {
-        "schema",        "record",       "value",          "table",
-        "max_bytes",     "root_element", "text_key",       "attribute_prefix",
-        "trim_text",     "skip_unknown", "strict_unknown", "max_depth",
-        "max_text_bytes"};
+    static const char *const names[] = {"schema",
+                                        "record",
+                                        "value",
+                                        "table",
+                                        "max_bytes",
+                                        "root_element",
+                                        "text_key",
+                                        "attribute_prefix",
+                                        "trim_text",
+                                        "skip_unknown",
+                                        "strict_unknown",
+                                        "max_depth",
+                                        "max_text_bytes",
+                                        "xml",
+                                        "json",
+                                        "data",
+                                        "path"};
     struct codec *c;
     lonejson_error cause;
     lonejson_status status;
     size_t i;
-    int owner, snapshot, schema, value, record = 0, skip = 1, strict = 0;
+    int owner, snapshot, schema, value, record = 0;
     options = lua_absindex(L, options);
     if (!lua_istable(L, options) ||
         !rl_fields(L, options, names, sizeof(names) / sizeof(names[0]),
@@ -77,7 +130,7 @@ static struct codec *prepare(lua_State *L, int options, int xml, int callback,
     lua_newtable(L);
     snapshot = lua_absindex(L, -1);
     for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
-        if (!xml && i >= 5)
+        if ((!xml && i >= 5 && i < 13) || (mode < 2 && i >= 13))
             continue;
         lua_getfield(L, options, names[i]);
         lua_setfield(L, snapshot, names[i]);
@@ -97,26 +150,39 @@ static struct codec *prepare(lua_State *L, int options, int xml, int callback,
     if (!rl_field_size(L, snapshot, "max_bytes", &c->max_bytes))
         goto invalid;
     if (xml) {
-        if (!rl_field_string(L, snapshot, "root_element",
-                             &c->xml.root_element) ||
-            !rl_field_string(L, snapshot, "text_key", &c->xml.text_key) ||
-            !rl_field_string(L, snapshot, "attribute_prefix",
-                             &c->xml.attribute_prefix) ||
-            !rl_field_bool(L, snapshot, "trim_text", &c->xml.trim_text) ||
-            !rl_field_bool(L, snapshot, "skip_unknown", &skip) ||
-            !rl_field_bool(L, snapshot, "strict_unknown", &strict) ||
-            !rl_field_size(L, snapshot, "max_depth", &c->xml.max_depth) ||
-            !rl_field_size(L, snapshot, "max_text_bytes",
-                           &c->xml.max_text_bytes))
+        if (!xml_options(L, snapshot, &c->xml))
             goto invalid;
-        c->xml.skip_unknown_disabled = !skip || strict;
     } else {
-        for (i = 5; i < sizeof(names) / sizeof(names[0]); ++i) {
+        for (i = 5; i < 13; ++i) {
             rl_field(L, options, names[i]);
             if (!lua_isnil(L, -1))
                 goto invalid;
             lua_pop(L, 1);
         }
+    }
+    if (mode >= 2) {
+        for (i = 1; i <= 4; ++i) {
+            rl_field(L, snapshot, names[i]);
+            if (!lua_isnil(L, -1))
+                goto invalid;
+            lua_pop(L, 1);
+        }
+        if (mode == 3) {
+            for (i = 13; i < sizeof(names) / sizeof(names[0]); ++i) {
+                rl_field(L, snapshot, names[i]);
+                if (!lua_isnil(L, -1))
+                    goto invalid;
+                lua_pop(L, 1);
+            }
+        }
+        lua_settop(L, owner);
+        return c;
+    }
+    for (i = 13; i < sizeof(names) / sizeof(names[0]); ++i) {
+        rl_field(L, options, names[i]);
+        if (!lua_isnil(L, -1))
+            goto invalid;
+        lua_pop(L, 1);
     }
     rl_field(L, snapshot, "record");
     if (lua_isnil(L, -1)) {
@@ -128,13 +194,13 @@ static struct codec *prepare(lua_State *L, int options, int xml, int callback,
         }
     }
     value = lua_absindex(L, -1);
-    if (!callback && lua_type(L, value) == LUA_TUSERDATA) {
+    if (!mode && lua_type(L, value) == LUA_TUSERDATA) {
         status =
             lonejson_lua_check_record(L, value, &c->schema, &c->record, &cause);
         record = value;
     } else {
         if (!lua_istable(L, value)) {
-            if (callback)
+            if (mode)
                 luaL_error(
                     L,
                     "callback writers require value tables; externally mutable "
@@ -209,42 +275,80 @@ static int serialize(lua_State *L, int xml)
     }
     return 1;
 }
-static int source(lua_State *L, int xml)
+static rotmos_status codec_source(lua_State *L, int index, int xml,
+                                  rotmos_error *error)
 {
     struct codec *c;
     struct rl_source *s;
-    rotmos_error error;
     rotmos_status status;
     rotmos_json_source_config json;
     rotmos_xml_source_config config;
-    c = prepare(L, 1, xml, 1, &error);
+    c = prepare(L, index, xml, 1, error);
     if (c == NULL)
-        return rl_error(L, &error);
+        return error->status;
     if (c->max_bytes != 0)
-        return rl_error(L,
-                        (rl_fail(&error, ROTMOS_INVALID,
-                                 "max_bytes is for materialized serialization"),
-                         &error));
-    s = rl_source_native_new(L, -1, codec_close, &error);
+        return rl_fail(error, ROTMOS_INVALID,
+                       "max_bytes is for materialized serialization");
+    s = rl_source_native_new(L, -1, codec_close, error);
     if (s == NULL)
-        return rl_error(L, &error);
+        return error->status;
     if (xml) {
         rotmos_xml_source_config_init(&config);
         config.record = &c->record;
         config.xml = c->xml;
-        status = rotmos_source_xml(&config, &s->delegate, &error);
+        status = rotmos_source_xml(&config, &s->delegate, error);
     } else {
         rotmos_json_source_config_init(&json);
         json.record = c->record;
-        status = rotmos_source_json(&json, &s->delegate, &error);
+        status = rotmos_source_json(&json, &s->delegate, error);
     }
     if (status != ROTMOS_OK) {
         lua_pushvalue(L, -1);
         s->root = luaL_ref(L, LUA_REGISTRYINDEX);
         rotmos_source_destroy(s->native, NULL);
-        return rl_error(L, &error);
+        return status;
     }
+    return ROTMOS_OK;
+}
+static int source(lua_State *L, int xml)
+{
+    rotmos_error error;
+    if (codec_source(L, 1, xml, &error) != ROTMOS_OK)
+        return rl_error(L, &error);
     return 1;
+}
+rotmos_status rl_codec_reply(lua_State *L, int index, int xml, int materialized,
+                             rotmos_reply *reply, int code, const char *type,
+                             rotmos_error *error)
+{
+    struct codec *c;
+    rotmos_bytes bytes;
+    int owner;
+    rotmos_status status;
+    if (type == NULL)
+        type = xml ? "application/xml" : "application/json";
+    if (materialized) {
+        c = prepare(L, index, xml, 0, error);
+        if (c == NULL)
+            return error->status;
+        owner = lua_absindex(L, -1);
+        status = xml ? rotmos_xml_serialize_materialized(
+                           &c->record, &c->xml, c->max_bytes, &c->bytes, error)
+                     : rotmos_json_serialize_materialized(
+                           &c->schema, c->record.record, c->max_bytes,
+                           &c->bytes, error);
+        if (status == ROTMOS_OK) {
+            bytes.data = c->bytes.data;
+            bytes.length = c->bytes.length;
+            status = rotmos_reply_bytes(reply, code, type, bytes, error);
+        }
+        cleanup(L, owner, c);
+        return status;
+    }
+    status = codec_source(L, index, xml, error);
+    if (status != ROTMOS_OK)
+        return status;
+    return rl_source_take(L, -1, reply, code, type, error);
 }
 struct sink_call {
     const void *bytes;
@@ -328,6 +432,238 @@ static int write(lua_State *L, int xml)
     rl_push_u64(L, written);
     return 2;
 }
+struct input_reader {
+    rotmos_source *source;
+    rotmos_body *body;
+    rotmos_error failure;
+};
+static lonejson_read_result input_read(void *data, unsigned char *buffer,
+                                       size_t capacity)
+{
+    struct input_reader *reader = data;
+    lonejson_read_result result;
+    rotmos_status status;
+    memset(&result, 0, sizeof(result));
+    status = reader->body != NULL
+                 ? rotmos_body_read(reader->body, buffer, capacity,
+                                    &result.bytes_read, &reader->failure)
+                 : rotmos_source_read(reader->source, buffer, capacity,
+                                      &result.bytes_read, &reader->failure);
+    if (status == ROTMOS_EOF)
+        result.eof = 1;
+    else if (status != ROTMOS_OK)
+        result.error_code = EIO;
+    return result;
+}
+static rotmos_status parse_json(lua_State *L, int schema,
+                                struct input_reader *reader, int *record,
+                                rotmos_error *error)
+{
+    lonejson_error cause;
+    lonejson_status status;
+    *record = 0;
+    status = lonejson_lua_parse_reader_to_record(L, schema, input_read, reader,
+                                                 record, &cause);
+    if (reader->failure.status != ROTMOS_OK) {
+        *error = reader->failure;
+        return error->status;
+    }
+    if (status != LONEJSON_STATUS_OK) {
+        if (*record != 0)
+            (void)lonejson_lua_clear_record(L, *record, NULL);
+        return json_error(error, &cause);
+    }
+    return ROTMOS_OK;
+}
+static rotmos_status new_record(lua_State *L, int owner, struct codec *c,
+                                rotmos_error *error)
+{
+    lonejson_error cause;
+    lonejson_status status;
+    int index;
+    lua_getiuservalue(L, owner, 1);
+    status = lonejson_lua_new_record(L, -1, &index, &c->record, &cause);
+    if (status != LONEJSON_STATUS_OK)
+        return json_error(error, &cause);
+    lua_pushvalue(L, index);
+    lua_setiuservalue(L, owner, 2);
+    c->private_record = 1;
+    return ROTMOS_OK;
+}
+static int parse(lua_State *L, int xml, int table)
+{
+    struct codec *c;
+    struct input_reader reader;
+    rotmos_error error;
+    rotmos_status status;
+    rotmos_bytes bytes;
+    const char *path = NULL;
+    int owner, options, record = 0, has_data;
+    c = prepare(L, 1, xml, 2, &error);
+    if (c == NULL)
+        return rl_error(L, &error);
+    owner = lua_absindex(L, -1);
+    lua_getiuservalue(L, owner, 3);
+    options = lua_absindex(L, -1);
+    rl_field(L, options, xml ? "json" : "xml");
+    if (!lua_isnil(L, -1))
+        goto invalid;
+    lua_pop(L, 1);
+    rl_field(L, options, xml ? "xml" : "json");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        rl_field(L, options, "data");
+    }
+    has_data = !lua_isnil(L, -1);
+    if (has_data && lua_type(L, -1) != LUA_TSTRING)
+        goto invalid;
+    bytes.data = lua_tolstring(L, -1, &bytes.length);
+    if (!rl_field_string(L, options, "path", &path) ||
+        has_data == (path != NULL))
+        goto invalid;
+    status = path != NULL ? rotmos_source_file(path, &c->input, &error)
+                          : rotmos_source_bytes(bytes, &c->input, &error);
+    if (status != ROTMOS_OK)
+        return rl_error(L, &error);
+    if (xml) {
+        status = new_record(L, owner, c, &error);
+        if (status == ROTMOS_OK)
+            status = rotmos_xml_parse_source(c->input, &c->schema, &c->xml,
+                                             c->record.record, &error);
+    } else {
+        memset(&reader, 0, sizeof(reader));
+        reader.source = c->input;
+        lua_getiuservalue(L, owner, 1);
+        status = parse_json(L, lua_absindex(L, -1), &reader, &record, &error);
+        if (status == ROTMOS_OK) {
+            lua_pushvalue(L, record);
+            lua_setiuservalue(L, owner, 2);
+            c->private_record = 1;
+        }
+    }
+    rotmos_source_destroy(c->input, NULL);
+    c->input = NULL;
+    if (status != ROTMOS_OK) {
+        cleanup(L, owner, c);
+        return rl_error(L, &error);
+    }
+    lua_getiuservalue(L, owner, 2);
+    if (table) {
+        if (lonejson_lua_record_to_table(L, -1) == 0)
+            return rl_error(
+                L, (rl_fail(&error, ROTMOS_INVALID, "record conversion failed"),
+                    &error));
+        cleanup(L, owner, c);
+    } else
+        c->private_record =
+            0; /* Returned userdata owns its independent record. */
+    return 1;
+invalid:
+    return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
+                                "provide exactly one data string or path"),
+                        &error));
+}
+int rl_request_json_record(lua_State *L)
+{
+    struct rl_request *request;
+    struct input_reader reader;
+    lonejson_schema_view schema;
+    lonejson_error cause;
+    rotmos_error error, rewind_error;
+    rotmos_status status, rewind_status;
+    int record;
+    if (!rl_request_check(L, 1, &request, &error))
+        return rl_error(L, &error);
+    memset(&schema, 0, sizeof(schema));
+    schema.size = sizeof(schema);
+    schema.abi_version = LONEJSON_VIEW_ABI_VERSION;
+    if (lonejson_lua_check_schema(L, 2, &schema, &cause) != LONEJSON_STATUS_OK)
+        return rl_error(L, (json_error(&error, &cause), &error));
+    memset(&reader, 0, sizeof(reader));
+    reader.body = rotmos_request_body(request->native);
+    if (rotmos_body_rewind(reader.body, &error) != ROTMOS_OK)
+        return rl_error(L, &error);
+    status = parse_json(L, 2, &reader, &record, &error);
+    rewind_status = rotmos_body_rewind(reader.body, &rewind_error);
+    if (status == ROTMOS_OK && rewind_status != ROTMOS_OK) {
+        status = rewind_status;
+        error = rewind_error;
+    }
+    if (status == ROTMOS_LIMIT)
+        error.status = status = ROTMOS_INVALID;
+    if (status != ROTMOS_OK)
+        return rl_error(L, &error);
+    return 1;
+}
+int rl_request_xml_record(lua_State *L)
+{
+    struct rl_request *request;
+    struct codec *c;
+    rotmos_error error;
+    rotmos_status status;
+    int owner;
+    if (!rl_request_check(L, 1, &request, &error))
+        return rl_error(L, &error);
+    c = prepare(L, 2, 1, 3, &error);
+    if (c == NULL)
+        return rl_error(L, &error);
+    owner = lua_absindex(L, -1);
+    status = new_record(L, owner, c, &error);
+    if (status == ROTMOS_OK)
+        status = rotmos_request_xml_into(request->native, &c->schema, &c->xml,
+                                         c->record.record, &error);
+    if (status != ROTMOS_OK) {
+        cleanup(L, owner, c);
+        return rl_error(L, &error);
+    }
+    c->private_record = 0;
+    lua_getiuservalue(L, owner, 2);
+    return 1;
+}
+int rl_codec_route_check(lua_State *L, int options, int xml,
+                         rotmos_error *error)
+{
+    static const char *const names[] = {"input_schema", "output_schema"};
+    static const char *const fields[] = {
+        "root_element", "text_key",       "attribute_prefix", "trim_text",
+        "skip_unknown", "strict_unknown", "max_depth",        "max_text_bytes"};
+    lonejson_schema_view schema;
+    lonejson_error cause;
+    rotmos_xml_config config;
+    size_t i;
+    rotmos_error_clear(error);
+    for (i = 0; i < 2; ++i) {
+        memset(&schema, 0, sizeof(schema));
+        schema.size = sizeof(schema);
+        schema.abi_version = LONEJSON_VIEW_ABI_VERSION;
+        rl_field(L, options, names[i]);
+        if (!lua_isnil(L, -1) &&
+            lonejson_lua_check_schema(L, -1, &schema, &cause) !=
+                LONEJSON_STATUS_OK) {
+            json_error(error, &cause);
+            return 0;
+        }
+        lua_pop(L, 1);
+    }
+    if (!xml)
+        return 1;
+    rotmos_xml_config_init(&config);
+    rl_field(L, options, "xml");
+    if (!lua_isnil(L, -1) &&
+        (!lua_istable(L, -1) ||
+         !rl_fields(L, -1, fields, sizeof(fields) / sizeof(fields[0]), error) ||
+         !xml_options(L, lua_absindex(L, -1), &config))) {
+        if (error->status == ROTMOS_OK)
+            rl_fail(error, ROTMOS_INVALID, "invalid XML route options");
+        return 0;
+    }
+    lua_pop(L, 1);
+    return 1;
+}
+static int json_parse(lua_State *L) { return parse(L, 0, 1); }
+static int json_parse_record(lua_State *L) { return parse(L, 0, 0); }
+static int xml_parse(lua_State *L) { return parse(L, 1, 1); }
+static int xml_parse_record(lua_State *L) { return parse(L, 1, 0); }
 static int json_serialize(lua_State *L) { return serialize(L, 0); }
 static int xml_serialize(lua_State *L) { return serialize(L, 1); }
 static int json_source(lua_State *L) { return source(L, 0); }
@@ -337,10 +673,14 @@ static int xml_write(lua_State *L) { return write(L, 1); }
 void rl_codecs_open(lua_State *L)
 {
     static const luaL_Reg json[] = {{"serialize", json_serialize},
+                                    {"parse", json_parse},
+                                    {"parse_record", json_parse_record},
                                     {"source", json_source},
                                     {"write", json_write},
                                     {NULL, NULL}};
     static const luaL_Reg xml[] = {{"serialize", xml_serialize},
+                                   {"parse", xml_parse},
+                                   {"parse_record", xml_parse_record},
                                    {"source", xml_source},
                                    {"write", xml_write},
                                    {NULL, NULL}};

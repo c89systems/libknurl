@@ -50,6 +50,15 @@ It uses bounded pread on the owner loop: filesystem I/O can block. It neither
 maps nor materializes the complete file. Failed registration retains caller
 ownership. The staged file helper pins the file when selecting the reply.
 
+`rotmos_source_file(path)` opens a regular file once at its current length and
+uses the same bounded reader as file-backed body results. The Source retains an
+independent descriptor/cursor, supports reset, excludes later growth, and fails
+if the file is truncated before its declared end. Renaming/unlinking the path
+does not change the pinned file; close releases the descriptor without unlinking.
+Opening a FIFO or directory fails. Filesystem reads run synchronously on the
+owner loop. Mapped Lua file parsing uses this public reader. The short
+[file-source fixture](../tests/source-file.c) covers these ownership/failure cases.
+
 `rotmos_reply_source_spooled` lifts Vectis's synchronous `response_source`:
 it borrows an unowned source, resets it once when supported, and copies bounded
 8192-byte chunks into a mode-0600 temporary file before returning. The directory

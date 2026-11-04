@@ -158,8 +158,8 @@ Userdata roots retire with their native operation; inherited parent loop tokens
 are invalidated before child callbacks can access discarded handles. The combined
 fixture covers real HTTP/mTLS connections, frame replay/output pressure, SSE
 pause/resume, fork scope, callback failures and allocation unwinding.
-Custom/packed asset/storage providers, typed routes and the other remaining
-binding/packaging surfaces are still required.
+Custom/packed asset/storage providers, selected-array input and the other
+remaining binding/packaging surfaces are still required.
 
 Lua JSON/XML writer bindings now reuse the public materialized serializers and
 pull generators, with LoneJSON's separately built released Lua provider supplying
@@ -168,5 +168,16 @@ callback/source output retains them through native cleanup. Buffered serializers
 also accept external mutable records, preserving Vectis's established distinction.
 The short installed fixture ports mutation, collection, reentry and private
 spooled-input cases and adds bounded pulls, cancellation, wire output, sink errors
-and allocation unwinding. Typed Lua routes, mapped parsing, XML DOM/SAX and the
+and allocation unwinding. Selected-array input, XML DOM/SAX and the
 other remaining binding/packaging surfaces remain part of the full goal.
+
+Lua mapped parsing and typed JSON/XML route conveniences now compose the public
+router, body/file readers and codecs with LoneJSON's public owned-record parser.
+Fixed JSON handlers receive independent input/output records and select bounded
+materialized replies; general typed handlers can choose schemas and either
+materialized record output or privately prepared live table output. Ordinary
+middleware and staged replacement remain shared with existing routes. The
+installed fixture covers captured JSON, spooled/file input, retained records,
+multiple output schemas, XML options, owner scope and allocation failure.
+Selected-array input, XML DOM/SAX, the other Lua families, packaging and final
+integration/artifact verification remain required by the full goal.

@@ -128,3 +128,10 @@ It runs on a default-stack pthread. The [wire fixture](../tests/xml-runtime.c)
 covers grouped registration, copied options, memory/file bodies, rewind, output,
 malformed input, auth short circuit, body limits and staged replacement. Both
 fixtures run against relocated static/shared installed SDKs.
+
+The [Lua facade](lua.md) binds mapped `parse`/`parse_record`, materialized/live
+output, request-owned parsing and `server/group:xml_route` through the public C
+codecs and LoneJSON interop. Data/path inputs, root/text/attribute options,
+trimming, unknown-field precedence and separate mapped limits follow Vectis.
+The [installed typed fixture](../tests/lua/typed.lua) covers these paths and copied
+route options. Lua DOM/SAX binding remains required by the full specification.

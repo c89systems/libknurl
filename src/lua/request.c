@@ -329,9 +329,11 @@ rotmos_status rl_reply_headers(lua_State *L, int table, rotmos_reply *reply,
  * Keep the original value untouched through all before/after callbacks. */
 static int reply_snapshot(lua_State *L, int index)
 {
-    static const char *fields[] = {"status",        "status_code",    "headers",
-                                   "content_type",  "file_path",      "file",
-                                   "stream_source", "spooled_source", "body"};
+    static const char *fields[] = {
+        "status",    "status_code", "headers",           "content_type",
+        "file_path", "file",        "stream_source",     "spooled_source",
+        "json",      "xml",         "json_materialized", "xml_materialized",
+        "body"};
     int snapshot, i;
     index = lua_absindex(L, index);
     lua_newtable(L);
@@ -343,12 +345,13 @@ static int reply_snapshot(lua_State *L, int index)
         lua_getfield(L, index, "status");
     }
     lua_setfield(L, snapshot, "status_code");
-    for (i = 2; i < 9; ++i) {
+    for (i = 2; i < (int)(sizeof(fields) / sizeof(fields[0])); ++i) {
         lua_getfield(L, index, fields[i]);
-        if (i >= 3 && i != 6 && i != 7 && lua_type(L, -1) == LUA_TNUMBER)
+        if ((i == 3 || i == 4 || i == 5 || i == 12) &&
+            lua_type(L, -1) == LUA_TNUMBER)
             (void)lua_tolstring(L, -1, NULL);
         lua_setfield(L, snapshot, fields[i]);
-        if (i >= 4 && i <= 7) {
+        if (i >= 4 && i <= 11) {
             rl_field(L, snapshot, fields[i]);
             if (!lua_isnil(L, -1)) {
                 lua_pop(L, 1);
@@ -365,14 +368,15 @@ rotmos_status rl_reply(lua_State *L, int index, rotmos_reply *reply,
     rotmos_status status;
     rotmos_bytes body;
     size_t code = 200;
-    const char *type = "text/plain; charset=utf-8", *file = NULL;
+    const char *type, *declared_type = NULL, *file = NULL;
     int source;
     index = lua_absindex(L, index);
     if (lua_isnil(L, index))
         return rotmos_reply_status(reply, 204, error);
     if (lua_isstring(L, index)) {
         body.data = lua_tolstring(L, index, &body.length);
-        return rotmos_reply_bytes(reply, 200, type, body, error);
+        return rotmos_reply_bytes(reply, 200, "text/plain; charset=utf-8", body,
+                                  error);
     }
     if (!lua_istable(L, index))
         return rl_fail(
@@ -382,10 +386,11 @@ rotmos_status rl_reply(lua_State *L, int index, rotmos_reply *reply,
     if (!rl_field_size(L, index, "status_code", &code))
         return rl_fail(error, ROTMOS_INVALID, "invalid response status");
     if (code > 599 || code < 200 ||
-        !rl_field_string(L, index, "content_type", &type) ||
+        !rl_field_string(L, index, "content_type", &declared_type) ||
         !rl_field_string(L, index, "file", &file) ||
         !rl_field_string(L, index, "file_path", &file))
         return rl_fail(error, ROTMOS_INVALID, "invalid response declaration");
+    type = declared_type != NULL ? declared_type : "text/plain; charset=utf-8";
     rl_field(L, index, "headers");
     if (!lua_isnil(L, -1)) {
         if (!lua_istable(L, -1))
@@ -427,6 +432,26 @@ rotmos_status rl_reply(lua_State *L, int index, rotmos_reply *reply,
                                config.config.limits.body_spool_directory,
                                error);
     }
+    lua_pop(L, 1);
+    rl_field(L, index, "json");
+    if (!lua_isnil(L, -1))
+        return rl_codec_reply(L, -1, 0, 0, reply, (int)code, declared_type,
+                              error);
+    lua_pop(L, 1);
+    rl_field(L, index, "xml");
+    if (!lua_isnil(L, -1))
+        return rl_codec_reply(L, -1, 1, 0, reply, (int)code, declared_type,
+                              error);
+    lua_pop(L, 1);
+    rl_field(L, index, "json_materialized");
+    if (!lua_isnil(L, -1))
+        return rl_codec_reply(L, -1, 0, 1, reply, (int)code, declared_type,
+                              error);
+    lua_pop(L, 1);
+    rl_field(L, index, "xml_materialized");
+    if (!lua_isnil(L, -1))
+        return rl_codec_reply(L, -1, 1, 1, reply, (int)code, declared_type,
+                              error);
     lua_pop(L, 1);
     rl_field(L, index, "body");
     if (lua_isnil(L, -1))
@@ -566,6 +591,8 @@ void rl_requests_open(lua_State *L)
         {"headers", headers},
         {"queries", queries},
         {"body_bytes", request_body},
+        {"json_record", rl_request_json_record},
+        {"xml_record", rl_request_xml_record},
         {"body_reader", rl_request_body_reader},
         {"body_materialize", rl_request_body_materialize},
         {"body_copy", rl_request_body_copy},

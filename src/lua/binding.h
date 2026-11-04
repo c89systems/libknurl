@@ -132,6 +132,11 @@ void rl_servers_open(lua_State *);
 void rl_requests_open(lua_State *);
 void rl_sources_open(lua_State *);
 void rl_codecs_open(lua_State *);
+int rl_request_json_record(lua_State *);
+int rl_request_xml_record(lua_State *);
+int rl_codec_route_check(lua_State *, int, int, rotmos_error *);
+rotmos_status rl_codec_reply(lua_State *, int, int, int, rotmos_reply *, int,
+                             const char *, rotmos_error *);
 struct rl_source *rl_source_native_new(lua_State *, int, lua_CFunction,
                                        rotmos_error *);
 void rl_bodies_open(lua_State *);

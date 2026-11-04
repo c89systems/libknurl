@@ -103,9 +103,12 @@ Both also run against relocated static/shared SDKs.
 The [Lua codecs](lua.md) now bind materialized serialization and generated
 Source/callback output through these public operations and released LoneJSON
 interop. Their private table preparation, mutation/GC/reentry, spooled input and
-buffered external-record cases preserve Vectis's writer policy. Typed Lua routes
-and input parsing remain required by the
-[complete specification](server-api-spec.md#fast-typed-json-and-xmllibxml2-routes).
+buffered external-record cases preserve Vectis's writer policy. Lua mapped input
+uses the provider's public owned-record parser over rotmos body/file readers.
+Fixed-schema and general typed Lua routes compose the public router/codecs, with
+materialized record replies and live output from private table preparation.
+Their [installed fixture](../tests/lua/typed.lua) covers captured JSON, file/spooled
+input, record lifetime, multiple output schemas and the shared hook chain.
 
 [Buffered REST](rest.md) adds generic decode/validate/error policy over ordinary
 staged routes and explicit materialized replies. [OpenAPI](openapi.md) projects
