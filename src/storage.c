@@ -339,7 +339,7 @@ static void result_metadata_clear(rotmos_storage_result *r)
     free((void *)r->recovery_path);
 }
 static rotmos_status result_check(rotmos_storage_operation *op,
-                                  const rotmos_storage_result *r,
+                                  const rotmos_storage_result *r, int expired,
                                   rotmos_error *error)
 {
     rotmos_storage_action action = op->arguments.action;
@@ -369,7 +369,7 @@ static rotmos_status result_check(rotmos_storage_operation *op,
         (action != ROTMOS_STORAGE_PUT_WRITE || r->code != ROTMOS_STORAGE_OK ||
          r->accepted > op->arguments.bytes.length))
         return fail(error, ROTMOS_INVALID, "invalid accepted write prefix");
-    if (!rotmos_storage_operation_cancelled(op) &&
+    if (!expired && !rotmos_storage_operation_cancelled(op) &&
         r->code == ROTMOS_STORAGE_OK) {
         if ((action == ROTMOS_STORAGE_STAT && !r->has_info) ||
             (action == ROTMOS_STORAGE_OPEN_READ && r->asset == NULL) ||
@@ -395,6 +395,8 @@ rotmos_storage_operation_complete(rotmos_storage_operation *op,
 {
     rotmos_storage_result empty, copy;
     rotmos_status status;
+    rotmos_u64 acknowledged_at;
+    int expired = 0;
     if (op == NULL)
         return fail(error, ROTMOS_INVALID, "missing storage operation");
     status = rotmos_loop_owner(op->loop, error);
@@ -403,10 +405,18 @@ rotmos_storage_operation_complete(rotmos_storage_operation *op,
     if (op->acknowledged || op->retiring || op->scope_busy)
         return fail(error, ROTMOS_STATE,
                     "storage operation already acknowledged");
+    if (op->timer != NULL) {
+        status = rotmos_loop_monotonic(&acknowledged_at, error);
+        if (status != ROTMOS_OK)
+            return status;
+        expired = acknowledged_at.high > op->timer->due.high ||
+                  (acknowledged_at.high == op->timer->due.high &&
+                   acknowledged_at.low >= op->timer->due.low);
+    }
     rotmos_storage_result_init(&empty);
     if (result == NULL)
         result = &empty;
-    status = result_check(op, result, error);
+    status = result_check(op, result, expired, error);
     if (status != ROTMOS_OK)
         return status;
     copy = *result;
@@ -452,6 +462,13 @@ rotmos_storage_operation_complete(rotmos_storage_operation *op,
         copy.resource->owner = op;
     op->result = copy;
     op->acknowledged = 1;
+    /* A queued timer is not proof its deadline has not elapsed. Completion
+     * can arrive in the same native event batch before timer delivery. */
+    if (expired) {
+        if (op->cause == ROTMOS_OK)
+            op->cause = ROTMOS_TIMEOUT;
+        __atomic_store_n(&op->cancelled, 1, __ATOMIC_RELEASE);
+    }
     if (op->arguments.resource != NULL && op->arguments.resource->pending == op)
         op->arguments.resource->pending = NULL;
     if (op->timer != NULL)

@@ -69,6 +69,13 @@ does not imply rollback.
 `rotmos_storage_operation_config_init` selects a 30000 ms deadline including queue
 and lock wait. Zero selects that default; `timeout_disabled` explicitly removes
 it. Disabling it does not remove bounded worker shutdown. A pending operation's
+acknowledgement checks the absolute deadline even if an event batch has delayed
+timer delivery. A late result retires as TIMEOUT, retaining its actual committed
+state; an already finished provider is not cancelled again. Acknowledgement
+before the deadline is independent of when the queued consumer callback runs.
+The [deadline fixture](../tests/storage-deadline.c) expires inside synchronous
+provider invocation and covers committed and empty late acknowledgements plus
+an explicitly disabled bound. A pending operation's
 waker/owner state keeps the worker drain alive until acknowledgement. Native
 threads publish via an owner-loop job callback or public waker, never directly
 through operation_complete. Immutable operation arguments and cancellation checks

@@ -85,10 +85,9 @@ Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memor
 measurements for the combined proxy review. Retain the
 automatic 100 Continue wire-accounting check in that review: the inherited
 native send path still needs alignment with the managed interim counters.
-One installed-SDK run also failed the existing storage timeout assertion;
-the executable passed in isolation and the SDK retry passed. Retain a targeted
-storage deadline/completion ordering check under scheduler delay in the fault
-review, rather than treating the successful retry as proof of that invariant.
+The storage deadline path now checks absolute expiry at acknowledgement, covering
+completion delivered before its queued timer under scheduler delay. Its focused
+public fixture proves committed/empty late acknowledgement and disabled bounds.
 Retain the
 remaining ACME in-flight fault and final integration checks for the combined
 review rather than repeating the full protocol matrix for each new surface.
