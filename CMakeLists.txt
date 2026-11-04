@@ -45,6 +45,7 @@ rotmos_add_kore_sources("${CMAKE_CURRENT_SOURCE_DIR}" "${kore_source_dir}")
 include(cmake/KoreBackend.cmake)
 
 add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
+  src/json.c src/json_array.c src/json_route.c src/xml.c src/xml_sax.c
   src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
   src/config_normalize.c src/server.c src/router.c src/route_path.c
   src/request.c src/request_decode.c src/router_dispatch.c
@@ -64,7 +65,7 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/acme_store.c src/acme_files.c src/kore_acme.c src/kore_tls_state.c)
 target_include_directories(rotmos_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(rotmos_objects PRIVATE "${kore_source_dir}/include/kore")
-target_link_libraries(rotmos_objects PRIVATE OpenSSL::SSL CURL::libcurl lonejson::lonejson pslog::pslog_shared)
+target_link_libraries(rotmos_objects PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::LibXml2 lonejson::lonejson pslog::pslog_shared)
 file(STRINGS vendor/kore.revision kore_revision LIMIT_COUNT 1)
 target_compile_definitions(rotmos_objects PRIVATE ROTMOS_VERSION="${PROJECT_VERSION}"
   ROTMOS_KORE_REVISION="${kore_revision}"
@@ -94,22 +95,25 @@ foreach(variant static shared)
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endforeach()
 target_link_libraries(rotmos_shared PRIVATE cpkt::openssl_ssl_shared cpkt::curl_shared
-  lonejson::lonejson pslog::pslog_shared Threads::Threads)
+  cpkt::libxml2_shared pslog::pslog_shared Threads::Threads)
+target_link_libraries(rotmos_shared PUBLIC lonejson::lonejson)
 target_link_libraries(rotmos_shared INTERFACE "$<LINK_ONLY:pslog::pslog_shared>")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(rotmos_shared PRIVATE -Wl,--no-undefined)
 endif()
-target_link_libraries(rotmos_static PRIVATE OpenSSL::SSL CURL::libcurl
-  lonejson::lonejson_static pslog::pslog_static Threads::Threads)
+target_link_libraries(rotmos_static PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::LibXml2
+  pslog::pslog_static Threads::Threads)
+target_link_libraries(rotmos_static PUBLIC lonejson::lonejson_static)
 set(rotmos_core_headers include/rotmos/common.h include/rotmos/http.h include/rotmos/rotmos.h
   include/rotmos/io.h include/rotmos/reply.h include/rotmos/tls.h
   include/rotmos/server.h include/rotmos/router.h include/rotmos/request.h include/rotmos/kore.h
   include/rotmos/loop.h include/rotmos/response.h include/rotmos/dispatch.h
   include/rotmos/body.h include/rotmos/channel.h include/rotmos/websocket.h include/rotmos/framing.h
-  include/rotmos/proxy.h)
+  include/rotmos/proxy.h include/rotmos/xml.h include/rotmos/lonejson.h)
 set_source_files_properties(${rotmos_core_headers} PROPERTIES LANGUAGE C HEADER_FILE_ONLY FALSE)
 add_library(rotmos_headers_c OBJECT ${rotmos_core_headers})
 target_include_directories(rotmos_headers_c PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(rotmos_headers_c PRIVATE lonejson::lonejson)
 rotmos_c89(rotmos_headers_c)
 install(DIRECTORY include/rotmos DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/rotmos)
@@ -132,6 +136,23 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_json_runtime tests/json-runtime.c)
+  target_link_libraries(rotmos_json_runtime PRIVATE rotmos::shared)
+  target_compile_definitions(rotmos_json_runtime PRIVATE
+    $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  rotmos_c89(rotmos_json_runtime)
+  rotmos_local_runtime(rotmos_json_runtime)
+  add_test(NAME rotmos.json-runtime COMMAND rotmos_json_runtime)
+  add_test(NAME rotmos.json-spool-policy COMMAND rotmos_json_runtime no-spool)
+  set_tests_properties(rotmos.json-runtime rotmos.json-spool-policy PROPERTIES TIMEOUT 10)
+  foreach(codec json xml)
+    add_executable(rotmos_${codec} "tests/${codec}.c")
+    target_link_libraries(rotmos_${codec} PRIVATE rotmos::shared Threads::Threads)
+    rotmos_c89(rotmos_${codec})
+    rotmos_local_runtime(rotmos_${codec})
+    add_test(NAME rotmos.${codec} COMMAND rotmos_${codec})
+    set_tests_properties(rotmos.${codec} PROPERTIES TIMEOUT 8)
+  endforeach()
   add_executable(rotmos_proxy_websocket tests/proxy-websocket.c)
   target_link_libraries(rotmos_proxy_websocket PRIVATE rotmos::shared OpenSSL::SSL)
   target_compile_definitions(rotmos_proxy_websocket PRIVATE

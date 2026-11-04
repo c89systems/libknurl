@@ -9,6 +9,8 @@ file(COPY "${ROTMOS_ROOT}/tests/consumer/CMakeLists.txt"
   "${ROTMOS_ROOT}/tests/server-runtime.c"
   "${ROTMOS_ROOT}/tests/proxy-runtime.c"
   "${ROTMOS_ROOT}/tests/proxy-websocket.c"
+  "${ROTMOS_ROOT}/tests/json.c" "${ROTMOS_ROOT}/tests/xml.c"
+  "${ROTMOS_ROOT}/tests/json-runtime.c"
   DESTINATION "${TEST_ROOT}/source")
 file(STRINGS "${ROTMOS_ROOT}/VERSION" version LIMIT_COUNT 1)
 function(run)
@@ -36,5 +38,9 @@ foreach(variant static shared)
     run("${TEST_ROOT}/${variant}/proxy-runtime_consumer")
     run("${TEST_ROOT}/${variant}/proxy-websocket_consumer")
     run("${TEST_ROOT}/${variant}/proxy-websocket_consumer" tls)
+    run("${TEST_ROOT}/${variant}/json_consumer")
+    run("${TEST_ROOT}/${variant}/xml_consumer")
+    run("${TEST_ROOT}/${variant}/json-runtime_consumer")
+    run("${TEST_ROOT}/${variant}/json-runtime_consumer" no-spool)
   endif()
 endforeach()

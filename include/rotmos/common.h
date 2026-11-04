@@ -73,6 +73,15 @@ typedef struct rotmos_bytes {
     size_t length;
 } rotmos_bytes;
 
+typedef struct rotmos_owned_bytes {
+    void *data;
+    size_t length;
+} rotmos_owned_bytes;
+
+/* Initializes or releases an independently owned byte allocation. */
+ROTMOS_API void rotmos_owned_bytes_init(rotmos_owned_bytes *bytes);
+ROTMOS_API void rotmos_owned_bytes_cleanup(rotmos_owned_bytes *bytes);
+
 typedef struct rotmos_header {
     rotmos_bytes name;
     rotmos_bytes value;

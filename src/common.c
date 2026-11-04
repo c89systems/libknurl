@@ -1,6 +1,22 @@
 #include "internal.h"
-
+#include <stdlib.h>
 #include <string.h>
+
+void rotmos_owned_bytes_init(rotmos_owned_bytes *bytes)
+{
+    if (bytes != NULL) {
+        bytes->data = NULL;
+        bytes->length = 0;
+    }
+}
+
+void rotmos_owned_bytes_cleanup(rotmos_owned_bytes *bytes)
+{
+    if (bytes != NULL) {
+        free(bytes->data);
+        rotmos_owned_bytes_init(bytes);
+    }
+}
 
 const char *rotmos_version(void) { return ROTMOS_VERSION; }
 

@@ -80,6 +80,14 @@ including early bytes, bounded output and orderly TLS half-close. Forced TLS
 retry-direction faults and slow/disconnected peers remain final integration
 coverage.
 
+[LoneJSON codecs and typed routes](json.md) parse completed memory/file bodies
+directly into public record storage and produce bounded JSON through the public
+pull generator. Per-request record owners survive output and staged replacement.
+Selected-array input uses incremental item callbacks. [XML DOM/SAX](xml.md) expose
+owned, confined document/views and incremental context-local parsing without
+libxml2 types in public headers. Their API and wire fixtures also run as relocated
+static/shared consumers. Mapped XML and resumable output remain the next surface.
+
 [Application WebSockets](websockets.md) expose transactional acceptance, a copied
 route facade, bounded complete frames and atomic output, pause/resume and
 capacity callbacks. They use the channel transport with an independent lifetime:

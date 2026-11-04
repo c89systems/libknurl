@@ -233,6 +233,10 @@ void rotmos_request_cleanup(rotmos_request *request)
     request->reply = NULL;
     rotmos_response_release(request->response);
     request->response = NULL;
+    if (request->codec_cleanup != NULL)
+        request->codec_cleanup(request->codec_data);
+    request->codec_data = NULL;
+    request->codec_cleanup = NULL;
     rotmos_body_release(request->body_store);
     request->body_store = NULL;
     free((void *)request->path.data);

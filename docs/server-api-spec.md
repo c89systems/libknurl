@@ -1769,6 +1769,11 @@ Public registrations include `rotmos_router_json_route`,
 `rotmos_router_json_typed_route` and `rotmos_router_xml_route`, with schema/body
 limits and typed handlers. Fixed JSON response registration is a separately named
 materialized convenience, not a replacement for a typed request route.
+The current [JSON facade](json.md) uses public `lonejson_schema_view` values in
+its input/output declarations; `rotmos_json_schema_from_map` prepares C-owned map
+registration through the same boundary used by public language interop. Typed
+handlers borrow read-only view descriptors with mutable record storage. The
+[XML DOM/SAX implementation](xml.md) documents its separate limits and ownership.
 
 The JSON fast path decodes through LoneJSON directly into typed record storage,
 invokes the C handler or Lua callback with the corresponding public record view,

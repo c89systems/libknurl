@@ -82,6 +82,8 @@ upstream upgrades and local changes separate.
 - [HTTP framing and proxy core](docs/proxy-core.md)
 - [HTTP/SSE reverse proxy routes](docs/proxy-http.md)
 - [WebSocket/WSS reverse proxy relays](docs/proxy-websocket.md)
+- [LoneJSON codecs and typed routes](docs/json.md)
+- [XML DOM, XPath and SAX](docs/xml.md)
 - [Server API specification](docs/server-api-spec.md)
 - [Vectis integration contract](docs/vectis-integration-contract.md)
 - [Ownership boundary](docs/extraction.md)

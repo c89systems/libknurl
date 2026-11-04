@@ -48,9 +48,13 @@ error/commitment handling and worker admission. The
 validated opening metadata, opaque duplex relay and streamed HTTP rejections to
 the same worker. Its plain/TLS fixture exercises copied in-memory trust and client
 identity, early frames, fragmentation, shared admission and failure after commitment.
-Next implement JSON/XML2 codecs and route facades, then storage/assets/WebDAV and
-REST/OpenAPI surfaces. Retain upstream HTTP2 live coverage, forced transport faults
-and slow-peer memory measurements for the combined proxy review. Retain the
+The [JSON facade](json.md) now connects public schema/record views, completed-body
+parsing, generated/materialized replies, typed/group routes and incremental
+selected-array input. The [XML DOM/SAX surface](xml.md) lifts Vectis's ownership,
+limits and context-local parser controls. Next connect mapped XML parsing/routes
+and true resumable libxml2 output, then storage/assets/WebDAV and REST/OpenAPI.
+Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memory
+measurements for the combined proxy review. Retain the
 remaining ACME in-flight fault and final integration checks for the combined
 review rather than repeating the full protocol matrix for each new surface.
 

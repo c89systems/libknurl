@@ -6,6 +6,8 @@
 #include <rotmos/dispatch.h>
 
 struct rotmos_request {
+    void *codec_data;
+    void (*codec_cleanup)(void *);
     rotmos_server *server;
     void *native;
     void *userdata;

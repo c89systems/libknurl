@@ -1,4 +1,5 @@
 #include <rotmos/rotmos.h>
+#include <rotmos/lonejson.h>
 
 int main()
 {

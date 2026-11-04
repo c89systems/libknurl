@@ -28,8 +28,9 @@ positive hard server ceiling. BUFFERED requires its entire finite limit to fit
 its memory budget. MATERIALIZED has a finite memory threshold and may spill only
 when disk permission and `limits.body_spool_directory` were explicitly supplied.
 The private spool uses a mode-0600 file and is removed after request cleanup.
-STREAM never collects or spools the message. Typed JSON and native-reader upload
-facades remain separate operations.
+STREAM never collects or spools the message. The [typed JSON facade](json.md)
+decodes completed BUFFERED/MATERIALIZED bodies and retains its records through
+response cleanup. Native-reader upload remains a separate implementation surface.
 
 For STREAM, `on_body` receives a borrowed chunk capped by `io.chunk_bytes` and
 `io.input_queue_bytes`. OK consumes only the reported prefix; a short prefix
