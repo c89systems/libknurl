@@ -15,6 +15,7 @@ make build                 # Compile the selected x86_64-linux-gnu target in bui
 make build-all             # Compile the full seven-target matrix, serially.
 make lua                   # Build the separate Lua facade/binding against the installed shared core.
 make lua-all               # Compile both products for all seven targets, serially.
+make lua-package           # Stage Lua sources, rockspec, source rock and their checksums.
 make build-all CONFIG=release
 make test                  # Run checks for the selected toolchain target.
 make install               # Install to owned build/install/<target>/debug by default.
@@ -42,6 +43,17 @@ The [Lua product](lua.md) uses its own `build/debug/lua/compile_commands.json`;
 `.clangd` selects it for binding sources, embedding headers and Lua host fixtures.
 Run `make lua` once to prepare those installed public SDK inputs before editing
 the binding. Core C headers/installations remain independent of Lua.
+
+`make lua-package` needs GNU tar, gzip, zip and touch. It stages only the Lua
+facade/binding and their declared build inputs from `lua/source-manifest.txt`.
+The three products and `lua-rotmos-<version>-CHECKSUMS` are written to `dist/`;
+no release or upload occurs. [Package instructions](../lua/README.md) describe
+the selected-target SDK build and LuaRocks variables. CTest's
+`rotmos.lua-package` checks reproducible final/nested bytes and source inventory;
+`rotmos.lua-source-consumer` builds the source rock against installed public SDKs,
+with LuaRocks cache/temp/tree under its owned build directory. GNU/musl hosts
+execute the installed module using the matching target Lua runtime. Other
+targets supply compile/link and installed-path evidence.
 
 The full matrix is GNU/musl Linux for x86_64, aarch64 and armhf, plus arm64 Apple
 Darwin. `make build TARGET=<target> CONFIG=release` selects one concrete build;

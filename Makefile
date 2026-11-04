@@ -18,7 +18,7 @@ TOOLCHAIN := cmake/toolchains/selected.cmake
 PREFIX ?= $(CURDIR)/build/install/$(TARGET)/$(CONFIG)
 DEPENDENCY_CACHE := $(if $(CPKT_DEPENDENCY_CACHE),$(CPKT_DEPENDENCY_CACHE),$(CURDIR)/.cache/deps)
 
-.PHONY: help deps deps-all toolchain toolchains configure build build-all lua lua-all prepare-kore test install format format-check update-kore clean
+.PHONY: help deps deps-all toolchain toolchains configure build build-all lua lua-all lua-package prepare-kore test install format format-check update-kore clean
 .NOTPARALLEL:
 
 help:
@@ -26,6 +26,7 @@ help:
 	  'make build                 Compile the selected target (default: x86_64-linux-gnu).' \
 	  'make build-all             Compile all seven lifecycle/cpkt targets, serially.' \
 	  'make lua / lua-all         Build the Lua binding against the installed shared core SDK.' \
+	  'make lua-package           Stage the Lua source archive, rockspec and source rock.' \
 	  'make test                  Build, then run registered CTest checks.' \
 	  'make install               Install to PREFIX (default: owned build/install/...). ' \
 	  'make prepare-kore          Prepare patched sources without dependency SDKs.' \
@@ -69,11 +70,14 @@ lua: build
 	"$(CMAKE)" -S lua/dependencies/pslog -B '$(BUILD_DIR)/lua-deps/pslog' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DROTMOS_TARGET='$(TARGET)' -DROTMOS_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)' -DPSLOG_LUA_SOURCE='$(DEPENDENCY_CACHE)/sources/pslog-lua-0.13.0' -DCMAKE_INSTALL_PREFIX='$(CURDIR)/.cache/sdk/$(TARGET)/pslog-lua'
 	"$(CMAKE)" --build '$(BUILD_DIR)/lua-deps/pslog' --parallel '$(JOBS)'
 	"$(CMAKE)" --install '$(BUILD_DIR)/lua-deps/pslog'
-	"$(CMAKE)" -S lua -B '$(BUILD_DIR)/lua' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DROTMOS_TARGET='$(TARGET)' -DROTMOS_CORE_PREFIX='$(CURDIR)/$(BUILD_DIR)/lua-core-sdk' -DROTMOS_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)'
+	"$(CMAKE)" -S lua -B '$(BUILD_DIR)/lua' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DBUILD_TESTING=ON -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DROTMOS_TARGET='$(TARGET)' -DROTMOS_CORE_PREFIX='$(CURDIR)/$(BUILD_DIR)/lua-core-sdk' -DROTMOS_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)'
 	"$(CMAKE)" --build '$(BUILD_DIR)/lua' --parallel '$(JOBS)'
 
 lua-all:
 	@for target in $(SUPPORTED_TARGETS); do $(MAKE) --no-print-directory lua TARGET="$$target" || exit $$?; done
+
+lua-package:
+	"$(CMAKE)" -P lua/cmake/Package.cmake
 
 prepare-kore:
 	"$(CMAKE)" -S cmake/source -B build/source -DROTMOS_ROOT='$(CURDIR)'

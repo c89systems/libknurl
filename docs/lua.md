@@ -574,6 +574,9 @@ An [isolated consumer](../tests/lua/consumer/CMakeLists.txt) builds that same
 module against installed C/Lua SDKs and selected toolchains.
 
 Remaining direct dispatch/response bindings require concrete baseline consumer
-coverage before expansion. Lua source archive, rockspec/source-rock packaging,
-the full Vectis reference adapter and final compatibility/artifact checks remain
-part of the active implementation goal.
+coverage before expansion. `make lua-package` ships the minimal source archive,
+release rockspec and source rock with a checksum inventory. The
+[source-package instructions](../lua/README.md) cover installed public SDK inputs,
+toolchain selection, LuaRocks installation and embedded hosts. The full Vectis
+reference adapter and final compatibility/artifact checks remain part of the
+active implementation goal.

@@ -1,0 +1,21 @@
+rockspec_format = "3.0"
+package = "lua-rotmos"
+version = "@rotmos_version@-1"
+source = {
+  url = "https://github.com/c89systems/librotmos/releases/download/v@rotmos_version@/lua-rotmos-@rotmos_version@.tar.gz",
+  dir = "lua-rotmos-@rotmos_version@",
+}
+description = {
+  summary = "HTTP server facade and public C binding for librotmos",
+  homepage = "https://github.com/c89systems/librotmos",
+  license = "MIT",
+}
+dependencies = { "lua >= 5.5, < 5.6" }
+build = {
+  type = "command",
+  build_command = [[bash lua/build-rock.sh "$(ROTMOS_TARGET)" "$(ROTMOS_CORE_PREFIX)" "$(ROTMOS_SDK_ROOT)"]],
+  install = {
+    lua = { rotmos = "lua/rotmos.lua" },
+    lib = { ["rotmos.native"] = "build/rock/rotmos/native.so" },
+  },
+}

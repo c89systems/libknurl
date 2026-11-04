@@ -61,3 +61,9 @@ Its worker case covers foreground and host-controlled paused readiness, callback
 ordering, stop results and successful control-FD transfer. Baseline second-based
 timeouts round up and saturate; mapped JSON records have no invented size cap.
 The remaining operation/error/type forwarding cases are still incomplete.
+Lua source delivery now has an explicit minimal input manifest, deterministic
+source archive, public-URL release rockspec and source rock. The source consumer
+uses only installed public SDKs and the included concrete toolchain selector;
+LuaRocks cache/temp/tree stay under build. Final/nested byte and reconstruction
+checks complement the existing binding workflow tests. Full release artifact
+validation and the complete Vectis adapter remain open.

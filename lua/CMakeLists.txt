@@ -5,6 +5,7 @@ endif()
 file(STRINGS ../VERSION rotmos_version LIMIT_COUNT 1)
 project(rotmos_lua VERSION "${rotmos_version}" LANGUAGES C)
 set(CMAKE_C90_STANDARD_COMPILE_OPTION "-std=c89")
+option(BUILD_TESTING "Build repository Lua binding tests" OFF)
 include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -33,7 +34,10 @@ target_sources(rotmos_lua PRIVATE ../src/lua/rest.c ../src/lua/openapi.c ../src/
 target_sources(rotmos_lua PRIVATE ../src/lua/tls.c)
 target_sources(rotmos_lua PRIVATE ../src/lua/logging.c)
 target_sources(rotmos_lua PRIVATE ../src/lua/providers.c)
-set_target_properties(rotmos_lua PROPERTIES OUTPUT_NAME native PREFIX "" SUFFIX ".so" EXPORT_NAME lua C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden)
+# Link the shipped search paths directly, including with osxcross where an
+# install_name_tool may be unavailable. Embedding/test hosts resolve the shared
+# SDK closure; the module does not retain workstation paths.
+set_target_properties(rotmos_lua PROPERTIES OUTPUT_NAME native PREFIX "" SUFFIX ".so" EXPORT_NAME lua C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden BUILD_WITH_INSTALL_RPATH TRUE)
 target_compile_options(rotmos_lua PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes)
 target_compile_definitions(rotmos_lua PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
 target_include_directories(rotmos_lua PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
@@ -44,12 +48,19 @@ endif()
 install(TARGETS rotmos_lua EXPORT rotmosLuaTargets LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/lua/5.5/rotmos")
 install(FILES rotmos.lua DESTINATION "${CMAKE_INSTALL_DATADIR}/lua/5.5")
 install(FILES include/rotmos/lua.h DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/rotmos")
+install(FILES ../LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/rotmos-lua")
 install(EXPORT rotmosLuaTargets NAMESPACE rotmos:: DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/rotmos_lua")
 configure_package_config_file(cmake/rotmos_luaConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/rotmos_luaConfig.cmake" INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/rotmos_lua")
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/rotmos_luaConfigVersion.cmake" VERSION "${PROJECT_VERSION}" COMPATIBILITY ExactVersion)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/rotmos_luaConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/rotmos_luaConfigVersion.cmake" DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/rotmos_lua")
 
 if(BUILD_TESTING)
+  if(ROTMOS_TARGET STREQUAL "x86_64-linux-gnu")
+    add_test(NAME rotmos.lua-package COMMAND "${CMAKE_COMMAND}"
+      "-DROTMOS_ROOT=${rotmos_root}" "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/package"
+      -P "${rotmos_root}/tests/LuaPackage.cmake")
+    set_tests_properties(rotmos.lua-package PROPERTIES TIMEOUT 15)
+  endif()
   add_library(rotmos_provider_fixture MODULE ../tests/lua/providers.c)
   set_target_properties(rotmos_provider_fixture PROPERTIES PREFIX "" SUFFIX ".so"
     C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden)
@@ -159,4 +170,14 @@ if(BUILD_TESTING)
       set_tests_properties(rotmos.lua-tls-${mode} PROPERTIES DISABLED TRUE)
     endif()
   endforeach()
+  set(source_consumer_host "")
+  if(ROTMOS_TARGET MATCHES "^x86_64-linux-(gnu|musl)$" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    set(source_consumer_host "$<TARGET_FILE:rotmos_lua_dynamic_host>")
+  endif()
+  add_test(NAME rotmos.lua-source-consumer COMMAND "${CMAKE_COMMAND}"
+    "-DROTMOS_ROOT=${rotmos_root}" "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/rock-consumer"
+    "-DROTMOS_TARGET=${ROTMOS_TARGET}" "-DROTMOS_CORE_PREFIX=${ROTMOS_CORE_PREFIX}"
+    "-DROTMOS_SDK_ROOT=${ROTMOS_SDK_ROOT}" "-DHOST=${source_consumer_host}"
+    -P "${rotmos_root}/tests/LuaRockConsumer.cmake")
+  set_tests_properties(rotmos.lua-source-consumer PROPERTIES TIMEOUT 60)
 endif()
