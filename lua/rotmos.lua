@@ -25,12 +25,19 @@ local function request(handle)
   end
   out.header,out.query,out.param=lookup('header'),lookup('query'),lookup('param')
   out.body_bytes=function() return handle:body_bytes() end
+  for _,name in ipairs{'body_reader','body_materialize','body_spill','body_copy'} do
+    out[name]=function(a,b)
+      if a==out then a=b end
+      return handle[name](handle,a)
+    end
+  end
+  out.body_resume=function() return handle:body_resume() end
   out.event=lookup('event')
   requests[handle]=out
   return out
 end
 M.source=native.source
-local function options(opts,handler)
+local function options(opts,handler,body_mode)
   opts=copy(opts)
   local fn=handler or opts.handler
   if type(fn)=='function' then opts.handler=function(req) return fn(request(req)) end end
@@ -48,7 +55,11 @@ local function options(opts,handler)
   elseif type(opts.body)=='table' then opts.body=copy(opts.body) end
   if type(opts.body)=='table' then
     if opts.body.mode=='buffered' then opts.body.mode=native.BODY_BUFFERED
-    elseif opts.body.mode=='none' or opts.body.mode==nil then opts.body.mode=native.BODY_NONE end
+    elseif opts.body.mode=='materialized' then opts.body.mode=native.BODY_MATERIALIZED
+    elseif opts.body.mode=='streaming_upload' then opts.body.mode=native.BODY_STREAMING_UPLOAD
+    elseif opts.body.mode=='stream' then opts.body.mode=native.BODY_STREAM
+    elseif opts.body.mode=='none' then opts.body.mode=native.BODY_NONE
+    elseif opts.body.mode==nil then opts.body.mode=body_mode or native.BODY_NONE end
   end
   return opts
 end
@@ -61,6 +72,26 @@ local function route(self,path,handler,opts)
   return true
 end
 Server.route,Group.route=route,route
+local function first(a,b,c)
+  if a~=nil then return a end
+  if b~=nil then return b end
+  return c
+end
+local function upload(self,opts)
+  if type(opts)~='table' then return invalid('upload declaration table required') end
+  opts=options(opts,nil,native.BODY_STREAMING_UPLOAD)
+  local callbacks={open=first(opts.open,opts.on_open),on_chunk=first(opts.on_chunk,opts.chunk,opts.write),
+    on_complete=first(opts.on_complete,opts.complete,opts.finish),close=first(opts.close,opts.on_close)}
+  opts.on_open,opts.chunk,opts.write,opts.complete,opts.finish,opts.on_close=nil,nil,nil,nil,nil,nil
+  for name,fn in pairs(callbacks) do
+    if type(fn)=='function' then opts[name]=function(req,...) return fn(request(req),...) end
+    else opts[name]=fn end
+  end
+  local handle,err=self._native:upload(opts)
+  if not handle then return nil,err end
+  return true
+end
+Server.upload,Group.upload=upload,upload
 for name,method in pairs(native.methods) do
   local function verb(self,path,handler,opts)
     opts=copy(opts);opts.method=method;return route(self,path,handler,opts)

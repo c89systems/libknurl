@@ -59,7 +59,8 @@ Spooling still occurs for HEAD before output suppression, matching Vectis's
 builder timing. Unselected declarations acquire no source or file ownership.
 
 Legacy `stream_source` tables retain `read(max_bytes)`, optional `reset()` and
-`close()`. The binding calls reset once before transfer when present. Reads accept
+`close()`. Optional reset runs once immediately before the first live pull,
+after upload completion/close and after final reply selection. Reads accept
 strings/numbers and nil/false/empty-string EOF, retain only an oversized chunk's
 remaining suffix, and drain it before another callback. Delivery uses the public
 source executor with bounded transport chunks; it creates no full-body buffer or
@@ -71,6 +72,49 @@ lookup returns `nil, error` after request close. Binary bodies preserve NUL.
 Ordered headers/query pairs and first-value lookups use public request APIs.
 Absent values return nil. The backend retains Vectis's rejection of empty wire
 header fields; decoded empty query values remain distinct from absence.
+
+Routes accept `body="materialized"` or a policy table with `mode`, `max_bytes`,
+`memory_buffer_limit_bytes` and `disk_spool_disabled`. Counts use the same exact
+unsigned conversion as the public C API. File-backed request bodies expose
+`body_spooled`, `body_path` and `body_size`; `body` remains nil. Their transport
+files are removed on request close. `request.body_reader()` returns a bounded,
+resettable public source wrapper which expires with the request, including its
+independently opened descriptor. Saving the Lua wrapper does not extend that
+scope. `source:read(capacity)` returns bytes or `nil, rotmos.EOF/AGAIN`;
+`source:reset()` and `source:close()` follow public ownership checks.
+
+Explicit `request.body_materialize(options)`, `body_spill(options)` and
+`body_copy(capacity)` reuse the public C materializers. Options are `capacity`
+(a Lua-owned caller buffer), `memory_limit_bytes`, `directory` and `prefix`.
+Materialize/spill use the configured server spool directory when omitted;
+otherwise the public helper's `/tmp` default applies. These operations explicitly
+copy a completed body and can block. They do not apply to live upload input.
+The independent result has `snapshot()`, `reader()` and `close()`. Its snapshot
+contains kind, exact length and memory bytes or file path. Readers pin the result;
+closing a result while readers remain open fails with STATE. Closing frees
+memory/path metadata but leaves a returned file as a caller artifact: save its
+path and explicitly remove it when finished.
+
+`server:upload{path=..., ...}` and `group:upload{...}` lift Vectis's live Lua
+upload callbacks through public `rotmos_router_upload_stream` / group equivalent.
+The default method is POST. `open(request)` (alias `on_open`) returns state;
+omission supplies a fresh table. Required `on_chunk(request, bytes, state)`
+(aliases `chunk`, `write`) accepts nil/true for the entire offered chunk. It also
+accepts a positive consumed prefix; the binding schedules remaining delivery.
+`nil, rotmos.AGAIN` pauses until `request.body_resume()` schedules another turn.
+`buffer_bytes` bounds each Lua chunk, and `max_body_bytes` sets the admitted
+public body limit. Input flows on the owning Lua thread without a whole-body
+buffer, spool, native Lua thread or second queue.
+
+Optional `on_complete(request, state)` (aliases `complete`, `finish`) returns an
+ordinary response, defaulting to 204. Normal auth and before/after hooks apply;
+the same request table and state persist through all callbacks. `body` is nil
+and `body_streaming_upload` is true. `close(request, state)` (alias `on_close`)
+runs exactly once after successful open, on success or failure. Open failure
+owns its own partial cleanup. Successful close follows final response conversion
+and precedes network output/live source reset. A close exception turns an
+otherwise successful upload into a server error; cleanup cannot replace an
+earlier failure. Admission/auth rejection opens no upload state.
 
 `rotmos.count(decimal_text)` or `rotmos.count(high, low)` represents unsigned
 64-bit quantities exactly. Values fitting Lua's integer range are integers;
@@ -150,12 +194,15 @@ memory/file/bundle inputs, raw-target HTTPS redirects, copied/effective values,
 paused startup, trusted proxies, shared autoblock events, auth ordering/challenges
 and failures, and constructor allocation unwinding through the same installed
 preload/dynamic paths.
+The [body/upload fixture](../tests/lua/body-upload.lua) adds request/result reader
+lifetimes, explicit spill/copy ownership, delivery before EOF, aliases and
+callback order, prefix/AGAIN resumption and callback/cleanup/allocation failures.
 
 ## Remaining binding surfaces
 
 The binding is incomplete. TLS material openers/ACME state callbacks,
-remaining policy/admission/observation/control callbacks, body materialization
-and upload callbacks, schemas/JSON/XML, REST/OpenAPI,
+remaining policy/admission/observation/control callbacks, native upload-file
+convenience, schemas/JSON/XML, REST/OpenAPI,
 assets/WebDAV, proxy/WebSocket/SSE and direct loop/response operations still need
 their public C bindings. Known unsupported options return an error. No transport
 or application mechanism belongs in a temporary Vectis adapter to fill those

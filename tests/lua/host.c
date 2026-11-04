@@ -14,11 +14,13 @@
 #include <sys/time.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 static pid_t child;
+static int progress_read = -1, progress_write = -1;
 struct allocator {
     size_t after;
     int failures;
@@ -109,6 +111,20 @@ static int exchange(unsigned short port, const char *method, const char *path,
     if (count != (ssize_t)strlen(head))
         goto done;
     if (length) {
+        if (progress_read >= 0 && !strcmp(path, "/upload/live")) {
+            struct pollfd ready;
+            char byte;
+            if (write(fd, body, 3) != 3)
+                goto done;
+            ready.fd = progress_read;
+            ready.events = POLLIN;
+            ready.revents = 0;
+            if (poll(&ready, 1, 3000) != 1 ||
+                read(progress_read, &byte, 1) != 1 || byte != 'p')
+                goto done;
+            body = (const char *)body + 3;
+            length -= 3;
+        }
         count =
             ssl ? SSL_write(ssl, body, (int)length) : write(fd, body, length);
         if (count != (ssize_t)length)
@@ -246,6 +262,83 @@ static int join(lua_State *L)
         !WIFEXITED(status) || WEXITSTATUS(status) != 0)
         return luaL_error(L, "HTTP driver failed");
     child = 0;
+    if (progress_write >= 0) {
+        close(progress_write);
+        progress_write = -1;
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int upload_progress(lua_State *L)
+{
+    if (progress_write < 0 || write(progress_write, "p", 1) != 1)
+        return luaL_error(L, "upload progress acknowledgement failed");
+    return 0;
+}
+static int prepare_body(lua_State *L)
+{
+    int fds[2];
+    if (pipe(fds) != 0)
+        return luaL_error(L, "progress pipe failed");
+    progress_read = fds[0];
+    progress_write = fds[1];
+    return 0;
+}
+static int drive_body(unsigned short port)
+{
+    static const char *const failures[] = {"open",   "chunk",  "oom",
+                                           "finish", "getter", "close"};
+    char path[64];
+    size_t i;
+    int failed;
+    failed = exchange(port, "POST", "/materialized", "A\0BCDE", 6, 200,
+                      "A\0BCDE", 6);
+    if (!failed)
+        failed = exchange(port, "GET", "/saved", "", 0, 200, "A\0BCDE", 6);
+    if (!failed)
+        failed = exchange(port, "GET", "/check-saved", "", 0, 200, "ok", 2);
+    if (!failed)
+        failed =
+            exchange(port, "POST", "/upload/live", "A\0BCDE", 6, 200, "6", 1);
+    if (!failed)
+        failed = exchange(port, "POST", "/empty", "", 0, 204, "", 0);
+    if (!failed)
+        failed = exchange(port, "POST", "/paused", "A\0BCDE", 6, 200, "6", 1);
+    for (i = 0; !failed && i < sizeof(failures) / sizeof(failures[0]); ++i) {
+        snprintf(path, sizeof(path), "/failure/%s", failures[i]);
+        failed = exchange(port, "POST", path, "A\0BCDE", 6, 500, "", 0);
+    }
+    if (!failed)
+        failed = exchange(port, "POST", "/failure/invalid", "A\0BCDE", 6, 500,
+                          "", 0);
+    if (!failed)
+        failed = exchange(port, "POST", "/limit", "ABC", 3, 413, "", 0);
+    if (!failed)
+        failed = exchange(port, "POST", "/denied", "ABC", 3, 403, "", 0);
+    if (!failed)
+        failed = exchange(port, "GET", "/stop", "", 0, 200, "ok", 2);
+    return failed;
+}
+static int spawn_body(lua_State *L)
+{
+    int status;
+    unsigned short port = (unsigned short)lua_tointeger(L, 1);
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        close(progress_write);
+        progress_write = -1;
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        status = drive_body(port);
+        close(progress_read);
+        if (status)
+            kill(getppid(), SIGTERM);
+        _exit(status);
+    }
+    close(progress_read);
+    progress_read = -1;
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -524,6 +617,12 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "tls_setup");
     lua_pushcfunction(L, spawn_policy);
     lua_setfield(L, -2, "spawn_policy");
+    lua_pushcfunction(L, spawn_body);
+    lua_setfield(L, -2, "spawn_body");
+    lua_pushcfunction(L, upload_progress);
+    lua_setfield(L, -2, "upload_progress");
+    lua_pushcfunction(L, prepare_body);
+    lua_setfield(L, -2, "prepare_body");
     lua_pushstring(L, argv[2]);
     lua_setfield(L, -2, "root");
     lua_setglobal(L, "fixture");

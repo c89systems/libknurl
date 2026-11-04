@@ -15,6 +15,12 @@
 #define RL_RULE "rotmos.callback"
 #define RL_SOURCE "rotmos.source"
 #define RL_COUNT "rotmos.count"
+#define RL_BODY_RESULT "rotmos.body_result"
+struct rl_body_result {
+    rotmos_body_result value;
+    unsigned int readers;
+    int closed;
+};
 struct rl_server {
     rotmos_server *native;
     lua_State *L;
@@ -26,15 +32,23 @@ struct rl_rule {
     rotmos_route_group *group;
     int root;
     int is_group;
+    int is_upload;
+    size_t buffer_bytes;
 };
 struct rl_request {
     rotmos_request *native;
     int root;
+    int streaming_upload, upload_opened, upload_closed, upload_finishing;
+    struct rl_rule *upload;
 };
 struct rl_source {
     rotmos_source *native;
     lua_State *L;
     int root, owned, legacy, resettable;
+    int initial_reset;
+    rotmos_source *delegate;
+    struct rl_request *request_body;
+    struct rl_body_result *result_body;
     size_t offset;
     rotmos_error error;
 };
@@ -73,6 +87,7 @@ rotmos_status rl_auth_apply(lua_State *, int, int, rotmos_request *,
 rotmos_status rl_callback_error(lua_State *, int, rotmos_error *, const char *);
 struct rl_server *rl_server(lua_State *, int);
 struct rl_request *rl_request(lua_State *, int);
+int rl_request_check(lua_State *, int, struct rl_request **, rotmos_error *);
 void rl_request_push(lua_State *, struct rl_request *);
 rotmos_status rl_request_start(rotmos_server *, rotmos_request *, void *,
                                rotmos_error *);
@@ -92,6 +107,21 @@ void rl_values_open(lua_State *);
 void rl_servers_open(lua_State *);
 void rl_requests_open(lua_State *);
 void rl_sources_open(lua_State *);
+void rl_bodies_open(lua_State *);
+void rl_body_result_retire(struct rl_body_result *);
+int rl_request_body_reader(lua_State *);
+int rl_request_body_materialize(lua_State *);
+int rl_request_body_copy(lua_State *);
+int rl_request_body_spill(lua_State *);
+int rl_source_wrap_reader(lua_State *, int, struct rl_request *,
+                          struct rl_body_result *, const rotmos_body_result *,
+                          rotmos_error *);
+void rl_source_expire(struct rl_source *);
+void rl_rule_options(lua_State *, struct rl_rule *);
+int rl_upload_prepare(lua_State *, int, rotmos_error *);
+void rl_upload_config(rotmos_upload_stream_config *,
+                      const rotmos_route_config *, struct rl_rule *);
+rotmos_status rl_upload_close(struct rl_request *, rotmos_error *);
 rotmos_status rl_source_take(lua_State *, int, rotmos_reply *, int,
                              const char *, rotmos_error *);
 rotmos_status rl_source_spool(lua_State *, int, rotmos_reply *, int,

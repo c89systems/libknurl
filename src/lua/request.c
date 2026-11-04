@@ -11,7 +11,7 @@ static int start_trampoline(lua_State *L)
 {
     struct rl_call *c = lua_touserdata(L, 1);
     struct rl_request *r;
-    r = lua_newuserdatauv(L, sizeof(*r), 3);
+    r = lua_newuserdatauv(L, sizeof(*r), 5);
     memset(r, 0, sizeof(*r));
     r->native = c->native;
     r->root = LUA_NOREF;
@@ -39,11 +39,27 @@ void rl_request_close(rotmos_server *server, rotmos_request *request,
 {
     struct rl_request *r = rotmos_request_userdata(request);
     struct rl_server *s = data;
+    size_t i, n;
+    int top = lua_gettop(s->L);
     (void)server;
     (void)outcome;
     if (r == NULL)
         return;
     r->native = NULL;
+    rl_request_push(s->L, r);
+    lua_getiuservalue(s->L, -1, 5);
+    if (lua_istable(s->L, -1)) {
+        n = lua_rawlen(s->L, -1);
+        for (i = 0; i < n; ++i) {
+            lua_rawgeti(s->L, -1, (lua_Integer)i + 1);
+            rl_source_expire(luaL_testudata(s->L, -1, RL_SOURCE));
+            lua_pop(s->L, 1);
+        }
+    }
+    lua_pop(s->L, 1);
+    lua_pushnil(s->L);
+    lua_setiuservalue(s->L, -2, 5);
+    lua_settop(s->L, top);
     luaL_unref(s->L, LUA_REGISTRYINDEX, r->root);
     r->root = LUA_NOREF;
 }
@@ -62,14 +78,19 @@ static void endpoint(lua_State *L, rotmos_endpoint value)
     lua_pushinteger(L, value.port);
     lua_setfield(L, -2, "port");
 }
-static int valid(lua_State *L, struct rl_request **r, rotmos_error *e)
+int rl_request_check(lua_State *L, int index, struct rl_request **r,
+                     rotmos_error *e)
 {
-    *r = rl_request(L, 1);
+    *r = rl_request(L, index);
     if (*r == NULL || (*r)->native == NULL) {
         rl_fail(e, ROTMOS_STATE, "request scope has closed");
         return 0;
     }
     return 1;
+}
+static int valid(lua_State *L, struct rl_request **r, rotmos_error *e)
+{
+    return rl_request_check(L, 1, r, e);
 }
 static int snapshot(lua_State *L)
 {
@@ -101,12 +122,31 @@ static int snapshot(lua_State *L)
     lua_pushboolean(L, rotmos_body_kind(rotmos_request_body(n)) ==
                            ROTMOS_BODY_FILE);
     lua_setfield(L, -2, "body_spooled");
+    lua_pushboolean(L, r->streaming_upload);
+    lua_setfield(L, -2, "body_streaming_upload");
+    {
+        const char *path;
+        int fd;
+        if (rotmos_body_file(rotmos_request_body(n), &fd, &path, NULL) ==
+            ROTMOS_OK) {
+            lua_pushstring(L, path);
+            lua_setfield(L, -2, "body_path");
+        }
+    }
     rl_push_size(L, rotmos_request_listener_index(n) + 1);
     lua_setfield(L, -2, "listener_index");
     if (rotmos_request_body_bytes(n, &body, NULL) == ROTMOS_OK) {
         lua_pushlstring(L, body.data != NULL ? body.data : "", body.length);
         lua_setfield(L, -2, "body");
         rl_push_size(L, body.length);
+        lua_setfield(L, -2, "body_size");
+    } else {
+        rotmos_u64 length;
+        if (rotmos_body_length(rotmos_request_body(n), &length, NULL) ==
+            ROTMOS_OK)
+            rl_push_u64(L, length);
+        else
+            lua_pushinteger(L, 0);
         lua_setfield(L, -2, "body_size");
     }
     return 1;
@@ -180,6 +220,16 @@ static int request_body(lua_State *L)
     if (rotmos_request_body_bytes(r->native, &body, &e) != ROTMOS_OK)
         return rl_error(L, &e);
     lua_pushlstring(L, body.data != NULL ? body.data : "", body.length);
+    return 1;
+}
+static int request_body_resume(lua_State *L)
+{
+    struct rl_request *r;
+    rotmos_error error;
+    if (!valid(L, &r, &error) ||
+        rotmos_request_body_resume(r->native, &error) != ROTMOS_OK)
+        return rl_error(L, &error);
+    lua_pushboolean(L, 1);
     return 1;
 }
 static int request_event(lua_State *L)
@@ -365,10 +415,7 @@ static int route_trampoline(lua_State *L)
     int view, options, value, invoke = 1;
     rl_request_push(L, c->request);
     view = lua_absindex(L, -1);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, c->server->root);
-    lua_getiuservalue(L, -1, 2);
-    lua_rawgeti(L, -1, c->rule->root);
-    lua_getiuservalue(L, -1, 1);
+    rl_rule_options(L, c->rule);
     options = lua_absindex(L, -1);
     if (c->hook == 3) {
         c->status = rl_auth_apply(L, options, view, c->native, c->reply,
@@ -417,6 +464,8 @@ static int route_trampoline(lua_State *L)
         lua_getiuservalue(L, view, 2);
         value = lua_absindex(L, -1);
         c->status = rl_reply(L, value, c->reply, c->native, c->error);
+        if (c->status == ROTMOS_OK && c->request->upload_finishing)
+            c->status = rl_upload_close(c->request, c->error);
     }
     return 0;
 }
@@ -438,6 +487,8 @@ static rotmos_status route_call(rotmos_request *n, rotmos_reply *reply,
     c.error = error;
     if (c.request == NULL)
         return rl_fail(error, ROTMOS_STATE, "Lua request association missing");
+    if (r->is_upload)
+        c.request->streaming_upload = 1;
     status = rl_protect(c.server->L, route_trampoline, &c, error);
     if (finish != NULL)
         *finish = c.finish;
@@ -465,15 +516,21 @@ rotmos_status rl_after(rotmos_request *n, rotmos_reply *r, int *f, void *d,
 }
 void rl_requests_open(lua_State *L)
 {
-    static const luaL_Reg methods[] = {{"snapshot", snapshot},
-                                       {"header", header},
-                                       {"query", query},
-                                       {"param", param},
-                                       {"headers", headers},
-                                       {"queries", queries},
-                                       {"body_bytes", request_body},
-                                       {"event", request_event},
-                                       {NULL, NULL}};
+    static const luaL_Reg methods[] = {
+        {"snapshot", snapshot},
+        {"header", header},
+        {"query", query},
+        {"param", param},
+        {"headers", headers},
+        {"queries", queries},
+        {"body_bytes", request_body},
+        {"body_reader", rl_request_body_reader},
+        {"body_materialize", rl_request_body_materialize},
+        {"body_copy", rl_request_body_copy},
+        {"body_spill", rl_request_body_spill},
+        {"body_resume", request_body_resume},
+        {"event", request_event},
+        {NULL, NULL}};
     luaL_newmetatable(L, RL_REQUEST);
     lua_pushvalue(L, -1);
     lua_setfield(L, -2, "__index");

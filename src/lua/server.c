@@ -356,11 +356,12 @@ static int method_value(lua_State *L, int index, rotmos_http_method *out)
     }
     return 0;
 }
-static int route_methods(lua_State *L, int index, rotmos_route_config *config)
+static int route_methods(lua_State *L, int index, rotmos_route_config *config,
+                         int upload)
 {
     size_t i, n;
     rotmos_http_method method;
-    config->method = ROTMOS_HTTP_GET;
+    config->method = upload ? ROTMOS_HTTP_POST : ROTMOS_HTTP_GET;
     rl_field(L, index, "methods");
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
@@ -388,15 +389,54 @@ static int route_methods(lua_State *L, int index, rotmos_route_config *config)
     lua_pop(L, 1);
     return 1;
 }
-static int rule(lua_State *L, int group)
+static int body_policy(lua_State *L, int index, rotmos_body_policy *policy,
+                       int upload, rotmos_error *error)
 {
+    size_t mode = (size_t)policy->mode;
+    static const char *const fields[] = {"mode", "max_bytes",
+                                         "memory_buffer_limit_bytes",
+                                         "disk_spool_disabled"};
+    index = lua_absindex(L, index);
+    if (!lua_istable(L, index))
+        goto invalid;
+    if (!rl_fields(L, index, fields, sizeof(fields) / sizeof(fields[0]), error))
+        return 0;
+    if (!rl_field_size(L, index, "mode", &mode) ||
+        !rl_field_size(L, index, "memory_buffer_limit_bytes",
+                       &policy->memory_buffer_limit_bytes))
+        goto invalid;
+    if ((!upload && mode != ROTMOS_BODY_NONE && mode != ROTMOS_BODY_BUFFERED &&
+         mode != ROTMOS_BODY_MATERIALIZED) ||
+        (upload && mode != ROTMOS_BODY_STREAMING_UPLOAD &&
+         mode != ROTMOS_BODY_STREAM))
+        goto invalid;
+    policy->mode = (rotmos_body_mode)mode;
+    rl_field(L, index, "max_bytes");
+    if (!lua_isnil(L, -1) && !rl_u64(L, -1, &policy->max_bytes))
+        goto invalid;
+    lua_pop(L, 1);
+    rl_field(L, index, "disk_spool_disabled");
+    if (!lua_isnil(L, -1)) {
+        if (!lua_isboolean(L, -1))
+            goto invalid;
+        policy->disk_spool_disabled = lua_toboolean(L, -1);
+    }
+    lua_pop(L, 1);
+    return 1;
+invalid:
+    rl_fail(error, ROTMOS_INVALID, "invalid route body policy");
+    return 0;
+}
+static int rule(lua_State *L, int kind_id)
+{
+    int group = kind_id == 1, upload = kind_id == 2;
     struct rl_server *s = rl_server(L, 1);
     struct rl_rule *parent = NULL, *r;
     rotmos_error e;
     rotmos_status status;
     rotmos_route_config config;
     rotmos_route_group_config gc;
-    size_t body = 0, max = 0;
+    rotmos_upload_stream_config uc;
     const char *kind = NULL;
     int root, index;
     static const char *const route_fields[] = {
@@ -404,6 +444,10 @@ static int rule(lua_State *L, int group)
         "handler", "before",    "after",  "auth"};
     static const char *const group_fields[] = {"prefix", "before", "after",
                                                "auth"};
+    static const char *const upload_fields[] = {
+        "path",        "path_kind", "method",       "methods",       "body",
+        "before",      "after",     "auth",         "open",          "on_chunk",
+        "on_complete", "close",     "buffer_bytes", "max_body_bytes"};
     static const char *const hooks[] = {"before", "after"};
     size_t i;
     if (s == NULL) {
@@ -420,9 +464,13 @@ static int rule(lua_State *L, int group)
         return rl_error(L, (rl_fail(&e, ROTMOS_NOT_SUPPORTED,
                                     "nested groups are not connected yet"),
                             &e));
-    if (!rl_fields(L, 2, group ? group_fields : route_fields,
-                   group ? sizeof(group_fields) / sizeof(group_fields[0])
-                         : sizeof(route_fields) / sizeof(route_fields[0]),
+    if (!rl_fields(L, 2,
+                   group    ? group_fields
+                   : upload ? upload_fields
+                            : route_fields,
+                   group    ? sizeof(group_fields) / sizeof(group_fields[0])
+                   : upload ? sizeof(upload_fields) / sizeof(upload_fields[0])
+                            : sizeof(route_fields) / sizeof(route_fields[0]),
                    &e))
         return rl_error(L, &e);
     for (i = 0; i < sizeof(hooks) / sizeof(hooks[0]); ++i) {
@@ -438,6 +486,8 @@ static int rule(lua_State *L, int group)
     r->root = LUA_NOREF;
     r->server = s;
     r->is_group = group;
+    r->is_upload = upload;
+    r->buffer_bytes = 262144UL;
     r->group = parent != NULL ? parent->group : NULL;
     index = lua_absindex(L, -1);
     luaL_setmetatable(L, group ? RL_GROUP : RL_RULE);
@@ -469,7 +519,7 @@ static int rule(lua_State *L, int group)
         rotmos_route_config_init(&config);
         if (!rl_field_string(L, 2, "path", &config.path) ||
             config.path == NULL || !rl_field_string(L, 2, "path_kind", &kind) ||
-            !route_methods(L, 2, &config))
+            !route_methods(L, 2, &config, upload))
             goto invalid;
         if (config.path[0] == '^')
             config.path_kind = ROTMOS_PATH_REGEX;
@@ -491,40 +541,45 @@ static int rule(lua_State *L, int group)
         config.hooks.before = rl_before;
         config.hooks.after = rl_after;
         config.hooks.userdata = r;
-        rl_field(L, 2, "handler");
-        if (!lua_isfunction(L, -1)) {
-            lua_pop(L, 1);
-            goto invalid;
-        }
-        lua_pop(L, 1);
-        rl_field(L, 2, "body");
-        if (!lua_isnil(L, -1)) {
-            static const char *const fields[] = {"mode", "max_bytes"};
-            if (lua_istable(L, -1) && !rl_fields(L, -1, fields, 2, &e))
-                goto failed;
-            if (!lua_istable(L, -1) || !rl_field_size(L, -1, "mode", &body) ||
-                !rl_field_size(L, -1, "max_bytes", &max))
+        if (!upload) {
+            rl_field(L, 2, "handler");
+            if (!lua_isfunction(L, -1)) {
+                lua_pop(L, 1);
                 goto invalid;
-            if (body != ROTMOS_BODY_NONE && body != ROTMOS_BODY_BUFFERED) {
-                rl_fail(&e, ROTMOS_NOT_SUPPORTED,
-                        "Lua route currently requires NONE or BUFFERED body "
-                        "policy");
+            }
+            lua_pop(L, 1);
+        } else {
+            rotmos_body_policy_init_upload(&config.body);
+            if (!rl_upload_prepare(L, 2, &e))
                 goto failed;
-            }
-            config.body.mode = (rotmos_body_mode)body;
-            if (max != 0) {
-                rotmos_u64_from_size(max, &config.body.max_bytes, NULL);
-                config.body.memory_buffer_limit_bytes = max;
-            }
+            if (!rl_field_size(L, 2, "buffer_bytes", &r->buffer_bytes))
+                goto invalid;
+            if (r->buffer_bytes == 0)
+                r->buffer_bytes = 262144UL;
+            rl_field(L, 2, "max_body_bytes");
+            if (!lua_isnil(L, -1) && !rl_u64(L, -1, &config.body.max_bytes))
+                goto invalid;
+            lua_pop(L, 1);
         }
+        rl_field(L, 2, "body");
+        if (!lua_isnil(L, -1) && !body_policy(L, -1, &config.body, upload, &e))
+            goto failed;
         lua_pop(L, 1);
         lua_pushvalue(L, index);
         r->root = luaL_ref(L, root);
-        status =
-            parent != NULL
-                ? rotmos_route_group_route(parent->group, &config, NULL, &e)
-                : rotmos_router_route(rotmos_server_router(s->native), &config,
-                                      NULL, &e);
+        if (upload) {
+            rl_upload_config(&uc, &config, r);
+            status = parent != NULL
+                         ? rotmos_route_group_upload_stream(parent->group, &uc,
+                                                            NULL, &e)
+                         : rotmos_router_upload_stream(
+                               rotmos_server_router(s->native), &uc, NULL, &e);
+        } else
+            status =
+                parent != NULL
+                    ? rotmos_route_group_route(parent->group, &config, NULL, &e)
+                    : rotmos_router_route(rotmos_server_router(s->native),
+                                          &config, NULL, &e);
     }
     if (status != ROTMOS_OK)
         goto failed;
@@ -539,6 +594,7 @@ failed:
 }
 static int l_route(lua_State *L) { return rule(L, 0); }
 static int l_group(lua_State *L) { return rule(L, 1); }
+static int l_upload(lua_State *L) { return rule(L, 2); }
 void rl_servers_open(lua_State *L)
 {
     static const luaL_Reg methods[] = {{"run", l_run},
@@ -550,6 +606,7 @@ void rl_servers_open(lua_State *L)
                                        {"state", l_state},
                                        {"listener", l_listener},
                                        {"route", l_route},
+                                       {"upload", l_upload},
                                        {"group", l_group},
                                        {"route_count", l_route_count},
                                        {NULL, NULL}};
@@ -565,6 +622,8 @@ void rl_servers_open(lua_State *L)
     lua_setfield(L, -2, "__index");
     lua_pushcfunction(L, l_route);
     lua_setfield(L, -2, "route");
+    lua_pushcfunction(L, l_upload);
+    lua_setfield(L, -2, "upload");
     lua_pop(L, 1);
     luaL_newmetatable(L, RL_RULE);
     lua_pop(L, 1);

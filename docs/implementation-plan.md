@@ -126,3 +126,12 @@ contract and protected cleanup. Its focused fixtures cover actual file-size
 failures, large output without a new ceiling, stack-record lifetime, HEAD and
 Lua allocation/close failures. The remaining binding and packaging scope is
 unchanged.
+
+The Lua body/upload surface now reuses public body materialization/readers and
+the owner-loop upload executor. It preserves Vectis's callback aliases, scoped
+request table/state, bounded chunk delivery, default POST/204 and close timing.
+Borrowed readers expire with their request; explicit copies retain independent
+memory/file ownership. The installed fixture withholds the rest of a socket body
+until Lua acknowledges its first chunk, and covers prefix/resume, lifetime and
+callback/allocation failures. Native upload-file convenience and the other
+remaining binding/packaging surfaces are still required.

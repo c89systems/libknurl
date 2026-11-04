@@ -31,6 +31,7 @@ int luaopen_rotmos_native(lua_State *L)
     rl_servers_open(L);
     rl_requests_open(L);
     rl_sources_open(L);
+    rl_bodies_open(L);
     lua_pushstring(L, rotmos_version());
     lua_setfield(L, -2, "version");
     lua_newtable(L);
@@ -49,6 +50,12 @@ int luaopen_rotmos_native(lua_State *L)
     lua_setfield(L, -2, "BODY_NONE");
     lua_pushinteger(L, ROTMOS_BODY_BUFFERED);
     lua_setfield(L, -2, "BODY_BUFFERED");
+    lua_pushinteger(L, ROTMOS_BODY_MATERIALIZED);
+    lua_setfield(L, -2, "BODY_MATERIALIZED");
+    lua_pushinteger(L, ROTMOS_BODY_STREAMING_UPLOAD);
+    lua_setfield(L, -2, "BODY_STREAMING_UPLOAD");
+    lua_pushinteger(L, ROTMOS_BODY_STREAM);
+    lua_setfield(L, -2, "BODY_STREAM");
     lua_pushvalue(L, -1);
     lua_rawsetp(L, LUA_REGISTRYINDEX, &module_key);
     return 1;
