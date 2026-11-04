@@ -1,0 +1,79 @@
+--- a/include/kore/library.h
++++ b/include/kore/library.h
+@@ -41,6 +41,7 @@
+ void kore_library_parent_step(u_int64_t);
+ void kore_library_parent_drain(u_int64_t);
+ void kore_library_http_pipeline_save(struct connection *, const void *, size_t);
++size_t kore_library_http_pipeline_read(struct connection *, void *, size_t);
+ /* Logical read/write mask, 0 on success or an errno value on failure. */
+ int kore_library_watch_update(int, unsigned int, unsigned int, void *);
+ void kore_library_cleanup(void);
+--- a/src/http.c
++++ b/src/http.c
+@@ -1594,19 +1594,13 @@
+ http_start_recv(struct connection *c)
+ {
+ 	size_t			len;
+-	u_int8_t		*data;
+ 
+ 	c->http_start = kore_time_ms();
+ 	c->http_timeout = http_header_timeout * 1000;
+-	data = c->http_pipeline;
+-	len = c->http_pipeline_len;
+-	c->http_pipeline = NULL;
+-	c->http_pipeline_len = 0;
+ 	net_recv_reset(c, http_header_max, http_header_recv);
++	len = kore_library_http_pipeline_read(c, c->rnb->buf, http_header_max);
+ 	if (len > 0) {
+-		memcpy(c->rnb->buf, data, len);
+ 		c->rnb->s_off = len;
+-		kore_free(data);
+ 		if (!http_header_recv(c->rnb))
+ 			kore_connection_disconnect(c);
+ 	}
+@@ -1618,16 +1612,40 @@
+ 	http_pipeline_save(c, data, len);
+ }
+ 
++size_t
++kore_library_http_pipeline_read(struct connection *c, void *buffer, size_t capacity)
++{
++	size_t count;
++	count = MIN(capacity, c->http_pipeline_len);
++	if (count == 0)
++		return (0);
++	memcpy(buffer, c->http_pipeline, count);
++	c->http_pipeline_len -= count;
++	if (c->http_pipeline_len != 0)
++		memmove(c->http_pipeline, c->http_pipeline + count,
++		    c->http_pipeline_len);
++	else {
++		kore_free(c->http_pipeline);
++		c->http_pipeline = NULL;
++	}
++	return (count);
++}
++
+ static void
+ http_pipeline_save(struct connection *c, const void *data, size_t len)
+ {
++	u_int8_t *copy;
+ 	if (len == 0)
+ 		return;
+-	if (c->http_pipeline != NULL)
+-		fatal("%s: pipeline already saved", "http_pipeline_save");
+-	c->http_pipeline = kore_malloc(len);
+-	memcpy(c->http_pipeline, data, len);
+-	c->http_pipeline_len = len;
++	if (len > (size_t)-1 - c->http_pipeline_len)
++		fatal("http_pipeline_save: length overflow");
++	copy = kore_malloc(len + c->http_pipeline_len);
++	memcpy(copy, data, len);
++	if (c->http_pipeline_len != 0)
++		memcpy(copy + len, c->http_pipeline, c->http_pipeline_len);
++	kore_free(c->http_pipeline);
++	c->http_pipeline = copy;
++	c->http_pipeline_len += len;
+ }
+ 
+ void

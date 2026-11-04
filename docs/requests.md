@@ -77,6 +77,7 @@ source: memory readers borrow the result/buffer; file readers pin an open FD.
 Keep memory owners alive until reader close. File readers do not remove artifacts.
 
 The [focused body fixture](../tests/body-runtime.c) is an executable public API
-example. The [full specification](server-api-spec.md) and
+example. [Connection channels](channels.md) provide exclusive raw input and
+tunnel takeover. The [full specification](server-api-spec.md) and
 [integration contract](vectis-integration-contract.md) retain the remaining
-connection-channel, codec, provider and language-facade requirements.
+codec, provider and language-facade requirements.

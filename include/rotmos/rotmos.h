@@ -12,5 +12,6 @@
 #include <rotmos/response.h>
 #include <rotmos/dispatch.h>
 #include <rotmos/body.h>
+#include <rotmos/channel.h>
 
 #endif

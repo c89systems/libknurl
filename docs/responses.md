@@ -56,5 +56,7 @@ monotonic milliseconds. Handles expire after terminal callbacks return.
 The [focused wire fixture](../tests/response-runtime.c) demonstrates manual
 bounded writes, source resume, trailers, large staged replies and wide file
 ranges. Interim responses, producer-supplied trailer configuration, native-reader
-execution and exclusive connection channels remain separate implementation
-surfaces under the [complete specification](server-api-spec.md).
+execution and the remaining protocol helpers are separate implementation surfaces
+under the [complete specification](server-api-spec.md).
+[Connection channels](channels.md) support validated WebSocket tunnel upgrades
+and bounded duplex output.

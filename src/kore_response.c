@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "kore_internal.h"
 #include "response_internal.h"
+#include "channel_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,11 @@ struct rotmos_delivery {
 static int pending_output(const struct rotmos_delivery *delivery)
 {
     const struct rotmos_response_segment *head;
+    struct http_request *native;
+    native = delivery->response->request->native;
+    if (!delivery->response->inflight && native->owner != NULL &&
+        !TAILQ_EMPTY(&native->owner->send_queue))
+        return 0;
     head = delivery->response->head;
     /* A completion callback precedes native buffer removal. Its retained
      * allocation consumes queue capacity, but is no longer stalled output. */
@@ -143,6 +149,7 @@ void rotmos_kore_response_progress(void *userdata, struct netbuf *buffer,
 {
     struct rotmos_delivery *delivery;
     (void)userdata;
+    rotmos_kore_channel_http_progress(buffer->owner, amount);
     if (buffer->cb != completed)
         return;
     delivery = buffer->extra;
@@ -175,11 +182,30 @@ static void terminal(struct rotmos_delivery *delivery)
     struct rotmos_delivery **slot;
     struct rotmos_delivery *previous;
     int close_connection;
+    int restore_channel;
     response = delivery->response;
     request = response->request;
     native = request->native;
     connection = native->owner;
     close_connection = response->close_connection;
+    restore_channel = 0;
+    if (request->channel != NULL) {
+        if (request->channel->phase != ROTMOS_CHANNEL_CLOSED)
+            rotmos_channel_finish(request->channel,
+                                  response->outcome.cause != ROTMOS_OK
+                                      ? response->outcome.cause
+                                      : (request->channel->input_complete
+                                             ? ROTMOS_OK
+                                             : ROTMOS_CANCELLED));
+        rotmos_channel_notify_closed(request->channel);
+        restore_channel =
+            request->channel->previous_phase == ROTMOS_CHANNEL_HTTP_INPUT &&
+            request->channel->input_complete &&
+            !request->channel->outcome.read_eof &&
+            request->channel->outcome.cause == ROTMOS_OK && !close_connection;
+        if (!restore_channel)
+            close_connection = 1;
+    }
     /* End/abort accepted during this turn may have queued a later turn. */
     if (delivery->queued) {
         previous = NULL;
@@ -200,6 +226,8 @@ static void terminal(struct rotmos_delivery *delivery)
     native->ms = native->total;
     rotmos_response_terminal(response);
     rotmos_kore_request_closed(request);
+    rotmos_channel_release(request->channel, restore_channel);
+    request->channel = NULL;
     if (native->rt->dom->accesslog || kore_accesslog_enabled())
         kore_accesslog(native);
     native->flags &= ~HTTP_REQUEST_LIBRARY_MANAGED;
@@ -225,10 +253,12 @@ static void terminal(struct rotmos_delivery *delivery)
 static void advance(struct rotmos_delivery *delivery)
 {
     rotmos_response *response;
+    rotmos_request *request;
     struct http_request *native;
     struct connection *connection;
     struct netbuf *buffer;
     response = delivery->response;
+    request = response->request;
     native = response->request->native;
     connection = native->owner;
     if (delivery->completed) {
@@ -241,6 +271,7 @@ static void advance(struct rotmos_delivery *delivery)
         response->phase < ROTMOS_RESPONSE_COMPLETE)
         (void)rotmos_response_abort(response, ROTMOS_CANCELLED, NULL);
     if (response->phase == ROTMOS_RESPONSE_ABORTED) {
+        rotmos_channel_finish(request->channel, response->outcome.cause);
         rotmos_kore_body_cancel(response->request, response->outcome.cause);
         if (delivery->buffer != NULL) {
             if (connection != NULL)
@@ -250,13 +281,30 @@ static void advance(struct rotmos_delivery *delivery)
         terminal(delivery);
         return;
     }
-    rotmos_kore_body_step(response->request);
+    if (request->channel != NULL &&
+        request->channel->phase == ROTMOS_CHANNEL_CLOSED &&
+        !TAILQ_EMPTY(&connection->send_queue)) {
+        if (!rotmos_kore_channel_flush_http(request)) {
+            (void)rotmos_response_abort(response, ROTMOS_IO, NULL);
+            kore_connection_disconnect(connection);
+            schedule(response);
+            return;
+        }
+    }
+    if (request->channel != NULL)
+        rotmos_channel_turn(request->channel);
+    else
+        rotmos_kore_body_step(response->request);
     rotmos_response_step(response);
     if (response->phase == ROTMOS_RESPONSE_ABORTED) {
         schedule(response);
         return;
     }
-    if (response->phase == ROTMOS_RESPONSE_FINISHING &&
+    if (((response->phase == ROTMOS_RESPONSE_FINISHING &&
+          (request->channel == NULL ||
+           request->channel->phase != ROTMOS_CHANNEL_TUNNEL)) ||
+         (response->phase == ROTMOS_RESPONSE_COMPLETE &&
+          request->channel != NULL)) &&
         response->head == NULL) {
         terminal(delivery);
         return;
@@ -266,12 +314,17 @@ static void advance(struct rotmos_delivery *delivery)
             delivery->output_pending = 0;
         return;
     }
+    if (request->channel != NULL && !TAILQ_EMPTY(&connection->send_queue))
+        return;
+    if (!response->outcome.committed)
+        delivery->last_progress = kore_time_ms();
     net_send_stream(connection, response->head->data, response->head->length,
                     completed, &buffer);
     buffer->extra = delivery;
     delivery->buffer = buffer;
     response->inflight = 1;
-    if (!net_send_flush(connection)) {
+    if (!(request->channel != NULL ? rotmos_kore_channel_flush_http(request)
+                                   : net_send_flush(connection))) {
         delivery->failed = 1;
         kore_connection_disconnect(connection);
     }
@@ -287,6 +340,7 @@ void rotmos_kore_responses_turn(struct rotmos_runtime *runtime)
     for (delivery = runtime->responses; delivery != NULL;
          delivery = delivery->next) {
         rotmos_kore_body_timeout(delivery->response->request);
+        rotmos_channel_check_timeout(delivery->response->request->channel);
         timeout = delivery->response->phase == ROTMOS_RESPONSE_BUILDING
                       ? runtime->server->config.timeouts.deferred_response
                       : runtime->server->config.timeouts.response_write_idle;
@@ -327,6 +381,11 @@ u_int64_t rotmos_kore_responses_wait(struct rotmos_runtime *runtime,
     for (delivery = runtime->responses; delivery != NULL;
          delivery = delivery->next) {
         maximum = rotmos_kore_body_wait(delivery->response->request, maximum);
+        if (delivery->response->request->channel != NULL &&
+            (u_int64_t)rotmos_channel_wait(
+                delivery->response->request->channel) < maximum)
+            maximum = (u_int64_t)rotmos_channel_wait(
+                delivery->response->request->channel);
         timeout = delivery->response->phase == ROTMOS_RESPONSE_BUILDING
                       ? runtime->server->config.timeouts.deferred_response
                       : runtime->server->config.timeouts.response_write_idle;
@@ -359,9 +418,20 @@ void rotmos_kore_responses_shutdown(struct rotmos_runtime *runtime)
         delivery->queued = 0;
         delivery->response->outcome.cause = ROTMOS_CANCELLED;
         delivery->response->phase = ROTMOS_RESPONSE_ABORTED;
+        rotmos_channel_finish(delivery->response->request->channel,
+                              ROTMOS_CANCELLED);
         rotmos_kore_body_cancel(delivery->response->request, ROTMOS_CANCELLED);
         terminal(delivery);
     }
+}
+
+void rotmos_kore_channels_stopping(struct rotmos_runtime *runtime)
+{
+    struct rotmos_delivery *delivery;
+    for (delivery = runtime->responses; delivery != NULL;
+         delivery = delivery->next)
+        rotmos_channel_finish(delivery->response->request->channel,
+                              ROTMOS_CANCELLED);
 }
 
 void rotmos_kore_response_body_end(rotmos_request *request)

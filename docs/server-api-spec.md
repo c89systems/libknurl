@@ -970,7 +970,9 @@ drain notifications expose capacity without exposing netbufs.
 Half-close drains already readable bytes before reporting EOF, preserves pending
 output, and does not continuously rearm a closed read half. A separate
 `rotmos_channel_shutdown_write` requests a bounded orderly output shutdown;
-read-side EOF alone is not permission to discard output. Channel close and worker
+`ROTMOS_WRITE_CLOSED` reports its completion once, including when ordinary
+interests are suspended. New writes are rejected after shutdown is requested.
+Read-side EOF alone is not permission to discard output. Channel close and worker
 shutdown cancel watches, timers, producers and transfers exactly once.
 
 Handoff does not disable server resource limits. Header validation/limits and
@@ -2216,6 +2218,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0048 | C89-safe signed/unsigned wide decimal values and limits for 32-bit and Apple targets; retain exact JSON/HSTS/curl/log values and perform unaligned-safe 64-bit network reads/writes without SDK macros containing C99 literals |
 | 0049 | Retain managed requests through asynchronous response drain and connection removal; retire library requests before native HTTP pools; report actual output progress and retained TLS retries through typed private hooks |
 | 0050 | Preserve prebody-owned pipelined surplus through a private typed wrapper around Kore's existing pipeline retention; managed body delivery bypasses automatic buffering/storage |
+| 0051 | Prepend returned framer tails to retained pipeline data and restore/read only bounded prefixes; allow channel tails larger than the native header receive buffer without loss or overflow |
 
 ## 22. Investigation references
 

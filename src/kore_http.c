@@ -3,6 +3,7 @@
 #include "reply_internal.h"
 #include "response_internal.h"
 #include "body_internal.h"
+#include "channel_internal.h"
 #include <rotmos/kore.h>
 
 #include <sys/socket.h>
@@ -132,6 +133,13 @@ static rotmos_status admit(rotmos_request *request, rotmos_error *error)
     rotmos_u64 hard;
     int order;
     policy = &request->plan.body;
+    if (request->plan.disposition == ROTMOS_REQUEST_TAKEOVER &&
+        request->channel != NULL)
+        return ROTMOS_OK;
+    if (request->channel != NULL)
+        return rotmos_fail(
+            error, ROTMOS_INVALID, "request_plan",
+            "an installed channel requires TAKEOVER disposition");
     if (request->plan.disposition != ROTMOS_REQUEST_MANAGED) {
         if (request->plan.disposition != ROTMOS_REQUEST_REPLY)
             return rotmos_fail(
@@ -286,6 +294,7 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
     }
     rotmos_request_plan_init(&plan);
     request->dispatch_started = 1;
+    request->in_headers = 1;
     if (runtime->server->config.dispatch.mode == ROTMOS_DISPATCH_CALLBACK)
         status = runtime->server->config.dispatch.on_headers(
             request, &plan, runtime->server->config.dispatch.userdata, &error);
@@ -293,10 +302,15 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
         status = rotmos_router_dispatch_headers(runtime->server->router,
                                                 request, &plan, &error);
     request->plan = plan;
+    request->in_headers = 0;
     request->userdata = plan.userdata;
     if (status == ROTMOS_OK)
         status = admit(request, &error);
     if (status != ROTMOS_OK) {
+        rotmos_channel_finish(request->channel,
+                              status > ROTMOS_EOF && status <= ROTMOS_BACKEND
+                                  ? status
+                                  : ROTMOS_INVALID);
         rotmos_kore_request_fail(
             request, status,
             request->rejection_status

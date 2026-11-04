@@ -37,6 +37,7 @@ struct rotmos_request {
     rotmos_route *route;
     rotmos_reply *reply;
     rotmos_response *response;
+    rotmos_channel *channel;
     rotmos_body *body_store;
     void *input;
     rotmos_request_plan plan;
@@ -45,6 +46,7 @@ struct rotmos_request {
     int router_dispatched;
     int close_notified;
     int rejection_status;
+    int in_headers;
 };
 
 rotmos_bytes rotmos_view(const char *text);

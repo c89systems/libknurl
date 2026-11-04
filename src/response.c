@@ -58,8 +58,9 @@ static int trailer_forbidden(const char *name)
 
 static int bodyless(rotmos_response *r)
 {
-    return r->request->method == ROTMOS_HTTP_HEAD || r->outcome.status == 204 ||
-           r->outcome.status == 205 || r->outcome.status == 304;
+    return r->outcome.status == 101 || r->request->method == ROTMOS_HTTP_HEAD ||
+           r->outcome.status == 204 || r->outcome.status == 205 ||
+           r->outcome.status == 304;
 }
 
 static int compare(rotmos_u64 a, rotmos_u64 b)
@@ -369,9 +370,10 @@ rotmos_status rotmos_response_begin(rotmos_response *r, rotmos_error *error)
     if (data == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "response_begin",
                            "cannot allocate response headers");
-    offset = (size_t)sprintf((char *)data, "%s %d %s\r\n", version,
-                             r->outcome.status,
-                             r->outcome.status >= 400 ? "Error" : "OK");
+    offset = (size_t)sprintf(
+        (char *)data, "%s %d %s\r\n", version, r->outcome.status,
+        r->outcome.status == 101 ? "Switching Protocols"
+                                 : (r->outcome.status >= 400 ? "Error" : "OK"));
     for (i = 0; i < r->headers->header_count; ++i)
         offset +=
             (size_t)sprintf((char *)data + offset, "%s: %s\r\n",
@@ -1144,4 +1146,62 @@ void rotmos_response_release(rotmos_response *r)
     free(r->ending);
     free(r->trailer_names);
     free(r);
+}
+
+rotmos_status rotmos_response_upgrade_headers(rotmos_response *r,
+                                              const rotmos_header *headers,
+                                              size_t count, rotmos_error *error)
+{
+    rotmos_reply *saved;
+    rotmos_reply *copy;
+    unsigned char *ending;
+    rotmos_status status;
+    size_t i;
+    int old_status;
+    int old_close;
+    status = building(r, error);
+    if (status != ROTMOS_OK)
+        return status;
+    if (r->producer || r->has_length || r->trailers_enabled)
+        return rotmos_fail(error, ROTMOS_STATE, "channel_upgrade",
+                           "upgrade requires a fresh response without a body "
+                           "or framing declaration");
+    status = rotmos_reply_new(&copy, error);
+    if (status != ROTMOS_OK)
+        return status;
+    ending = malloc(1);
+    if (ending == NULL) {
+        (void)rotmos_reply_destroy(copy, NULL);
+        return rotmos_fail(error, ROTMOS_NOMEM, "channel_upgrade",
+                           "cannot allocate terminal handshake state");
+    }
+    /* The caller validates the complete set, including staged fields. */
+    for (i = 0; status == ROTMOS_OK && i < count; ++i)
+        status = rotmos_reply_header_add(copy, headers[i].name.data,
+                                         headers[i].value.data, error);
+    saved = r->headers;
+    old_status = r->outcome.status;
+    old_close = r->close_connection;
+    if (status == ROTMOS_OK) {
+        r->headers = copy;
+        r->outcome.status = 101;
+        r->close_connection = 0;
+        status = rotmos_response_begin(r, error);
+    }
+    if (status != ROTMOS_OK) {
+        r->headers = saved;
+        r->outcome.status = old_status;
+        r->close_connection = old_close;
+        r->suppressed = r->chunked = 0;
+        free(ending);
+        (void)rotmos_reply_destroy(copy, NULL);
+        return status;
+    }
+    (void)rotmos_reply_destroy(saved, NULL);
+    r->ending = ending;
+    r->ending_length = 0;
+    r->eof = 1;
+    r->phase = ROTMOS_RESPONSE_FINISHING;
+    rotmos_error_clear(error);
+    return ROTMOS_OK;
 }

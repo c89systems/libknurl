@@ -40,6 +40,8 @@ static void stop_read(rotmos_request *request)
     connection = native->owner;
     if (connection == NULL || connection->state != CONN_STATE_ESTABLISHED)
         return;
+    if (request->channel != NULL)
+        return;
     kore_platform_disable_read(connection->fd);
     kore_platform_schedule_write(connection->fd, connection);
     connection->evt.flags &= ~KORE_EVENT_READ;
@@ -148,6 +150,12 @@ static void arm_read(struct rotmos_input *input)
     net_recv_reset(connection, capacity, received);
     connection->rnb->extra = input;
     connection->rnb->flags |= NETBUF_CALL_CB_ALWAYS;
+    if (connection->http_pipeline_len != 0) {
+        connection->rnb->s_off = kore_library_http_pipeline_read(
+            connection, connection->rnb->buf, capacity);
+        (void)received(connection->rnb);
+        return;
+    }
     input->waiting = 1;
     input->waiting_since = kore_time_ms();
     kore_platform_event_all(connection->fd, connection);
@@ -298,6 +306,24 @@ void rotmos_kore_body_step(rotmos_request *request)
         if (status != ROTMOS_OK)
             rotmos_kore_request_fail(request, status, 500);
     }
+}
+
+void rotmos_kore_body_initial(rotmos_request *request, rotmos_bytes *out)
+{
+    struct rotmos_input *input;
+    input = request->input;
+    out->data = input->pending_length != 0 ? input->pending : input->surplus;
+    out->length = input->pending_length + input->surplus_length;
+}
+
+void rotmos_kore_body_transferred(rotmos_request *request)
+{
+    struct rotmos_input *input;
+    input = request->input;
+    input->dead = 1;
+    input->waiting = input->paused = 0;
+    input->pending = input->surplus = NULL;
+    input->pending_length = input->surplus_length = 0;
 }
 
 rotmos_status rotmos_request_body_resume(rotmos_request *request,

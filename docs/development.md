@@ -54,6 +54,17 @@ distinguish successful input completion, cancelled unread input and failure.
 requests during a pause, deferred replies, deadlines, file/result ownership and
 callback failure. Immediate and ordinary replies preserve pipelined surplus.
 
+[Connection channels](channels.md) add exclusive headers-time takeover, bounded
+raw HTTP input, explicit tail return and restoration, and validated WebSocket
+tunnel upgrades. Tunnel output uses bounded copied prefixes, preserves earlier
+queued streams, and drains before orderly write-half shutdown. Read EOF remains
+separate from output completion. Logical readiness and terminal notifications
+run on the owner loop; channel close precedes request close. The public and
+private queue fixtures cover raw chunked input, early frames, queue pressure,
+half-close, idle timeout and pipeline tails larger than the native header buffer.
+TLS retry directions and retained buffers are implemented in the adapter;
+end-to-end TLS-channel evidence follows the public TLS listener integration.
+
 Parent and HTTP-worker loops expose borrowed FD watches, monotonic wide timers,
 deferred callbacks and coalescing wakers. Readiness is dispatched after native
 event batches; cancellation retires userdata after outstanding batch references.
@@ -73,7 +84,7 @@ This is partial runtime coverage. Preflight explicitly rejects configured TLS,
 worker observations, access logs, trusted proxies, autoblock,
 typed JSON and native-reader upload facades until those paths are connected.
 Native-reader sources require an executor that is not connected yet. Interim
-responses, producer trailer declarations, connection channels and gate observations,
+responses, producer trailer declarations, application WebSockets, HTTP framing helpers and gate observations,
 complete startup/failure unwinding, auxiliary-worker lifecycle, the protocol and
 provider helpers, the opt-in native declaration component, and the Lua product
 remain implementation work. Worker failure,

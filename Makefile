@@ -70,10 +70,10 @@ install: build
 	"$(CMAKE)" --install '$(BUILD_DIR)' --prefix '$(PREFIX)'
 
 format:
-	clang-format -i include/rotmos/*.h src/*.c src/*.h tests/*.c tests/*.cpp
+	clang-format -i include/rotmos/*.h src/*.c src/*.h tests/*.c tests/*.h tests/*.cpp
 
 format-check:
-	clang-format --dry-run --Werror include/rotmos/*.h src/*.c src/*.h tests/*.c tests/*.cpp
+	clang-format --dry-run --Werror include/rotmos/*.h src/*.c src/*.h tests/*.c tests/*.h tests/*.cpp
 
 update-kore:
 	bash scripts/update-kore.sh '$(KORE_REVISION)'

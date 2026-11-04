@@ -89,5 +89,11 @@ void rotmos_kore_request_fail(rotmos_request *request, rotmos_status cause,
                               int status);
 void rotmos_kore_request_closed(rotmos_request *request);
 void rotmos_kore_response_body_end(rotmos_request *request);
+void rotmos_kore_body_initial(rotmos_request *request, rotmos_bytes *out);
+void rotmos_kore_body_transferred(rotmos_request *request);
+int rotmos_kore_channel_flush_http(rotmos_request *request);
+void rotmos_kore_channel_http_progress(struct connection *connection,
+                                       size_t amount);
+void rotmos_kore_channels_stopping(struct rotmos_runtime *runtime);
 
 #endif

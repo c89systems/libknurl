@@ -212,6 +212,7 @@ static void worker_stopping(void *userdata)
         runtime->server->state = ROTMOS_SERVER_STOPPING;
         (void)rotmos_runtime_hook(
             runtime, runtime->server->config.callbacks.on_worker_stopping);
+        rotmos_kore_channels_stopping(runtime);
     }
 }
 
