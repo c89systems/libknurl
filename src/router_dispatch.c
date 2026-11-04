@@ -183,35 +183,49 @@ static rotmos_status hook(rotmos_route_hook_fn function,
                             : ROTMOS_OK;
 }
 
+rotmos_status rotmos_router_hooks_before(rotmos_request *request, int *finish,
+                                         rotmos_error *error)
+{
+    const rotmos_route_hooks *local = &request->route->config.hooks;
+    rotmos_route_hooks empty = {0};
+    const rotmos_route_hooks *group = request->route->group != NULL
+                                          ? &request->route->group->config.hooks
+                                          : &empty;
+    rotmos_status status;
+    *finish = 0;
+    status = hook(group->auth, group, request, finish, error);
+    if (status == ROTMOS_OK && !*finish)
+        status = hook(local->auth, local, request, finish, error);
+    if (status == ROTMOS_OK && !*finish)
+        status = hook(group->before, group, request, finish, error);
+    if (status == ROTMOS_OK && !*finish)
+        status = hook(local->before, local, request, finish, error);
+    return status;
+}
+rotmos_status rotmos_router_hooks_after(rotmos_request *request,
+                                        rotmos_error *error)
+{
+    const rotmos_route_hooks *local = &request->route->config.hooks;
+    rotmos_route_hooks empty = {0};
+    const rotmos_route_hooks *group = request->route->group != NULL
+                                          ? &request->route->group->config.hooks
+                                          : &empty;
+    rotmos_status status;
+    int finish = 0;
+    status = hook(local->after, local, request, &finish, error);
+    return status == ROTMOS_OK
+               ? hook(group->after, group, request, &finish, error)
+               : status;
+}
 rotmos_status rotmos_router_invoke(rotmos_request *request, rotmos_error *error)
 {
-    const rotmos_route_hooks *local;
-    const rotmos_route_hooks *group;
-    rotmos_route_hooks empty = {0};
     rotmos_status status;
     int finish;
-    local = &request->route->config.hooks;
-    group = request->route->group != NULL ? &request->route->group->config.hooks
-                                          : &empty;
-    finish = 0;
-    status = hook(group->auth, group, request, &finish, error);
-    if (status != ROTMOS_OK || finish)
-        return status;
-    status = hook(local->auth, local, request, &finish, error);
-    if (status != ROTMOS_OK || finish)
-        return status;
-    status = hook(group->before, group, request, &finish, error);
-    if (status != ROTMOS_OK || finish)
-        return status;
-    status = hook(local->before, local, request, &finish, error);
+    status = rotmos_router_hooks_before(request, &finish, error);
     if (status != ROTMOS_OK || finish)
         return status;
     status = request->route->config.handler(
         request, request->reply, request->route->config.userdata, error);
-    if (status != ROTMOS_OK)
-        return status;
-    status = hook(local->after, local, request, &finish, error);
-    if (status != ROTMOS_OK)
-        return status;
-    return hook(group->after, group, request, &finish, error);
+    return status == ROTMOS_OK ? rotmos_router_hooks_after(request, error)
+                               : status;
 }

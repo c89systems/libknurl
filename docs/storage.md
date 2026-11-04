@@ -108,9 +108,10 @@ stat/open/list operations. Opened-object metadata, file sources and bounded
 listing iteration keep their existing public ownership. A bounded iterator AGAIN
 retries on the owner loop with the same retained resource; it does not collect a
 directory tree. The caller retains the asset provider through storage-provider
-ownership. The filesystem provider below supplies mutable transactions. The WebDAV
-HTTP facade and live native-reader body/source adapters remain subsequent surfaces
-of the full goal.
+ownership. The filesystem provider below supplies mutable transactions. The
+[WebDAV HTTP facade](webdav.md) connects these providers to mounts. Live
+native-reader body/source and general readiness adapters remain subsequent
+surfaces of the full goal.
 
 The [public fixture](../tests/storage-runtime.c) drives the real server and
 post-fork executor: copied arguments/chunks, native versus owner thread callbacks,
@@ -179,7 +180,9 @@ live native-reader transport adapter remains a separate implementation surface.
 Conditions and quota accounting share the storage mutation lock with every
 provider using the same cache/site. External filesystem writers must coordinate
 separately. The provider advertises write, conditional, copy and move capabilities;
-it does not advertise cross-resource atomicity or directory-fsync crash durability.
+it also advertises owner-loop mutation scope checks, as used by the
+[WebDAV facade](webdav.md). It does not advertise cross-resource atomicity or
+directory-fsync crash durability.
 A successful PUT acknowledges data fsync plus replacement, rather than a stronger
 filesystem durability contract.
 

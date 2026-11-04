@@ -10,7 +10,7 @@ struct rotmos_route {
     regex_t pattern;
     int has_pattern;
     int raw_path;
-    int static_mount;
+    int directory_mount;
     rotmos_headers_fn preflight;
     rotmos_route_group *group;
     void (*release_userdata)(void *);

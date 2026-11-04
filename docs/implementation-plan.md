@@ -60,8 +60,10 @@ arguments, provider capability checks, resources/results and acknowledged
 cancellation, plus a bounded post-fork native job pool and read-only adapter.
 The filesystem provider now lifts Vectis's direct-root/managed-cache engine,
 conditions, quotas, collections, copy/move and recovery, with incremental PUT
-transactions and a shared worker pool. Next connect WebDAV, live native-reader
-adapters and REST/OpenAPI.
+transactions and a shared worker pool. The [WebDAV facade](webdav.md) now connects
+filesystem/read-only/custom mounts, staged middleware, scoped owner-loop authorization,
+conditional/range file replies, incremental PUT and bounded PROPFIND. Next connect
+live native-reader/body/source readiness adapters and REST/OpenAPI.
 Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memory
 measurements for the combined proxy review. Retain the
 remaining ACME in-flight fault and final integration checks for the combined

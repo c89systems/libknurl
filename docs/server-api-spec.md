@@ -1946,7 +1946,10 @@ The [storage operation/executor implementation](storage.md) supplies this public
 contract, read-only asset adapter and mutable filesystem provider. The latter
 preserves Vectis's direct-root/managed-cache layout and mutation semantics, uses
 incremental PUT transactions and shares one bounded native pool per HTTP worker.
-The WebDAV HTTP facade remains part of the complete implementation goal.
+The [WebDAV HTTP facade](webdav.md) connects these providers to public mounts,
+incremental PUT and bounded PROPFIND, with owner-loop policy checks inside native
+mutation scope. General native-reader/source readiness and combined transport
+coverage remain part of the complete implementation goal.
 
 Each provider call receives an opaque `rotmos_storage_operation` and immutable
 arguments. OK completes synchronously; AGAIN transfers completion responsibility
@@ -2004,7 +2007,16 @@ same operation contract. No executor thread calls Lua or owns a request handle.
 Protected mount registration requires an auth callback. Its public request view
 includes method and normalized source/destination resource. Its reply can allow
 with a principal, conceal/deny, challenge or redirect with bounded copied fields.
-Both resources are authorized before COPY/MOVE mutates storage. Vectis supplies
+Both resources are authorized before COPY/MOVE mutates storage. Recursive DELETE,
+COPY and MOVE also authorize affected physical descendants, mapped destinations
+and overwritten destination descendants within the provider's mutation scope.
+Protected mutable providers declare `ROTMOS_STORAGE_CAN_SCOPE_CHECK`; a configured
+`rotmos_storage_operation_config.check_scope` is rejected before invocation for
+incapable providers. `rotmos_storage_operation_check_scope` invokes policy on the
+owner loop and suppresses it after cancellation. Native filesystem jobs marshal
+one bounded copied path pair to that loop while retaining the mutation lock;
+no native thread invokes Lua or receives a live request. Denial reports
+`ROTMOS_STORAGE_DENIED` without mutation. Vectis supplies
 its existing auth/Lockd/packed adapters through those public interfaces. Rotmos
 does not acquire mandatory Lockd/Pouch/database dependencies to serve WebDAV.
 

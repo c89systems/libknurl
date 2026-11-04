@@ -19,7 +19,8 @@ typedef enum rotmos_storage_code {
     ROTMOS_STORAGE_TOMBSTONED,
     ROTMOS_STORAGE_PRECONDITION,
     ROTMOS_STORAGE_NOT_SUPPORTED,
-    ROTMOS_STORAGE_END
+    ROTMOS_STORAGE_END,
+    ROTMOS_STORAGE_DENIED
 } rotmos_storage_code;
 typedef enum rotmos_storage_action {
     ROTMOS_STORAGE_STAT = 0,
@@ -45,6 +46,7 @@ typedef enum rotmos_storage_resource_kind {
 #define ROTMOS_STORAGE_CAN_MOVE 8u
 #define ROTMOS_STORAGE_ATOMIC_CROSS_RESOURCE 16u
 #define ROTMOS_STORAGE_DURABLE_COMMIT 32u
+#define ROTMOS_STORAGE_CAN_SCOPE_CHECK 64u
 #define ROTMOS_STORAGE_CHUNK_MAX 65536u
 #define ROTMOS_STORAGE_CONDITION_MAX 65536u
 #define ROTMOS_STORAGE_MAX_OPERATIONS 256u
@@ -95,10 +97,16 @@ typedef void (*rotmos_storage_interrupt_fn)(rotmos_storage_operation *,
                                             rotmos_status, void *);
 typedef void (*rotmos_storage_retire_fn)(const rotmos_storage_outcome *,
                                          void *);
+typedef rotmos_status (*rotmos_storage_scope_fn)(rotmos_storage_operation *,
+                                                 const char *path,
+                                                 const char *destination,
+                                                 int *allowed, void *,
+                                                 rotmos_error *);
 typedef struct rotmos_storage_operation_config {
     rotmos_storage_complete_fn completed;
     rotmos_storage_interrupt_fn interrupted;
     rotmos_storage_retire_fn retired;
+    rotmos_storage_scope_fn check_scope;
     void *userdata;
     long timeout_ms;
     int timeout_disabled;
@@ -158,6 +166,18 @@ ROTMOS_API void *
 rotmos_storage_operation_userdata(const rotmos_storage_operation *);
 ROTMOS_API rotmos_status rotmos_storage_operation_set_userdata(
     rotmos_storage_operation *, void *, rotmos_error *);
+/* Immutable query may be used by retained native work. A configured checker
+ * requires CAN_SCOPE_CHECK before accepting a mutation. Scope-capable providers
+ * check every affected physical descendant, mapped destination and overwritten
+ * destination descendant inside the same atomic mutation scope. */
+ROTMOS_API int
+rotmos_storage_operation_has_scope_check(const rotmos_storage_operation *);
+/* Owner-loop only. Invokes check_scope synchronously; never yields. Retained
+ * native jobs must marshal checks to this loop, never invoke policy directly.
+ * Cancellation suppresses policy callbacks and denies the check. */
+ROTMOS_API rotmos_status
+rotmos_storage_operation_check_scope(rotmos_storage_operation *, const char *,
+                                     const char *, int *, rotmos_error *);
 /* Cooperative native-thread check. Explicit cancellation revokes consumer
  * callbacks immediately. Timeout/shutdown may first deliver interrupted on the
  * owner loop. Retirement still waits for acknowledgement and preserves actual

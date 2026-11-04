@@ -54,6 +54,8 @@ struct rotmos_request {
 };
 
 rotmos_bytes rotmos_view(const char *text);
+rotmos_status rotmos_request_path_decode(const char *, rotmos_bytes *,
+                                         rotmos_error *);
 rotmos_status rotmos_request_decode(rotmos_request *request,
                                     rotmos_error *error);
 void rotmos_request_cleanup(rotmos_request *request);
@@ -62,6 +64,9 @@ rotmos_status rotmos_router_select(rotmos_router *router,
                                    rotmos_error *error);
 rotmos_status rotmos_router_select_raw(rotmos_router *, rotmos_request *,
                                        rotmos_error *);
+rotmos_status rotmos_router_hooks_before(rotmos_request *, int *,
+                                         rotmos_error *);
+rotmos_status rotmos_router_hooks_after(rotmos_request *, rotmos_error *);
 rotmos_status rotmos_router_invoke(rotmos_request *request,
                                    rotmos_error *error);
 

@@ -86,6 +86,7 @@ upstream upgrades and local changes separate.
 - [XML mapping, routes, DOM and SAX](docs/xml.md)
 - [Assets and static serving](docs/assets.md)
 - [Storage providers, transactions and native jobs](docs/storage.md)
+- [WebDAV mounts and authorization](docs/webdav.md)
 - [Server API specification](docs/server-api-spec.md)
 - [Vectis integration contract](docs/vectis-integration-contract.md)
 - [Ownership boundary](docs/extraction.md)

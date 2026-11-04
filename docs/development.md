@@ -96,7 +96,8 @@ listing is incremental. [Storage operations and native jobs](storage.md) add ack
 retained result/resource ownership, owner-loop publication and bounded post-fork
 execution. The filesystem provider supplies incremental PUT transactions,
 locked conditions/quotas and Vectis-compatible direct/managed roots. The WebDAV
-HTTP facade and the live native-reader adapters remain part of
+[HTTP facade](webdav.md) now supplies mount authorization, incremental PUT and
+bounded PROPFIND. Live native-reader/readiness adapters remain part of
 the full implementation goal.
 
 [Application WebSockets](websockets.md) expose transactional acceptance, a copied

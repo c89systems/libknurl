@@ -33,7 +33,7 @@ struct rotmos_storage_operation {
     size_t references;
     unsigned int cancelled;
     int accepted, acknowledged, delivered, detached, interrupted, retiring,
-        linked, invoke_busy;
+        linked, invoke_busy, scope_busy;
 };
 static rotmos_status fail(rotmos_error *error, rotmos_status status,
                           const char *message)
@@ -82,9 +82,11 @@ const char *rotmos_storage_code_string(rotmos_storage_code code)
     static const char *names[] = {
         "ok",         "not found",           "exists",        "invalid",
         "limit",      "I/O error",           "out of memory", "conflict",
-        "tombstoned", "precondition failed", "not supported", "end"};
-    return code >= ROTMOS_STORAGE_OK && code <= ROTMOS_STORAGE_END ? names[code]
-                                                                   : "unknown";
+        "tombstoned", "precondition failed", "not supported", "end",
+        "denied"};
+    return code >= ROTMOS_STORAGE_OK && code <= ROTMOS_STORAGE_DENIED
+               ? names[code]
+               : "unknown";
 }
 static void provider_ref(rotmos_storage_provider *p) { ++p->references; }
 static void provider_unref(void *data)
@@ -116,7 +118,7 @@ rotmos_storage_provider_new(const rotmos_storage_provider_config *config,
     if (out != NULL)
         *out = NULL;
     if (config == NULL || out == NULL || config->invoke == NULL ||
-        config->cancel == NULL || (config->capabilities & ~63u) != 0 ||
+        config->cancel == NULL || (config->capabilities & ~127u) != 0 ||
         !bounded(config->commit_description, 256))
         return fail(error, ROTMOS_INVALID,
                     "provide invoke/cancel callbacks, valid capabilities and "
@@ -341,7 +343,7 @@ static rotmos_status result_check(rotmos_storage_operation *op,
                                   rotmos_error *error)
 {
     rotmos_storage_action action = op->arguments.action;
-    if (r->code < ROTMOS_STORAGE_OK || r->code > ROTMOS_STORAGE_END ||
+    if (r->code < ROTMOS_STORAGE_OK || r->code > ROTMOS_STORAGE_DENIED ||
         !bounded(r->recovery_path, ROTMOS_ASSET_PATH_MAX) ||
         (r->committed && !commits(action)) ||
         (r->partial && !mutation(action)) ||
@@ -398,7 +400,7 @@ rotmos_storage_operation_complete(rotmos_storage_operation *op,
     status = rotmos_loop_owner(op->loop, error);
     if (status != ROTMOS_OK)
         return status;
-    if (op->acknowledged || op->retiring)
+    if (op->acknowledged || op->retiring || op->scope_busy)
         return fail(error, ROTMOS_STATE,
                     "storage operation already acknowledged");
     rotmos_storage_result_init(&empty);
@@ -493,6 +495,48 @@ rotmos_storage_operation_set_userdata(rotmos_storage_operation *op, void *data,
     op->userdata = data;
     rotmos_error_clear(error);
     return ROTMOS_OK;
+}
+int rotmos_storage_operation_has_scope_check(const rotmos_storage_operation *op)
+{
+    return op != NULL && op->config.check_scope != NULL;
+}
+rotmos_status rotmos_storage_operation_check_scope(rotmos_storage_operation *op,
+                                                   const char *path,
+                                                   const char *destination,
+                                                   int *allowed,
+                                                   rotmos_error *error)
+{
+    rotmos_status status;
+    if (allowed != NULL)
+        *allowed = 0;
+    if (op == NULL || allowed == NULL || !rotmos_asset_path_valid(path) ||
+        (destination != NULL && !rotmos_asset_path_valid(destination)))
+        return fail(error, ROTMOS_INVALID,
+                    "provide normalized scope paths and decision output");
+    status = rotmos_loop_owner(op->loop, error);
+    if (status != ROTMOS_OK)
+        return status;
+    if (op->acknowledged || op->retiring || op->scope_busy)
+        return fail(
+            error, ROTMOS_STATE,
+            "scope check requires a pending operation outside another check");
+    if (rotmos_storage_operation_cancelled(op))
+        return fail(error, ROTMOS_CANCELLED, "storage policy access revoked");
+    if (op->config.check_scope == NULL) {
+        *allowed = 1;
+        rotmos_error_clear(error);
+        return ROTMOS_OK;
+    }
+    op->scope_busy = 1;
+    status = op->config.check_scope(op, path, destination, allowed,
+                                    op->config.userdata, error);
+    op->scope_busy = 0;
+    if (status != ROTMOS_OK || rotmos_storage_operation_cancelled(op))
+        *allowed = 0;
+    if (status == ROTMOS_OK && rotmos_storage_operation_cancelled(op))
+        return fail(error, ROTMOS_CANCELLED,
+                    "storage policy access revoked during check");
+    return status;
 }
 static void operation_unref(void *data)
 {
@@ -763,6 +807,16 @@ rotmos_storage_operation_start(rotmos_storage_provider *p, rotmos_loop *loop,
     rotmos_storage_operation_config_init(&defaults);
     if (config != NULL)
         defaults = *config;
+    if (defaults.check_scope != NULL) {
+        if (args->action != ROTMOS_STORAGE_DELETE &&
+            args->action != ROTMOS_STORAGE_COPY &&
+            args->action != ROTMOS_STORAGE_MOVE)
+            return fail(error, ROTMOS_INVALID,
+                        "scope checks apply to DELETE/COPY/MOVE");
+        if (!(p->config.capabilities & ROTMOS_STORAGE_CAN_SCOPE_CHECK))
+            return fail(error, ROTMOS_NOT_SUPPORTED,
+                        "provider cannot atomically check mutation scope");
+    }
     if (defaults.timeout_ms < 0)
         return fail(error, ROTMOS_INVALID,
                     "storage timeout must be nonnegative; use timeout_disabled "

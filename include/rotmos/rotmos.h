@@ -19,6 +19,7 @@
 #include <rotmos/xml.h>
 #include <rotmos/executor.h>
 #include <rotmos/storage.h>
+#include <rotmos/webdav.h>
 #include <rotmos/asset.h>
 #include <rotmos/static.h>
 

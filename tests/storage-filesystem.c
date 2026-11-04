@@ -611,7 +611,8 @@ int main(int argc, char **argv)
                                         &error) == ROTMOS_OK);
     CHECK(rotmos_storage_provider_capabilities(f.provider) ==
           (ROTMOS_STORAGE_CAN_WRITE | ROTMOS_STORAGE_CAN_CONDITIONAL |
-           ROTMOS_STORAGE_CAN_COPY | ROTMOS_STORAGE_CAN_MOVE));
+           ROTMOS_STORAGE_CAN_COPY | ROTMOS_STORAGE_CAN_MOVE |
+           ROTMOS_STORAGE_CAN_SCOPE_CHECK));
     snprintf(path, sizeof(path), "%s/webdav/test/.lock", f.cache);
     CHECK(access(path, F_OK) != 0);
     status = rotmos_server_run(server, &result, &error);

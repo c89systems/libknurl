@@ -16,12 +16,16 @@ typedef struct rotmos_fs_config {
     rotmos_job *job;
     rotmos_storage_result *result;
     char *recovery;
+    rotmos_storage_code (*scope)(const char *, const char *, void *);
+    void *scope_data;
 } rotmos_fs_config;
 typedef struct rotmos_fs_entry {
     int kind;
     size_t size;
     char storage_path[ROTMOS_FS_STORAGE_PATH_MAX];
 } rotmos_fs_entry;
+rotmos_storage_code rotmos_fs_scope(const rotmos_fs_config *, const char *,
+                                    const char *, int, int);
 int rotmos_fs_config_valid(const rotmos_fs_config *);
 int rotmos_fs_path_normalize(const char *, char[ROTMOS_FS_PATH_MAX + 1]);
 int rotmos_fs_disk_path(const rotmos_fs_config *, const char *, const char *,

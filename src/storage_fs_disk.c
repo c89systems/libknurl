@@ -1927,6 +1927,8 @@ rotmos_storage_code rotmos_fs_delete_conditional(const rotmos_fs_config *config,
     }
     status =
         rotmos_fs_check_conditions(config, normalized, if_match, if_none_match);
+    if (status == ROTMOS_STORAGE_OK)
+        status = rotmos_fs_scope(config, normalized, NULL, 1, 0);
     if (status != ROTMOS_STORAGE_OK) {
         rotmos_fs_unlock(lock_fd);
         return status;
@@ -2119,6 +2121,10 @@ static rotmos_storage_code rotmos_fs_copy_or_move_direct_with_scratch(
     if (status == ROTMOS_STORAGE_OK)
         status =
             rotmos_fs_check_parent(config, scratch->normalized_destination);
+    if (status == ROTMOS_STORAGE_OK)
+        status = rotmos_fs_scope(config, scratch->normalized_source,
+                                 scratch->normalized_destination,
+                                 remove_source || !shallow, overwrite);
     if (status != ROTMOS_STORAGE_OK) {
         rotmos_fs_unlock(lock_fd);
         return status;
@@ -2326,6 +2332,10 @@ static rotmos_storage_code rotmos_fs_copy_or_move_with_scratch(
     if (status == ROTMOS_STORAGE_OK)
         status =
             rotmos_fs_check_parent(config, scratch->normalized_destination);
+    if (status == ROTMOS_STORAGE_OK)
+        status = rotmos_fs_scope(config, scratch->normalized_source,
+                                 scratch->normalized_destination,
+                                 remove_source || !shallow, overwrite);
     if (status != ROTMOS_STORAGE_OK) {
         rotmos_fs_unlock(lock_fd);
         return status;

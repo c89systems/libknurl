@@ -58,6 +58,14 @@ invalid:
                        "invalid percent escape or forbidden decoded byte");
 }
 
+rotmos_status rotmos_request_path_decode(const char *path, rotmos_bytes *out,
+                                         rotmos_error *error)
+{
+    rotmos_bytes input;
+    input.data = path;
+    input.length = strlen(path);
+    return decode(input, 0, out, error);
+}
 rotmos_status rotmos_request_decode(rotmos_request *request,
                                     rotmos_error *error)
 {
@@ -74,7 +82,7 @@ rotmos_status rotmos_request_decode(rotmos_request *request,
         status = rotmos_route_path_validate(request->path.data,
                                             ROTMOS_PATH_LITERAL, error);
     /* A single trailing slash is admitted only when the ordinary first match
-     * is a static directory/asset mount. Keep decoded traversal and ordinary
+     * is a directory/asset/DAV mount. Keep decoded traversal and ordinary
      * route rejection ahead of the existing raw proxy fallback. */
     if (status == ROTMOS_INVALID && request->server != NULL &&
         request->path.data != NULL && request->path.length > 1) {
@@ -89,10 +97,10 @@ rotmos_status rotmos_request_decode(rotmos_request *request,
                 status = rotmos_router_select(request->server->router, request,
                                               error);
                 if (status == ROTMOS_EOF ||
-                    (status == ROTMOS_OK && !request->route->static_mount))
-                    status =
-                        rotmos_fail(error, ROTMOS_INVALID, "request_decode",
-                                    "trailing slash requires a static mount");
+                    (status == ROTMOS_OK && !request->route->directory_mount))
+                    status = rotmos_fail(
+                        error, ROTMOS_INVALID, "request_decode",
+                        "trailing slash requires a directory mount");
             }
         }
     }

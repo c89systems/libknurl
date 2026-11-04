@@ -6,6 +6,7 @@
 #include <rotmos/request.h>
 #include <dirent.h>
 #include <openssl/rand.h>
+#include <poll.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -32,8 +33,15 @@ struct disk_operation {
     rotmos_storage_operation *operation;
     const rotmos_storage_arguments *arguments;
     struct disk_resource *resource, *created;
-    rotmos_job *job;
+    rotmos_job *job, *native_job;
     rotmos_timer *admission;
+    rotmos_waker *scope_waker;
+    unsigned int scope_ready;
+    int scope_allowed, scope_destination;
+    rotmos_status scope_status;
+    rotmos_error scope_error;
+    char scope_path[ROTMOS_FS_STORAGE_PATH_MAX],
+        scope_target[ROTMOS_FS_STORAGE_PATH_MAX];
     size_t references;
     rotmos_storage_result result;
     int fd;
@@ -574,6 +582,40 @@ done:
     free(leaf);
     return code;
 }
+static rotmos_storage_code scope_request(const char *path,
+                                         const char *destination, void *data)
+{
+    struct disk_operation *op = data;
+    strcpy(op->scope_path, path);
+    op->scope_destination = destination != NULL;
+    if (destination != NULL)
+        strcpy(op->scope_target, destination);
+    __atomic_store_n(&op->scope_ready, 1u, __ATOMIC_RELEASE);
+    (void)rotmos_waker_signal(op->scope_waker, NULL);
+    while (__atomic_load_n(&op->scope_ready, __ATOMIC_ACQUIRE) != 2u) {
+        if (rotmos_job_cancelled(op->native_job))
+            return ROTMOS_STORAGE_IO;
+        (void)poll(NULL, 0, 1);
+    }
+    if (op->scope_status != ROTMOS_OK)
+        return op->scope_status == ROTMOS_NOMEM ? ROTMOS_STORAGE_NOMEM
+                                                : ROTMOS_STORAGE_IO;
+    return op->scope_allowed ? ROTMOS_STORAGE_OK : ROTMOS_STORAGE_DENIED;
+}
+static void scope_ready(rotmos_loop *loop, void *data)
+{
+    struct disk_operation *op = data;
+    (void)loop;
+    if (op->operation == NULL ||
+        __atomic_load_n(&op->scope_ready, __ATOMIC_ACQUIRE) != 1u)
+        return;
+    op->scope_allowed = 0;
+    op->scope_status = rotmos_storage_operation_check_scope(
+        op->operation, op->scope_path,
+        op->scope_destination ? op->scope_target : NULL, &op->scope_allowed,
+        &op->scope_error);
+    __atomic_store_n(&op->scope_ready, 2u, __ATOMIC_RELEASE);
+}
 static rotmos_status native_work(rotmos_job *job, rotmos_bytes arguments,
                                  void *data, rotmos_error *error)
 {
@@ -585,7 +627,12 @@ static rotmos_status native_work(rotmos_job *job, rotmos_bytes arguments,
     int lock;
     (void)arguments;
     (void)error;
+    op->native_job = job;
     config.job = job;
+    if (op->scope_waker != NULL) {
+        config.scope = scope_request;
+        config.scope_data = op;
+    }
     config.result = &op->result;
     config.recovery = op->recovery;
     op->result.code = ROTMOS_STORAGE_IO;
@@ -743,8 +790,11 @@ static void native_retired(const rotmos_job_outcome *outcome, void *data)
     if (status != ROTMOS_OK)
         op->result.code =
             status == ROTMOS_NOMEM ? ROTMOS_STORAGE_NOMEM : ROTMOS_STORAGE_IO;
+    if (op->scope_status != ROTMOS_OK && op->scope_error.status != ROTMOS_OK)
+        op->result.error = op->scope_error;
     if (op->result.code != ROTMOS_STORAGE_OK &&
-        op->result.code != ROTMOS_STORAGE_END)
+        op->result.code != ROTMOS_STORAGE_END &&
+        op->result.error.status == ROTMOS_OK)
         (void)rotmos_fail(
             &op->result.error,
             op->result.code == ROTMOS_STORAGE_NOMEM
@@ -771,6 +821,12 @@ static void operation_unref(struct disk_operation *op)
 {
     if (--op->references == 0)
         free(op);
+}
+static void scope_retired(void *data)
+{
+    struct disk_operation *op = data;
+    op->scope_waker = NULL;
+    operation_unref(op);
 }
 static void admission_retired(void *data)
 {
@@ -850,6 +906,13 @@ static rotmos_status invoke(rotmos_storage_operation *operation,
         free(op);
         return status;
     }
+    if (rotmos_storage_operation_has_scope_check(operation)) {
+        status = rotmos_waker_new(loop, scope_ready, scope_retired, op,
+                                  &op->scope_waker, error);
+        if (status != ROTMOS_OK)
+            return status;
+        ++op->references;
+    }
     status = submit(op, error);
     if (status == ROTMOS_OK)
         return ROTMOS_AGAIN;
@@ -889,6 +952,8 @@ static void retired(rotmos_storage_operation *operation,
     if (op == NULL)
         return;
     op->operation = NULL;
+    if (op->scope_waker != NULL)
+        (void)rotmos_waker_destroy(op->scope_waker, NULL);
     if (op->admission != NULL)
         rotmos_timer_cancel(op->admission);
     if (op->fd >= 0)
@@ -1016,7 +1081,8 @@ rotmos_status rotmos_storage_filesystem_new(
     rotmos_storage_provider_config_init(&provider);
     provider.capabilities = ROTMOS_STORAGE_CAN_WRITE |
                             ROTMOS_STORAGE_CAN_CONDITIONAL |
-                            ROTMOS_STORAGE_CAN_COPY | ROTMOS_STORAGE_CAN_MOVE;
+                            ROTMOS_STORAGE_CAN_COPY | ROTMOS_STORAGE_CAN_MOVE |
+                            ROTMOS_STORAGE_CAN_SCOPE_CHECK;
     provider.commit_description =
         "Mutation lock covers conditions, quotas and replacement; PUT fsyncs "
         "data before rename. Direct MOVE may leave committed destination and "

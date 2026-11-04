@@ -20,13 +20,6 @@ void rotmos_static_config_init(rotmos_static_config *config)
     if (config != NULL)
         memset(config, 0, sizeof(*config));
 }
-static const char *header(rotmos_request *request, const char *name)
-{
-    rotmos_bytes bytes;
-    return rotmos_request_header_first(request, name, &bytes, NULL) == ROTMOS_OK
-               ? (const char *)bytes.data
-               : NULL;
-}
 static rotmos_status not_found(struct static_route *r, rotmos_reply *reply,
                                rotmos_error *error)
 {
@@ -87,118 +80,6 @@ static rotmos_status redirect(rotmos_request *request, rotmos_reply *reply,
     return status == ROTMOS_OK ? rotmos_reply_status(reply, 308, error)
                                : status;
 }
-static rotmos_status send_asset(struct static_route *r, rotmos_request *request,
-                                rotmos_reply *reply, rotmos_asset *asset,
-                                const char *path, rotmos_error *error)
-{
-    const rotmos_asset_info *info = rotmos_asset_stat(asset);
-    struct rotmos_static_range range;
-    rotmos_u64 length, start, end, one;
-    const char *type, *value, *range_input;
-    char total[21], first[21], last[21], content_range[80];
-    size_t written;
-    rotmos_source *source;
-    rotmos_status status = ROTMOS_OK;
-    int match, code = 200;
-    type = r->custom && info->content_type != NULL ? info->content_type
-                                                   : r->config.content_type;
-    if (r->custom && (type == NULL || type[0] == 0))
-        type = "application/octet-stream";
-    else if (type == NULL)
-        type = info->content_type != NULL ? info->content_type
-                                          : rotmos_static_content_type(path);
-    if (r->config.cache_control != NULL || r->custom)
-        status = rotmos_reply_header_set(reply, "cache-control",
-                                         r->config.cache_control != NULL
-                                             ? r->config.cache_control
-                                             : "no-cache",
-                                         error);
-    if (status == ROTMOS_OK && info->etag != NULL && info->etag[0] != 0)
-        status = rotmos_reply_header_set(reply, "etag", info->etag, error);
-    if (status == ROTMOS_OK)
-        status =
-            rotmos_reply_header_set(reply, "accept-ranges", "bytes", error);
-    if (status == ROTMOS_OK && info->last_modified != NULL)
-        status = rotmos_reply_header_set(reply, "last-modified",
-                                         info->last_modified, error);
-    value = header(request, "if-match");
-    if (status == ROTMOS_OK && value != NULL) {
-        match = rotmos_http_tag_matches(value, info->etag, 1, 1);
-        if (match != 1) {
-            code = match < 0 ? 400 : 412;
-            goto empty;
-        }
-    }
-    value = header(request, "if-none-match");
-    if (status == ROTMOS_OK && value != NULL) {
-        match = rotmos_http_tag_matches(value, info->etag, 1, 0);
-        if (match != 0) {
-            code = match < 0 ? 400 : 304;
-            goto empty;
-        }
-    }
-    if (status == ROTMOS_OK && value == NULL && info->last_modified != NULL) {
-        const char *since = header(request, "if-modified-since");
-        if (since != NULL && curl_getdate(since, NULL) != (time_t)-1 &&
-            curl_getdate(since, NULL) ==
-                curl_getdate(info->last_modified, NULL)) {
-            code = 304;
-            goto empty;
-        }
-    }
-    if (status != ROTMOS_OK)
-        goto done;
-    range_input = rotmos_request_method(request) == ROTMOS_HTTP_GET
-                      ? header(request, "range")
-                      : NULL;
-    value = header(request, "if-range");
-    if (range_input != NULL && value != NULL &&
-        !rotmos_static_if_range(value, info->etag))
-        range_input = NULL;
-    rotmos_static_range_parse(range_input, info->size, &range);
-    rotmos_u64_format_decimal(info->size, total, sizeof(total), &written, NULL);
-    if (range.requested) {
-        if (!range.satisfiable) {
-            snprintf(content_range, sizeof(content_range), "bytes */%s", total);
-            code = 416;
-        } else {
-            one.high = 0;
-            one.low = 1;
-            rotmos_u64_add(range.start, range.length, &end, NULL);
-            end = rotmos_asset_subtract(end, one);
-            rotmos_u64_format_decimal(range.start, first, sizeof(first),
-                                      &written, NULL);
-            rotmos_u64_format_decimal(end, last, sizeof(last), &written, NULL);
-            snprintf(content_range, sizeof(content_range), "bytes %s-%s/%s",
-                     first, last, total);
-            code = 206;
-        }
-        status = rotmos_reply_header_set(reply, "content-range", content_range,
-                                         error);
-        if (status != ROTMOS_OK || code == 416)
-            goto empty;
-    }
-    start.high = start.low = 0;
-    length = info->size;
-    if (range.requested) {
-        start = range.start;
-        length = range.length;
-    }
-    status = rotmos_asset_source_take(asset, start, length, &source, error);
-    if (status != ROTMOS_OK)
-        goto done;
-    asset = NULL;
-    status = rotmos_reply_source_take(reply, code, type, source, error);
-    if (status != ROTMOS_OK)
-        rotmos_source_destroy(source, NULL);
-    return status;
-empty:
-    if (status == ROTMOS_OK)
-        status = rotmos_reply_status(reply, code, error);
-done:
-    rotmos_asset_close(asset, NULL);
-    return status;
-}
 static rotmos_status serve(rotmos_request *request, rotmos_reply *reply,
                            void *data, rotmos_error *error)
 {
@@ -221,7 +102,8 @@ static rotmos_status serve(rotmos_request *request, rotmos_reply *reply,
             rotmos_asset_close(asset, NULL);
             return not_found(r, reply, error);
         }
-        return send_asset(r, request, reply, asset, r->file, error);
+        return rotmos_static_reply_asset(&r->config, r->custom, request, reply,
+                                         asset, r->file, error);
     }
     prefix = strlen(r->prefix);
     relative = strcmp(r->prefix, "/") == 0 ? path : path + prefix;
@@ -257,7 +139,8 @@ static rotmos_status serve(rotmos_request *request, rotmos_reply *reply,
             rotmos_asset_close(asset, NULL);
             return redirect(request, reply, error);
         }
-        status = send_asset(r, request, reply, asset, copy, error);
+        status = rotmos_static_reply_asset(&r->config, r->custom, request,
+                                           reply, asset, copy, error);
         free(copy);
         return status;
     }
@@ -300,7 +183,8 @@ static rotmos_status serve(rotmos_request *request, rotmos_reply *reply,
         free(index);
         return redirect(request, reply, error);
     }
-    status = send_asset(r, request, reply, selected, index, error);
+    status = rotmos_static_reply_asset(&r->config, r->custom, request, reply,
+                                       selected, index, error);
     free(index);
     return status;
 }
@@ -565,7 +449,7 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
         registered->group = group;
         registered->release_userdata = release_route;
         registered->preflight = preflight;
-        registered->static_mount = kind != 0;
+        registered->directory_mount = kind != 0;
         if (out != NULL)
             *out = registered;
     }
