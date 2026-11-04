@@ -12,7 +12,8 @@ dependency. Its header and library come from the selected released SDK.
 view. A supplied runtime is borrowed; NULL selects an independently owned default
 runtime for the operation or request. Existing public schema views can be passed
 directly. Views must match the released LoneJSON ABI and their map's record size,
-which is bounded to 1..10 MiB. Map metadata and borrowed runtimes remain valid
+which must match the map's nonzero struct size. No additional record-size cap is
+imposed. Map metadata and borrowed runtimes remain valid
 through route destruction or producer close. Registration copies view values,
 patterns, hooks and userdata pointers without parsing or executing callbacks.
 

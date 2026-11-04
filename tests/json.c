@@ -15,6 +15,13 @@ struct record {
 static const lonejson_field fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(struct record, message, "message")};
 LONEJSON_MAP_DEFINE(map, struct record, fields);
+/* A declared record size is a schema property, not an HTTP/output limit. */
+struct large_record {
+    char value[10485761UL];
+};
+static const lonejson_field large_fields[] = {LONEJSON_FIELD_STRING_FIXED_REQ(
+    struct large_record, value, "value", LONEJSON_OVERFLOW_FAIL)};
+LONEJSON_MAP_DEFINE(large_map, struct large_record, large_fields);
 struct lifetime {
     int closed;
     rotmos_status outcome;
@@ -170,6 +177,9 @@ int main(void)
     size_t count;
     size_t length;
     CHECK(selected_items() == 0);
+    CHECK(rotmos_json_schema_from_map(NULL, &large_map, &schema, &error) ==
+              ROTMOS_OK &&
+          schema.record_size == sizeof(struct large_record));
     memset(&lifetime, 0, sizeof(lifetime));
     record.message = malloc(131073);
     collected = malloc(131100);

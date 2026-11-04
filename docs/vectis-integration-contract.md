@@ -32,3 +32,13 @@ they are read-only evidence, never build inputs:
 Readiness requires a concrete installed reference adapter here and the affected
 Vectis regressions during the separately authorized consumer cutover. A broad
 library API alone does not establish a simple replacement.
+
+The installed fixture [vectis-server.c](../tests/vectis-server.c) translates all
+34 server fields from the test-only baseline declarations in
+[vectis-server.h](../tests/vectis-server.h). It retains Vectis's application name,
+server header and explicit body-limit inheritance; normalization remains in the
+library. [vectis-config.c](../tests/vectis-config.c) checks defaults, overrides,
+copied declarations, baseline timeout saturation and foreground/supervised worker
+lifecycle. A supervised host attaches its control FD and signal policy after
+translation. Successful construction transfers that FD; shutdown closes it.
+This is configuration/lifecycle evidence, not a completed application adapter.

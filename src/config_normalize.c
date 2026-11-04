@@ -41,8 +41,7 @@ static rotmos_status deadline(rotmos_deadline *value, long fallback,
         if (value->milliseconds % 1000 != 0)
             ++rounded;
         if (rounded > 65535)
-            return invalid(error,
-                           "rounded backend deadline exceeds 65535 seconds");
+            rounded = 65535;
         value->milliseconds = rounded * 1000;
     }
     return ROTMOS_OK;

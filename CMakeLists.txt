@@ -167,10 +167,13 @@ if(BUILD_TESTING)
   rotmos_local_runtime(rotmos_log_backend)
   add_test(NAME rotmos.log-backend COMMAND rotmos_log_backend)
   set_tests_properties(rotmos.log-backend PROPERTIES TIMEOUT 5)
-  foreach(codec json reply-spooled xml xml-mapped xml-runtime asset static-runtime storage-runtime storage-deadline storage-filesystem webdav-runtime source-runtime upload-runtime rest-runtime openapi policy-runtime policy-logs-runtime)
+  foreach(codec vectis-config json reply-spooled xml xml-mapped xml-runtime asset static-runtime storage-runtime storage-deadline storage-filesystem webdav-runtime source-runtime upload-runtime rest-runtime openapi policy-runtime policy-logs-runtime)
     add_executable(rotmos_${codec} "tests/${codec}.c")
     if(codec STREQUAL "xml-runtime")
       target_sources(rotmos_${codec} PRIVATE tests/vectis-forward.c)
+    endif()
+    if(codec STREQUAL "vectis-config")
+      target_sources(rotmos_${codec} PRIVATE tests/vectis-server.c)
     endif()
     if(codec STREQUAL "storage-runtime")
       # Internal native-job coverage is not an installed SDK consumer.
@@ -179,7 +182,7 @@ if(BUILD_TESTING)
     else()
       target_link_libraries(rotmos_${codec} PRIVATE rotmos::shared Threads::Threads)
     endif()
-    if(codec STREQUAL "policy-logs-runtime")
+    if(codec STREQUAL "policy-logs-runtime" OR codec STREQUAL "vectis-config")
       target_link_libraries(rotmos_${codec} PRIVATE pslog::pslog_shared)
     endif()
     target_compile_definitions(rotmos_${codec} PRIVATE
@@ -447,9 +450,11 @@ if(BUILD_TESTING)
   set_tests_properties(kore.patch-replay kore.preparation kore.build-invalidation
     kore.upgrade PROPERTIES TIMEOUT 60)
   if(NOT rotmos_can_run)
-    set_tests_properties(rotmos.acme-state rotmos.auxiliary-runtime rotmos.auxiliary-restart rotmos.auxiliary-terminate rotmos.process-runtime rotmos.process-backend rotmos.tls-runtime rotmos.channel-runtime rotmos.channel-backend rotmos.body-runtime rotmos.response-runtime rotmos.loop-smoke rotmos.server-runtime rotmos.kore-runtime
-      rotmos.source-runtime rotmos.upload-runtime rotmos.rest-runtime rotmos.openapi rotmos.policy-runtime rotmos.policy-logs-runtime rotmos.autoblock rotmos.log-backend rotmos.storage-deadline
-      rotmos.declarations rotmos.reply rotmos.reply-spooled rotmos.source-file rotmos.kore-port rotmos.foundation
-      rotmos.headers.cpp PROPERTIES DISABLED TRUE)
+    # rotmos.* checks execute selected-target programs, except these host-tool
+    # gates. Keep new runtime cases from silently escaping cross-target gating.
+    get_property(runtime_tests DIRECTORY PROPERTY TESTS)
+    list(FILTER runtime_tests INCLUDE REGEX "^rotmos\\.")
+    list(REMOVE_ITEM runtime_tests rotmos.public-boundary rotmos.installed-consumer)
+    set_tests_properties(${runtime_tests} PROPERTIES DISABLED TRUE)
   endif()
 endif()

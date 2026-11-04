@@ -70,6 +70,14 @@ derived sub=http and independent file access logs. Preload/dynamic checks cover
 owner retention/release and coroutine collection. All seven target bindings use
 the pinned shared Lua providers and C SDKs; no core-private headers are imported.
 The remaining surface review and full reference adapter are still open.
+
+The server-config reference now translates the 34 baseline fields and exercises
+foreground/host-controlled readiness and worker shutdown through installed public
+interfaces. It exposed two corrected restrictions: second-based deadlines now
+saturate at 65,535 seconds as in Vectis, and mapped JSON records no longer acquire
+a 10 MiB size ceiling absent from the baseline. Cross-target executable tests are
+disabled consistently when that target cannot run locally; host-tool SDK/export
+checks remain enabled.
 Host asset/storage providers now have public Lua interop values for static-assets
 and WebDAV mounts. They retain an optional owner without taking or closing the
 provider. The isolated C host module compiles against installed public C/Lua

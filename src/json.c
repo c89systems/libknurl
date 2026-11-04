@@ -52,11 +52,10 @@ rotmos_status rotmos_json_schema_check(const lonejson_schema_view *s,
 {
     if (s == NULL || s->size != sizeof(*s) ||
         s->abi_version != LONEJSON_VIEW_ABI_VERSION || s->map == NULL ||
-        s->record_size == 0 || s->record_size > 10485760UL ||
-        s->record_size != s->map->struct_size)
+        s->record_size == 0 || s->record_size != s->map->struct_size)
         return rotmos_fail(error, ROTMOS_INVALID, "json_schema",
                            "provide a public schema view matching its record "
-                           "size (1..10 MiB)");
+                           "size");
     rotmos_error_clear(error);
     return ROTMOS_OK;
 }

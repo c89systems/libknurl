@@ -55,3 +55,9 @@ Host asset/storage providers now enter Lua through public borrowed-provider
 interop values. Static-assets and WebDAV registrations retain the host owner and
 use the existing C engines. The host-module fixture builds against installed
 C/Lua SDKs on all seven targets; GNU/musl preload/dynamic workflows are exercised.
+The server reference now maps all 34 baseline configuration fields, including
+explicit body-limit inheritance, copied rules/strings and application defaults.
+Its worker case covers foreground and host-controlled paused readiness, callback
+ordering, stop results and successful control-FD transfer. Baseline second-based
+timeouts round up and saturate; mapped JSON records have no invented size cap.
+The remaining operation/error/type forwarding cases are still incomplete.
