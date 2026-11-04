@@ -17,6 +17,7 @@ struct rotmos_reply {
     unsigned char *body;
     size_t body_length;
     int file;
+    char *file_path;
     rotmos_u64 file_length;
     rotmos_source *source;
     rotmos_source *retired_head;
@@ -26,6 +27,7 @@ struct rotmos_reply {
 };
 
 void rotmos_reply_retire(rotmos_reply *reply);
+rotmos_status rotmos_reply_open_file(rotmos_reply *, rotmos_error *);
 typedef rotmos_status (*rotmos_reply_file_writer_fn)(int, void *,
                                                      rotmos_error *);
 rotmos_status rotmos_reply_generate_file(rotmos_reply *, int, const char *,

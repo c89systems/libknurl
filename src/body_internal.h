@@ -20,6 +20,7 @@ struct rotmos_body {
     rotmos_status failure;
 };
 
+rotmos_u64 rotmos_body_policy_limit(const rotmos_body_policy *, rotmos_u64);
 rotmos_status rotmos_body_create(const rotmos_body_policy *policy,
                                  const char *directory, rotmos_body **out,
                                  rotmos_error *error);

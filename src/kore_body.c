@@ -103,6 +103,12 @@ void rotmos_kore_body_cancel(rotmos_request *request, rotmos_status cause)
 void rotmos_kore_request_fail(rotmos_request *request, rotmos_status cause,
                               int code)
 {
+    rotmos_kore_request_fail_message(request, cause, code, NULL);
+}
+void rotmos_kore_request_fail_message(rotmos_request *request,
+                                      rotmos_status cause, int code,
+                                      const char *message)
+{
     if (cause <= ROTMOS_EOF || cause > ROTMOS_BACKEND)
         cause = ROTMOS_INVALID;
     if (request->outcome.cause == ROTMOS_OK)
@@ -112,7 +118,7 @@ void rotmos_kore_request_fail(rotmos_request *request, rotmos_status cause,
     if (request->response->phase == ROTMOS_RESPONSE_FINISHING &&
         request->response->outcome.status >= 400)
         return;
-    rotmos_response_error(request->response, cause, code);
+    rotmos_response_error_message(request->response, cause, code, message);
 }
 
 static int received(struct netbuf *buffer)
@@ -272,8 +278,8 @@ void rotmos_kore_body_step(rotmos_request *request)
         status = rotmos_body_append(request->body_store, input->pending,
                                     consumed, &error);
         if (status != ROTMOS_OK) {
-            rotmos_kore_request_fail(request, status,
-                                     status == ROTMOS_LIMIT ? 413 : 500);
+            rotmos_kore_request_fail_message(request, status, 413,
+                                             "failed to stream request body");
             return;
         }
         input->pending += consumed;

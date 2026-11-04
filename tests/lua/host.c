@@ -745,8 +745,9 @@ static int drive_body(unsigned short port)
         failed = rotmos_lua_test_exchange(port, "POST", "/failure/invalid",
                                           "A\0BCDE", 6, 500, "", 0);
     if (!failed)
-        failed = rotmos_lua_test_exchange(port, "POST", "/limit", "ABC", 3, 413,
-                                          "", 0);
+        failed =
+            rotmos_lua_test_exchange(port, "POST", "/limit", "ABC", 3, 413,
+                                     "request body exceeds route limit", 32);
     if (!failed)
         failed = rotmos_lua_test_exchange(port, "POST", "/denied", "ABC", 3,
                                           403, "", 0);
@@ -809,7 +810,8 @@ static int drive_routes(unsigned short port)
     R("GET", "/after-oom", "", 0, 500, NULL, 0);
     required_body = NULL;
     R("POST", "/upload-file", "A\0B", 3, 200, "3", 1);
-    R("POST", "/upload-limit", "four", 4, 413, "", 0);
+    R("POST", "/upload-limit", "four", 4, 413,
+      "request body exceeds route limit", 32);
     R("PUT", "/dav/file", "A\0B", 3, 201, "", 0);
     R("GET", "/dav/file", "", 0, 200, "A\0B", 3);
     request_headers = "Depth: 1\r\n";

@@ -51,3 +51,10 @@ reply replacement and HTTP error selection stay in public library operations.
 The [runtime case](../tests/vectis-route-runtime.c) checks duplicate query/headers,
 captures, binary input, 255-byte diagnostics, source ownership and hook/reset/
 suppression/failure timing. No Lockd SDK or sibling source is a build input.
+
+[vectis-body-file.c](../tests/vectis-body-file.c) extends that adapter with the
+borrowed body-reader/path and file-reply shapes. It checks JSON/buffered/legacy
+upload spill behavior, defaults and registration failures, disabled spilling,
+spool I/O failure and cleanup, then after-hook file creation/replacement/removal
+and final 404/HEAD/bodyless handling. The adapter never collects input or opens
+reply files; those operations remain in librotmos.

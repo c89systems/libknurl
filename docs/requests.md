@@ -32,12 +32,19 @@ separately and closes; it cannot turn unread input into EOF or reuse that
 connection. Upgrade/takeover dispositions require their installed capability.
 
 Body policies resolve zero limits through the configured default and enforce a
-positive hard server ceiling. BUFFERED requires its entire finite limit to fit
-its memory budget. MATERIALIZED has a finite memory threshold and may spill only
-when disk permission and `limits.body_spool_directory` were explicitly supplied.
-The private spool uses a mode-0600 file and is removed after request cleanup.
+positive hard server ceiling. JSON, BUFFERED and MATERIALIZED retain completed
+input up to a memory threshold, then spill unless `disk_spool_disabled` is set.
+Zero threshold selects min(limit, 256 KiB); an explicit threshold above the limit
+is invalid. Disabled spilling accepts fitting input and rejects input that
+crosses the threshold with 413, matching Vectis. Spill failures also produce 413
+with its diagnostic. An omitted spool directory selects `/tmp`; the application
+can supply its resolved directory. The private mode-0600 file is removed after
+request cleanup. Ordinary handlers may also use the legacy STREAMING_UPLOAD
+policy with its 3 GiB default; disabling its spooling requires a fully fitting
+memory budget. This policy still delivers a completed body, while live upload
+registrations deliver the bounded reader/chunk callbacks.
 STREAM never collects or spools the message. The [typed JSON facade](json.md)
-decodes completed BUFFERED/MATERIALIZED bodies and retains its records through
+decodes completed JSON/BUFFERED/MATERIALIZED bodies and retains its records through
 response cleanup. Native-reader upload remains a separate implementation surface.
 
 For STREAM, `on_body` receives a borrowed chunk capped by `io.chunk_bytes` and

@@ -40,6 +40,8 @@ static void clear_payload(rotmos_reply *reply)
     reply->source = NULL;
     free(body);
     free(type);
+    free(reply->file_path);
+    reply->file_path = NULL;
     if (file != -1)
         (void)close(file);
     if (source != NULL) {
@@ -124,6 +126,7 @@ rotmos_status rotmos_reply_new(rotmos_reply **out, rotmos_error *error)
     reply->body = NULL;
     reply->body_length = 0;
     reply->file = -1;
+    reply->file_path = NULL;
     reply->file_length.high = reply->file_length.low = 0;
     reply->source = NULL;
     reply->retired_head = reply->retired_tail = NULL;
@@ -309,10 +312,8 @@ rotmos_status rotmos_reply_file(rotmos_reply *reply, int status,
                                 rotmos_error *error)
 {
     char *type;
+    char *copy;
     rotmos_status result;
-    int file;
-    int code;
-    struct stat info;
     result = prepare_type(reply, status, content_type, &type, error);
     if (result != ROTMOS_OK)
         return result;
@@ -321,11 +322,30 @@ rotmos_status rotmos_reply_file(rotmos_reply *reply, int status,
         return rotmos_fail(error, ROTMOS_INVALID, "reply_file",
                            "file path is required");
     }
-    file = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    copy = rotmos_copy_text(path);
+    if (copy == NULL) {
+        free(type);
+        return rotmos_fail(error, ROTMOS_NOMEM, "reply_file",
+                           "cannot copy reply file path");
+    }
+    select_payload(reply, status, ROTMOS_REPLY_FILE, type);
+    reply->file_path = copy;
+    rotmos_error_clear(error);
+    return ROTMOS_OK;
+}
+
+rotmos_status rotmos_reply_open_file(rotmos_reply *reply, rotmos_error *error)
+{
+    int file;
+    int code;
+    rotmos_status result;
+    struct stat info;
+    if (reply->file != -1)
+        return ROTMOS_OK;
+    file = open(reply->file_path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
     if (file == -1) {
         code = errno;
-        free(type);
-        result = rotmos_fail(error, ROTMOS_IO, "reply_file",
+        result = rotmos_fail(error, ROTMOS_EOF, "reply_file_open",
                              "cannot open reply file");
         if (error != NULL) {
             error->source = ROTMOS_ERROR_SYSTEM;
@@ -336,8 +356,7 @@ rotmos_status rotmos_reply_file(rotmos_reply *reply, int status,
     if (fstat(file, &info) == -1) {
         code = errno;
         (void)close(file);
-        free(type);
-        result = rotmos_fail(error, ROTMOS_IO, "reply_file",
+        result = rotmos_fail(error, ROTMOS_EOF, "reply_file_open",
                              "cannot inspect reply file");
         if (error != NULL) {
             error->source = ROTMOS_ERROR_SYSTEM;
@@ -347,12 +366,10 @@ rotmos_status rotmos_reply_file(rotmos_reply *reply, int status,
     }
     if (!S_ISREG(info.st_mode) || info.st_size < 0) {
         (void)close(file);
-        free(type);
         return rotmos_fail(
-            error, ROTMOS_INVALID, "reply_file",
+            error, ROTMOS_IO, "reply_file_open",
             "reply file must be a regular file with a valid size");
     }
-    select_payload(reply, status, ROTMOS_REPLY_FILE, type);
     reply->file = file;
     reply->file_length.high = (unsigned long)((info.st_size >> 16) >> 16);
     reply->file_length.low = (unsigned long)info.st_size & 0xffffffffUL;

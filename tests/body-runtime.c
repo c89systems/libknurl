@@ -375,8 +375,9 @@ static rotmos_status configure_plan(rotmos_request *request,
         else
             rotmos_body_policy_init_buffered(&plan->body);
         plan->body.max_bytes.low = 4096;
-        plan->body.memory_buffer_limit_bytes =
-            is(c, "/spill") || is(c, "/bad-plan") ? 4 : 4096;
+        plan->body.memory_buffer_limit_bytes = is(c, "/bad-plan") ? 8192
+                                               : is(c, "/spill")  ? 4
+                                                                  : 4096;
         return ROTMOS_OK;
     }
     if (is(c, "/ping") || is(c, "/survives") || is(c, "/deferred") ||
@@ -605,7 +606,7 @@ static int client(unsigned short port)
                    "") == 0);
     CHECK(exchange(port, "POST", "/oversize",
                    "Expect: 100-continue\r\nContent-Length: 5\r\n", "", 413,
-                   "") == 0);
+                   "request body exceeds route limit") == 0);
     CHECK(exchange(port, "GET", "/no-end", "", "", 500, "") == 0);
     CHECK(exchange(port, "GET", "/dispatch-error", "", "", 500, "") == 0);
     CHECK(exchange(port, "GET", "/reply-invalid", "", "", 500, "") == 0);
@@ -621,7 +622,7 @@ static int client(unsigned short port)
                        200, strcmp(method[i], "HEAD") == 0 ? "" : "ok") == 0);
     CHECK(exchange(port, "POST", "/method", "", "", 411, "") == 0);
     CHECK(exchange(port, "GET", "/method", "Content-Length: 1\r\n", "x", 413,
-                   "") == 0);
+                   "request body is not allowed for this route") == 0);
     CHECK(exchange(port, "GET", "/stop", "", "", 200, "ok") == 0);
     return 0;
 }

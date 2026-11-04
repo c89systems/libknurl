@@ -94,15 +94,22 @@ configuration now carries that explicit reset option. A failed staged source
 also outlived request-close notification; terminal cleanup now closes it while
 the host request association is still valid.
 
-Body-policy translation remains open: baseline JSON/BUFFERED modes may spill
-after their memory threshold, whereas the current generic BUFFERED mode requires
-its whole admitted limit to fit memory and JSON is rejected at raw admission.
-Check those baseline policies and disabled-spill failure timing in the next
-adapter batch; do not implement a collector or spooler in the adapter.
-File-reply timing also needs its baseline case: Vectis copies the path in
-vectis_response_file and opens it in the backend after hooks; the current
-rotmos_reply_file pins it during selection. Cover replacement/path changes and
-missing-file status before choosing the library correction.
+JSON/BUFFERED body policies now use the baseline memory threshold and spill
+behavior, with borrowed reader/path forwarding in the adapter. Disabled spilling
+accepts fitting input and rejects threshold crossings at reception; missing
+spool directories preserve the baseline 413 diagnostic. Ordinary legacy upload
+policies retain their separate default/validation. Route registration checks
+intrinsic memory limits and the associated server's hard body ceiling.
+File replies now copy the path in the builder and open it after hooks. The
+reference checks atomic path replacement, creation/removal, reply replacement,
+missing-path 404, HEAD length and bodyless suppression. Explicit pinned Sources
+and completed generated/spooled file replies retain their own semantics.
+
+The remaining response audit has a concrete wire gap: server-header and HSTS
+configuration reaches Kore globals, while rotmos_response_begin writes its own
+head without using Kore's configured header generation. Check the backend head
+builder, keep-alive metadata and response bounds next; preserve configuration on
+the wire without adding HTTP encoding work to the application adapter.
 
 ## Evidence limits and work state
 

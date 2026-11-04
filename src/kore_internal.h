@@ -126,6 +126,8 @@ void rotmos_kore_body_timeout(rotmos_request *request);
 u_int64_t rotmos_kore_body_wait(rotmos_request *request, u_int64_t maximum);
 void rotmos_kore_request_fail(rotmos_request *request, rotmos_status cause,
                               int status);
+void rotmos_kore_request_fail_message(rotmos_request *, rotmos_status, int,
+                                      const char *);
 void rotmos_kore_request_closed(rotmos_request *request);
 void rotmos_kore_response_body_end(rotmos_request *request);
 void rotmos_kore_body_initial(rotmos_request *request, rotmos_bytes *out);

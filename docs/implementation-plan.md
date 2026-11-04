@@ -70,6 +70,11 @@ validation and the complete Vectis adapter remain open.
 Ordinary-route forwarding now includes baseline status/errors, request string
 conversion and host-source callback/ownership adaptation. Delayed live reset is
 an explicit public C option shared by Lua. Its parity case also exposed and
-corrected cleanup after request-close on reset failure. Next address baseline
-JSON/buffered body-policy spill and disabled-spill timing, then remaining route,
-provider, proxy/TLS and lifecycle operation forwarding coverage.
+corrected cleanup after request-close on reset failure. Body policy/file
+forwarding now covers threshold spill and disabled-spill/I/O failure timing,
+intrinsic/server-limit registration checks, borrowed readers and deferred file
+opening after hooks. Remaining route/provider, proxy/TLS and lifecycle operation
+forwarding and the broader surface audit remain open.
+Next review response head generation against Kore: server-header/HSTS settings
+are configured but bypassed by the current custom head writer. Use the backend's
+existing behavior and prove the configured wire output before expanding adapters.

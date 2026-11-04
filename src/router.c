@@ -1,5 +1,7 @@
 #include "router_internal.h"
 #include "openapi_internal.h"
+#include "body_internal.h"
+#include "server_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -10,7 +12,7 @@ void rotmos_body_policy_init(rotmos_body_policy *policy)
         return;
     policy->mode = ROTMOS_BODY_NONE;
     policy->max_bytes.high = policy->max_bytes.low = 0;
-    policy->memory_buffer_limit_bytes = 262144UL;
+    policy->memory_buffer_limit_bytes = 0;
     policy->disk_spool_disabled = 0;
 }
 
@@ -125,6 +127,38 @@ rotmos_status rotmos_router_destroy(rotmos_router *router, rotmos_error *error)
     return ROTMOS_OK;
 }
 
+static rotmos_status body_check(rotmos_router *router,
+                                const rotmos_body_policy *input,
+                                rotmos_error *error)
+{
+    rotmos_body_policy policy = *input;
+    rotmos_body *body;
+    rotmos_u64 fallback, hard;
+    int order;
+    rotmos_status status;
+    if (input->mode == ROTMOS_BODY_NONE || input->mode == ROTMOS_BODY_STREAM)
+        return ROTMOS_OK;
+    fallback.high = 0;
+    fallback.low = 10485760UL;
+    if (router->server != NULL)
+        fallback = router->server->config.limits.default_body_bytes;
+    policy.max_bytes = rotmos_body_policy_limit(input, fallback);
+    if (router->server != NULL) {
+        hard = router->server->config.limits.hard_body_bytes;
+        if (hard.high || hard.low) {
+            (void)rotmos_u64_compare(policy.max_bytes, hard, &order, NULL);
+            if (order > 0)
+                return rotmos_fail(
+                    error, ROTMOS_INVALID, "router_route",
+                    "route body limit exceeds the server body limit");
+        }
+    }
+    status = rotmos_body_create(&policy, NULL, &body, error);
+    if (status == ROTMOS_OK)
+        rotmos_body_release(body);
+    return status;
+}
+
 static rotmos_status route_add(rotmos_router *router,
                                const rotmos_route_config *input,
                                rotmos_route_group *group, rotmos_route **out,
@@ -171,6 +205,10 @@ static rotmos_status route_add(rotmos_router *router,
         !rotmos_u64_valid(input->body.max_bytes))
         return rotmos_fail(error, ROTMOS_INVALID, "router_route",
                            "invalid body policy mode or wide limit");
+    status = input->on_headers == NULL ? body_check(router, &input->body, error)
+                                       : ROTMOS_OK;
+    if (status != ROTMOS_OK)
+        return status;
     status = rotmos_route_path_validate(input->path, input->path_kind, error);
     if (status != ROTMOS_OK)
         return status;

@@ -37,7 +37,7 @@ LONEJSON_MAP_DEFINE(input_map, struct input, input_fields);
 LONEJSON_MAP_DEFINE(output_map, struct output, output_fields);
 LONEJSON_MAP_DEFINE(problem_map, struct problem, problem_fields);
 static lonejson_schema_view problem_schema;
-static int called, typed_called, replaced, stopped, no_spool;
+static int called, typed_called, replaced, stopped, default_spool_directory;
 static int array_called;
 static int record_acquired, record_released;
 struct external_record {
@@ -389,6 +389,9 @@ static int exchange(unsigned short port, const char *path, const char *body,
               memcmp(result + total - 2, "\"}", 2) == 0);
         for (used = 12; used < total - 2; ++used)
             CHECK(result[used] == 'x');
+    } else if (expected == NULL) {
+        CHECK(code >= 400 && total > 0 &&
+              total < sizeof(((rotmos_error *)0)->message));
     } else {
         if (strcmp(result, expected) != 0)
             (void)fprintf(stderr, "%s body: %s\n", path, result);
@@ -406,18 +409,20 @@ static int client(unsigned short port)
     CHECK(exchange(port, "/api/echo", "{\"message\":\"hello\"}", 200,
                    "{\"result\":\"hello\"}", 1, 0) == 0);
     CHECK(exchange(port, "/api/echo",
-                   "{\"message\":\"allocated\",\"message\":[]}", 400, "", 0,
-                   0) == 0);
+                   "{\"message\":\"allocated\",\"message\":[]}", 400,
+                   "duplicate field 'message'", 0, 0) == 0);
     CHECK(exchange(port, "/spilled", "{\"message\":\"file\"}", 200,
                    "{\"result\":\"file\"}", 0, 0) == 0);
     CHECK(exchange(port, "/replace", "{\"message\":\"hidden\"}", 201,
                    "replaced", 0, 0) == 0);
     CHECK(exchange(port, "/provider-fail", "{\"message\":\"hidden\"}", 500, "",
                    0, 0) == 0);
-    CHECK(exchange(port, "/provider-wrong", "{\"message\":\"hidden\"}", 400, "",
+    CHECK(
+        exchange(port, "/provider-wrong", "{\"message\":\"hidden\"}", 400,
+                 "provider must supply initialized storage matching its schema",
+                 0, 0) == 0);
+    CHECK(exchange(port, "/provider-malformed", "{\"message\":[]}", 400, NULL,
                    0, 0) == 0);
-    CHECK(exchange(port, "/provider-malformed", "{\"message\":[]}", 400, "", 0,
-                   0) == 0);
     CHECK(exchange(port, "/provider-output-fail", "{\"message\":\"hidden\"}",
                    500, "", 0, 0) == 0);
     CHECK(exchange(port, "/deny", "{", 403, "denied", 0, 0) == 0);
@@ -427,13 +432,13 @@ static int client(unsigned short port)
     CHECK(exchange(port, "/array",
                    "{\"items\":[{\"message\":\"one\"},{\"message\":\"two\"}]}",
                    200, "array", 0, 0) == 0);
-    CHECK(exchange(port, "/limit", "{\"message\":\"too much\"}", 413, "", 0,
-                   0) == 0);
+    CHECK(exchange(port, "/limit", "{\"message\":\"too much\"}", 413,
+                   "request body exceeds route limit", 0, 0) == 0);
     CHECK(exchange(port, "/fixed",
                    "{\"result\":"
                    "\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                    "xxxxxxxxxxxxxxxxxxxxxxx\"}",
-                   400, "", 0, 0) == 0);
+                   400, NULL, 0, 0) == 0);
     large = malloc(65551);
     CHECK(large != NULL);
     memcpy(large, "{\"message\":\"", 12);
@@ -492,7 +497,7 @@ int main(int argc, char **argv)
     int child_status;
     char path[16] = "/echo";
     (void)argv;
-    no_spool = argc > 1;
+    default_spool_directory = argc > 1;
     memset(&fixture, 0, sizeof(fixture));
     fixture.child = -1;
     strcpy(fixture.directory, "json-spool-XXXXXX");
@@ -507,7 +512,8 @@ int main(int argc, char **argv)
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
     config.io.output_queue_bytes = 4096;
     config.io.chunk_bytes = 128;
-    config.limits.body_spool_directory = no_spool ? NULL : fixture.directory;
+    config.limits.body_spool_directory =
+        default_spool_directory ? NULL : fixture.directory;
     config.callbacks.on_parent_ready = ready;
     config.callbacks.on_worker_exit = worker_exit;
     config.callbacks.userdata = &fixture;
@@ -616,9 +622,8 @@ int main(int argc, char **argv)
     ordinary.handler = stop;
     CHECK(rotmos_router_route(rotmos_server_router(server), &ordinary, NULL,
                               &error) == ROTMOS_OK);
-    if (no_spool) {
-        CHECK(rotmos_server_validate(server, &error) == ROTMOS_INVALID &&
-              strcmp(error.operation, "body_plan") == 0);
+    if (default_spool_directory) {
+        CHECK(rotmos_server_validate(server, &error) == ROTMOS_OK);
         CHECK(rotmos_server_destroy(server, &error) == ROTMOS_OK &&
               rmdir(fixture.directory) == 0);
         return 0;

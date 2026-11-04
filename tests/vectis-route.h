@@ -81,12 +81,19 @@ int reference_request_query_at(struct reference_request *, size_t,
                                const char **, const char **);
 reference_status reference_request_bytes(struct reference_request *,
                                          rotmos_bytes *, reference_error *);
+struct reference_source *
+reference_request_body_reader(struct reference_request *);
+const char *reference_request_body_path(struct reference_request *);
+int reference_request_body_is_spooled(struct reference_request *);
 reference_status reference_response_status(struct reference_response *, int,
                                            reference_error *);
 reference_status reference_response_header(struct reference_response *,
                                            const char *, const char *,
                                            reference_error *);
 reference_status reference_response_text(struct reference_response *, int,
+                                         const char *, const char *,
+                                         reference_error *);
+reference_status reference_response_file(struct reference_response *, int,
                                          const char *, const char *,
                                          reference_error *);
 reference_status reference_response_source(struct reference_response *, int,

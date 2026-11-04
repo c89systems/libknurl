@@ -190,13 +190,8 @@ static rotmos_status admit(rotmos_request *request, rotmos_error *error)
         (policy->mode != ROTMOS_BODY_STREAM && request->plan.on_body != NULL))
         return rotmos_fail(error, ROTMOS_INVALID, "request_plan",
                            "on_body belongs exclusively to STREAM delivery");
-    if (policy->mode == ROTMOS_BODY_JSON ||
-        policy->mode == ROTMOS_BODY_STREAMING_UPLOAD)
-        return rotmos_fail(
-            error, ROTMOS_NOT_SUPPORTED, "request_plan",
-            "typed JSON and reader-upload facades are not connected yet");
-    if (policy->max_bytes.high == 0 && policy->max_bytes.low == 0)
-        policy->max_bytes = request->server->config.limits.default_body_bytes;
+    policy->max_bytes = rotmos_body_policy_limit(
+        policy, request->server->config.limits.default_body_bytes);
     hard = request->server->config.limits.hard_body_bytes;
     if (!rotmos_u64_valid(policy->max_bytes))
         return rotmos_fail(error, ROTMOS_INVALID, "request_plan",
@@ -211,12 +206,16 @@ static rotmos_status admit(rotmos_request *request, rotmos_error *error)
     if (request->has_length) {
         (void)rotmos_u64_compare(request->content_length, policy->max_bytes,
                                  &order, NULL);
-        if (order > 0 ||
-            (policy->mode == ROTMOS_BODY_NONE &&
-             (request->content_length.high || request->content_length.low))) {
+        if (policy->mode == ROTMOS_BODY_NONE &&
+            (request->content_length.high || request->content_length.low)) {
             request->rejection_status = 413;
             return rotmos_fail(error, ROTMOS_LIMIT, "request_plan",
-                               "declared body exceeds the admitted limit");
+                               "request body is not allowed for this route");
+        }
+        if (order > 0) {
+            request->rejection_status = 413;
+            return rotmos_fail(error, ROTMOS_LIMIT, "request_plan",
+                               "request body exceeds route limit");
         }
         if ((request->content_length.high || request->content_length.low) &&
             request->method != ROTMOS_HTTP_POST &&
@@ -335,11 +334,12 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
                               status > ROTMOS_EOF && status <= ROTMOS_BACKEND
                                   ? status
                                   : ROTMOS_INVALID);
-        rotmos_kore_request_fail(
+        rotmos_kore_request_fail_message(
             request, status,
             request->rejection_status
                 ? request->rejection_status
-                : (status == ROTMOS_NOT_SUPPORTED ? 501 : 500));
+                : (status == ROTMOS_NOT_SUPPORTED ? 501 : 500),
+            request->rejection_status == 413 ? error.message : NULL);
         return KORE_RESULT_RETRY;
     }
     if (expect && plan.disposition == ROTMOS_REQUEST_MANAGED &&

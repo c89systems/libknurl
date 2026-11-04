@@ -23,6 +23,18 @@ void rotmos_body_policy_init_stream(rotmos_body_policy *policy)
         policy->mode = ROTMOS_BODY_STREAM;
 }
 
+rotmos_u64 rotmos_body_policy_limit(const rotmos_body_policy *policy,
+                                    rotmos_u64 fallback)
+{
+    if (policy->max_bytes.high || policy->max_bytes.low)
+        return policy->max_bytes;
+    if (policy->mode == ROTMOS_BODY_STREAMING_UPLOAD) {
+        fallback.high = 0;
+        fallback.low = 3221225472UL;
+    }
+    return fallback;
+}
+
 rotmos_status rotmos_body_create(const rotmos_body_policy *policy,
                                  const char *directory, rotmos_body **out,
                                  rotmos_error *error)
@@ -30,36 +42,33 @@ rotmos_status rotmos_body_create(const rotmos_body_policy *policy,
     rotmos_body *body;
     size_t limit;
     size_t memory_limit;
-    off_t offset;
     int fits;
     *out = NULL;
     if (policy == NULL || !rotmos_u64_valid(policy->max_bytes) ||
-        (policy->mode != ROTMOS_BODY_NONE &&
+        (policy->mode != ROTMOS_BODY_NONE && policy->mode != ROTMOS_BODY_JSON &&
+         policy->mode != ROTMOS_BODY_STREAMING_UPLOAD &&
          policy->mode != ROTMOS_BODY_BUFFERED &&
          policy->mode != ROTMOS_BODY_MATERIALIZED &&
          policy->mode != ROTMOS_BODY_STREAM))
-        return rotmos_fail(
-            error, ROTMOS_INVALID, "body_plan",
-            "select NONE, BUFFERED, MATERIALIZED or STREAM with a valid limit");
+        return rotmos_fail(error, ROTMOS_INVALID, "body_plan",
+                           "select NONE, JSON, BUFFERED, MATERIALIZED or "
+                           "STREAM with a valid limit");
     limit = 0;
     fits = rotmos_u64_to_size(policy->max_bytes, &limit, NULL) == ROTMOS_OK;
     memory_limit = policy->memory_buffer_limit_bytes;
     if (memory_limit == 0)
-        memory_limit = policy->mode == ROTMOS_BODY_BUFFERED ? limit : 262144UL;
-    if (policy->mode == ROTMOS_BODY_BUFFERED &&
-        (!fits || (policy->memory_buffer_limit_bytes != 0 &&
-                   limit > policy->memory_buffer_limit_bytes)))
+        memory_limit = fits && limit < 262144UL ? limit : 262144UL;
+    if (policy->mode != ROTMOS_BODY_NONE &&
+        policy->mode != ROTMOS_BODY_STREAM &&
+        policy->mode != ROTMOS_BODY_STREAMING_UPLOAD && fits &&
+        memory_limit > limit)
         return rotmos_fail(error, ROTMOS_INVALID, "body_plan",
-                           "BUFFERED requires its entire finite limit to fit "
-                           "its memory budget");
-    if (policy->mode == ROTMOS_BODY_MATERIALIZED &&
-        (!rotmos_file_offset(policy->max_bytes, &offset) ||
-         ((!fits || limit > memory_limit) &&
-          (directory == NULL || directory[0] == '\0' ||
-           policy->disk_spool_disabled))))
-        return rotmos_fail(error, ROTMOS_INVALID, "body_plan",
-                           "MATERIALIZED requires a seekable limit and "
-                           "explicit spill permission/directory");
+                           "body memory threshold must not exceed its limit");
+    if (policy->mode == ROTMOS_BODY_STREAMING_UPLOAD &&
+        policy->disk_spool_disabled && (!fits || memory_limit < limit))
+        return rotmos_fail(
+            error, ROTMOS_INVALID, "body_plan",
+            "upload policy cannot disable spooling unless fully buffered");
     body = calloc(1, sizeof(*body));
     if (body == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "body_plan",
@@ -108,7 +117,7 @@ rotmos_status rotmos_body_append(rotmos_body *body, const void *data,
         return ROTMOS_OK;
     if (body->fd == -1 && (rotmos_u64_to_size(next, &size, NULL) != ROTMOS_OK ||
                            size > body->memory_limit)) {
-        if (body->policy.mode != ROTMOS_BODY_MATERIALIZED)
+        if (body->policy.disk_spool_disabled)
             return rotmos_fail(error, ROTMOS_LIMIT, "body_receive",
                                "body exceeds its memory budget");
         status = rotmos_private_file(body->directory, "rotmos-body", &body->fd,

@@ -46,7 +46,11 @@ ROTMOS_API rotmos_status rotmos_reply_bytes(rotmos_reply *reply, int status,
                                             const char *content_type,
                                             rotmos_bytes body,
                                             rotmos_error *error);
-/* Opens/pins a regular file; no later path lookup is used for delivery. */
+/* Copies a path. After-hooks may replace it or change the file before the
+ * selected reply is submitted. Submission opens/pins the regular file; a
+ * missing/unreadable path produces an empty 404. Bodyless statuses do not open
+ * it; HEAD still resolves its representation. Explicit source_file pins early.
+ */
 ROTMOS_API rotmos_status rotmos_reply_file(rotmos_reply *reply, int status,
                                            const char *content_type,
                                            const char *path,

@@ -14,6 +14,7 @@ file(COPY "${ROTMOS_ROOT}/tests/consumer/CMakeLists.txt"
   "${ROTMOS_ROOT}/tests/vectis-forward.c" "${ROTMOS_ROOT}/tests/vectis-forward.h"
   "${ROTMOS_ROOT}/tests/vectis-config.c" "${ROTMOS_ROOT}/tests/vectis-server.c" "${ROTMOS_ROOT}/tests/vectis-server.h"
   "${ROTMOS_ROOT}/tests/vectis-route-runtime.c" "${ROTMOS_ROOT}/tests/vectis-route.c" "${ROTMOS_ROOT}/tests/vectis-route.h"
+  "${ROTMOS_ROOT}/tests/vectis-body-file.c"
   "${ROTMOS_ROOT}/tests/asset.c" "${ROTMOS_ROOT}/tests/static-runtime.c"
   "${ROTMOS_ROOT}/tests/storage-filesystem.c" "${ROTMOS_ROOT}/tests/webdav-runtime.c"
   "${ROTMOS_ROOT}/tests/source-runtime.c" "${ROTMOS_ROOT}/tests/upload-runtime.c" "${ROTMOS_ROOT}/tests/rest-runtime.c" "${ROTMOS_ROOT}/tests/openapi.c" "${ROTMOS_ROOT}/tests/policy-runtime.c"
@@ -48,6 +49,7 @@ foreach(variant static shared)
     run("${TEST_ROOT}/${variant}/declarations_consumer")
     run("${TEST_ROOT}/${variant}/vectis-config_consumer")
     run("${TEST_ROOT}/${variant}/vectis-route-runtime_consumer")
+    run("${TEST_ROOT}/${variant}/vectis-body-file_consumer")
     run("${TEST_ROOT}/${variant}/server-runtime_consumer")
     run("${TEST_ROOT}/${variant}/proxy-runtime_consumer")
     run("${TEST_ROOT}/${variant}/proxy-websocket_consumer")
@@ -68,6 +70,6 @@ foreach(variant static shared)
     run("${TEST_ROOT}/${variant}/policy-runtime_consumer")
     run("${TEST_ROOT}/${variant}/policy-logs-runtime_consumer")
     run("${TEST_ROOT}/${variant}/json-runtime_consumer")
-    run("${TEST_ROOT}/${variant}/json-runtime_consumer" no-spool)
+    run("${TEST_ROOT}/${variant}/json-runtime_consumer" default-directory)
   endif()
 endforeach()

@@ -67,7 +67,12 @@ option; their separate first-read reset path has been removed.
 checks its offset and length against the target's actual seek representation.
 It uses bounded pread on the owner loop: filesystem I/O can block. It neither
 maps nor materializes the complete file. Failed registration retains caller
-ownership. The staged file helper pins the file when selecting the reply.
+ownership. `rotmos_reply_file` instead copies a path at selection and opens/pins
+it at submission after hooks. A hook may create, replace or remove that path or
+replace the reply altogether. Missing/unreadable final paths produce an empty
+404 while retaining staged headers/type. HEAD resolves the representation;
+1xx/204/205/304 do not open the path. Generated/spooled private-file replies have
+already finished their file before returning and retain their existing FD.
 
 `rotmos_source_file(path)` opens a regular file once at its current length and
 uses the same bounded reader as file-backed body results. The Source retains an

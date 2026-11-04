@@ -57,11 +57,14 @@ static int trailer_forbidden(const char *name)
            rotmos_text_equal_case(name, "set-cookie");
 }
 
+static int status_bodyless(int code)
+{
+    return code < 200 || code == 204 || code == 205 || code == 304;
+}
 static int bodyless(rotmos_response *r)
 {
-    return r->outcome.status < 200 || r->request->method == ROTMOS_HTTP_HEAD ||
-           r->outcome.status == 204 || r->outcome.status == 205 ||
-           r->outcome.status == 304;
+    return status_bodyless(r->outcome.status) ||
+           r->request->method == ROTMOS_HTTP_HEAD;
 }
 
 static int compare(rotmos_u64 a, rotmos_u64 b)
@@ -1068,8 +1071,17 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
         } else if (reply->kind == ROTMOS_REPLY_FILE) {
             rotmos_u64 zero;
             zero.high = zero.low = 0;
-            status = rotmos_response_file_take(r, reply->file, zero,
-                                               reply->file_length, error);
+            if (!status_bodyless(r->outcome.status)) {
+                status = rotmos_reply_open_file(reply, error);
+                if (status == ROTMOS_EOF) {
+                    r->outcome.status = 404;
+                    r->has_length = r->producer = 1;
+                    r->length = zero;
+                    status = ROTMOS_OK;
+                } else if (status == ROTMOS_OK)
+                    status = rotmos_response_file_take(
+                        r, reply->file, zero, reply->file_length, error);
+            }
         } else {
             r->has_length = !bodyless(r) || reply->body_length != 0;
             (void)rotmos_u64_from_size(reply->body_length, &r->length, NULL);
@@ -1102,7 +1114,8 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
     (void)rotmos_reply_destroy(saved, NULL);
     if (reply->kind == ROTMOS_REPLY_SOURCE)
         reply->source = NULL;
-    else if (reply->kind == ROTMOS_REPLY_FILE)
+    else if (reply->kind == ROTMOS_REPLY_FILE && r->file == reply->file &&
+             r->file != -1)
         reply->file = -1;
     else {
         r->memory = reply->body;
@@ -1121,9 +1134,30 @@ void rotmos_response_fail(rotmos_response *r, rotmos_status cause)
 
 void rotmos_response_error(rotmos_response *r, rotmos_status cause, int code)
 {
+    rotmos_response_error_message(r, cause, code, NULL);
+}
+
+void rotmos_response_error_message(rotmos_response *r, rotmos_status cause,
+                                   int code, const char *message)
+{
+    rotmos_reply *failure;
+    rotmos_status status;
     if (!r->outcome.committed && !r->inflight) {
         retire_source(r, cause);
         if (rotmos_response_replace_uncommitted(r, NULL) == ROTMOS_OK) {
+            if (message != NULL && *message != '\0') {
+                status = rotmos_reply_new(&failure, NULL);
+                if (status == ROTMOS_OK) {
+                    status = rotmos_reply_failure(failure, code, message);
+                    if (status == ROTMOS_OK)
+                        status = rotmos_response_submit(r, failure, NULL);
+                    (void)rotmos_reply_destroy(failure, NULL);
+                    if (status == ROTMOS_OK)
+                        return;
+                }
+                (void)rotmos_response_abort(r, cause, NULL);
+                return;
+            }
             r->outcome.status = code;
             r->has_length = 1;
             if (rotmos_response_begin(r, NULL) == ROTMOS_OK &&

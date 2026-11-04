@@ -136,8 +136,9 @@ int main(void)
     REQUIRE(rotmos_reply_content_type(reply).length == 0);
     REQUIRE(rotmos_reply_header_count(reply) == 3);
     REQUIRE(rotmos_reply_file(reply, 200, "text/plain", "/no/such/rotmos/file",
-                              &error) == ROTMOS_IO);
-    REQUIRE(rotmos_reply_status_code(reply) == 204);
+                              &error) == ROTMOS_OK);
+    REQUIRE(rotmos_reply_status_code(reply) == 200);
+    REQUIRE(rotmos_reply_payload_kind(reply) == ROTMOS_REPLY_FILE);
     REQUIRE(rotmos_reply_destroy(reply, &error) == ROTMOS_OK);
 
     first.closing_target = NULL;

@@ -372,16 +372,17 @@ static rotmos_status validate_config(rotmos_server *server, rotmos_error *error)
         if (route->on_headers != NULL)
             continue;
         if (route->body.mode != ROTMOS_BODY_NONE &&
+            route->body.mode != ROTMOS_BODY_JSON &&
+            route->body.mode != ROTMOS_BODY_STREAMING_UPLOAD &&
             route->body.mode != ROTMOS_BODY_BUFFERED &&
             route->body.mode != ROTMOS_BODY_MATERIALIZED)
             return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "server_validate",
-                               "JSON/upload facades are not connected; STREAM "
+                               "uploads require upload registration; STREAM "
                                "requires an on_headers route");
         if (route->body.mode == ROTMOS_BODY_NONE)
             continue;
-        limit = route->body.max_bytes;
-        if (limit.high == 0 && limit.low == 0)
-            limit = server->config.limits.default_body_bytes;
+        limit = rotmos_body_policy_limit(
+            &route->body, server->config.limits.default_body_bytes);
         policy = route->body;
         policy.max_bytes = limit;
         status = rotmos_body_create(

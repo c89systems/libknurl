@@ -209,8 +209,6 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
     route.path = config->path;
     route.path_kind = config->path_kind;
     route.body = config->body;
-    if (route.body.mode == ROTMOS_BODY_JSON)
-        route.body.mode = ROTMOS_BODY_MATERIALIZED;
     route.handler = dispatch;
     route.userdata = data;
     route.hooks = config->hooks;

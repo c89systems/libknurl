@@ -9,6 +9,8 @@ struct string_copy {
 struct reference_request {
     rotmos_request *request;
     struct string_copy *strings;
+    struct reference_source body_reader;
+    rotmos_error reader_error;
 };
 struct forwarding {
     struct forwarding *next;
@@ -265,6 +267,56 @@ reference_status reference_request_bytes(struct reference_request *r,
         rotmos_request_body_bytes(r != NULL ? r->request : NULL, out, &e);
     return reference_error_from_rotmos(s, &e, error);
 }
+static size_t body_read(struct reference_source *source, void *buffer,
+                        size_t capacity, struct reference_source_error *error)
+{
+    struct reference_request *r = source->impl;
+    size_t count = 0;
+    rotmos_status status =
+        rotmos_body_read(rotmos_request_body(r->request), buffer, capacity,
+                         &count, &r->reader_error);
+    if (status != ROTMOS_OK && status != ROTMOS_EOF) {
+        error->code = status == ROTMOS_NOMEM ? 2 : 3;
+        error->message = r->reader_error.message;
+    }
+    return count;
+}
+static int body_reset(struct reference_source *source,
+                      struct reference_source_error *error)
+{
+    struct reference_request *r = source->impl;
+    rotmos_status status =
+        rotmos_body_rewind(rotmos_request_body(r->request), &r->reader_error);
+    if (status == ROTMOS_OK)
+        return 0;
+    error->code = status == ROTMOS_NOMEM ? 2 : 3;
+    error->message = r->reader_error.message;
+    return error->code;
+}
+struct reference_source *
+reference_request_body_reader(struct reference_request *r)
+{
+    if (r == NULL || rotmos_request_body(r->request) == NULL)
+        return NULL;
+    r->body_reader.read = body_read;
+    r->body_reader.reset = body_reset;
+    r->body_reader.impl = r;
+    return &r->body_reader;
+}
+const char *reference_request_body_path(struct reference_request *r)
+{
+    const char *path;
+    int fd;
+    return r != NULL && rotmos_body_file(rotmos_request_body(r->request), &fd,
+                                         &path, NULL) == ROTMOS_OK
+               ? path
+               : NULL;
+}
+int reference_request_body_is_spooled(struct reference_request *r)
+{
+    return r != NULL && rotmos_body_kind(rotmos_request_body(r->request)) ==
+                            ROTMOS_BODY_FILE;
+}
 reference_status reference_response_status(struct reference_response *r,
                                            int code, reference_error *error)
 {
@@ -295,6 +347,15 @@ struct source_forward {
     struct reference_source *host;
     int taken;
 };
+reference_status reference_response_file(struct reference_response *r, int code,
+                                         const char *type, const char *path,
+                                         reference_error *error)
+{
+    rotmos_error e;
+    rotmos_status s =
+        rotmos_reply_file(r != NULL ? r->reply : NULL, code, type, path, &e);
+    return reference_error_from_rotmos(s, &e, error);
+}
 static rotmos_status source_error(const struct reference_source_error *in,
                                   rotmos_error *out, const char *prefix)
 {

@@ -418,7 +418,7 @@ Lua-owned record storage through the public request codec.
 Servers and groups expose `json_route`, `json_typed_route` and `xml_route`.
 Declarations use ordinary path/method/body/hooks, optional `input_schema`, and
 `handler(request, input_record, ...)`. Their default method is POST. JSON uses
-MATERIALIZED input with the normal explicit body/spool validation; XML requires
+JSON input with the normal memory-threshold/spool policy; XML requires
 an input schema and live STREAMING_UPLOAD/STREAM input. XML `buffer_bytes` bounds
 the reader queue (zero selects 256 KiB), without collecting a transport body.
 Schema arguments are checked during registration. Auth and before hooks finish
