@@ -35,8 +35,10 @@ ROTMOS_API rotmos_status rotmos_loop_now(const rotmos_loop *loop,
                                          rotmos_u64 *out, rotmos_error *error);
 
 /* The descriptor is borrowed, never closed or made nonblocking. Cancel before
- * closing/reusing it. A zero interest suspends delivery. New registrations
- * own one retirement notification only on success.
+ * closing/reusing it. A cancelled watch permits a replacement registration
+ * before its retirement callback; its old userdata stays alive until
+ * retirement. A zero interest suspends delivery. New registrations own one
+ * retirement notification only on success.
  */
 ROTMOS_API rotmos_status rotmos_loop_watch(rotmos_loop *loop, int fd,
                                            unsigned int interest,

@@ -96,9 +96,9 @@ alongside an ordinary request, worker admission, idle/total deadlines and failur
 after commitment. The same fixture is compiled and run against relocated static
 and shared installed SDKs, without private headers or Kore declarations.
 
-WebSocket/WSS route execution remains the next slice; a valid opening currently
-gets 501 after preflight, and malformed openings get 400. Existing private
-handshake, opaque wire and rejection machinery will join the same worker
-admission policy. Upstream TLS/HTTP2 live exchanges, forced transport faults and
-slow-peer memory measurements remain required combined proxy verification under
+The same registrations also execute [WebSocket/WSS relays](proxy-websocket.md),
+with validated opening responses, opaque duplex bytes and streamed non-101
+rejections. Their admission and deadlines use this worker policy. Upstream
+HTTP2 live exchanges, forced transport faults and slow-peer memory measurements
+remain required combined proxy verification under
 the [complete specification](server-api-spec.md#reverse-proxy).

@@ -204,7 +204,8 @@ rotmos_status rotmos_loop_watch(rotmos_loop *loop, int fd,
                            "valid descriptor, callback, output and read/write "
                            "interest are required");
     for (item = loop->items; item != NULL; item = item->next) {
-        if (item->kind == ROTMOS_LOOP_WATCH && ((rotmos_watch *)item)->fd == fd)
+        if (!item->cancelled && item->kind == ROTMOS_LOOP_WATCH &&
+            ((rotmos_watch *)item)->fd == fd)
             return rotmos_fail(error, ROTMOS_CONFLICT, "loop_watch",
                                "descriptor already belongs to a watch");
     }

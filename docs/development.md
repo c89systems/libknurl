@@ -61,8 +61,11 @@ loop watches/timers, with a live bounded transfer fixture. The
 [public proxy facade](proxy-http.md) registers copied routes and executes bounded
 HTTP/SSE duplex exchanges with interim responses, trailers, progress/total
 deadlines and shared worker admission. Its live fixture also runs against the
-relocated static and shared SDKs. WebSocket/WSS relay execution remains to be
-connected.
+relocated static and shared SDKs.
+[WebSocket/WSS relays](proxy-websocket.md) validate the upstream opening, preserve
+early and opaque fragmented/extension bytes, stream non-101 rejections, and share
+worker admission with HTTP. Plain/TLS fixtures cover duplex flow, upstream mTLS,
+bounded rejection output, half-close, deadlines and failure after commitment.
 
 [Connection channels](channels.md) add exclusive headers-time takeover, bounded
 raw HTTP input, explicit tail return and restoration, and validated WebSocket

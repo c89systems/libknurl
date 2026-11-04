@@ -140,6 +140,12 @@ void rotmos_channel_progress(rotmos_channel *c, size_t received, size_t sent)
     }
     if (received != 0 || sent != 0)
         (void)rotmos_loop_monotonic(&c->last_activity, NULL);
+    if (c->response != NULL && c->response->progress != NULL) {
+        if (received != 0)
+            c->response->progress(c->response->progress_data, received);
+        if (sent != 0)
+            c->response->progress(c->response->progress_data, sent);
+    }
     if (sent != 0) {
         c->last_write = c->last_activity;
         c->write_notified = 0;

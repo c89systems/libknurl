@@ -73,7 +73,9 @@ lengths format through the C89 public wide-integer implementation.
 The [public HTTP/SSE route adapter](proxy-http.md) connects these components to
 request takeover, managed 100/103 output, final-response commitment and worker
 admission. Configuration and opaque hook views are installed in
-[`<rotmos/proxy.h>`](../include/rotmos/proxy.h). WebSocket/WSS relay execution
-remains the next implementation surface; its validators and wire machinery are
-already available privately. Vectis cutover still requires the complete
+[`<rotmos/proxy.h>`](../include/rotmos/proxy.h). The
+[WebSocket/WSS relay](proxy-websocket.md) uses the same worker ownership and
+admission, the lifted handshake/wire validators and the public raw channel.
+Non-101 replies share the HTTP response writer. Vectis cutover still requires the
+complete
 [proxy specification](server-api-spec.md#reverse-proxy).

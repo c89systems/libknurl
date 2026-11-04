@@ -43,11 +43,14 @@ machinery. An owner-loop curl transport runs independently of Kore through publi
 watches/timers, with bounded live-transfer coverage. The body framer and proxy
 declarations are public. The [HTTP/SSE adapter](proxy-http.md) connects copied
 route registrations, raw-path fallback, 100/103 output, duplex/trailer delivery,
-error/commitment handling and worker admission. The next slice connects
-WebSocket/WSS relays using the same worker admission policy and existing raw
-channel/curl handoff, then continues with providers/codecs. Retain upstream
-TLS/HTTP2 live coverage, forced transport faults and slow-peer memory measurements
-for the combined proxy review. Retain the
+error/commitment handling and worker admission. The
+[WebSocket/WSS adapter](proxy-websocket.md) connects raw curl socket handoff,
+validated opening metadata, opaque duplex relay and streamed HTTP rejections to
+the same worker. Its plain/TLS fixture exercises copied in-memory trust and client
+identity, early frames, fragmentation, shared admission and failure after commitment.
+Next implement JSON/XML2 codecs and route facades, then storage/assets/WebDAV and
+REST/OpenAPI surfaces. Retain upstream HTTP2 live coverage, forced transport faults
+and slow-peer memory measurements for the combined proxy review. Retain the
 remaining ACME in-flight fault and final integration checks for the combined
 review rather than repeating the full protocol matrix for each new surface.
 

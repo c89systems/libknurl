@@ -56,7 +56,7 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/websocket.c src/websocket_frame.c src/kore_websocket.c src/websocket_route.c
   src/framing.c src/proxy_common.c src/proxy_framing.c src/proxy_headers.c
   src/proxy_transport.c
-  src/proxy_route.c src/proxy_runtime.c
+  src/proxy_route.c src/proxy_runtime.c src/proxy_ws_runtime.c
   src/proxy_upload.c src/proxy_http.c src/proxy_http_upstream.c src/proxy_http_wire.c
   src/proxy_url.c src/proxy_director.c src/proxy_response.c src/proxy_local.c
   src/proxy_ws_handshake.c src/proxy_ws_wire.c src/proxy_ws_rejection.c
@@ -132,6 +132,15 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_proxy_websocket tests/proxy-websocket.c)
+  target_link_libraries(rotmos_proxy_websocket PRIVATE rotmos::shared OpenSSL::SSL)
+  target_compile_definitions(rotmos_proxy_websocket PRIVATE
+    $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  rotmos_c89(rotmos_proxy_websocket)
+  rotmos_local_runtime(rotmos_proxy_websocket)
+  add_test(NAME rotmos.proxy-websocket COMMAND rotmos_proxy_websocket)
+  add_test(NAME rotmos.proxy-wss COMMAND rotmos_proxy_websocket tls)
+  set_tests_properties(rotmos.proxy-websocket rotmos.proxy-wss PROPERTIES TIMEOUT 10)
   add_executable(rotmos_proxy_runtime tests/proxy-runtime.c)
   target_link_libraries(rotmos_proxy_runtime PRIVATE rotmos::shared)
   target_compile_definitions(rotmos_proxy_runtime PRIVATE

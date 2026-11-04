@@ -1,4 +1,6 @@
 #include "proxy_runtime.h"
+#include "proxy_runtime_internal.h"
+#include "proxy_ws_runtime.h"
 #include "proxy_route_internal.h"
 #include "proxy_director.h"
 #include "proxy_local.h"
@@ -18,63 +20,6 @@
 #include <stdio.h>
 #include <limits.h>
 
-struct proxy_exchange;
-struct rotmos_proxy_worker {
-    rotmos_proxy_transport *transport;
-    struct proxy_exchange *exchanges;
-    size_t active;
-    size_t refs;
-    int closing;
-};
-struct proxy_interim {
-    struct proxy_interim *next;
-    rotmos_proxy_headers headers;
-    rotmos_header views[ROTMOS_PROXY_HEADER_COUNT_LIMIT];
-    int status;
-};
-struct proxy_exchange {
-    struct proxy_exchange *next;
-    struct rotmos_proxy_worker *worker;
-    const rotmos_proxy_route_data *route;
-    rotmos_request *request;
-    rotmos_loop *loop;
-    rotmos_channel *channel;
-    rotmos_proxy_transfer *transfer;
-    rotmos_proxy_http_upstream upstream;
-    rotmos_proxy_upload_buffer upload;
-    rotmos_proxy_local_response local;
-    struct curl_slist *request_headers;
-    struct proxy_interim *interims;
-    struct proxy_interim *interim_tail;
-    rotmos_timer *timer;
-    char *target;
-    char *authority;
-    unsigned char *input;
-    size_t input_length;
-    size_t input_offset;
-    size_t refs;
-    size_t local_offset;
-    size_t interim_bytes;
-    unsigned int interim_count;
-    int queued;
-    int has_upload;
-    int up_done;
-    int final_ready;
-    int final_prepared;
-    int begun;
-    int ended;
-    int failed;
-    int local_prepared;
-    int local_begun;
-    int local_status;
-    rotmos_error failure;
-    rotmos_u64 started;
-    rotmos_u64 progress;
-    curl_off_t uploaded;
-    curl_off_t downloaded;
-};
-
-static void schedule(struct proxy_exchange *);
 static void step(struct proxy_exchange *);
 
 static void worker_unref(struct rotmos_proxy_worker *w)
@@ -89,7 +34,7 @@ static void interim_free(struct proxy_interim *i)
     free(i);
 }
 
-static void release(void *data)
+void rotmos_proxy_release(void *data)
 {
     struct proxy_exchange *x;
     struct proxy_interim *i;
@@ -100,6 +45,7 @@ static void release(void *data)
         x->interims = i->next;
         interim_free(i);
     }
+    rotmos_proxy_ws_clear(x);
     rotmos_proxy_http_upstream_cleanup(&x->upstream);
     rotmos_proxy_upload_cleanup(&x->upload);
     rotmos_proxy_local_cleanup(&x->local);
@@ -111,7 +57,7 @@ static void release(void *data)
     free(x);
 }
 
-static void progress(void *data, size_t count)
+void rotmos_proxy_progress(void *data, size_t count)
 {
     struct proxy_exchange *x;
     x = data;
@@ -129,19 +75,19 @@ static int xfer_progress(void *data, curl_off_t total_down, curl_off_t down,
     if (down != x->downloaded || up != x->uploaded) {
         x->downloaded = down;
         x->uploaded = up;
-        progress(x, 1);
+        rotmos_proxy_progress(x, 1);
     }
     return 0;
 }
 
 static void upload_consumed(void *data, size_t count)
 {
-    progress(data, count);
-    schedule(data);
+    rotmos_proxy_progress(data, count);
+    rotmos_proxy_schedule(data);
 }
 
-static void record_failure(struct proxy_exchange *x, rotmos_status cause,
-                           int status, const char *message)
+void rotmos_proxy_record_failure(struct proxy_exchange *x, rotmos_status cause,
+                                 int status, const char *message)
 {
     if (x->failure.status != ROTMOS_OK)
         return;
@@ -171,6 +117,7 @@ static void request_closed(rotmos_request *request,
     x->request = NULL;
     x->channel = NULL;
     stop_timer(x);
+    rotmos_proxy_ws_stop(x);
     if (x->transfer != NULL) {
         rotmos_proxy_transfer_cancel(x->transfer);
         x->transfer = NULL;
@@ -181,7 +128,7 @@ static void request_closed(rotmos_request *request,
     if (*slot == x)
         *slot = x->next;
     --x->worker->active;
-    release(x);
+    rotmos_proxy_release(x);
 }
 
 static void turn(rotmos_loop *loop, void *data)
@@ -194,13 +141,13 @@ static void turn(rotmos_loop *loop, void *data)
         step(x);
 }
 
-static void schedule(struct proxy_exchange *x)
+void rotmos_proxy_schedule(struct proxy_exchange *x)
 {
     rotmos_status status;
     if (x->request == NULL || x->worker->closing || x->queued)
         return;
     ++x->refs;
-    status = rotmos_loop_defer(x->loop, turn, release, x, NULL);
+    status = rotmos_loop_defer(x->loop, turn, rotmos_proxy_release, x, NULL);
     if (status != ROTMOS_OK) {
         --x->refs;
         (void)rotmos_response_abort(x->request->response, status, NULL);
@@ -212,7 +159,7 @@ static void schedule(struct proxy_exchange *x)
 static void writable(rotmos_response *response, void *data)
 {
     (void)response;
-    schedule(data);
+    rotmos_proxy_schedule(data);
 }
 
 static void channel_ready(rotmos_channel *channel, unsigned int flags,
@@ -220,7 +167,7 @@ static void channel_ready(rotmos_channel *channel, unsigned int flags,
 {
     (void)channel;
     (void)flags;
-    schedule(data);
+    rotmos_proxy_schedule(data);
 }
 
 static void channel_closed(rotmos_channel *channel,
@@ -230,8 +177,9 @@ static void channel_closed(rotmos_channel *channel,
     (void)channel;
     x = data;
     if (out->cause != ROTMOS_OK)
-        record_failure(x, out->cause, 502, "downstream channel closed");
-    schedule(x);
+        rotmos_proxy_record_failure(x, out->cause, 502,
+                                    "downstream channel closed");
+    rotmos_proxy_schedule(x);
 }
 
 static long remaining(rotmos_u64 now, rotmos_u64 start, long duration)
@@ -268,18 +216,19 @@ static void arm_timer(struct proxy_exchange *x)
             wait = total;
     }
     if (wait == 0) {
-        record_failure(x, ROTMOS_TIMEOUT, 504,
-                       "proxy progress or total deadline expired");
-        schedule(x);
+        rotmos_proxy_record_failure(x, ROTMOS_TIMEOUT, 504,
+                                    "proxy progress or total deadline expired");
+        rotmos_proxy_schedule(x);
         return;
     }
     ++x->refs;
-    status = rotmos_loop_timer(x->loop, wait, 0, check_timeout, release, x,
-                               &x->timer, NULL);
+    status = rotmos_loop_timer(x->loop, wait, 0, check_timeout,
+                               rotmos_proxy_release, x, &x->timer, NULL);
     if (status != ROTMOS_OK) {
         --x->refs;
-        record_failure(x, status, 500, "cannot register proxy deadline");
-        schedule(x);
+        rotmos_proxy_record_failure(x, status, 500,
+                                    "cannot register proxy deadline");
+        rotmos_proxy_schedule(x);
     }
 }
 
@@ -292,19 +241,20 @@ static void check_timeout(rotmos_timer *timer, void *data)
     arm_timer(x);
 }
 
-static void upstream_ready(rotmos_proxy_http_upstream *upstream,
-                           rotmos_proxy_http_event event, void *data)
+void rotmos_proxy_upstream_ready(rotmos_proxy_http_upstream *upstream,
+                                 rotmos_proxy_http_event event, void *data)
 {
     struct proxy_exchange *x;
     struct proxy_interim *i;
     size_t at;
     x = data;
-    progress(x, 1);
+    rotmos_proxy_progress(x, 1);
     if (event == ROTMOS_PROXY_HTTP_INFORMATIONAL) {
         if (x->interim_count >= 16 ||
             upstream->response.headers.bytes > 131072UL - x->interim_bytes) {
-            record_failure(x, ROTMOS_LIMIT, 502,
-                           "upstream interim metadata exceeds budget");
+            rotmos_proxy_record_failure(
+                x, ROTMOS_LIMIT, 502,
+                "upstream interim metadata exceeds budget");
             upstream->failed = 1;
         } else {
             i = calloc(1, sizeof(*i));
@@ -313,8 +263,9 @@ static void upstream_ready(rotmos_proxy_http_upstream *upstream,
                                  ROTMOS_PROXY_HEADER_OK) {
                 if (i != NULL)
                     interim_free(i);
-                record_failure(x, ROTMOS_NOMEM, 502,
-                               "cannot retain upstream interim metadata");
+                rotmos_proxy_record_failure(
+                    x, ROTMOS_NOMEM, 502,
+                    "cannot retain upstream interim metadata");
                 upstream->failed = 1;
             } else {
                 i->status = upstream->response.status;
@@ -334,7 +285,7 @@ static void upstream_ready(rotmos_proxy_http_upstream *upstream,
         }
     } else if (event == ROTMOS_PROXY_HTTP_FINAL)
         x->final_ready = 1;
-    schedule(x);
+    rotmos_proxy_schedule(x);
 }
 
 static void upstream_done(CURL *easy, CURLcode result, void *data)
@@ -350,7 +301,7 @@ static void upstream_done(CURL *easy, CURLcode result, void *data)
     first = x->failure.status == ROTMOS_OK;
     if (rotmos_proxy_http_upstream_finish(&x->upstream, result, &reason) !=
         ROTMOS_PROXY_HEADER_OK) {
-        record_failure(
+        rotmos_proxy_record_failure(
             x, result == CURLE_OPERATION_TIMEDOUT ? ROTMOS_TIMEOUT : ROTMOS_IO,
             result == CURLE_OPERATION_TIMEDOUT ? 504 : 502,
             result != CURLE_OK ? curl_easy_strerror(result) : reason);
@@ -359,7 +310,7 @@ static void upstream_done(CURL *easy, CURLcode result, void *data)
             x->failure.native_code = (long)result;
         }
     }
-    schedule(x);
+    rotmos_proxy_schedule(x);
 }
 
 static rotmos_u64 wide(uint64_t value)
@@ -379,12 +330,13 @@ static rotmos_status prepare_local(struct proxy_exchange *x)
     if (!x->failed) {
         x->failed = 1;
         stop_timer(x);
+        rotmos_proxy_ws_stop(x);
         if (x->transfer != NULL) {
             rotmos_proxy_transfer_cancel(x->transfer);
             x->transfer = NULL;
         }
         (void)rotmos_channel_interest(x->channel, 0, NULL);
-        if (rotmos_response_is_committed(r) ||
+        if (rotmos_proxy_ws_tunneled(x) || rotmos_response_is_committed(r) ||
             (r->inflight && (r->head == NULL || !r->head->interim))) {
             (void)rotmos_response_abort(r, x->failure.status, NULL);
             return ROTMOS_STATE;
@@ -448,7 +400,7 @@ static rotmos_status local_step(struct proxy_exchange *x)
             return status;
         x->local_offset += accepted;
         if (x->local_offset != x->local.body_length) {
-            schedule(x);
+            rotmos_proxy_schedule(x);
             return ROTMOS_OK;
         }
     }
@@ -476,7 +428,7 @@ static rotmos_status upload_step(struct proxy_exchange *x)
             if (status != ROTMOS_OK)
                 return status == ROTMOS_EOF ? ROTMOS_INVALID : status;
             x->input_length = count;
-            progress(x, count);
+            rotmos_proxy_progress(x, count);
         }
         consumed = 0;
         frame = rotmos_proxy_upload_feed(&x->upload, x->input + x->input_offset,
@@ -494,7 +446,7 @@ static rotmos_status upload_step(struct proxy_exchange *x)
             return ROTMOS_OK;
     }
     if (budget == (unsigned int)-1)
-        schedule(x);
+        rotmos_proxy_schedule(x);
     return ROTMOS_OK;
 }
 
@@ -577,7 +529,7 @@ static rotmos_status relay_step(struct proxy_exchange *x)
         }
         rotmos_proxy_http_upstream_consume(&x->upstream, accepted);
         if (accepted != count) {
-            schedule(x);
+            rotmos_proxy_schedule(x);
             return ROTMOS_OK;
         }
     }
@@ -607,6 +559,7 @@ static void step(struct proxy_exchange *x)
     size_t held;
     int mask;
     int resume;
+    int interim_pending;
     if (x->failure.status != ROTMOS_OK) {
         status = local_step(x);
         if (status != ROTMOS_OK && status != ROTMOS_AGAIN)
@@ -616,17 +569,31 @@ static void step(struct proxy_exchange *x)
     }
     if (x->ended)
         return;
-    status = upload_step(x);
+    status = x->ws != NULL ? rotmos_proxy_ws_step(x) : upload_step(x);
     if (status != ROTMOS_OK) {
-        record_failure(x, status, status == ROTMOS_LIMIT ? 413 : 400,
-                       "invalid, oversized or truncated proxy upload");
-        schedule(x);
+        rotmos_proxy_record_failure(
+            x, status,
+            x->ws != NULL ? 502 : (status == ROTMOS_LIMIT ? 413 : 400),
+            x->ws != NULL ? "WebSocket upstream transfer or framing failed"
+                          : "invalid, oversized or truncated proxy upload");
+        rotmos_proxy_schedule(x);
         return;
     }
+    if (rotmos_proxy_ws_tunneled(x))
+        return;
+    held = x->upstream.body_length - x->upstream.body_offset;
+    interim_pending = x->interims != NULL;
     status = relay_step(x);
     if (status != ROTMOS_OK && status != ROTMOS_AGAIN) {
-        record_failure(x, status, 502, "upstream response cannot be relayed");
-        schedule(x);
+        rotmos_proxy_record_failure(x, status, 502,
+                                    "upstream response cannot be relayed");
+        rotmos_proxy_schedule(x);
+        return;
+    }
+    if (x->ws != NULL) {
+        if (held > x->upstream.body_length - x->upstream.body_offset ||
+            (interim_pending && x->interims == NULL))
+            rotmos_proxy_schedule(x);
         return;
     }
     if (!x->up_done && x->transfer != NULL) {
@@ -646,9 +613,10 @@ static void step(struct proxy_exchange *x)
                     mask |= CURLPAUSE_SEND;
             }
             if (curl_easy_pause(x->upstream.easy, mask) != CURLE_OK) {
-                record_failure(x, ROTMOS_IO, 502,
-                               "cannot resume duplex upstream transfer");
-                schedule(x);
+                rotmos_proxy_record_failure(
+                    x, ROTMOS_IO, 502,
+                    "cannot resume duplex upstream transfer");
+                rotmos_proxy_schedule(x);
             }
         }
     }
@@ -840,12 +808,6 @@ rotmos_status rotmos_proxy_dispatch(rotmos_request *request,
             goto finished;
         }
     }
-    if (head.websocket_upgrade) {
-        status =
-            simple_reply(request, plan, NULL, 501,
-                         "WebSocket proxy relay is not connected\n", error);
-        goto finished;
-    }
     status = worker_get(request->server, &w, error);
     if (status != ROTMOS_OK)
         goto finished;
@@ -883,7 +845,7 @@ rotmos_status rotmos_proxy_dispatch(rotmos_request *request,
     plan->disposition = ROTMOS_REQUEST_TAKEOVER;
     status =
         rotmos_response_callbacks(request->response, writable, NULL, x, error);
-    request->response->progress = progress;
+    request->response->progress = rotmos_proxy_progress;
     request->response->progress_data = x;
     if (status == ROTMOS_OK &&
         rotmos_proxy_headers_sanitize_request(&inbound, &sanitized) !=
@@ -892,11 +854,20 @@ rotmos_status rotmos_proxy_dispatch(rotmos_request *request,
     if (status == ROTMOS_OK)
         status = rotmos_proxy_director_prepare(
             route, request->method, request->raw_path.data, request->query.data,
-            head.host, 0, request, &inbound, &sanitized, &directed, &x->target,
-            &x->authority, error);
+            head.host, head.websocket_upgrade, request, &inbound, &sanitized,
+            &directed, &x->target, &x->authority, error);
     if (status != ROTMOS_OK)
         goto exchange_failed;
     url = route->targets[directed.target_index];
+    if (head.websocket_upgrade) {
+        status =
+            rotmos_proxy_ws_start(x, url, &inbound, &directed.headers, error);
+        if (status != ROTMOS_OK)
+            goto exchange_failed;
+        arm_timer(x);
+        rotmos_proxy_schedule(x);
+        goto finished;
+    }
     if (!add_header(x, "Host", x->authority) ||
         !add_header(x, "X-Forwarded-For", request->peer.address.data) ||
         !add_header(x, "X-Forwarded-Proto", request->tls ? "https" : "http") ||
@@ -975,7 +946,8 @@ rotmos_status rotmos_proxy_dispatch(rotmos_request *request,
             &x->upstream, easy, url, x->target, methods[directed.method],
             x->request_headers, route->buffer_limit_bytes,
             route->connect_timeout_ms, route->total_timeout_ms,
-            x->has_upload ? &upload : NULL, upstream_ready, x, error);
+            x->has_upload ? &upload : NULL, rotmos_proxy_upstream_ready, x,
+            error);
     if (status == ROTMOS_OK &&
         (curl_easy_setopt(easy, CURLOPT_XFERINFOFUNCTION, xfer_progress) !=
              CURLE_OK ||
@@ -999,15 +971,15 @@ rotmos_status rotmos_proxy_dispatch(rotmos_request *request,
             goto exchange_failed;
     }
     arm_timer(x);
-    schedule(x);
+    rotmos_proxy_schedule(x);
     status = ROTMOS_OK;
     goto finished;
 exchange_failed:
-    record_failure(
+    rotmos_proxy_record_failure(
         x, status,
         status == ROTMOS_INVALID ? 400 : (status == ROTMOS_NOMEM ? 500 : 502),
         "proxy setup or rewrite failed");
-    schedule(x);
+    rotmos_proxy_schedule(x);
     status = ROTMOS_OK;
 finished:
     rotmos_proxy_director_cleanup(&directed);
@@ -1028,6 +1000,7 @@ void rotmos_proxy_worker_clear(rotmos_server *server)
     w->closing = 1;
     for (x = w->exchanges; x != NULL; x = x->next) {
         stop_timer(x);
+        rotmos_proxy_ws_stop(x);
         if (x->transfer != NULL) {
             rotmos_proxy_transfer_cancel(x->transfer);
             x->transfer = NULL;

@@ -14,6 +14,9 @@ struct fixture {
     int eof;
     int delivered;
     int retired;
+    int replaced;
+    int failed;
+    rotmos_loop *loop;
     rotmos_waker *waker;
 };
 
@@ -43,11 +46,26 @@ static void wake(rotmos_loop *loop, void *userdata)
 static void watch(rotmos_watch *handle, unsigned int flags, void *userdata)
 {
     struct fixture *fixture;
+    rotmos_watch *replacement;
     char byte;
     fixture = userdata;
     if ((flags & ROTMOS_READABLE) && read(fixture->pipe[0], &byte, 1) == 1)
         ++fixture->delivered;
+    if (!fixture->replaced) {
+        if (rotmos_loop_watch(fixture->loop, fixture->pipe[0], ROTMOS_READABLE,
+                              watch, retire, fixture, &replacement,
+                              NULL) != ROTMOS_CONFLICT ||
+            replacement != NULL)
+            fixture->failed = 1;
+    }
     rotmos_watch_cancel(handle);
+    if (!fixture->replaced) {
+        fixture->replaced = 1;
+        if (rotmos_loop_watch(fixture->loop, fixture->pipe[0], ROTMOS_READABLE,
+                              watch, retire, fixture, &replacement,
+                              NULL) != ROTMOS_OK)
+            fixture->failed = 1;
+    }
 }
 
 static rotmos_status control(rotmos_server *server, unsigned int events,
@@ -81,6 +99,7 @@ static rotmos_status ready(rotmos_server *server,
     (void)process;
     fixture = userdata;
     loop = rotmos_server_loop(server);
+    fixture->loop = loop;
     if (rotmos_loop_now(loop, &now, error) != ROTMOS_OK ||
         rotmos_loop_watch(loop, fixture->pipe[0], ROTMOS_READABLE, watch,
                           retire, fixture, &fd_watch, error) != ROTMOS_OK ||
@@ -112,7 +131,7 @@ int main(void)
         return 1;
     fixture.control = pair[0];
     if (write(pair[1], "abc", 3) != 3 || shutdown(pair[1], SHUT_WR) != 0 ||
-        write(fixture.pipe[1], "x", 1) != 1)
+        write(fixture.pipe[1], "xy", 2) != 2)
         return 2;
     rotmos_server_config_init(&config);
     rotmos_listener_config_init(&listener);
@@ -133,10 +152,10 @@ int main(void)
         (void)fprintf(stderr, "%s: %s\n", error.operation, error.message);
         return 4;
     }
-    if (!fixture.eof || fixture.received != 3 || fixture.delivered != 4 ||
-        fixture.retired != 4 || result.reason != ROTMOS_RUN_REQUESTED_STOP ||
-        result.escalated || fcntl(pair[0], F_GETFD) != -1 ||
-        fcntl(fixture.pipe[0], F_GETFD) == -1)
+    if (!fixture.eof || fixture.received != 3 || fixture.delivered != 5 ||
+        fixture.retired != 5 || !fixture.replaced || fixture.failed ||
+        result.reason != ROTMOS_RUN_REQUESTED_STOP || result.escalated ||
+        fcntl(pair[0], F_GETFD) != -1 || fcntl(fixture.pipe[0], F_GETFD) == -1)
         return 5;
     if (rotmos_server_run(server, NULL, &error) != ROTMOS_STATE)
         return 6;

@@ -1861,8 +1861,9 @@ outbound/response/local-reply views and public accessors/edit operations. Lift t
 generic selector/director hooks, headers/framing validation, curl pools, upload
 framer, HTTP/SSE transport, WebSocket/WSS relay and response-rejection handling.
 No public proxy declaration leaks curl/Kore/OpenSSL layouts.
-The current [HTTP/SSE implementation](proxy-http.md) documents the installed
-facade, ownership, limits and remaining relay coverage.
+The current [HTTP/SSE implementation](proxy-http.md) and
+[WebSocket/WSS adapter](proxy-websocket.md) document the installed facade,
+ownership, limits and remaining transport coverage.
 
 Preserve configured HTTP/HTTPS targets and allowed alternates; raw path/query
 rewrites; explicit Host and forwarding behavior; request preflight; rewrite;

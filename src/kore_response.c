@@ -279,6 +279,17 @@ static void advance(struct rotmos_delivery *delivery)
          connection->state == CONN_STATE_DISCONNECTING) &&
         response->phase < ROTMOS_RESPONSE_COMPLETE)
         (void)rotmos_response_abort(response, ROTMOS_CANCELLED, NULL);
+    if (response->phase == ROTMOS_RESPONSE_COMPLETE &&
+        (connection == NULL || connection->state == CONN_STATE_DISCONNECTING)) {
+        if (response->head == NULL) {
+            terminal(delivery);
+            return;
+        }
+        /* A tunnel can finish before its queued 101 drains. A released
+         * native connection cannot deliver that remaining handshake. */
+        response->outcome.cause = ROTMOS_CANCELLED;
+        response->phase = ROTMOS_RESPONSE_ABORTED;
+    }
     if (response->phase == ROTMOS_RESPONSE_ABORTED) {
         rotmos_channel_finish(request->channel, response->outcome.cause);
         rotmos_kore_body_cancel(response->request, response->outcome.cause);
