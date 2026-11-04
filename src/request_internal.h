@@ -38,6 +38,7 @@ struct rotmos_request {
     rotmos_reply *reply;
     rotmos_response *response;
     rotmos_channel *channel;
+    rotmos_websocket *websocket;
     rotmos_body *body_store;
     void *input;
     rotmos_request_plan plan;

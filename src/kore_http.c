@@ -138,13 +138,16 @@ static rotmos_status admit(rotmos_request *request, rotmos_error *error)
     rotmos_u64 hard;
     int order;
     policy = &request->plan.body;
+    if (request->plan.disposition == ROTMOS_REQUEST_WEBSOCKET &&
+        request->websocket != NULL && request->channel != NULL)
+        return ROTMOS_OK;
     if (request->plan.disposition == ROTMOS_REQUEST_TAKEOVER &&
-        request->channel != NULL)
+        request->channel != NULL && request->websocket == NULL)
         return ROTMOS_OK;
     if (request->channel != NULL)
-        return rotmos_fail(
-            error, ROTMOS_INVALID, "request_plan",
-            "an installed channel requires TAKEOVER disposition");
+        return rotmos_fail(error, ROTMOS_INVALID, "request_plan",
+                           "installed ownership requires its WEBSOCKET or "
+                           "TAKEOVER disposition");
     if (request->plan.disposition != ROTMOS_REQUEST_MANAGED) {
         if (request->plan.disposition != ROTMOS_REQUEST_REPLY)
             return rotmos_fail(

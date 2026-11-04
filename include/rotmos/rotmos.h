@@ -13,5 +13,6 @@
 #include <rotmos/dispatch.h>
 #include <rotmos/body.h>
 #include <rotmos/channel.h>
+#include <rotmos/websocket.h>
 
 #endif

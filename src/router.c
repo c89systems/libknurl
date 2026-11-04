@@ -96,6 +96,9 @@ void rotmos_router_release(rotmos_router *router)
         if (router->routes[i]->has_pattern)
             regfree(&router->routes[i]->pattern);
         free((void *)router->routes[i]->config.path);
+        if (router->routes[i]->release_userdata != NULL)
+            router->routes[i]->release_userdata(
+                router->routes[i]->config.userdata);
         free(router->routes[i]);
     }
     free(router->routes);
@@ -185,6 +188,7 @@ static rotmos_status route_add(rotmos_router *router,
     route->config.path = rotmos_copy_text(input->path);
     route->has_pattern = 0;
     route->group = group;
+    route->release_userdata = NULL;
     if (route->config.path == NULL) {
         free(route);
         return rotmos_fail(error, ROTMOS_NOMEM, "router_route",

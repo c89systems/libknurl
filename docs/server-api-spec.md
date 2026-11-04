@@ -1213,6 +1213,10 @@ before acknowledgement and interruption between acknowledgement and activation.
 
 ## 13. Application WebSockets
 
+The concrete C surface and route facade are documented in
+[Application WebSockets](websockets.md), using
+[rotmos/websocket.h](../include/rotmos/websocket.h).
+
 `rotmos_websocket_accept` validates a downstream handshake and installs typed
 open/frame/close callbacks. Allocate state transactionally; a rejected handshake
 must not retain state awaiting a disconnect callback that will never be installed.
@@ -2252,6 +2256,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0053 | Parent observations of owned child start/exit/restart/escalation; auxiliary loop/teardown hooks and restart policy; cleanup after returned initialization errors; atomic child-operation deadlines with an IPC wake and shutdown enforcement; bounded auxiliary accept-control indexing |
 | 0054 | Prepare private ACME work after key-manager IPC setup; persist complete initial keys and install acknowledged candidates before distribution; preserve in-memory manual identities; update every matching listener context through cached policy hooks; capture ACME transport policy; reset/free ACME globals; release transient TLS references, clear expected PEM EOF errors and disable accept only when registered during shutdown |
 | 0055 | Wait for HTTP-worker challenge installation acknowledgements; replay account state after ACME restart; deduplicate domain orders across listeners; own order/signing timers and references; advance completed steps immediately and retry unavailable account/directory services; classify account-not-found by problem type; remove stale parent IPC cache references and restrict HTTP-worker broadcasts |
+| 0056 | Clear event readiness when allocating/reusing a connection, preventing stale error/half-close flags from terminating a new managed channel or WebSocket |
 
 ## 22. Investigation references
 

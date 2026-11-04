@@ -90,7 +90,7 @@ static int connection_upgrade(rotmos_request *request)
     return upgrade;
 }
 
-static int accept_key(rotmos_request *request, char *accept)
+int rotmos_websocket_accept_key(rotmos_request *request, char *accept)
 {
     rotmos_bytes key;
     rotmos_bytes version;
@@ -166,7 +166,7 @@ rotmos_status rotmos_channel_upgrade(rotmos_channel *channel,
         return rotmos_fail(
             error, ROTMOS_STATE, "channel_upgrade",
             "channel has already completed or upgraded HTTP input");
-    if (!accept_key(request, accept))
+    if (!rotmos_websocket_accept_key(request, accept))
         return rotmos_fail(error, ROTMOS_INVALID, "channel_upgrade",
                            "request is not a valid WebSocket handshake");
     existing = request->response->headers->header_count;

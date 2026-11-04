@@ -31,16 +31,17 @@ directory/account/order exchanges, validates JWS/CSR and live TLS-ALPN-01,
 and verifies issuance plus renewal selection after ACME-process restart.
 It also covers explicit/environment trust capture and transport bounds.
 
-The next broad surface is the application WebSocket API and facade, using the
-existing public request/channel/loop lifetime contracts. Preserve Vectis handler
-behavior, bounded messages/output, fragmentation, ping/pong, close/error
-notification and owner-loop execution without exposing private Kore structures.
-Add short observable framing, ownership and failure cases. Continue with the
-upstream HTTP/framing/proxy surface and provider/codecs afterwards. Retain the
+The [application WebSocket API and facade](websockets.md) use the public
+request/channel/loop contracts, with atomic bounded output, held frame resume,
+ping/pong, validated close and separate handshake/connection lifetimes. The
+initial application path rejects continuation and fragmented data frames;
+transparent tunnels retain opaque fragmentation, as specified. Plain/TLS
+fixtures cover ownership, protocol failure and shutdown without Kore types.
+Continue with the upstream HTTP/framing/proxy surface and provider/codecs. Retain the
 remaining ACME in-flight fault and final integration checks for the combined
 review rather than repeating the full protocol matrix for each new surface.
 
-The full goal also retains application WebSockets, upstream/reverse proxy and
+The full goal also retains WebSocket integration/fault coverage, upstream/reverse proxy and
 HTTP framing, WebDAV, REST/OpenAPI/assets, JSON/XML2 codecs, admission/logging,
 the native-reader executor, Lua facade/public C binding, installed-consumer
 coverage and final lifecycle/packaging proof. ACME progress does not narrow that

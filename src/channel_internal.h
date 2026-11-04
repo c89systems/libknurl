@@ -3,6 +3,7 @@
 
 #include "request_internal.h"
 #include <rotmos/channel.h>
+#include <rotmos/server.h>
 
 struct rotmos_channel_chunk {
     struct rotmos_channel_chunk *next;
@@ -25,6 +26,11 @@ struct rotmos_channel_backend {
 
 struct rotmos_channel {
     rotmos_request *request;
+    rotmos_server *server;
+    rotmos_response *response;
+    void (*schedule)(rotmos_channel *);
+    void *schedule_data;
+    rotmos_deadline idle;
     rotmos_channel_config config;
     rotmos_channel_phase phase;
     rotmos_channel_phase previous_phase;
@@ -39,6 +45,7 @@ struct rotmos_channel {
     struct rotmos_channel_chunk *head;
     struct rotmos_channel_chunk *last;
     size_t queued;
+    size_t retained;
     unsigned int io_ready;
     unsigned int read_wait;
     unsigned int write_wait;
@@ -69,5 +76,8 @@ void rotmos_channel_progress(rotmos_channel *channel, size_t received,
                              size_t sent);
 long rotmos_channel_wait(rotmos_channel *channel);
 void rotmos_channel_check_timeout(rotmos_channel *channel);
+rotmos_status rotmos_channel_enqueue(rotmos_channel *, unsigned char *, size_t,
+                                     rotmos_error *);
+int rotmos_websocket_accept_key(rotmos_request *, char *);
 
 #endif

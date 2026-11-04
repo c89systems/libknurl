@@ -22,6 +22,7 @@ typedef struct rotmos_request rotmos_request;
 typedef struct rotmos_request_plan rotmos_request_plan;
 typedef struct rotmos_body rotmos_body;
 typedef struct rotmos_channel rotmos_channel;
+typedef struct rotmos_websocket rotmos_websocket;
 typedef struct rotmos_response rotmos_response;
 typedef struct rotmos_reply rotmos_reply;
 typedef struct rotmos_source rotmos_source;

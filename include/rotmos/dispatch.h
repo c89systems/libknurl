@@ -19,6 +19,7 @@ typedef struct rotmos_request_outcome {
     rotmos_status cause;
     rotmos_status body_cause;
     int body_complete;
+    int upgraded;
     rotmos_u64 received_body_bytes;
     rotmos_u64 delivered_body_bytes;
     rotmos_response_outcome response;

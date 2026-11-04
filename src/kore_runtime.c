@@ -234,6 +234,7 @@ static void worker_stopping(void *userdata)
         (void)rotmos_runtime_hook(
             runtime, runtime->server->config.callbacks.on_worker_stopping);
         rotmos_kore_channels_stopping(runtime);
+        rotmos_kore_websockets_stopping(runtime);
     }
 }
 
@@ -294,7 +295,8 @@ static int worker_pending(void *userdata)
 {
     struct rotmos_runtime *runtime;
     runtime = userdata;
-    return rotmos_loop_pending(runtime->server->loop);
+    return runtime->websockets != NULL ||
+           rotmos_loop_pending(runtime->server->loop);
 }
 
 static rotmos_status validate_config(rotmos_server *server, rotmos_error *error)

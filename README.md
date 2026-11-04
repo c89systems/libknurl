@@ -78,6 +78,7 @@ live outside its source tree and apply to disposable build copies, keeping
 upstream upgrades and local changes separate.
 
 - [Build availability, commands and backend maintenance](docs/development.md)
+- [Application WebSocket API](docs/websockets.md)
 - [Server API specification](docs/server-api-spec.md)
 - [Vectis integration contract](docs/vectis-integration-contract.md)
 - [Ownership boundary](docs/extraction.md)

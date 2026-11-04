@@ -9,6 +9,7 @@
 #include "loop_internal.h"
 #include "tls_internal.h"
 #include "acme_internal.h"
+#include <rotmos/channel.h>
 
 #include <setjmp.h>
 #include <pthread.h>
@@ -63,6 +64,7 @@ struct rotmos_runtime {
     struct rotmos_delivery *response_head;
     struct rotmos_delivery *response_tail;
     size_t response_count;
+    rotmos_websocket *websockets;
     struct rotmos_tls_prepared tls;
     struct rotmos_acme_store *acme;
     unsigned char *acme_ca;
@@ -124,6 +126,16 @@ int rotmos_kore_channel_flush_http(rotmos_request *request);
 void rotmos_kore_channel_http_progress(struct connection *connection,
                                        size_t amount);
 void rotmos_kore_channels_stopping(struct rotmos_runtime *runtime);
+rotmos_status rotmos_kore_channel_prepare(rotmos_request *,
+                                          const rotmos_channel_config *,
+                                          rotmos_channel **, rotmos_error *);
+void rotmos_kore_channel_attach(rotmos_channel *);
+void rotmos_kore_channel_detach(rotmos_channel *);
+void rotmos_kore_websocket_handshake(rotmos_request *, int);
+void rotmos_kore_websockets_turn(struct rotmos_runtime *);
+u_int64_t rotmos_kore_websockets_wait(struct rotmos_runtime *, u_int64_t);
+void rotmos_kore_websockets_stopping(struct rotmos_runtime *);
+void rotmos_kore_websockets_shutdown(struct rotmos_runtime *);
 void rotmos_kore_listener_domains(struct rotmos_runtime *runtime,
                                   struct kore_server *server,
                                   const rotmos_listener_config *listener);

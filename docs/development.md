@@ -67,6 +67,15 @@ including early bytes, bounded output and orderly TLS half-close. Forced TLS
 retry-direction faults and slow/disconnected peers remain final integration
 coverage.
 
+[Application WebSockets](websockets.md) expose transactional acceptance, a copied
+route facade, bounded complete frames and atomic output, pause/resume and
+capacity callbacks. They use the channel transport with an independent lifetime:
+the HTTP request closes before open, and each accepted WebSocket owns one close
+notification. Plain/TLS fixtures cover framing, validation, ownership and drain.
+Continuation frames/extensions are unsupported on this application path; proxy
+tunnels remain opaque. Connection reuse clears native event readiness through
+the external patch series.
+
 [TLS listeners](tls.md) support manual identities from bounded files, copied
 memory and synchronous source callbacks, including bundles, extra server chains
 and independent client-auth trust. Preparation checks key pairs and protocol/

@@ -12,9 +12,15 @@ static rotmos_status owner(rotmos_channel *c, rotmos_error *error)
     if (c == NULL)
         return rotmos_fail(error, ROTMOS_INVALID, "channel",
                            "channel is required");
-    if (c->phase == ROTMOS_CHANNEL_CLOSED || c->request->close_notified)
+    if (c->phase == ROTMOS_CHANNEL_CLOSED ||
+        (c->request != NULL && c->request->close_notified))
         return rotmos_fail(error, ROTMOS_STATE, "channel", "channel is closed");
-    return rotmos_loop_owner(c->request->server->loop, error);
+    return rotmos_loop_owner(c->server->loop, error);
+}
+
+static void schedule_response(rotmos_channel *c)
+{
+    c->response->schedule(c->response);
 }
 
 static rotmos_u64 subtract(rotmos_u64 a, rotmos_u64 b)
@@ -89,6 +95,10 @@ rotmos_status rotmos_channel_create(rotmos_request *request,
                            "cannot allocate bounded channel receive storage");
     }
     c->request = request;
+    c->server = request->server;
+    c->response = request->response;
+    c->schedule = schedule_response;
+    c->idle = request->server->config.timeouts.connection_idle;
     c->config = resolved;
     c->receive_length = initial.length + backlog.length;
     if (initial.length != 0)
@@ -109,10 +119,7 @@ rotmos_status rotmos_channel_create(rotmos_request *request,
     return ROTMOS_OK;
 }
 
-void rotmos_channel_schedule(rotmos_channel *c)
-{
-    c->request->response->schedule(c->request->response);
-}
+void rotmos_channel_schedule(rotmos_channel *c) { c->schedule(c); }
 
 rotmos_channel_phase rotmos_channel_state(const rotmos_channel *c)
 {
@@ -160,7 +167,7 @@ rotmos_status rotmos_channel_read(rotmos_channel *c, void *buffer,
                            "HTTP input boundary was already declared");
     if (c->receive_length == 0 && !c->outcome.read_eof) {
         c->receive_offset = 0;
-        limit = c->request->server->config.io.chunk_bytes;
+        limit = c->server->config.io.chunk_bytes;
         if (limit > c->config.receive_bytes)
             limit = c->config.receive_bytes;
         count = 0;
@@ -244,8 +251,8 @@ rotmos_status rotmos_channel_write(rotmos_channel *c, const void *data,
     }
     if (count > length)
         count = length;
-    if (count > c->request->server->config.io.chunk_bytes)
-        count = c->request->server->config.io.chunk_bytes;
+    if (count > c->server->config.io.chunk_bytes)
+        count = c->server->config.io.chunk_bytes;
     chunk = malloc(sizeof(*chunk));
     if (chunk == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "channel_write",
@@ -268,11 +275,46 @@ rotmos_status rotmos_channel_write(rotmos_channel *c, const void *data,
     if (c->queued == 0)
         (void)rotmos_loop_monotonic(&c->last_write, NULL);
     c->queued += count;
+    c->retained += count;
     c->write_notified = 0;
     *accepted = count;
     c->ops.interest(c);
     rotmos_channel_schedule(c);
     rotmos_error_clear(error);
+    return ROTMOS_OK;
+}
+
+/* Takes ownership only on success. One allocation pins an entire frame across
+ * transport retries, and no prefix can be accepted on allocation failure. */
+rotmos_status rotmos_channel_enqueue(rotmos_channel *c, unsigned char *data,
+                                     size_t length, rotmos_error *error)
+{
+    struct rotmos_channel_chunk *chunk;
+    if (length > c->config.send_bytes)
+        return rotmos_fail(error, ROTMOS_LIMIT, "channel_enqueue",
+                           "frame exceeds output capacity");
+    if (length > c->config.send_bytes - c->retained)
+        return ROTMOS_AGAIN;
+    chunk = malloc(sizeof(*chunk));
+    if (chunk == NULL)
+        return rotmos_fail(error, ROTMOS_NOMEM, "channel_enqueue",
+                           "cannot allocate complete frame segment");
+    chunk->data = data;
+    chunk->length = length;
+    chunk->offset = 0;
+    chunk->next = NULL;
+    if (c->last != NULL)
+        c->last->next = chunk;
+    else
+        c->head = chunk;
+    c->last = chunk;
+    if (c->queued == 0)
+        (void)rotmos_loop_monotonic(&c->last_write, NULL);
+    c->queued += length;
+    c->retained += length;
+    c->write_notified = 0;
+    c->ops.interest(c);
+    rotmos_channel_schedule(c);
     return ROTMOS_OK;
 }
 
@@ -384,19 +426,20 @@ void rotmos_channel_finish(rotmos_channel *c, rotmos_status cause)
     c->phase = ROTMOS_CHANNEL_CLOSED;
     c->outcome.cause = cause;
     c->config.interest = 0;
-    if (!c->request->outcome.body_complete) {
+    if (c->request != NULL && !c->request->outcome.body_complete) {
         c->request->outcome.body_cause =
             cause == ROTMOS_OK ? ROTMOS_CANCELLED : cause;
         c->request->response->close_connection = 1;
     }
-    if (cause != ROTMOS_OK && c->request->outcome.cause == ROTMOS_OK)
+    if (c->request != NULL && cause != ROTMOS_OK &&
+        c->request->outcome.cause == ROTMOS_OK)
         c->request->outcome.cause = cause;
-    if (c->previous_phase == ROTMOS_CHANNEL_TUNNEL) {
+    if (c->response != NULL && c->previous_phase == ROTMOS_CHANNEL_TUNNEL) {
         if (cause == ROTMOS_OK)
             c->request->response->phase = ROTMOS_RESPONSE_COMPLETE;
         else
             (void)rotmos_response_abort(c->request->response, cause, NULL);
-    } else if (cause != ROTMOS_OK &&
+    } else if (c->response != NULL && cause != ROTMOS_OK &&
                c->request->response->phase < ROTMOS_RESPONSE_FINISHING)
         rotmos_response_error(c->request->response, cause, 500);
     c->ops.interest(c);
@@ -417,7 +460,7 @@ rotmos_status rotmos_channel_close(rotmos_channel *c, rotmos_status cause,
     if (cause == ROTMOS_OK &&
         (c->queued != 0 ||
          (c->phase == ROTMOS_CHANNEL_TUNNEL &&
-          (c->request->response->head != NULL ||
+          ((c->response != NULL && c->response->head != NULL) ||
            (c->shutdown_requested && !c->outcome.write_shutdown))) ||
          (c->phase == ROTMOS_CHANNEL_HTTP_INPUT && !c->input_complete)))
         return rotmos_fail(
@@ -507,10 +550,9 @@ long rotmos_channel_wait(rotmos_channel *c)
         return wait;
     if (rotmos_loop_monotonic(&now, NULL) != ROTMOS_OK)
         return 0;
-    timeouts = &c->request->server->config.timeouts;
-    if (!timeouts->connection_idle.disabled)
-        wait = remaining(now, c->last_activity,
-                         timeouts->connection_idle.milliseconds);
+    timeouts = &c->server->config.timeouts;
+    if (!c->idle.disabled)
+        wait = remaining(now, c->last_activity, c->idle.milliseconds);
     if (c->queued != 0 && !timeouts->response_write_idle.disabled) {
         value = remaining(now, c->last_write,
                           timeouts->response_write_idle.milliseconds);

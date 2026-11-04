@@ -53,6 +53,7 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/response.c src/kore_response.c src/body.c src/body_materialize.c
   src/file.c src/dispatch.c src/kore_body.c src/body_reader.c
   src/channel.c src/channel_upgrade.c src/kore_channel.c
+  src/websocket.c src/websocket_frame.c src/kore_websocket.c src/websocket_route.c
   src/tls.c src/tls_material.c src/kore_tls.c src/kore_process.c
   src/acme_store.c src/acme_files.c src/kore_acme.c src/kore_tls_state.c)
 target_include_directories(rotmos_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -69,6 +70,7 @@ rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_response.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_body.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_channel.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_websocket.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_tls.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_process.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_acme.c"
@@ -97,7 +99,7 @@ set(rotmos_core_headers include/rotmos/common.h include/rotmos/http.h include/ro
   include/rotmos/io.h include/rotmos/reply.h include/rotmos/tls.h
   include/rotmos/server.h include/rotmos/router.h include/rotmos/request.h include/rotmos/kore.h
   include/rotmos/loop.h include/rotmos/response.h include/rotmos/dispatch.h
-  include/rotmos/body.h include/rotmos/channel.h)
+  include/rotmos/body.h include/rotmos/channel.h include/rotmos/websocket.h)
 set_source_files_properties(${rotmos_core_headers} PROPERTIES LANGUAGE C HEADER_FILE_ONLY FALSE)
 add_library(rotmos_headers_c OBJECT ${rotmos_core_headers})
 target_include_directories(rotmos_headers_c PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -123,6 +125,17 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_websocket_runtime tests/websocket-runtime.c)
+  target_compile_definitions(rotmos_websocket_runtime PRIVATE
+    $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  target_link_libraries(rotmos_websocket_runtime PRIVATE rotmos::shared
+    cpkt::openssl_ssl_shared Threads::Threads)
+  rotmos_c89(rotmos_websocket_runtime)
+  rotmos_local_runtime(rotmos_websocket_runtime)
+  add_test(NAME rotmos.websocket-runtime COMMAND rotmos_websocket_runtime)
+  add_test(NAME rotmos.websocket-tls COMMAND rotmos_websocket_runtime tls)
+  set_tests_properties(rotmos.websocket-runtime rotmos.websocket-tls PROPERTIES TIMEOUT 15)
+
   add_executable(rotmos_acme_protocol tests/acme-protocol.c tests/acme-ca.c)
   target_compile_definitions(rotmos_acme_protocol PRIVATE
     $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)

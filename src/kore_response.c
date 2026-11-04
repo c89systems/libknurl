@@ -183,13 +183,19 @@ static void terminal(struct rotmos_delivery *delivery)
     struct rotmos_delivery *previous;
     int close_connection;
     int restore_channel;
+    int upgraded;
     response = delivery->response;
     request = response->request;
     native = request->native;
     connection = native->owner;
     close_connection = response->close_connection;
     restore_channel = 0;
-    if (request->channel != NULL) {
+    upgraded = request->websocket != NULL && request->channel != NULL &&
+               request->channel->phase == ROTMOS_CHANNEL_TUNNEL &&
+               response->phase == ROTMOS_RESPONSE_COMPLETE &&
+               response->outcome.cause == ROTMOS_OK;
+    request->outcome.upgraded = upgraded;
+    if (request->channel != NULL && !upgraded) {
         if (request->channel->phase != ROTMOS_CHANNEL_CLOSED)
             rotmos_channel_finish(request->channel,
                                   response->outcome.cause != ROTMOS_OK
@@ -226,6 +232,7 @@ static void terminal(struct rotmos_delivery *delivery)
     native->ms = native->total;
     rotmos_response_terminal(response);
     rotmos_kore_request_closed(request);
+    rotmos_kore_websocket_handshake(request, upgraded);
     rotmos_channel_release(request->channel, restore_channel);
     request->channel = NULL;
     if (native->rt->dom->accesslog || kore_accesslog_enabled())
@@ -241,6 +248,8 @@ static void terminal(struct rotmos_delivery *delivery)
     http_request_free(native);
     if (connection != NULL && connection->state == CONN_STATE_ESTABLISHED) {
         connection->flags &= ~CONN_IS_BUSY;
+        if (upgraded)
+            return;
         if (close_connection)
             kore_connection_disconnect(connection);
         else {
@@ -300,6 +309,12 @@ static void advance(struct rotmos_delivery *delivery)
         schedule(response);
         return;
     }
+    if (request->websocket != NULL &&
+        response->phase == ROTMOS_RESPONSE_FINISHING &&
+        response->outcome.status == 101 && response->head == NULL &&
+        !response->inflight && TAILQ_EMPTY(&connection->send_queue) &&
+        request->channel->phase == ROTMOS_CHANNEL_TUNNEL)
+        response->phase = ROTMOS_RESPONSE_COMPLETE;
     if (((response->phase == ROTMOS_RESPONSE_FINISHING &&
           (request->channel == NULL ||
            request->channel->phase != ROTMOS_CHANNEL_TUNNEL)) ||

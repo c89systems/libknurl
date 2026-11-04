@@ -1,0 +1,10 @@
+--- a/src/connection.c
++++ b/src/connection.c
+@@ -83,6 +83,7 @@
+ 	c->idle_timer.length = worker_idle_timeout;
+ 
+ 	c->evt.type = KORE_TYPE_CONNECTION;
++	c->evt.flags = 0;
+ 	c->evt.handle = kore_connection_event;
+ 
+ #if !defined(KORE_NO_HTTP)

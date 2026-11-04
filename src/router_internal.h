@@ -10,6 +10,7 @@ struct rotmos_route {
     regex_t pattern;
     int has_pattern;
     rotmos_route_group *group;
+    void (*release_userdata)(void *);
 };
 
 struct rotmos_route_group {

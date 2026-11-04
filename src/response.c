@@ -645,6 +645,10 @@ rotmos_status rotmos_response_replace_uncommitted(rotmos_response *r,
     status = access_response(r, error);
     if (status != ROTMOS_OK)
         return status;
+    if (r->request->websocket != NULL)
+        return rotmos_fail(
+            error, ROTMOS_STATE, "response_replace",
+            "accepted WebSocket owns the handshake; abort to cancel");
     if (r->outcome.committed || r->inflight)
         return rotmos_fail(error, ROTMOS_STATE, "response_replace",
                            "transport has committed or holds an active buffer");

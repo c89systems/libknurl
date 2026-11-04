@@ -18,9 +18,11 @@ struct rotmos_kore_channel {
     unsigned int registered;
     unsigned int managed_wait;
     int handshake_drained;
+    int attached;
 };
 
 static void interest(rotmos_channel *channel);
+static int flush_channel(rotmos_channel *channel);
 
 static rotmos_status failed(rotmos_error *error, int code,
                             const char *operation)
@@ -257,7 +259,8 @@ static void interest(rotmos_channel *channel)
     int result;
     backend = channel->backend;
     connection = backend->connection;
-    if (connection == NULL || connection->state != CONN_STATE_ESTABLISHED)
+    if (!backend->attached || connection == NULL ||
+        connection->state != CONN_STATE_ESTABLISHED)
         return;
     if (channel->phase == ROTMOS_CHANNEL_CLOSED &&
         channel->previous_phase == ROTMOS_CHANNEL_TUNNEL) {
@@ -281,7 +284,7 @@ static void interest(rotmos_channel *channel)
         wanted |=
             backend->managed_wait ? backend->managed_wait : ROTMOS_WRITABLE;
     } else if (channel->phase == ROTMOS_CHANNEL_TUNNEL &&
-               channel->request->response->head == NULL) {
+               (channel->response == NULL || channel->response->head == NULL)) {
         if (channel->head != NULL)
             wanted |=
                 channel->write_wait ? channel->write_wait : ROTMOS_WRITABLE;
@@ -303,11 +306,14 @@ static void interest(rotmos_channel *channel)
 
 int rotmos_kore_channel_flush_http(rotmos_request *request)
 {
-    rotmos_channel *channel;
+    return flush_channel(request->channel);
+}
+
+static int flush_channel(rotmos_channel *channel)
+{
     struct rotmos_kore_channel *backend;
     struct connection *connection;
     unsigned int wanted;
-    channel = request->channel;
     backend = channel->backend;
     connection = backend->connection;
     if (connection == NULL)
@@ -348,7 +354,7 @@ static void pump(rotmos_channel *channel)
         return;
     }
     if (!TAILQ_EMPTY(&connection->send_queue)) {
-        if (!rotmos_kore_channel_flush_http(channel->request)) {
+        if (!flush_channel(channel)) {
             rotmos_channel_finish(channel, ROTMOS_IO);
             kore_connection_disconnect(connection);
             return;
@@ -357,7 +363,7 @@ static void pump(rotmos_channel *channel)
             return;
     }
     if (channel->phase != ROTMOS_CHANNEL_TUNNEL ||
-        channel->request->response->head != NULL)
+        (channel->response != NULL && channel->response->head != NULL))
         return;
     if (!backend->handshake_drained) {
         backend->handshake_drained = 1;
@@ -380,6 +386,7 @@ static void pump(rotmos_channel *channel)
         channel->queued -= count;
         rotmos_channel_progress(channel, 0, count);
         if (chunk->offset == chunk->length) {
+            channel->retained -= chunk->length;
             channel->head = chunk->next;
             if (channel->head == NULL)
                 channel->last = NULL;
@@ -414,7 +421,7 @@ static void release(rotmos_channel *channel, int restore)
     struct connection *connection;
     backend = channel->backend;
     connection = backend->connection;
-    if (connection != NULL) {
+    if (backend->attached && connection != NULL) {
         connection->hdlr_extra = NULL;
         connection->evt.handle = backend->event;
         connection->handle = backend->handle;
@@ -431,9 +438,10 @@ static void release(rotmos_channel *channel, int restore)
     channel->backend = NULL;
 }
 
-rotmos_status rotmos_request_takeover(rotmos_request *request,
-                                      const rotmos_channel_config *config,
-                                      rotmos_channel **out, rotmos_error *error)
+rotmos_status rotmos_kore_channel_prepare(rotmos_request *request,
+                                          const rotmos_channel_config *config,
+                                          rotmos_channel **out,
+                                          rotmos_error *error)
 {
     struct http_request *native;
     struct connection *connection;
@@ -488,6 +496,20 @@ rotmos_status rotmos_request_takeover(rotmos_request *request,
     channel->ops.pump = pump;
     channel->ops.release = release;
     channel->ops.completed = body_completed;
+    *out = channel;
+    rotmos_error_clear(error);
+    return ROTMOS_OK;
+}
+
+void rotmos_kore_channel_attach(rotmos_channel *channel)
+{
+    struct rotmos_kore_channel *backend;
+    struct connection *connection;
+    rotmos_request *request;
+    backend = channel->backend;
+    connection = backend->connection;
+    request = channel->request;
+    backend->attached = 1;
     request->channel = channel;
     rotmos_kore_body_transferred(request);
     kore_free(connection->http_pipeline);
@@ -497,8 +519,28 @@ rotmos_status rotmos_request_takeover(rotmos_request *request,
     connection->evt.handle = event;
     connection->disconnect = channel_disconnected;
     connection->http_timeout = 0;
-    *out = channel;
     rotmos_channel_schedule(channel);
-    rotmos_error_clear(error);
-    return ROTMOS_OK;
+}
+
+rotmos_status rotmos_request_takeover(rotmos_request *request,
+                                      const rotmos_channel_config *config,
+                                      rotmos_channel **out, rotmos_error *error)
+{
+    rotmos_status status;
+    status = rotmos_kore_channel_prepare(request, config, out, error);
+    if (status == ROTMOS_OK)
+        rotmos_kore_channel_attach(*out);
+    return status;
+}
+
+void rotmos_kore_channel_detach(rotmos_channel *channel)
+{
+    struct rotmos_kore_channel *backend;
+    backend = channel->backend;
+    if (backend->connection != NULL) {
+        backend->connection->proto = CONN_PROTO_WEBSOCKET;
+        kore_connection_stop_idletimer(backend->connection);
+    }
+    channel->request = NULL;
+    channel->response = NULL;
 }
