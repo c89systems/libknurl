@@ -47,7 +47,7 @@ include(cmake/KoreBackend.cmake)
 add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/json.c src/json_array.c src/json_route.c src/xml.c src/xml_sax.c src/xml_mapping.c src/xml_generator.c src/xml_route.c
   src/executor.c src/native_io.c src/source_native.c src/storage.c src/storage_assets.c src/storage_filesystem.c src/storage_fs_disk.c src/storage_fs_scope.c src/asset.c src/asset_filesystem.c src/static.c src/static_reply.c src/static_policy.c
-  src/webdav.c src/webdav_http.c src/webdav_propfind.c src/upload.c
+  src/webdav.c src/webdav_http.c src/webdav_propfind.c src/upload.c src/upload_metadata.c src/upload_reader.c src/upload_file.c
   src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
   src/config_normalize.c src/server.c src/router.c src/route_path.c
   src/request.c src/request_decode.c src/router_dispatch.c

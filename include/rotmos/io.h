@@ -45,7 +45,9 @@ ROTMOS_API rotmos_status rotmos_source_new(const rotmos_source_config *config,
 ROTMOS_API rotmos_status rotmos_source_bytes(rotmos_bytes bytes,
                                              rotmos_source **out,
                                              rotmos_error *error);
-/* Manual access is available only before ownership passes to a reply/runtime.
+/* Manual access is available before ownership passes to a reply/runtime.
+ * A native upload handler may also read its borrowed source as documented in
+ * upload.h; that view rejects reset, destroy and ownership transfer.
  */
 ROTMOS_API rotmos_status rotmos_source_read(rotmos_source *source, void *buffer,
                                             size_t capacity, size_t *produced,

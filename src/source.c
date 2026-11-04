@@ -140,7 +140,7 @@ rotmos_status rotmos_source_reset(rotmos_source *source, rotmos_error *error)
     if (source == NULL)
         return rotmos_fail(error, ROTMOS_INVALID, "source_reset",
                            "source is required");
-    if (source->busy || source->owner != NULL)
+    if (source->borrowed || source->busy || source->owner != NULL)
         return rotmos_fail(error, ROTMOS_STATE, "source_reset",
                            "source is owned or busy");
     if (source->config.reset == NULL)
@@ -226,7 +226,7 @@ rotmos_status rotmos_source_destroy(rotmos_source *source, rotmos_error *error)
 {
     rotmos_status outcome;
     if (source != NULL) {
-        if (source->busy || source->owner != NULL)
+        if (source->borrowed || source->busy || source->owner != NULL)
             return rotmos_fail(error, ROTMOS_STATE, "source_destroy",
                                "source is owned or busy");
         outcome = source->failure;

@@ -9,6 +9,7 @@ struct rotmos_source {
     rotmos_source_config config;
     rotmos_u64 position;
     void *owner;
+    int borrowed;
     unsigned int cancelled;
     int resume_requested;
     rotmos_job *native_job;

@@ -111,8 +111,8 @@ directory tree. The caller retains the asset provider through storage-provider
 ownership. The filesystem provider below supplies mutable transactions. The
 [WebDAV HTTP facade](webdav.md) connects these providers to mounts.
 [Native output sources](responses.md) and [upload stream callbacks](uploads.md)
-use the same public runtime. Native upload-reader/file adapters remain subsequent
-surfaces of the full goal.
+use the same public runtime. Native upload-reader/file helpers use the shared I/O
+executor; their direct file artifacts retain Vectis's partial-output semantics.
 
 The [public fixture](../tests/storage-runtime.c) drives the real server and
 post-fork executor: copied arguments/chunks, native versus owner thread callbacks,

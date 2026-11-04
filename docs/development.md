@@ -99,8 +99,9 @@ locked conditions/quotas and Vectis-compatible direct/managed roots. The WebDAV
 [HTTP facade](webdav.md) now supplies mount authorization, incremental PUT and
 bounded PROPFIND. [Output sources](responses.md) now support owner-loop readiness
 and bounded native-reader execution. [Upload callbacks](uploads.md) lift Vectis's
-stream facade with ordinary hooks and no additional transport. Native upload
-readers and file helpers remain part of the full implementation goal.
+stream facade with ordinary hooks and no additional transport. Native reader and
+file helpers use the same managed input and shared executor, with bounded queues,
+copied metadata, cancellation acknowledgement and owner-loop publication.
 
 [Application WebSockets](websockets.md) expose transactional acceptance, a copied
 route facade, bounded complete frames and atomic output, pause/resume and
@@ -136,8 +137,8 @@ the library and its three released dependency prefixes.
 
 This is partial runtime coverage. Preflight explicitly rejects
 access logs, trusted proxies, autoblock,
-low-level JSON and upload policy values without a corresponding facade. Native
-upload-reader/file facades, producer trailer declarations and gate observations,
+low-level JSON and upload policy values without a corresponding facade.
+Producer trailer declarations and gate observations,
 complete fatal/allocation-failure unwinding, the protocol and
 provider helpers, the opt-in native declaration component, and the Lua product
 remain implementation work. [Process observations](processes.md) cover child

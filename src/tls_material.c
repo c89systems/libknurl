@@ -72,7 +72,8 @@ rotmos_status rotmos_tls_material_read(const rotmos_tls_material *material,
                                    ? status
                                    : ROTMOS_INVALID,
                                "tls_material", "TLS material open failed");
-        if (source == NULL || source->owner != NULL || source->busy)
+        if (source == NULL || source->borrowed || source->owner != NULL ||
+            source->busy)
             return rotmos_fail(
                 error, ROTMOS_STATE, "tls_material",
                 "TLS material open must transfer an unowned source");

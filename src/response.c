@@ -871,8 +871,8 @@ rotmos_status rotmos_response_producer(rotmos_response *r,
     status = available_producer(r, error);
     if (status != ROTMOS_OK)
         return status;
-    if (source == NULL || source->owner != NULL || source->busy ||
-        source->failure != ROTMOS_OK)
+    if (source == NULL || source->borrowed || source->owner != NULL ||
+        source->busy || source->failure != ROTMOS_OK)
         return rotmos_fail(error, ROTMOS_STATE, "response_producer",
                            "source is unavailable");
     if (r->has_length &&

@@ -1674,7 +1674,17 @@ These helpers reuse the same body plans and queues, not a second transport path.
 The [upload stream facade](uploads.md) uses Vectis's optional open, prefix write,
 finish and close callbacks, with group hooks and application-owned request
 userdata. It opens only after input admission and finishes through the staged
-reply chain.
+reply chain. Reader and file registrations use that same managed input path.
+`rotmos_upload_metadata` is an immutable copied view of request method/version,
+target/path/query/authority, ordered headers/query/parameter pairs, endpoints,
+listener, TLS presence and Content-Length. The native handler borrows this view,
+a public source and an independent staged reply seeded with before-hook headers.
+It consumes all admitted input; known-length completion does not require another
+EOF read. Borrowed readers reject reset, destroy and ownership transfer.
+Cancellation retains these independent bytes until native acknowledgement and
+revokes request-facing publication. File helpers open the explicit caller path
+with truncate semantics after admission, write incrementally, preserve partial
+artifacts on failure and return Vectis's 200 text/plain decimal byte count.
 
 `rotmos_body_policy` retains the NONE/JSON/BUFFERED/STREAMING_UPLOAD distinctions,
 body bound, memory threshold and disk-spool-disabled setting needed by Vectis's
@@ -1963,8 +1973,9 @@ incremental PUT transactions and shares one bounded native pool per HTTP worker.
 The [WebDAV HTTP facade](webdav.md) connects these providers to public mounts,
 incremental PUT and bounded PROPFIND, with owner-loop policy checks inside native
 mutation scope. Native output source execution/readiness and the upload stream
-facade are connected. Native upload-reader/file adapters and combined transport
-coverage remain part of the complete implementation goal.
+facade are connected. Native upload-reader/file helpers also connect bounded
+queues, copied metadata, native acknowledgement and owner-loop publication.
+Combined transport coverage remains part of the complete implementation goal.
 
 Each provider call receives an opaque `rotmos_storage_operation` and immutable
 arguments. OK completes synchronously; AGAIN transfers completion responsibility

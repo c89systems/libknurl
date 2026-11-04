@@ -353,8 +353,8 @@ rotmos_status rotmos_reply_source_take(rotmos_reply *reply, int status,
     result = prepare_type(reply, status, content_type, &type, error);
     if (result != ROTMOS_OK)
         return result;
-    if (source == NULL || source->owner != NULL || source->busy ||
-        source->failure != ROTMOS_OK) {
+    if (source == NULL || source->borrowed || source->owner != NULL ||
+        source->busy || source->failure != ROTMOS_OK) {
         free(type);
         return rotmos_fail(
             error, source == NULL ? ROTMOS_INVALID : ROTMOS_STATE,
