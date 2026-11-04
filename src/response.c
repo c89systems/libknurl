@@ -4,6 +4,7 @@
 #include "body_internal.h"
 #include "server_internal.h"
 #include "loop_internal.h"
+#include "policy_internal.h"
 
 #include <sys/stat.h>
 #include <errno.h>
@@ -1154,7 +1155,7 @@ void rotmos_response_step(rotmos_response *r)
         if ((r->phase == ROTMOS_RESPONSE_ACTIVE ||
              r->phase == ROTMOS_RESPONSE_BUILDING) &&
             r->request->plan.on_writable != NULL)
-            r->request->plan.on_writable(r->request, r->request->userdata);
+            r->request->plan.on_writable(r->request, r->request->plan.userdata);
     }
     if (r->phase != ROTMOS_RESPONSE_ACTIVE &&
         !(r->phase == ROTMOS_RESPONSE_FINISHING && r->complete_reply &&
@@ -1253,8 +1254,11 @@ void rotmos_response_sent(rotmos_response *r, size_t offset, size_t count,
     size_t end;
     struct rotmos_response_segment *segment;
     segment = r->head;
-    if (!segment->interim && (count != 0 || retry))
+    if (!segment->interim && (count != 0 || retry) && !r->outcome.committed) {
         r->outcome.committed = 1;
+        rotmos_policy_observe(r->request, ROTMOS_OBSERVE_RESPONSE_COMMITTED,
+                              NULL, r->outcome.status, ROTMOS_OK);
+    }
     if (add_size(r->outcome.wire_bytes, count, &r->outcome.wire_bytes) !=
         ROTMOS_OK) {
         (void)rotmos_response_abort(r, ROTMOS_OVERFLOW, NULL);

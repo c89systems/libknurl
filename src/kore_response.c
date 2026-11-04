@@ -166,6 +166,7 @@ int rotmos_kore_response_release(void *userdata, struct http_request *native)
     if (request == NULL || request->response == NULL)
         return 1;
     if (request->response->phase < ROTMOS_RESPONSE_COMPLETE) {
+        request->disconnect_side = ROTMOS_DISCONNECT_DOWNSTREAM;
         rotmos_kore_body_cancel(request, ROTMOS_IO);
         (void)rotmos_response_abort(request->response, ROTMOS_IO, NULL);
     }
@@ -277,8 +278,10 @@ static void advance(struct rotmos_delivery *delivery)
     }
     if ((delivery->failed || connection == NULL ||
          connection->state == CONN_STATE_DISCONNECTING) &&
-        response->phase < ROTMOS_RESPONSE_COMPLETE)
+        response->phase < ROTMOS_RESPONSE_COMPLETE) {
+        request->disconnect_side = ROTMOS_DISCONNECT_DOWNSTREAM;
         (void)rotmos_response_abort(response, ROTMOS_CANCELLED, NULL);
+    }
     if (response->phase == ROTMOS_RESPONSE_COMPLETE &&
         (connection == NULL || connection->state == CONN_STATE_DISCONNECTING)) {
         if (response->head == NULL) {

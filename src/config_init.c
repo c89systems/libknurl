@@ -130,6 +130,9 @@ void rotmos_server_config_init(rotmos_server_config *config)
     config->callbacks.on_worker_exit = NULL;
     config->callbacks.on_worker_event = NULL;
     config->callbacks.on_tls_identity = NULL;
+    config->callbacks.on_request_start = NULL;
+    config->callbacks.on_request_close = NULL;
+    config->callbacks.on_observe = NULL;
     config->callbacks.userdata = NULL;
     config->supervision.enabled = 0;
     config->supervision.control_fd = -1;
@@ -138,6 +141,13 @@ void rotmos_server_config_init(rotmos_server_config *config)
     config->supervision.userdata = NULL;
     config->client_ip.trusted_proxies = NULL;
     config->client_ip.trusted_proxy_count = 0;
+    config->client_ip.resolve = NULL;
+    config->client_ip.userdata = NULL;
+    config->correlation_id.resolve = NULL;
+    config->correlation_id.userdata = NULL;
+    config->admission.on_connection = NULL;
+    config->admission.on_request = NULL;
+    config->admission.userdata = NULL;
     config->autoblock.enabled = 0;
     config->autoblock.window_seconds = 1800;
     config->autoblock.block_seconds = 3600;

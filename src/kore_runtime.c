@@ -327,11 +327,10 @@ static rotmos_status validate_config(rotmos_server *server, rotmos_error *error)
             error, ROTMOS_STATE, "server_validate",
             "supervised rerun requires a fresh control descriptor");
     if (server->config.autoblock.enabled ||
-        server->config.client_ip.trusted_proxy_count != 0 ||
         server->config.http.access_log_path != NULL)
-        return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "server_validate",
-                           "Access logs and admission "
-                           "policy are unavailable in the current runtime");
+        return rotmos_fail(
+            error, ROTMOS_NOT_SUPPORTED, "server_validate",
+            "Access logs and process-shared autoblock are not connected yet");
     for (i = 0; i < server->router->count; ++i) {
         route = &server->router->routes[i]->config;
         if (route->on_headers != NULL)
@@ -649,6 +648,11 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             hooks.worker_cleanup = rotmos_kore_loop_shutdown;
             hooks.request_release = rotmos_kore_response_release;
             hooks.net_progress = rotmos_kore_response_progress;
+            hooks.accept = rotmos_kore_accept;
+            hooks.tcp_stall = rotmos_kore_tcp_stall;
+            hooks.tls_failure = rotmos_kore_tls_failure;
+            hooks.http_status = rotmos_kore_http_status;
+            hooks.connection_status = rotmos_kore_connection_status;
             hooks.worker_event = rotmos_kore_worker_event;
             hooks.tls_updated = rotmos_kore_tls_updated;
             if (runtime->acme != NULL) {

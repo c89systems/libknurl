@@ -42,6 +42,7 @@ struct fixture {
     int tunnel_closed;
     int failure;
     int material_again;
+    int observed_tls_failures, observed_redirects;
     rotmos_status material_outcome;
 };
 
@@ -309,6 +310,38 @@ static rotmos_status headers(rotmos_request *request, rotmos_request_plan *plan,
     return ROTMOS_OK;
 }
 
+static void observe(rotmos_server *server, const rotmos_observation *event,
+                    void *data)
+{
+    struct fixture *f = data;
+    (void)server;
+    if (event->connection.peer.address.length == 0 ||
+        event->connection.process.role != ROTMOS_PROCESS_HTTP)
+        f->failure = 1;
+    if (event->kind == ROTMOS_OBSERVE_TLS_FAILURE) {
+        ++f->observed_tls_failures;
+        if (!event->connection.tls || event->request != NULL ||
+            event->status != 0)
+            f->failure = 1;
+    }
+    if (event->kind == ROTMOS_OBSERVE_REQUEST_COMPLETE &&
+        event->connection.listener_index >= 4) {
+        ++f->observed_redirects;
+        if (!event->has_outcome || !event->committed ||
+            event->outcome.response.wire_bytes.low == 0 ||
+            event->outcome.response.body_bytes.low != 0)
+            f->failure = 1;
+    }
+}
+static int observer_exit(rotmos_server *server,
+                         const rotmos_process_context *process, void *data)
+{
+    struct fixture *f = data;
+    (void)server;
+    (void)process;
+    return f->failure || f->observed_tls_failures == 0 ||
+           f->observed_redirects != 5;
+}
 static rotmos_status handler(rotmos_request *request, rotmos_reply *reply,
                              void *userdata, rotmos_error *error)
 {
@@ -674,6 +707,8 @@ static int run(struct fixture *fixture)
                              ? ROTMOS_TLS_VERSION_1_2
                              : ROTMOS_TLS_VERSION_1_3;
     config.callbacks.on_parent_ready = ready;
+    config.callbacks.on_observe = observe;
+    config.callbacks.on_worker_exit = observer_exit;
     config.callbacks.userdata = fixture;
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
     if (fixture->version == TLS1_2_VERSION) {

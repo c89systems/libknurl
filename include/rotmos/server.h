@@ -2,6 +2,7 @@
 #define ROTMOS_SERVER_H
 
 #include <rotmos/http.h>
+#include <rotmos/request.h>
 #include <rotmos/tls.h>
 #include <rotmos/dispatch.h>
 
@@ -173,6 +174,77 @@ typedef void (*rotmos_worker_event_fn)(rotmos_server *server,
                                        const rotmos_worker_event *event,
                                        void *userdata);
 
+typedef struct rotmos_connection_info {
+    rotmos_endpoint peer, local;
+    size_t listener_index;
+    rotmos_process_context process;
+    int tls;
+} rotmos_connection_info;
+typedef enum rotmos_observation_kind {
+    ROTMOS_OBSERVE_CONNECTION_ACCEPTED = 0,
+    ROTMOS_OBSERVE_TCP_STALL,
+    ROTMOS_OBSERVE_TLS_FAILURE,
+    ROTMOS_OBSERVE_HTTP_STATUS,
+    ROTMOS_OBSERVE_REQUEST_STARTED,
+    ROTMOS_OBSERVE_REQUEST_REJECTED,
+    ROTMOS_OBSERVE_RESPONSE_COMMITTED,
+    ROTMOS_OBSERVE_REQUEST_COMPLETE,
+    ROTMOS_OBSERVE_APPLICATION
+} rotmos_observation_kind;
+typedef enum rotmos_disconnect_side {
+    ROTMOS_DISCONNECT_UNKNOWN = 0,
+    ROTMOS_DISCONNECT_DOWNSTREAM,
+    ROTMOS_DISCONNECT_UPSTREAM,
+    ROTMOS_DISCONNECT_HOST
+} rotmos_disconnect_side;
+typedef struct rotmos_observation {
+    rotmos_observation_kind kind;
+    rotmos_connection_info connection;
+    rotmos_request *request;
+    rotmos_bytes effective_address, correlation_id, name;
+    int status, committed, has_outcome, input_counts_known;
+    rotmos_status cause;
+    rotmos_disconnect_side disconnect_side;
+    rotmos_request_outcome outcome;
+} rotmos_observation;
+/* Borrowed snapshots, owner-loop only. Transport observations have request=NULL
+ * and always identify the real TCP peer. Final counts/duration are available
+ * only when has_outcome is true; input_counts_known distinguishes admitted
+ * managed input from early rejection/takeover. Unknown status is zero.
+ * Observers cannot perform request/response I/O or recursively emit events. */
+typedef void (*rotmos_observe_fn)(rotmos_server *, const rotmos_observation *,
+                                  void *);
+typedef rotmos_status (*rotmos_request_start_fn)(rotmos_server *,
+                                                 rotmos_request *, void *,
+                                                 rotmos_error *);
+typedef void (*rotmos_request_end_fn)(rotmos_server *, rotmos_request *,
+                                      const rotmos_request_outcome *, void *);
+/* A start callback sees resolved identity, can associate application userdata,
+ * and cannot begin I/O. Close follows response/plan cleanup and final
+ * observation, with valid metadata, once per initialized managed request;
+ * resolver/start/admission failure before dispatch is included. In-flight
+ * native sources close after acknowledgement and may outlive this callback. */
+typedef enum rotmos_admission_action {
+    ROTMOS_ADMISSION_ALLOW = 0,
+    ROTMOS_ADMISSION_REJECT,
+    ROTMOS_ADMISSION_CLOSE
+} rotmos_admission_action;
+typedef rotmos_status (*rotmos_connection_admit_fn)(
+    rotmos_server *, const rotmos_connection_info *, rotmos_admission_action *,
+    void *, rotmos_error *);
+typedef rotmos_status (*rotmos_request_admit_fn)(rotmos_request *,
+                                                 rotmos_reply *,
+                                                 rotmos_admission_action *,
+                                                 void *, rotmos_error *);
+typedef struct rotmos_admission_config {
+    rotmos_connection_admit_fn on_connection;
+    rotmos_request_admit_fn on_request;
+    void *userdata;
+} rotmos_admission_config;
+/* ALLOW is the default. Connection REJECT/CLOSE closes before TLS work.
+ * Request REJECT submits the supplied staged status/headers/copied bytes
+ * (default 403); file/source payloads and bodies over the output bound fail.
+ * CLOSE sends no HTTP reply. No body/proxy allocation precedes admission. */
 typedef struct rotmos_server_callbacks {
     rotmos_process_fn on_process_start;
     rotmos_process_fn on_parent_prepare;
@@ -184,6 +256,9 @@ typedef struct rotmos_server_callbacks {
     rotmos_worker_exit_fn on_worker_exit;
     rotmos_worker_event_fn on_worker_event;
     rotmos_tls_identity_fn on_tls_identity;
+    rotmos_request_start_fn on_request_start;
+    rotmos_request_end_fn on_request_close;
+    rotmos_observe_fn on_observe;
     void *userdata;
 } rotmos_server_callbacks;
 
@@ -204,9 +279,23 @@ typedef struct rotmos_supervision_config {
     void *userdata;
 } rotmos_supervision_config;
 
+#define ROTMOS_CORRELATION_ID_MAX 128U
+/* Write into the supplied bounded buffer and return its length (no trailing
+ * NUL required). Address resolvers return a numeric IPv4/IPv6 address;
+ * correlation IDs may be empty but cannot contain NUL/control bytes. */
+typedef rotmos_status (*rotmos_request_resolve_fn)(rotmos_request *, char *,
+                                                   size_t capacity,
+                                                   size_t *length, void *,
+                                                   rotmos_error *);
+typedef struct rotmos_identifier_config {
+    rotmos_request_resolve_fn resolve;
+    void *userdata;
+} rotmos_identifier_config;
 typedef struct rotmos_client_ip_config {
     const char *const *trusted_proxies;
     size_t trusted_proxy_count;
+    rotmos_request_resolve_fn resolve;
+    void *userdata;
 } rotmos_client_ip_config;
 
 typedef struct rotmos_autoblock_status_rule {
@@ -254,6 +343,8 @@ typedef struct rotmos_server_config {
     rotmos_dispatch_config dispatch;
     rotmos_supervision_config supervision;
     rotmos_client_ip_config client_ip;
+    rotmos_identifier_config correlation_id;
+    rotmos_admission_config admission;
     rotmos_autoblock_config autoblock;
     int start_paused;
 } rotmos_server_config;

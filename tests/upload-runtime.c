@@ -243,6 +243,10 @@ static rotmos_status native_reader(const rotmos_upload_metadata *m,
     VERIFY(f, m->param_count == 1 && !strcmp(m->params[0].name.data, "id"));
     VERIFY(f, m->peer.address.length != 0 && m->local.address.length != 0 &&
                   m->listener_index == 0 && !m->tls);
+    VERIFY(f, m->effective_address.length == m->peer.address.length &&
+                  !memcmp(m->effective_address.data, m->peer.address.data,
+                          m->peer.address.length) &&
+                  m->correlation_id.length == 0);
     VERIFY(f, m->has_content_length && m->content_length.high == 0 &&
                   m->version.length == 8);
     id = m->params[0].value.data;

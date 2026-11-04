@@ -42,6 +42,8 @@ VIEW_ACCESSOR(raw_path, raw_path)
 VIEW_ACCESSOR(path, path)
 VIEW_ACCESSOR(query, query)
 VIEW_ACCESSOR(authority, authority)
+VIEW_ACCESSOR(effective_address, effective_address)
+VIEW_ACCESSOR(correlation_id, correlation_id)
 #undef VIEW_ACCESSOR
 
 size_t rotmos_request_listener_index(const rotmos_request *request)

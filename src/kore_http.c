@@ -4,6 +4,7 @@
 #include "response_internal.h"
 #include "body_internal.h"
 #include "channel_internal.h"
+#include "policy_internal.h"
 #include <rotmos/kore.h>
 
 #include <sys/socket.h>
@@ -51,7 +52,7 @@ static rotmos_http_method method(int native)
     return ROTMOS_HTTP_ANY;
 }
 
-static void endpoint(int fd, int peer, rotmos_endpoint *out, char *buffer)
+void rotmos_kore_endpoint(int fd, int peer, rotmos_endpoint *out, char *buffer)
 {
     struct sockaddr_storage storage;
     struct sockaddr_in *ipv4;
@@ -108,8 +109,10 @@ static rotmos_status metadata(struct rotmos_runtime *runtime,
             break;
         }
     }
-    endpoint(native->owner->fd, 1, &request->peer, request->peer_address);
-    endpoint(native->owner->fd, 0, &request->local, request->local_address);
+    rotmos_kore_endpoint(native->owner->fd, 1, &request->peer,
+                         request->peer_address);
+    rotmos_kore_endpoint(native->owner->fd, 0, &request->local,
+                         request->local_address);
     TAILQ_FOREACH(header, &native->req_headers, list)++ request->header_count;
     if (request->header_count != 0) {
         request->headers =
@@ -244,7 +247,7 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
     int hosts;
     int lengths;
     int coding;
-    int expect;
+    int expect, handled;
     runtime = kore_library_hooks.arg;
     if (!__atomic_load_n(&runtime->shared->serving, __ATOMIC_ACQUIRE))
         return reject(native, 503);
@@ -292,18 +295,28 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
         if (expect > 1 || !rotmos_text_equal_case(value.data, "100-continue"))
             return reject(native, 417);
     }
-    if (runtime->server->config.listeners[request->listener].kind ==
-        ROTMOS_LISTENER_REDIRECT)
-        return rotmos_kore_redirect(request);
     status = rotmos_kore_response_create(runtime, request, &error);
     if (status != ROTMOS_OK)
         return reject(native, 500);
+    status = rotmos_policy_start(request, &error);
+    if (status == ROTMOS_OK)
+        status = rotmos_policy_admit(request, &handled, &error);
+    if (status != ROTMOS_OK) {
+        rotmos_kore_request_fail(request, status, 500);
+        return KORE_RESULT_RETRY;
+    }
+    if (handled)
+        return KORE_RESULT_RETRY;
+    if (runtime->server->config.listeners[request->listener].kind ==
+        ROTMOS_LISTENER_REDIRECT)
+        return rotmos_kore_redirect(request);
     status = rotmos_kore_body_create(request, data, length, &error);
     if (status != ROTMOS_OK) {
         rotmos_kore_request_fail(request, status, 500);
         return KORE_RESULT_RETRY;
     }
     rotmos_request_plan_init(&plan);
+    plan.userdata = request->userdata;
     request->dispatch_started = 1;
     request->in_headers = 1;
     if (runtime->server->config.dispatch.mode == ROTMOS_DISPATCH_CALLBACK)
@@ -314,7 +327,6 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
                                                 request, &plan, &error);
     request->plan = plan;
     request->in_headers = 0;
-    request->userdata = plan.userdata;
     if (status == ROTMOS_OK)
         status = admit(request, &error);
     if (status != ROTMOS_OK) {

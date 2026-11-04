@@ -16,6 +16,11 @@ callback/userdata fields, even on dispatch failure so assigned state gets one
 terminal notification. Keep dynamically allocated state in `plan.userdata` and
 release its request owner in `on_close`.
 
+The plan's callback state is independent of `rotmos_request_userdata`, which
+belongs to the application. [Global request lifecycle callbacks](policy.md)
+can retain that association across private route plans and release it after
+the plan's terminal callback.
+
 MANAGED plans provide `on_body_end` unless an installed response/producer already
 owns completion. NONE still delivers one empty completion event. REPLY requires
 a successfully ended final response, including a successful complete-reply

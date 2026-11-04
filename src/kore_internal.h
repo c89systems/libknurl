@@ -84,6 +84,12 @@ struct rotmos_runtime {
 
 rotmos_status rotmos_runtime_hook(struct rotmos_runtime *runtime,
                                   rotmos_process_fn function);
+void rotmos_kore_endpoint(int, int, rotmos_endpoint *, char *);
+int rotmos_kore_accept(void *, struct connection *);
+void rotmos_kore_tcp_stall(void *, struct connection *);
+void rotmos_kore_tls_failure(void *, struct connection *);
+void rotmos_kore_http_status(void *, struct http_request *, int);
+void rotmos_kore_connection_status(void *, struct connection *, int);
 int rotmos_kore_prebody(struct http_request *native, const void *data,
                         size_t length);
 int rotmos_kore_dispatch(struct http_request *native);

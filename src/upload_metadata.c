@@ -8,7 +8,7 @@ rotmos_status rotmos_upload_metadata_copy(rotmos_request *r,
                                           void **text, rotmos_header **pairs,
                                           rotmos_error *error)
 {
-    rotmos_bytes input[9], *output[9];
+    rotmos_bytes input[11], *output[11];
     const rotmos_header *groups[3];
     size_t sizes[3], i, j, total = 0, count = 0;
     char *cursor;
@@ -34,13 +34,17 @@ rotmos_status rotmos_upload_metadata_copy(rotmos_request *r,
     output[7] = &m->peer.address;
     input[8] = r->local.address;
     output[8] = &m->local.address;
+    input[9] = r->effective_address;
+    output[9] = &m->effective_address;
+    input[10] = r->correlation_id;
+    output[10] = &m->correlation_id;
     groups[0] = r->headers;
     sizes[0] = r->header_count;
     groups[1] = r->queries;
     sizes[1] = r->query_count;
     groups[2] = r->params;
     sizes[2] = r->param_count;
-    for (i = 0; i < 9; ++i) {
+    for (i = 0; i < 11; ++i) {
         if (input[i].length == (size_t)-1 ||
             total > (size_t)-1 - input[i].length - 1)
             goto overflow;
@@ -71,7 +75,7 @@ rotmos_status rotmos_upload_metadata_copy(rotmos_request *r,
                            "copying request metadata");
     }
     cursor = *text;
-    for (i = 0; i < 9; ++i) {
+    for (i = 0; i < 11; ++i) {
         *output[i] = input[i];
         output[i]->data = cursor;
         if (input[i].length != 0)

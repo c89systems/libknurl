@@ -1,4 +1,5 @@
 #include "kore_internal.h"
+#include "response_internal.h"
 #include "acme.h"
 
 #include <arpa/inet.h>
@@ -142,7 +143,8 @@ static int allowed(const rotmos_tls_identity *identity, const char *host)
 int rotmos_kore_redirect(rotmos_request *request)
 {
     const rotmos_listener_config *listener;
-    struct http_request *native;
+    rotmos_u64 length_zero = {0, 0};
+    rotmos_status result;
     char host[254];
     char port[8];
     char *location;
@@ -151,7 +153,6 @@ int rotmos_kore_redirect(rotmos_request *request)
     size_t bound;
     int status;
     listener = &request->server->config.listeners[request->listener];
-    native = request->native;
     status = 400;
     location = NULL;
     if (authority(request->authority.data, host) &&
@@ -178,14 +179,23 @@ int rotmos_kore_redirect(rotmos_request *request)
             else {
                 (void)snprintf(location, length + 1, "https://%s%s%s", host,
                                port, target);
-                http_response_header(native, "location", location);
-                status = 308;
+                result = rotmos_response_header_add(request->response,
+                                                    "location", location, NULL);
+                status = result == ROTMOS_OK ? 308 : 500;
             }
         }
     }
     free(location);
-    native->owner->flags |= CONN_CLOSE_EMPTY;
-    native->flags |= HTTP_REQUEST_DELETE;
-    http_response_close(native, status, NULL, 0);
-    return KORE_RESULT_ERROR;
+    request->response->close_connection = 1;
+    result = rotmos_response_status(request->response, status, NULL);
+    if (result == ROTMOS_OK)
+        result =
+            rotmos_response_known_length(request->response, length_zero, NULL);
+    if (result == ROTMOS_OK)
+        result = rotmos_response_begin(request->response, NULL);
+    if (result == ROTMOS_OK)
+        result = rotmos_response_end(request->response, NULL, 0, NULL);
+    if (result != ROTMOS_OK)
+        rotmos_kore_request_fail(request, result, 500);
+    return KORE_RESULT_RETRY;
 }

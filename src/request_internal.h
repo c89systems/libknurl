@@ -30,6 +30,10 @@ struct rotmos_request {
     rotmos_endpoint local;
     char peer_address[46];
     char local_address[46];
+    char effective_storage[46], correlation_storage[129];
+    rotmos_bytes effective_address, correlation_id;
+    int lifecycle_started, observing;
+    int disconnect_side;
     rotmos_u64 content_length;
     int has_length;
     int has_coding;

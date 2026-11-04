@@ -1294,6 +1294,15 @@ trusted-proxy chain resolution and X-Real-IP fallback; untrusted headers must
 never affect pre-request transport admission. Use the same resolved request
 identity for handlers, request-level autoblock and access logging.
 
+The [address/admission/observation implementation](policy.md) supplies these
+public callback boundaries and copied resolver results. Application request
+userdata is independent of dispatch-plan callback userdata; private route plans
+cannot displace the host association. Global start follows identity resolution;
+global close follows response/plan cleanup and final observation, including
+resolver/start/admission failures before dispatch. Parser failures before managed
+request initialization remain transport-only events. Process-shared autoblock
+and pslog/access configuration retain their separate implementation obligations.
+
 The pslog integration accepts a borrowed native logger and copied access-log
 rules, with trace/warn/error categories and exact status overrides including
 DISABLED. Structured and file access sinks are independent. Preserve repeated

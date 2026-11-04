@@ -47,6 +47,13 @@ rotmos_request_path_param(const rotmos_request *request, const char *name,
                           rotmos_bytes *out, rotmos_error *error);
 ROTMOS_API rotmos_endpoint rotmos_request_peer(const rotmos_request *request);
 ROTMOS_API rotmos_endpoint rotmos_request_local(const rotmos_request *request);
+/* Copied identity values, separate from the unmodified TCP peer. Correlation
+ * is empty unless a resolver is configured. Views expire at request close. */
+ROTMOS_API rotmos_bytes
+rotmos_request_effective_address(const rotmos_request *);
+ROTMOS_API rotmos_bytes rotmos_request_correlation_id(const rotmos_request *);
+ROTMOS_API rotmos_status rotmos_request_event(rotmos_request *,
+                                              const char *name, rotmos_error *);
 ROTMOS_API int rotmos_request_is_tls(const rotmos_request *request);
 ROTMOS_API rotmos_status
 rotmos_request_content_length(const rotmos_request *request, int *present,
@@ -55,6 +62,8 @@ rotmos_request_content_length(const rotmos_request *request, int *present,
 ROTMOS_API rotmos_status rotmos_request_body_bytes(
     const rotmos_request *request, rotmos_bytes *out, rotmos_error *error);
 ROTMOS_API void *rotmos_request_userdata(const rotmos_request *request);
+/* Application association, independent of the dispatch plan's callback state.
+ */
 ROTMOS_API void rotmos_request_set_userdata(rotmos_request *request,
                                             void *userdata);
 

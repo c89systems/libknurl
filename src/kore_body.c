@@ -2,6 +2,7 @@
 #include "kore_internal.h"
 #include "response_internal.h"
 #include "body_internal.h"
+#include "policy_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -255,7 +256,7 @@ void rotmos_kore_body_step(rotmos_request *request)
             input->in_callback = 1;
             status =
                 request->plan.on_body(request, input->pending, count, &consumed,
-                                      request->userdata, &error);
+                                      request->plan.userdata, &error);
             input->in_callback = 0;
             if ((status != ROTMOS_OK && status != ROTMOS_AGAIN) ||
                 consumed > count || (status == ROTMOS_AGAIN && consumed != 0)) {
@@ -302,7 +303,8 @@ void rotmos_kore_body_step(rotmos_request *request)
     finish_metadata(request, input);
     if (request->plan.on_body_end != NULL) {
         rotmos_error_clear(&error);
-        status = request->plan.on_body_end(request, request->userdata, &error);
+        status =
+            request->plan.on_body_end(request, request->plan.userdata, &error);
         if (status != ROTMOS_OK)
             rotmos_kore_request_fail(request, status, 500);
     }
@@ -338,8 +340,8 @@ rotmos_status rotmos_request_body_resume(rotmos_request *request,
     if (status != ROTMOS_OK)
         return status;
     input = request->input;
-    if (request->close_notified || input == NULL || input->dead ||
-        request->outcome.body_complete ||
+    if (request->close_notified || request->observing || input == NULL ||
+        input->dead || request->outcome.body_complete ||
         request->plan.body.mode != ROTMOS_BODY_STREAM)
         return rotmos_fail(error, ROTMOS_STATE, "body_resume",
                            "request has no live streaming body");
@@ -394,7 +396,9 @@ void rotmos_kore_request_closed(rotmos_request *request)
     if (request->outcome.cause == ROTMOS_OK)
         request->outcome.cause = request->response->outcome.cause;
     if (request->dispatch_started && request->plan.on_close != NULL)
-        request->plan.on_close(request, &request->outcome, request->userdata);
+        request->plan.on_close(request, &request->outcome,
+                               request->plan.userdata);
+    rotmos_policy_closed(request);
     free(request->input);
     request->input = NULL;
 }

@@ -56,6 +56,7 @@ typedef struct rotmos_upload_metadata {
     rotmos_bytes method_token, version, target, raw_path, path, query,
         authority;
     rotmos_endpoint peer, local;
+    rotmos_bytes effective_address, correlation_id;
     const rotmos_header *headers, *queries, *params;
     size_t header_count, query_count, param_count, listener_index;
     rotmos_u64 content_length;
