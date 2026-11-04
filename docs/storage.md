@@ -109,8 +109,9 @@ listing iteration keep their existing public ownership. A bounded iterator AGAIN
 retries on the owner loop with the same retained resource; it does not collect a
 directory tree. The caller retains the asset provider through storage-provider
 ownership. The filesystem provider below supplies mutable transactions. The
-[WebDAV HTTP facade](webdav.md) connects these providers to mounts. Live
-native-reader body/source and general readiness adapters remain subsequent
+[WebDAV HTTP facade](webdav.md) connects these providers to mounts.
+[Native output sources](responses.md) and [upload stream callbacks](uploads.md)
+use the same public runtime. Native upload-reader/file adapters remain subsequent
 surfaces of the full goal.
 
 The [public fixture](../tests/storage-runtime.c) drives the real server and
@@ -175,7 +176,7 @@ check cancellation. Listing retains one directory cursor and returns one immedia
 child per operation, with explicit END; it never constructs a tree/vector.
 Opened read results keep one descriptor for metadata and subsequent bounded
 pread calls. Those asset reads are ordinary synchronous filesystem calls; the
-live native-reader transport adapter remains a separate implementation surface.
+asset provider has not yet selected the generic NATIVE_READER execution policy.
 
 Conditions and quota accounting share the storage mutation lock with every
 provider using the same cache/site. External filesystem writers must coordinate

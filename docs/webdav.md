@@ -104,8 +104,9 @@ It retains one bounded item's metadata and serializes URI-encoded hrefs, collect
 kind and wide content lengths directly into caller output spans. It pauses while
 a listing operation is pending and resumes through the public response producer.
 No complete listing/document or undisclosed staging file is constructed. The
-current opened-file asset path uses bounded ordinary pread calls; live native-reader
-body/source execution and general source readiness remain the next shared surface.
+current opened-file asset path uses bounded ordinary pread calls. The generic
+[source API](responses.md) supports native-reader execution and explicit readiness;
+WebDAV's opened-file path has not yet moved onto that execution policy.
 
 The [HTTP fixture](../tests/webdav-runtime.c) drives real sockets with 128-byte
 transport chunks. It covers auth/challenge/redirect, middleware and principal/

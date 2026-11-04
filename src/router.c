@@ -125,7 +125,7 @@ rotmos_status rotmos_router_destroy(rotmos_router *router, rotmos_error *error)
 static rotmos_status route_add(rotmos_router *router,
                                const rotmos_route_config *input,
                                rotmos_route_group *group, rotmos_route **out,
-                               rotmos_error *error)
+                               rotmos_error *error, int facade)
 {
     rotmos_route *route;
     rotmos_route **grown;
@@ -140,7 +140,7 @@ static rotmos_status route_add(rotmos_router *router,
         return rotmos_fail(error, ROTMOS_INVALID, "router_route",
                            "provide a router, declaration and exactly one "
                            "handler or on_headers callback");
-    if (input->on_headers != NULL &&
+    if (!facade && input->on_headers != NULL &&
         (input->hooks.auth != NULL || input->hooks.before != NULL ||
          input->hooks.after != NULL ||
          (group != NULL && (group->config.hooks.auth != NULL ||
@@ -240,7 +240,7 @@ rotmos_status rotmos_router_route(rotmos_router *router,
                                   const rotmos_route_config *config,
                                   rotmos_route **out, rotmos_error *error)
 {
-    return route_add(router, config, NULL, out, error);
+    return route_add(router, config, NULL, out, error, 0);
 }
 
 rotmos_status rotmos_router_group(rotmos_router *router,
@@ -295,9 +295,10 @@ rotmos_status rotmos_router_group(rotmos_router *router,
     return ROTMOS_OK;
 }
 
-rotmos_status rotmos_route_group_route(rotmos_route_group *group,
-                                       const rotmos_route_config *config,
-                                       rotmos_route **out, rotmos_error *error)
+static rotmos_status group_route(rotmos_route_group *group,
+                                 const rotmos_route_config *config,
+                                 rotmos_route **out, rotmos_error *error,
+                                 int facade)
 {
     rotmos_route_config joined;
     char *path;
@@ -321,7 +322,7 @@ rotmos_status rotmos_route_group_route(rotmos_route_group *group,
         return status;
     prefix = group->config.prefix;
     if (*prefix == '\0' || strcmp(prefix, "/") == 0)
-        return route_add(group->router, config, group, out, error);
+        return route_add(group->router, config, group, out, error, facade);
     prefix_length = strlen(prefix);
     path_length = strlen(config->path);
     escaped = prefix_length;
@@ -358,7 +359,7 @@ rotmos_status rotmos_route_group_route(rotmos_route_group *group,
     joined.path = path;
     if (joined.path_kind != ROTMOS_PATH_REGEX && strchr(path, ':') != NULL)
         joined.path_kind = ROTMOS_PATH_PARAMS;
-    status = route_add(group->router, &joined, group, out, error);
+    status = route_add(group->router, &joined, group, out, error, facade);
     free(path);
     return status;
 }
@@ -385,4 +386,20 @@ rotmos_status rotmos_router_route_at(const rotmos_router *router, size_t index,
 const rotmos_route_config *rotmos_route_declaration(const rotmos_route *route)
 {
     return route != NULL ? &route->config : NULL;
+}
+
+rotmos_status rotmos_route_group_route(rotmos_route_group *group,
+                                       const rotmos_route_config *config,
+                                       rotmos_route **out, rotmos_error *error)
+{
+    return group_route(group, config, out, error, 0);
+}
+rotmos_status rotmos_router_facade_route(rotmos_router *router,
+                                         rotmos_route_group *group,
+                                         const rotmos_route_config *config,
+                                         rotmos_route **out,
+                                         rotmos_error *error)
+{
+    return group != NULL ? group_route(group, config, out, error, 1)
+                         : route_add(router, config, NULL, out, error, 1);
 }

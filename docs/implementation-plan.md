@@ -63,7 +63,10 @@ conditions, quotas, collections, copy/move and recovery, with incremental PUT
 transactions and a shared worker pool. The [WebDAV facade](webdav.md) now connects
 filesystem/read-only/custom mounts, staged middleware, scoped owner-loop authorization,
 conditional/range file replies, incremental PUT and bounded PROPFIND. Next connect
-live native-reader/body/source readiness adapters and REST/OpenAPI.
+native upload-reader/file facades and REST/OpenAPI. The
+[source execution surface](responses.md) connects native readers to the existing
+bounded executor and public source readiness. The [upload stream facade](uploads.md)
+connects Vectis's callback lifecycle to managed STREAM input and ordinary hooks.
 Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memory
 measurements for the combined proxy review. Retain the
 remaining ACME in-flight fault and final integration checks for the combined

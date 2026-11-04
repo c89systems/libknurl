@@ -15,6 +15,10 @@ typedef rotmos_status (*rotmos_source_reset_fn)(void *userdata,
 typedef void (*rotmos_source_close_fn)(void *userdata, rotmos_status outcome);
 /* Close receives OK on completed consumption, the failure cause, or CANCELLED
  * on replacement/destruction before completion. Reentrant mutation is rejected.
+ * Native runtime reads receive only their independently retained userdata and
+ * chunk, never live request/response handles. Retain userdata until close: an
+ * interrupted native read may acknowledge after transport closure. Close runs
+ * on the owner loop after that acknowledgement, exactly once.
  */
 
 typedef enum rotmos_source_execution {
@@ -48,6 +52,14 @@ ROTMOS_API rotmos_status rotmos_source_read(rotmos_source *source, void *buffer,
                                             rotmos_error *error);
 ROTMOS_API rotmos_status rotmos_source_reset(rotmos_source *source,
                                              rotmos_error *error);
+/* Owner-loop readiness notification after runtime transfer; can be called
+ * inside an owner-loop read callback and coalesces a later pull. A native
+ * provider posts through a public waker. No response/request handle needed. */
+ROTMOS_API rotmos_status rotmos_source_resume(rotmos_source *, rotmos_error *);
+/* Cooperative query during a retained native read callback. Includes response
+ * revocation and worker stopping. Close waits for read acknowledgement and
+ * runs once on the owner loop; no HTTP callback joins a native reader. */
+ROTMOS_API int rotmos_source_cancelled(const rotmos_source *);
 ROTMOS_API rotmos_status rotmos_source_destroy(rotmos_source *source,
                                                rotmos_error *error);
 

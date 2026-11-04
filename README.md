@@ -78,6 +78,8 @@ live outside its source tree and apply to disposable build copies, keeping
 upstream upgrades and local changes separate.
 
 - [Build availability, commands and backend maintenance](docs/development.md)
+- [Upload callbacks](docs/uploads.md)
+- [Source execution and response delivery](docs/responses.md)
 - [Application WebSocket API](docs/websockets.md)
 - [HTTP framing and proxy core](docs/proxy-core.md)
 - [HTTP/SSE reverse proxy routes](docs/proxy-http.md)

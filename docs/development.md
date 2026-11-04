@@ -87,7 +87,7 @@ Selected-array input uses incremental item callbacks. [XML codecs](xml.md) expos
 mapped records/routes, resumable libxml2 output, owned confined DOM/views and
 incremental SAX parsing without libxml2 types in public headers. Their API and
 wire fixtures also run as relocated static/shared consumers. Mapped input
-currently uses completed body readers; native-reader execution remains pending.
+currently uses completed body readers; live upload-reader parser adapters remain pending.
 
 [Read-only assets and static routes](assets.md) connect pinned filesystem roots
 and public packed-provider adapters to opened-object metadata, bounded range
@@ -97,8 +97,10 @@ retained result/resource ownership, owner-loop publication and bounded post-fork
 execution. The filesystem provider supplies incremental PUT transactions,
 locked conditions/quotas and Vectis-compatible direct/managed roots. The WebDAV
 [HTTP facade](webdav.md) now supplies mount authorization, incremental PUT and
-bounded PROPFIND. Live native-reader/readiness adapters remain part of
-the full implementation goal.
+bounded PROPFIND. [Output sources](responses.md) now support owner-loop readiness
+and bounded native-reader execution. [Upload callbacks](uploads.md) lift Vectis's
+stream facade with ordinary hooks and no additional transport. Native upload
+readers and file helpers remain part of the full implementation goal.
 
 [Application WebSockets](websockets.md) expose transactional acceptance, a copied
 route facade, bounded complete frames and atomic output, pause/resume and
@@ -134,9 +136,8 @@ the library and its three released dependency prefixes.
 
 This is partial runtime coverage. Preflight explicitly rejects
 access logs, trusted proxies, autoblock,
-typed JSON and native-reader upload facades until those paths are connected.
-Native-reader sources require an executor that is not connected yet. Interim
-responses, producer trailer declarations, application WebSockets, HTTP framing helpers and gate observations,
+low-level JSON and upload policy values without a corresponding facade. Native
+upload-reader/file facades, producer trailer declarations and gate observations,
 complete fatal/allocation-failure unwinding, the protocol and
 provider helpers, the opt-in native declaration component, and the Lua product
 remain implementation work. [Process observations](processes.md) cover child

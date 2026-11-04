@@ -1,4 +1,5 @@
 #include "source_internal.h"
+#include "loop_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -29,7 +30,7 @@ rotmos_status rotmos_source_new(const rotmos_source_config *config,
         return rotmos_fail(error, ROTMOS_INVALID, "source_new",
                            "provide callbacks, an execution policy and a valid "
                            "optional length");
-    source = malloc(sizeof(*source));
+    source = calloc(1, sizeof(*source));
     if (source == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "source_new",
                            "cannot allocate source");
@@ -48,10 +49,7 @@ rotmos_status rotmos_source_pull(rotmos_source *source, void *owner,
                                  size_t *produced, rotmos_error *error)
 {
     rotmos_status status;
-    rotmos_u64 amount;
-    rotmos_u64 next;
     size_t count;
-    int order;
     if (produced != NULL)
         *produced = 0;
     if (source == NULL || buffer == NULL || capacity == 0 || produced == NULL)
@@ -68,6 +66,17 @@ rotmos_status rotmos_source_pull(rotmos_source *source, void *owner,
     status = source->config.read(buffer, capacity, &count,
                                  source->config.userdata, error);
     source->busy = 0;
+    status = rotmos_source_validate(source, capacity, count, status, error);
+    if (status == ROTMOS_OK)
+        *produced = count;
+    return status;
+}
+rotmos_status rotmos_source_validate(rotmos_source *source, size_t capacity,
+                                     size_t count, rotmos_status status,
+                                     rotmos_error *error)
+{
+    rotmos_u64 amount, next;
+    int order;
     if (status < ROTMOS_OK || status > ROTMOS_BACKEND) {
         source->failure = ROTMOS_INVALID;
         return rotmos_fail(error, ROTMOS_INVALID, "source_read",
@@ -114,7 +123,6 @@ rotmos_status rotmos_source_pull(rotmos_source *source, void *owner,
         return status;
     }
     source->position = next;
-    *produced = count;
     rotmos_error_clear(error);
     return ROTMOS_OK;
 }
@@ -160,7 +168,7 @@ rotmos_status rotmos_source_reset(rotmos_source *source, rotmos_error *error)
     return ROTMOS_OK;
 }
 
-void rotmos_source_release(rotmos_source *source, rotmos_status outcome)
+void rotmos_source_release_now(rotmos_source *source, rotmos_status outcome)
 {
     source->busy = 1;
     if (source->config.close != NULL)
@@ -168,6 +176,52 @@ void rotmos_source_release(rotmos_source *source, rotmos_status outcome)
     free(source);
 }
 
+void rotmos_source_revoke(rotmos_source *source)
+{
+    __atomic_store_n(&source->cancelled, 1u, __ATOMIC_RELEASE);
+    source->resume = NULL;
+    source->resume_data = NULL;
+    if (source->native != NULL)
+        rotmos_source_native_revoke(source);
+}
+void rotmos_source_release(rotmos_source *source, rotmos_status outcome)
+{
+    __atomic_store_n(&source->cancelled, 1u, __ATOMIC_RELEASE);
+    source->resume = NULL;
+    source->resume_data = NULL;
+    if (source->native != NULL) {
+        rotmos_source_native_retire(source, outcome);
+        return;
+    }
+    rotmos_source_release_now(source, outcome);
+}
+rotmos_status rotmos_source_resume(rotmos_source *source, rotmos_error *error)
+{
+    rotmos_status status;
+    if (source == NULL || source->loop == NULL)
+        return rotmos_fail(error, ROTMOS_STATE, "source_resume",
+                           "source has no live runtime owner");
+    status = rotmos_loop_owner(source->loop, error);
+    if (status != ROTMOS_OK)
+        return status;
+    if (source->resume == NULL ||
+        __atomic_load_n(&source->cancelled, __ATOMIC_ACQUIRE))
+        return rotmos_fail(error, ROTMOS_STATE, "source_resume",
+                           "source owner is retired");
+    source->resume_requested = 1;
+    if (source->native != NULL)
+        rotmos_source_native_resume(source);
+    source->resume(source->resume_data);
+    rotmos_error_clear(error);
+    return ROTMOS_OK;
+}
+int rotmos_source_cancelled(const rotmos_source *source)
+{
+    return source == NULL ||
+           __atomic_load_n(&source->cancelled, __ATOMIC_ACQUIRE) ||
+           (source->native_job != NULL &&
+            rotmos_job_cancelled(source->native_job));
+}
 rotmos_status rotmos_source_destroy(rotmos_source *source, rotmos_error *error)
 {
     rotmos_status outcome;

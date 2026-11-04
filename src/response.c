@@ -97,6 +97,7 @@ static void retire_source(rotmos_response *r, rotmos_status cause)
     rotmos_source *source;
     source = r->source;
     if (source != NULL) {
+        rotmos_source_revoke(source);
         source->failure = cause;
         source->retired_next = r->retired;
         r->retired = source;
@@ -853,6 +854,15 @@ static rotmos_status available_producer(rotmos_response *r, rotmos_error *error)
     return ROTMOS_OK;
 }
 
+static void source_ready(void *data)
+{
+    rotmos_source *source = data;
+    rotmos_response *r = source->owner;
+    if (r != NULL && r->source == source && !r->terminal_notified) {
+        r->paused = 0;
+        r->schedule(r);
+    }
+}
 rotmos_status rotmos_response_producer(rotmos_response *r,
                                        rotmos_source *source,
                                        rotmos_error *error)
@@ -865,9 +875,6 @@ rotmos_status rotmos_response_producer(rotmos_response *r,
         source->failure != ROTMOS_OK)
         return rotmos_fail(error, ROTMOS_STATE, "response_producer",
                            "source is unavailable");
-    if (source->config.execution != ROTMOS_SOURCE_OWNER_LOOP)
-        return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "response_producer",
-                           "native-reader execution is not available");
     if (r->has_length &&
         (!source->config.has_length ||
          compare(r->length,
@@ -879,6 +886,9 @@ rotmos_status rotmos_response_producer(rotmos_response *r,
                            "known-length source conflicts with trailers");
     r->source = source;
     source->owner = r;
+    source->loop = rotmos_request_loop(r->request);
+    source->resume = source_ready;
+    source->resume_data = source;
     r->producer = 1;
     if (source->config.has_length) {
         r->has_length = 1;
@@ -898,10 +908,7 @@ rotmos_status rotmos_response_producer_resume(rotmos_response *r,
     if (r->source == NULL || r->eof)
         return rotmos_fail(error, ROTMOS_STATE, "response_resume",
                            "no live source producer");
-    r->paused = 0;
-    r->schedule(r);
-    rotmos_error_clear(error);
-    return ROTMOS_OK;
+    return rotmos_source_resume(r->source, error);
 }
 
 rotmos_status rotmos_response_file_take(rotmos_response *r, int fd,
@@ -1065,6 +1072,9 @@ rotmos_status rotmos_response_submit(rotmos_response *r, rotmos_reply *reply,
     if (status != ROTMOS_OK) {
         if (r->source != NULL) {
             r->source->owner = reply;
+            r->source->resume = NULL;
+            r->source->resume_data = NULL;
+            r->source->loop = NULL;
             r->source = NULL;
         }
         r->file = -1;
@@ -1181,8 +1191,14 @@ void rotmos_response_step(rotmos_response *r)
     }
     if (r->source != NULL) {
         r->busy = 1;
-        status =
-            rotmos_source_pull(r->source, r, buffer, capacity, &count, NULL);
+        if (r->source->config.execution == ROTMOS_SOURCE_NATIVE_READER)
+            status = rotmos_source_native_pull(r->source, r, buffer, capacity,
+                                               &count, NULL);
+        else {
+            r->source->resume_requested = 0;
+            status = rotmos_source_pull(r->source, r, buffer, capacity, &count,
+                                        NULL);
+        }
         r->busy = 0;
     } else if (r->file != -1 &&
                (r->file_remaining.high || r->file_remaining.low)) {
@@ -1216,7 +1232,11 @@ void rotmos_response_step(rotmos_response *r)
         if (buffer == NULL)
             r->memory_position += accepted;
     } else if (status == ROTMOS_AGAIN) {
-        r->paused = 1;
+        r->paused = !(r->source != NULL &&
+                      r->source->config.execution == ROTMOS_SOURCE_OWNER_LOOP &&
+                      r->source->resume_requested);
+        if (!r->paused)
+            r->schedule(r);
     } else if (status == ROTMOS_EOF) {
         r->eof = 1;
         status = end_response(r, NULL, 0, NULL);

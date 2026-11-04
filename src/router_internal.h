@@ -34,5 +34,9 @@ rotmos_status rotmos_route_path_validate(const char *path,
                                          rotmos_route_path_kind kind,
                                          rotmos_error *error);
 void rotmos_router_release(rotmos_router *router);
+/* Built-in streaming facades explicitly run the staged hook phases. */
+rotmos_status rotmos_router_facade_route(rotmos_router *, rotmos_route_group *,
+                                         const rotmos_route_config *,
+                                         rotmos_route **, rotmos_error *);
 
 #endif

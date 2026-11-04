@@ -858,7 +858,15 @@ A source producer is a nonblocking pull callback into a supplied bounded buffer
 returning bytes, EOF, AGAIN or error, plus one close callback. Do not reset or
 rewind a live source implicitly. Its close callback runs once on success,
 replacement, abort, HEAD/bodyless response or startup failure after transfer of
-ownership. Blocking file/source adapters and materializing helpers must be named
+ownership. NATIVE_READER executes the same read contract through the shared
+bounded post-fork I/O executor; it never runs Lua callbacks. Its callback uses
+independently retained userdata and can query `rotmos_source_cancelled` for
+response cancellation or worker stopping. Revocation stops delivery immediately;
+close runs on the owner loop after the native read acknowledges and may outlive
+request closure. It cannot access expired request metadata. The normal
+request-facing retirement order still applies; source userdata has its own owner
+until close. HEAD/bodyless replies do not submit native reads.
+Blocking file/source adapters and materializing helpers must be named
 and documented accordingly; they cannot hide a full-value staging operation
 behind a streaming name. Vectis's existing materializing `response_source` and
 live `response_stream_source` remain distinct application operations.
@@ -871,8 +879,9 @@ next pull. Errors do not expose a successful prefix. All counters are checked
 before queuing; overproduction/underproduction against a known length fails.
 
 AGAIN pauses pulls until `rotmos_response_producer_resume(response, error)` on
-the owning loop. Resume schedules a later pull, never recursively invokes it;
-repeated resumes coalesce and no pull runs without output capacity. A thread
+the owning loop. `rotmos_source_resume(source, error)` provides the same
+notification without retaining a response handle. Resume schedules a later pull,
+never recursively invokes it; repeated resumes coalesce and no pull runs without output capacity. A thread
 signals an owner-loop waker to request resume. Downstream writable events alone
 do not poll an application-paused producer. Once the library accepts the producer,
 it owns exactly one close notification even if begin subsequently fails. Failed
@@ -1591,7 +1600,8 @@ source pointer. Failed replacement preserves the previous selected reply.
 
 `rotmos_source_config_init/new`, `rotmos_source_bytes/read/reset/destroy` provide
 the public source ownership shell. Construction never calls a callback. Manual
-read/reset/destroy reject a transferred or busy source. A copied byte source
+read/reset/destroy reject a transferred or busy source. An unattached manual
+read uses the caller's thread regardless of the runtime execution policy. A copied byte source
 does not borrow its input. Close reports completion, failure or cancellation;
 reentrant mutation is rejected. Declared length is checked on pulls and EOF.
 The materialized-reply helper borrows the source and uses an explicit output
@@ -1661,6 +1671,10 @@ reset/position semantics are selected explicitly by the facade. Supply generic
 bytes/copy, spill/path/kind and reader helpers. The reader executor owns bounded
 post-fork execution and loop wake/cleanup; consumers provide parsing callbacks.
 These helpers reuse the same body plans and queues, not a second transport path.
+The [upload stream facade](uploads.md) uses Vectis's optional open, prefix write,
+finish and close callbacks, with group hooks and application-owned request
+userdata. It opens only after input admission and finishes through the staged
+reply chain.
 
 `rotmos_body_policy` retains the NONE/JSON/BUFFERED/STREAMING_UPLOAD distinctions,
 body bound, memory threshold and disk-spool-disabled setting needed by Vectis's
@@ -1948,7 +1962,8 @@ preserves Vectis's direct-root/managed-cache layout and mutation semantics, uses
 incremental PUT transactions and shares one bounded native pool per HTTP worker.
 The [WebDAV HTTP facade](webdav.md) connects these providers to public mounts,
 incremental PUT and bounded PROPFIND, with owner-loop policy checks inside native
-mutation scope. General native-reader/source readiness and combined transport
+mutation scope. Native output source execution/readiness and the upload stream
+facade are connected. Native upload-reader/file adapters and combined transport
 coverage remain part of the complete implementation goal.
 
 Each provider call receives an opaque `rotmos_storage_operation` and immutable

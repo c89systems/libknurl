@@ -91,8 +91,10 @@ ROTMOS_API rotmos_status rotmos_response_file_take(rotmos_response *response,
                                                    int fd, rotmos_u64 offset,
                                                    rotmos_u64 length,
                                                    rotmos_error *error);
-/* Takes a nonblocking OWNER_LOOP source only on success. No implicit reset.
- * EOF alone indicates success; AGAIN pauses until an explicit later resume. */
+/* Takes a source only on success. OWNER_LOOP reads are nonblocking;
+ * NATIVE_READER callbacks run through the bounded worker executor. No implicit
+ * reset. EOF alone indicates success; AGAIN pauses until an explicit later
+ * resume. */
 ROTMOS_API rotmos_status rotmos_response_producer(rotmos_response *response,
                                                   rotmos_source *source,
                                                   rotmos_error *error);
