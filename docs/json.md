@@ -64,6 +64,16 @@ materialized operation has a finite output bound, defaulting to 10 MiB; failure
 leaves the prior reply intact. `rotmos_json_serialize_materialized` returns an owned
 byte value released by `rotmos_owned_bytes_cleanup`.
 
+`rotmos_reply_json_spooled` preserves Vectis's `response_json_generated` behavior:
+LoneJSON's public sink serializer writes directly into a private unlinked response
+file and completes before returning. It retains no record/schema pointer and
+constructs no full JSON buffer, so stack records are safe. The directory defaults
+to `/tmp`; this explicit file-backed helper adds no payload bound. Replacement
+and failure preserve headers and release file ownership through the common
+[reply materialization path](responses.md). The
+[spooled fixture](../tests/reply-spooled.c) verifies independent serialized bytes
+after record mutation, descriptor cleanup and actual disk-write failure.
+
 `rotmos_source_json` and `rotmos_reply_json` use LoneJSON's public pull generator.
 They keep output bounded by the consumer's read budget and preserve generic
 source backpressure, cancellation and suppression behavior. Caller-owned records

@@ -2,6 +2,7 @@
 #define ROTMOS_BODY_INTERNAL_H
 
 #include "internal.h"
+#include "file_internal.h"
 #include <rotmos/body.h>
 #include <sys/types.h>
 
@@ -19,11 +20,6 @@ struct rotmos_body {
     rotmos_status failure;
 };
 
-int rotmos_file_offset(rotmos_u64 value, off_t *out);
-rotmos_status rotmos_private_file(const char *directory, const char *prefix,
-                                  int *fd, char **path, rotmos_error *error);
-rotmos_status rotmos_file_write(int fd, const void *data, size_t length,
-                                rotmos_error *error);
 rotmos_status rotmos_body_create(const rotmos_body_policy *policy,
                                  const char *directory, rotmos_body **out,
                                  rotmos_error *error);

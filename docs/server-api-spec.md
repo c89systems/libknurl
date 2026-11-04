@@ -180,7 +180,7 @@ explicitly named copy/take. Config, plan and error types each have an initialize
 | `rotmos_request_body_info`, `rotmos_request_body_read`, `rotmos_request_body_rewind` | Materialized-kind/length, bounded reads and explicit rewind; live streams reject these operations |
 | `rotmos_request_body_materialize`, `rotmos_request_body_bytes/copy/spill/path`, `rotmos_request_body_reader` | Explicit facade operations over the same body store; no consumer-owned spool or reader bridge |
 | `rotmos_body_materialize_config_init`, `rotmos_body_materialized_cleanup`, `rotmos_body_materialized_open_reader` | Explicit result ownership and caller-buffer/file behavior, separate from borrowed request storage |
-| `rotmos_reply_status/header_set/header_add/text/bytes/file`, `rotmos_reply_source_materialized/source_take` | Staged route result, selected only after the middleware/handler chain; generic source ownership |
+| `rotmos_reply_status/header_set/header_add/text/bytes/file`, `rotmos_reply_source_materialized/source_spooled/source_take` | Staged route result, selected only after the middleware/handler chain; explicit buffered/file-backed/live source ownership |
 | `rotmos_response_state`, `rotmos_response_is_committed`, `rotmos_response_queued_bytes` | Drain state, irreversible commitment latch and bounded queue occupancy |
 | `rotmos_response_bytes` | Bounded copied complete reply (status/type/body), automatically begins and ends on success; cannot replace an existing reply |
 | `rotmos_response_file_take`, `rotmos_response_producer`, `rotmos_response_producer_resume` | Explicit descriptor/producer ownership, pause/resume and close callback as defined in section 9 |
@@ -1667,11 +1667,11 @@ read/reset/closed by the library; acquired owners from partial conversion still
 receive their required cleanup. Do not confuse discarding an unselected table
 with replacing a source already transferred to a C reply builder.
 
-The optional LoneJSON header adds `rotmos_reply_json`,
-`rotmos_reply_json_file`, `rotmos_reply_error_json` and typed reply operations.
+The optional LoneJSON header adds `rotmos_reply_json_materialized`,
+`rotmos_reply_json_spooled`, `rotmos_reply_error_json` and typed reply operations.
 JSON materialization and file-backed generation finish during those builder
 calls, preserving the lifetime of caller stack records. They are distinct from
-a live generator with an explicit retained owner. Vectis's existing generated
+a live `rotmos_reply_json` generator with an explicit retained owner. Vectis's existing generated
 JSON file path maps to the file-backed operation, not silently to a live borrow.
 
 Public sources/readers use generic C89 callbacks and userdata, never `lc_source`.

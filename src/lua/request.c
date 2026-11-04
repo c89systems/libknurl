@@ -282,7 +282,7 @@ static int reply_snapshot(lua_State *L, int index)
     return snapshot;
 }
 rotmos_status rl_reply(lua_State *L, int index, rotmos_reply *reply,
-                       rotmos_error *error)
+                       rotmos_request *request, rotmos_error *error)
 {
     rotmos_status status;
     rotmos_bytes body;
@@ -332,9 +332,23 @@ rotmos_status rl_reply(lua_State *L, int index, rotmos_reply *reply,
         return rl_source_take(L, source, reply, (int)code, type, error);
     lua_pop(L, 1);
     rl_field(L, index, "spooled_source");
-    if (!lua_isnil(L, -1))
-        return rl_fail(error, ROTMOS_NOT_SUPPORTED,
-                       "Lua materialized sources are not connected yet");
+    if (!lua_isnil(L, -1)) {
+        rotmos_server_effective config;
+        source = lua_absindex(L, -1);
+        if (lua_istable(L, source)) {
+            status = rl_source_create(L, source, 1, error);
+            if (status != ROTMOS_OK)
+                return status;
+            source = lua_absindex(L, -1);
+        }
+        status = rotmos_server_effective_config(rotmos_request_server(request),
+                                                &config, error);
+        if (status != ROTMOS_OK)
+            return status;
+        return rl_source_spool(L, source, reply, (int)code, type,
+                               config.config.limits.body_spool_directory,
+                               error);
+    }
     lua_pop(L, 1);
     rl_field(L, index, "body");
     if (lua_isnil(L, -1))
@@ -388,7 +402,7 @@ static int route_trampoline(lua_State *L)
     }
     if (c->hook == 1) {
         if (invoke) {
-            c->status = rl_reply(L, -1, c->reply, c->error);
+            c->status = rl_reply(L, -1, c->reply, c->native, c->error);
             c->finish = c->status == ROTMOS_OK;
         }
         return 0;
@@ -402,7 +416,7 @@ static int route_trampoline(lua_State *L)
     if (c->rule->is_group || c->rule->group == NULL) {
         lua_getiuservalue(L, view, 2);
         value = lua_absindex(L, -1);
-        c->status = rl_reply(L, value, c->reply, c->error);
+        c->status = rl_reply(L, value, c->reply, c->native, c->error);
     }
     return 0;
 }

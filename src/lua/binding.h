@@ -34,7 +34,7 @@ struct rl_request {
 struct rl_source {
     rotmos_source *native;
     lua_State *L;
-    int root, owned, legacy, started;
+    int root, owned, legacy, resettable;
     size_t offset;
     rotmos_error error;
 };
@@ -78,7 +78,8 @@ rotmos_status rl_request_start(rotmos_server *, rotmos_request *, void *,
                                rotmos_error *);
 void rl_request_close(rotmos_server *, rotmos_request *,
                       const rotmos_request_outcome *, void *);
-rotmos_status rl_reply(lua_State *, int, rotmos_reply *, rotmos_error *);
+rotmos_status rl_reply(lua_State *, int, rotmos_reply *, rotmos_request *,
+                       rotmos_error *);
 rotmos_status rl_handler(rotmos_request *, rotmos_reply *, void *,
                          rotmos_error *);
 rotmos_status rl_before(rotmos_request *, rotmos_reply *, int *, void *,
@@ -93,6 +94,8 @@ void rl_requests_open(lua_State *);
 void rl_sources_open(lua_State *);
 rotmos_status rl_source_take(lua_State *, int, rotmos_reply *, int,
                              const char *, rotmos_error *);
+rotmos_status rl_source_spool(lua_State *, int, rotmos_reply *, int,
+                              const char *, const char *, rotmos_error *);
 rotmos_status rl_source_create(lua_State *, int, int, rotmos_error *);
 void rl_sentinel(lua_State *, int);
 int rl_is_sentinel(lua_State *, int, int);

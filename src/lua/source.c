@@ -28,7 +28,7 @@ static int source_trampoline(lua_State *L)
     lua_getiuservalue(L, view, 1);
     rl_field(L, -1, c->name);
     if (lua_isnil(L, -1)) {
-        c->status = !strcmp(c->name, "reset") && !(s->legacy && !s->started)
+        c->status = !strcmp(c->name, "reset")
                         ? rl_fail(c->error, ROTMOS_NOT_SUPPORTED,
                                   "source is not resettable")
                         : ROTMOS_OK;
@@ -40,7 +40,6 @@ static int source_trampoline(lua_State *L)
         return 0;
     }
     if (!strcmp(c->name, "read")) {
-        s->started = 1;
         rl_push_size(L, c->capacity);
         lua_call(L, 1, 2);
         if (lua_isnil(L, -2) && rl_is_sentinel(L, -1, ROTMOS_AGAIN)) {
@@ -109,7 +108,6 @@ static int source_trampoline(lua_State *L)
             lua_pushnil(L);
             lua_setiuservalue(L, view, 2);
             s->offset = 0;
-            s->started = 0;
         }
     }
     return 0;
@@ -199,12 +197,14 @@ rotmos_status rl_source_create(lua_State *L, int index, int legacy,
         if (!lua_isfunction(L, -1) && (i == 0 || !lua_isnil(L, -1)))
             return rl_fail(error, ROTMOS_INVALID,
                            "source callbacks must be functions");
+        if (i == 1)
+            s->resettable = lua_isfunction(L, -1);
         lua_setfield(L, callbacks, names[i]);
     }
     lua_setiuservalue(L, -2, 1);
     rotmos_source_config_init(&config);
     config.read = read_source;
-    config.reset = reset_source;
+    config.reset = s->resettable ? reset_source : NULL;
     config.close = close_source;
     config.userdata = s;
     status = rotmos_source_new(&config, &s->native, error);
@@ -228,7 +228,8 @@ rotmos_status rl_source_take(lua_State *L, int index, rotmos_reply *reply,
     lua_pushvalue(L, index);
     s->root = luaL_ref(L, LUA_REGISTRYINDEX);
     s->L = L;
-    status = s->legacy ? rotmos_source_reset(s->native, error) : ROTMOS_OK;
+    status = s->legacy && s->resettable ? rotmos_source_reset(s->native, error)
+                                        : ROTMOS_OK;
     if (status == ROTMOS_OK)
         status = rotmos_reply_source_take(reply, code, type, s->native, error);
     if (status == ROTMOS_OK)
@@ -236,6 +237,37 @@ rotmos_status rl_source_take(lua_State *L, int index, rotmos_reply *reply,
     else {
         luaL_unref(L, LUA_REGISTRYINDEX, s->root);
         s->root = LUA_NOREF;
+    }
+    return status;
+}
+rotmos_status rl_source_spool(lua_State *L, int index, rotmos_reply *reply,
+                              int code, const char *type, const char *directory,
+                              rotmos_error *error)
+{
+    struct rl_source *s = luaL_testudata(L, index, RL_SOURCE);
+    rotmos_error cleanup;
+    rotmos_status status, closed;
+    if (s == NULL || !s->owned || s->native == NULL)
+        return rl_fail(error, ROTMOS_STATE,
+                       "source is closed or already transferred");
+    lua_pushvalue(L, index);
+    s->root = luaL_ref(L, LUA_REGISTRYINDEX);
+    s->L = L;
+    s->owned = 0;
+    status = rotmos_reply_source_spooled(reply, code, type, s->native,
+                                         directory, error);
+    closed = rotmos_source_destroy(s->native, &cleanup);
+    if (closed != ROTMOS_OK) {
+        /* Public source destruction normally cannot fail after the synchronous
+         * borrow has returned. Preserve ownership if the core rejects it. */
+        s->owned = 1;
+        luaL_unref(L, LUA_REGISTRYINDEX, s->root);
+        s->root = LUA_NOREF;
+        if (status == ROTMOS_OK) {
+            status = closed;
+            if (error != NULL)
+                *error = cleanup;
+        }
     }
     return status;
 }

@@ -2,6 +2,7 @@
 #define _FILE_OFFSET_BITS 64
 
 #include "reply_internal.h"
+#include "file_internal.h"
 
 #include <sys/stat.h>
 #include <errno.h>
@@ -368,6 +369,132 @@ rotmos_status rotmos_reply_source_take(rotmos_reply *reply, int status,
     return ROTMOS_OK;
 }
 
+static rotmos_status spool_error(rotmos_error *error, const char *message,
+                                 int code)
+{
+    rotmos_fail(error, ROTMOS_IO, "reply_spooled", message);
+    if (error != NULL) {
+        error->source = ROTMOS_ERROR_SYSTEM;
+        error->native_code = code;
+    }
+    return ROTMOS_IO;
+}
+
+rotmos_status rotmos_reply_generate_file(rotmos_reply *reply, int status,
+                                         const char *content_type,
+                                         const char *directory,
+                                         rotmos_reply_file_writer_fn writer,
+                                         void *data, rotmos_error *error)
+{
+    char *type, *path = NULL;
+    int fd = -1, code;
+    struct stat info;
+    rotmos_status result;
+    result = prepare_type(reply, status, content_type, &type, error);
+    if (result != ROTMOS_OK)
+        return result;
+    if (directory == NULL || directory[0] == 0)
+        directory = "/tmp";
+    reply->busy = 1;
+    result =
+        rotmos_private_file(directory, "rotmos-response", &fd, &path, error);
+    if (result == ROTMOS_OK) {
+        if (unlink(path) != 0)
+            result = spool_error(error, "cannot unlink private response file",
+                                 errno);
+        else {
+            free(path);
+            path = NULL;
+        }
+    }
+    if (result == ROTMOS_OK)
+        result = writer(fd, data, error);
+    if (result == ROTMOS_OK && fstat(fd, &info) != 0)
+        result =
+            spool_error(error, "cannot inspect private response file", errno);
+    if (result == ROTMOS_OK && (!S_ISREG(info.st_mode) || info.st_size < 0))
+        result =
+            spool_error(error, "invalid private response file size", EOVERFLOW);
+    reply->busy = 0;
+    if (result == ROTMOS_OK) {
+        select_payload(reply, status, ROTMOS_REPLY_FILE, type);
+        reply->file = fd;
+        reply->file_length.high = (unsigned long)((info.st_size >> 16) >> 16);
+        reply->file_length.low = (unsigned long)info.st_size & 0xffffffffUL;
+        rotmos_error_clear(error);
+        return ROTMOS_OK;
+    }
+    code = errno;
+    if (fd != -1)
+        (void)close(fd);
+    if (path != NULL)
+        (void)unlink(path);
+    free(path);
+    free(type);
+    errno = code;
+    return result;
+}
+
+struct spool_source {
+    rotmos_source *source;
+    int claimed;
+};
+static rotmos_status spool_source_write(int fd, void *data, rotmos_error *error)
+{
+    struct spool_source *s = data;
+    unsigned char *chunk;
+    size_t count;
+    rotmos_status status;
+    chunk = malloc(8192);
+    if (chunk == NULL)
+        return rotmos_fail(error, ROTMOS_NOMEM, "reply_source_spooled",
+                           "cannot allocate response source chunk");
+    status = s->source->config.reset != NULL
+                 ? rotmos_source_reset(s->source, error)
+                 : ROTMOS_OK;
+    if (status == ROTMOS_OK) {
+        s->source->owner = s;
+        s->claimed = 1;
+    }
+    while (status == ROTMOS_OK) {
+        status = rotmos_source_pull(s->source, s, chunk, 8192, &count, error);
+        if (status == ROTMOS_EOF) {
+            status = ROTMOS_OK;
+            break;
+        }
+        if (status == ROTMOS_AGAIN)
+            status = rotmos_fail(
+                error, ROTMOS_NOT_SUPPORTED, "reply_source_spooled",
+                "synchronous spooling cannot wait on a paused source");
+        if (status == ROTMOS_OK)
+            status = rotmos_file_write(fd, chunk, count, error);
+    }
+    free(chunk);
+    return status;
+}
+
+rotmos_status rotmos_reply_source_spooled(rotmos_reply *reply, int status,
+                                          const char *content_type,
+                                          rotmos_source *source,
+                                          const char *directory,
+                                          rotmos_error *error)
+{
+    struct spool_source state;
+    rotmos_status result;
+    if (source == NULL || source->owner != NULL || source->busy)
+        return rotmos_fail(error,
+                           source == NULL ? ROTMOS_INVALID : ROTMOS_STATE,
+                           "reply_source_spooled",
+                           "provide an unowned source which is not busy");
+    state.source = source;
+    state.claimed = 0;
+    result = rotmos_reply_generate_file(reply, status, content_type, directory,
+                                        spool_source_write, &state, error);
+    if (state.claimed)
+        source->owner = NULL;
+    return result;
+}
+
 void rotmos_source_materialize_config_init(
     rotmos_source_materialize_config *config)
 {
@@ -392,6 +519,7 @@ rotmos_status rotmos_reply_source_materialized(
     size_t capacity;
     size_t count;
     size_t next;
+    int claimed = 0;
     rotmos_status result;
     rotmos_status reset_result;
     result = prepare_type(reply, status, content_type, &type, error);
@@ -426,8 +554,12 @@ rotmos_status rotmos_reply_source_materialized(
     reply->busy = 1;
     result =
         effective.reset_before ? rotmos_source_reset(source, error) : ROTMOS_OK;
+    if (result == ROTMOS_OK) {
+        source->owner = reply;
+        claimed = 1;
+    }
     while (result == ROTMOS_OK) {
-        result = rotmos_source_read(source, chunk, effective.chunk_bytes,
+        result = rotmos_source_pull(source, reply, chunk, effective.chunk_bytes,
                                     &count, error);
         if (result == ROTMOS_EOF) {
             result = ROTMOS_OK;
@@ -468,14 +600,20 @@ rotmos_status rotmos_reply_source_materialized(
         length += count;
     }
     if (effective.reset_after) {
+        if (claimed)
+            source->owner = NULL;
         reset_result =
             rotmos_source_reset(source, result == ROTMOS_OK ? error : NULL);
+        source->owner = reply;
+        claimed = 1;
         if (result == ROTMOS_OK)
             result = reset_result;
     }
     reply->busy = 0;
     free(chunk);
     if (result != ROTMOS_OK) {
+        if (claimed)
+            source->owner = NULL;
         free(body);
         free(type);
         return result;
@@ -483,6 +621,8 @@ rotmos_status rotmos_reply_source_materialized(
     select_payload(reply, status, ROTMOS_REPLY_BYTES, type);
     reply->body = body;
     reply->body_length = length;
+    if (claimed)
+        source->owner = NULL;
     rotmos_error_clear(error);
     return ROTMOS_OK;
 }

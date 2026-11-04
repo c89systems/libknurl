@@ -50,6 +50,26 @@ It uses bounded pread on the owner loop: filesystem I/O can block. It neither
 maps nor materializes the complete file. Failed registration retains caller
 ownership. The staged file helper pins the file when selecting the reply.
 
+`rotmos_reply_source_spooled` lifts Vectis's synchronous `response_source`:
+it borrows an unowned source, resets it once when supported, and copies bounded
+8192-byte chunks into a mode-0600 temporary file before returning. The directory
+argument defaults to `/tmp`; it has no new payload ceiling. File-offset and
+filesystem limits still apply. AGAIN is unsupported for this synchronous call.
+It never closes the caller's source. Success selects a FILE reply holding an
+unlinked descriptor through delivery, suppression, replacement or destruction;
+failure closes the partial file and preserves the previous payload and headers.
+The borrowed source stays pinned during callback/replacement cleanup. Buffered
+`rotmos_reply_source_materialized` retains its separate finite memory bound and
+explicit reset flags. These are explicit materializations, with no live-streaming
+claim. [Spooled JSON](json.md) shares that private file lifecycle.
+
+The [public materialization fixture](../tests/reply-spooled.c) proves output
+larger than the buffered default, descriptor privacy/lifetime, source reentry,
+buffered replacement ownership, input/reset/AGAIN and actual file-size failures,
+plus synchronous stack-record JSON serialization. The installed
+[Lua fixture](../tests/lua/foundation.lua) covers the matching `spooled_source`
+declaration, HEAD, chunk remainders and allocation/close failures.
+
 `rotmos_response_bytes` copies a complete body under the output bound and
 automatically begins/ends delivery. Failure leaves no partial reply. HEAD and
 204/205/304 suppress payload copying or producer pulls; transferred owners still

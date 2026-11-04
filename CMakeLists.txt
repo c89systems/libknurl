@@ -164,7 +164,7 @@ if(BUILD_TESTING)
   rotmos_local_runtime(rotmos_log_backend)
   add_test(NAME rotmos.log-backend COMMAND rotmos_log_backend)
   set_tests_properties(rotmos.log-backend PROPERTIES TIMEOUT 5)
-  foreach(codec json xml xml-mapped xml-runtime asset static-runtime storage-runtime storage-deadline storage-filesystem webdav-runtime source-runtime upload-runtime rest-runtime openapi policy-runtime policy-logs-runtime)
+  foreach(codec json reply-spooled xml xml-mapped xml-runtime asset static-runtime storage-runtime storage-deadline storage-filesystem webdav-runtime source-runtime upload-runtime rest-runtime openapi policy-runtime policy-logs-runtime)
     add_executable(rotmos_${codec} "tests/${codec}.c")
     target_link_libraries(rotmos_${codec} PRIVATE rotmos::shared Threads::Threads)
     if(codec STREQUAL "policy-logs-runtime")
@@ -436,7 +436,7 @@ if(BUILD_TESTING)
   if(NOT rotmos_can_run)
     set_tests_properties(rotmos.acme-state rotmos.auxiliary-runtime rotmos.auxiliary-restart rotmos.auxiliary-terminate rotmos.process-runtime rotmos.process-backend rotmos.tls-runtime rotmos.channel-runtime rotmos.channel-backend rotmos.body-runtime rotmos.response-runtime rotmos.loop-smoke rotmos.server-runtime rotmos.kore-runtime
       rotmos.source-runtime rotmos.upload-runtime rotmos.rest-runtime rotmos.openapi rotmos.policy-runtime rotmos.policy-logs-runtime rotmos.autoblock rotmos.log-backend rotmos.storage-deadline
-      rotmos.declarations rotmos.reply rotmos.kore-port rotmos.foundation
+      rotmos.declarations rotmos.reply rotmos.reply-spooled rotmos.kore-port rotmos.foundation
       rotmos.headers.cpp PROPERTIES DISABLED TRUE)
   endif()
 endif()

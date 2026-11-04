@@ -1,6 +1,9 @@
+#define _POSIX_C_SOURCE 200809L
+#define _FILE_OFFSET_BITS 64
 #include "json_internal.h"
 #include "internal.h"
 #include "reply_internal.h"
+#include "file_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -378,4 +381,65 @@ rotmos_status rotmos_reply_json_materialized(rotmos_reply *reply, int code,
     } else
         rotmos_owned_bytes_cleanup(&bytes);
     return status;
+}
+
+struct json_file {
+    const lonejson_schema_view *schema;
+    const void *record;
+    int fd;
+    rotmos_error failure;
+};
+static lonejson_status json_file_sink(void *data, const void *bytes,
+                                      size_t count, lonejson_error *error)
+{
+    struct json_file *s = data;
+    (void)error;
+    if (s->failure.status != ROTMOS_OK ||
+        rotmos_file_write(s->fd, bytes, count, &s->failure) != ROTMOS_OK)
+        return LONEJSON_STATUS_IO_ERROR;
+    return LONEJSON_STATUS_OK;
+}
+static rotmos_status json_file_write(int fd, void *data, rotmos_error *error)
+{
+    struct json_file *s = data;
+    lonejson *runtime;
+    lonejson_error native;
+    lonejson_status code;
+    rotmos_status status;
+    int owned;
+    s->fd = fd;
+    status = rotmos_json_runtime(s->schema, &runtime, &owned, error);
+    if (status != ROTMOS_OK)
+        return status;
+    code = lonejson_serialize_sink(runtime, s->schema->map, s->record,
+                                   json_file_sink, s, &native);
+    if (owned)
+        lonejson_free(runtime);
+    if (s->failure.status != ROTMOS_OK) {
+        if (error != NULL)
+            *error = s->failure;
+        return s->failure.status;
+    }
+    return rotmos_json_error(code, &native, error);
+}
+rotmos_status rotmos_reply_json_spooled(rotmos_reply *reply, int code,
+                                        const lonejson_schema_view *schema,
+                                        const void *record,
+                                        const char *directory,
+                                        rotmos_error *error)
+{
+    struct json_file state;
+    rotmos_status status;
+    if (record == NULL)
+        return rotmos_fail(error, ROTMOS_INVALID, "reply_json_spooled",
+                           "record is required");
+    status = rotmos_json_schema_check(schema, error);
+    if (status != ROTMOS_OK)
+        return status;
+    memset(&state, 0, sizeof(state));
+    state.schema = schema;
+    state.record = record;
+    return rotmos_reply_generate_file(reply, code, "application/json",
+                                      directory, json_file_write, &state,
+                                      error);
 }

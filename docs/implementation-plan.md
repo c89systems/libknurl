@@ -115,3 +115,14 @@ credentials and sessions remain host-owned. Its combined fixture covers the live
 wire behavior, copying, invalid decisions, protected getters and constructor
 allocation unwinding. Material openers/ACME callbacks, remaining policy/control
 hooks and the other Lua families remain part of the full goal.
+
+Explicit [file-backed replies](responses.md) now lift Vectis's source and
+generated-JSON materializers through public `rotmos_reply_source_spooled` and
+`rotmos_reply_json_spooled`. They complete before returning, retain an unlinked
+file descriptor and preserve the prior reply on failure. Borrowed inputs stay
+pinned across callback/replacement cleanup, including the buffered helper.
+Lua `spooled_source` uses that public operation with the existing source-table
+contract and protected cleanup. Its focused fixtures cover actual file-size
+failures, large output without a new ceiling, stack-record lifetime, HEAD and
+Lua allocation/close failures. The remaining binding and packaging scope is
+unchanged.

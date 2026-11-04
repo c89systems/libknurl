@@ -48,6 +48,16 @@ Nil means 204; strings and numbers produce text. Response declarations accept
 `status_code`/`status`, headers, content type and body/file/stream source. Repeated
 headers can use an ordered array of `{name=..., value=...}` pairs.
 
+`spooled_source` is Vectis's explicit file-backed alternative to `stream_source`.
+The binding calls public `rotmos_reply_source_spooled`, closes the input once
+after synchronous consumption/failure, and leaves the staged file to ordinary
+response cleanup. It uses `limits.body_spool_directory` when configured,
+otherwise the public helper's `/tmp` default. Optional reset runs once; legacy
+EOF/numeric chunks and oversized-chunk remainders retain their meaning. The
+operation can block; AGAIN fails rather than collecting a paused producer.
+Spooling still occurs for HEAD before output suppression, matching Vectis's
+builder timing. Unselected declarations acquire no source or file ownership.
+
 Legacy `stream_source` tables retain `read(max_bytes)`, optional `reset()` and
 `close()`. The binding calls reset once before transfer when present. Reads accept
 strings/numbers and nil/false/empty-string EOF, retain only an oversized chunk's
@@ -145,7 +155,7 @@ preload/dynamic paths.
 
 The binding is incomplete. TLS material openers/ACME state callbacks,
 remaining policy/admission/observation/control callbacks, body materialization
-and upload callbacks, file-backed `spooled_source`, schemas/JSON/XML, REST/OpenAPI,
+and upload callbacks, schemas/JSON/XML, REST/OpenAPI,
 assets/WebDAV, proxy/WebSocket/SSE and direct loop/response operations still need
 their public C bindings. Known unsupported options return an error. No transport
 or application mechanism belongs in a temporary Vectis adapter to fill those

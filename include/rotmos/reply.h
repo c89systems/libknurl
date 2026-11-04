@@ -68,6 +68,17 @@ ROTMOS_API rotmos_status rotmos_reply_source_materialized(
     rotmos_source *source, const rotmos_source_materialize_config *config,
     rotmos_error *error);
 
+/* Synchronous file-backed materialization. Borrows an unowned source, resets
+ * once when supported, and never closes it. Consumes to EOF in bounded chunks;
+ * AGAIN fails. No memory/body ceiling is added. The target file-offset range
+ * and filesystem limits still apply. NULL/empty directory selects /tmp.
+ * Success pins a private unlinked regular file until delivery/replacement;
+ * failure closes it and preserves the prior reply (input may be consumed).
+ * This operation can block on its source and filesystem. */
+ROTMOS_API rotmos_status rotmos_reply_source_spooled(
+    rotmos_reply *reply, int status, const char *content_type,
+    rotmos_source *source, const char *directory, rotmos_error *error);
+
 /* These snapshots borrow the builder's storage until its next mutation. */
 ROTMOS_API int rotmos_reply_is_selected(const rotmos_reply *reply);
 ROTMOS_API int rotmos_reply_status_code(const rotmos_reply *reply);

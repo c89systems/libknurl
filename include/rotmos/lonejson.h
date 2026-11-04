@@ -72,6 +72,14 @@ ROTMOS_API rotmos_status rotmos_json_serialize_materialized(
 ROTMOS_API rotmos_status rotmos_reply_json_materialized(
     rotmos_reply *reply, int status, const lonejson_schema_view *schema,
     const void *record, size_t max_bytes, rotmos_error *error);
+/* Synchronously serializes into a private file, without a full JSON buffer or
+ * retaining the record/schema after return. Directory/ownership follow
+ * rotmos_reply_source_spooled. Failure preserves the existing reply. */
+ROTMOS_API rotmos_status rotmos_reply_json_spooled(rotmos_reply *, int status,
+                                                   const lonejson_schema_view *,
+                                                   const void *record,
+                                                   const char *directory,
+                                                   rotmos_error *);
 
 typedef rotmos_status (*rotmos_json_route_fn)(
     rotmos_request *request, const lonejson_record_view *input,

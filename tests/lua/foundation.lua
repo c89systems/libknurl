@@ -24,14 +24,16 @@ for n=0,18 do
 end
 collectgarbage('collect')
 local closed,calls,retained,source_closed,skipped=0,0,nil,0,0
+local spooled_closed=0
 local server=ok(rotmos.server{
   port=0,workers={count=1,affinity_disabled=true},http={backend_quiet=true},io={chunk_bytes=7},
+  limits={body_spool_directory=fixture.root},
   on_parent_ready=function(s,process)
     assert(process.role=='parent' and process.process_id>0)
     ok(fixture.spawn(ok(s:listener()).port))
   end,
   on_worker_exit=function()
-    assert(source_closed==2 and skipped==0)
+    assert(source_closed==2 and spooled_closed==7 and skipped==0)
   end,
 })
 assert(calls==0)
@@ -70,6 +72,38 @@ ok(server:get('/stream',function()
   }}
 end))
 ok(server:get('/source-error',function() return {stream_source={read=function() error('expected source failure') end,close=function() source_closed=source_closed+1 end}} end))
+ok(server:route{path='/spooled',methods={'GET','HEAD'},handler=function()
+  local state={n=0,resets=0}
+  return {spooled_source={
+    reset=function() state.resets=state.resets+1 end,
+    read=function(capacity)
+      assert(capacity==8192 and state.resets==1);state.n=state.n+1
+      if state.n==1 then return string.rep('p',20000)..'\0' end
+      if state.n==2 then return 123 end
+      return nil
+    end,
+    close=function()
+      spooled_closed=spooled_closed+1;assert(state.n==3 and state.resets==1)
+      local value,why=server:close();assert(value==nil and why.status==rotmos.status.STATE)
+    end,
+  }}
+end})
+ok(server:get('/spooled-error',function() return {spooled_source={read=function() error('expected spool read failure') end,close=function() spooled_closed=spooled_closed+1 end}} end))
+ok(server:get('/spooled-oom',function() return {spooled_source={read=function() fixture.fail_next();return string.rep('x',30000) end,close=function() spooled_closed=spooled_closed+1 end}} end))
+ok(server:get('/spooled-close-error',function() return {spooled_source={read=function() return false end,close=function() spooled_closed=spooled_closed+1;error('expected spool close failure') end}} end))
+ok(server:get('/spooled-strict',function()
+  local n=0
+  return {spooled_source=ok(rotmos.source{
+    read=function() n=n+1;if n==1 then return 'strict' end;return nil,rotmos.EOF end,
+    close=function(cause) assert(cause==rotmos.status.OK and n==2);spooled_closed=spooled_closed+1 end,
+  })}
+end))
+ok(server:get('/spooled-paused',function() return {spooled_source=ok(rotmos.source{
+  read=function() return nil,rotmos.AGAIN end,
+  close=function(cause) assert(cause==rotmos.status.CANCELLED);spooled_closed=spooled_closed+1 end,
+})} end))
+ok(server:get('/spooled-discard',function() return {spooled_source=setmetatable({},{__index=function() error('unselected spool getter') end})} end,
+  {after=function() return 'discarded' end}))
 ok(server:get('/getter-error',function() return setmetatable({},{__index=function() error('expected getter failure') end}) end))
 local reply={body='cannot allocate this reply'}
 ok(server:get('/oom-reply',function() fixture.fail_next();return reply end))
@@ -95,13 +129,13 @@ assert(server:group{
 ok(server:get('/verify',function()
   local value,expired=retained.header('x')
   assert(value==nil and expired.kind=='invalid state')
-  assert(calls==1 and source_closed==2 and skipped==0)
+  assert(calls==1 and source_closed==2 and spooled_closed==7 and skipped==0)
   return 'verified'
 end))
 ok(server:get('/stop',function() ok(server:stop());return 'stopped' end))
-assert(server:route_count()==17)
+assert(server:route_count()==24)
 local value,why=server:route{path='/bad-method',method='BOGUS',handler=function() end}
-assert(value==nil and why.status==rotmos.status.INVALID and server:route_count()==17)
+assert(value==nil and why.status==rotmos.status.INVALID and server:route_count()==24)
 value,why=server:route{path='/auth',auth={},handler=function() end}
 assert(value==nil and why.status==rotmos.status.NOT_SUPPORTED)
 ok(server:validate())

@@ -170,11 +170,18 @@ done:
 static int drive(unsigned short port)
 {
     char *stream = malloc(1003);
+    char *spooled = malloc(20004);
     int failed = 0;
-    if (stream == NULL)
+    if (stream == NULL || spooled == NULL) {
+        free(stream);
+        free(spooled);
         return 1;
+    }
     memset(stream, 's', 1000);
     memcpy(stream + 1000, "123", 3);
+    memset(spooled, 'p', 20000);
+    spooled[20000] = 0;
+    memcpy(spooled + 20001, "123", 3);
 #define REQ(m, p, b, l, s, e, n)                                               \
     do {                                                                       \
         if (exchange(port, m, p, b, l, s, e, n)) {                             \
@@ -191,6 +198,16 @@ static int drive(unsigned short port)
     REQ("GET", "/throw", "", 0, 500, "", 0);
     REQ("GET", "/stream", "", 0, 200, stream, 1003);
     REQ("GET", "/source-error", "", 0, 500, "", 0);
+    required_header = "content-length: 20004\r\n";
+    REQ("GET", "/spooled", "", 0, 200, spooled, 20004);
+    REQ("HEAD", "/spooled", "", 0, 200, "", 0);
+    required_header = NULL;
+    REQ("GET", "/spooled-error", "", 0, 500, "", 0);
+    REQ("GET", "/spooled-oom", "", 0, 500, "", 0);
+    REQ("GET", "/spooled-close-error", "", 0, 200, "", 0);
+    REQ("GET", "/spooled-strict", "", 0, 200, "strict", 6);
+    REQ("GET", "/spooled-paused", "", 0, 501, "", 0);
+    REQ("GET", "/spooled-discard", "", 0, 200, "discarded", 9);
     REQ("GET", "/getter-error", "", 0, 500, "", 0);
     REQ("GET", "/oom-reply", "", 0, 500, "", 0);
     REQ("GET", "/oom-source", "", 0, 500, "", 0);
@@ -201,6 +218,7 @@ static int drive(unsigned short port)
     REQ("GET", "/stop", "", 0, 200, "stopped", 7);
 done:
     free(stream);
+    free(spooled);
     return failed;
 }
 static int spawn(lua_State *L)

@@ -1,12 +1,23 @@
 #define _POSIX_C_SOURCE 200809L
 #define _FILE_OFFSET_BITS 64
-#include "body_internal.h"
+#include "file_internal.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+static rotmos_status file_error(rotmos_error *error, const char *operation,
+                                const char *message, int code)
+{
+    rotmos_fail(error, ROTMOS_IO, operation, message);
+    if (error != NULL) {
+        error->source = ROTMOS_ERROR_SYSTEM;
+        error->native_code = code;
+    }
+    return ROTMOS_IO;
+}
 
 int rotmos_file_offset(rotmos_u64 value, off_t *out)
 {
@@ -37,6 +48,7 @@ rotmos_status rotmos_private_file(const char *directory, const char *prefix,
     size_t i;
     char *text;
     int file;
+    int code;
     *fd = -1;
     *path = NULL;
     if (prefix == NULL || prefix[0] == '\0')
@@ -66,16 +78,18 @@ rotmos_status rotmos_private_file(const char *directory, const char *prefix,
     memcpy(text + directory_length + 1 + prefix_length, ".XXXXXX", 8);
     file = mkstemp(text);
     if (file == -1) {
+        code = errno;
         free(text);
-        return rotmos_fail(error, ROTMOS_IO, "body_file",
-                           "cannot create private body file");
+        return file_error(error, "private_file", "cannot create private file",
+                          code);
     }
     if (fcntl(file, F_SETFD, FD_CLOEXEC) == -1) {
+        code = errno;
         (void)close(file);
         (void)unlink(text);
         free(text);
-        return rotmos_fail(error, ROTMOS_IO, "body_file",
-                           "cannot set close-on-exec");
+        return file_error(error, "private_file", "cannot set close-on-exec",
+                          code);
     }
     *fd = file;
     *path = text;
@@ -94,8 +108,8 @@ rotmos_status rotmos_file_write(int fd, const void *data, size_t length,
         if (count == -1 && errno == EINTR)
             continue;
         if (count <= 0)
-            return rotmos_fail(error, ROTMOS_IO, "body_write",
-                               "cannot write body file");
+            return file_error(error, "file_write", "cannot write private file",
+                              count == 0 ? EIO : errno);
         bytes += (size_t)count;
         length -= (size_t)count;
     }
