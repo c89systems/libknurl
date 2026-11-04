@@ -58,7 +58,9 @@ custom packed providers, incremental listing, validators/ranges and static route
 semantics. The [storage/executor surface](storage.md) now supplies copied/pinned operation
 arguments, provider capability checks, resources/results and acknowledged
 cancellation, plus a bounded post-fork native job pool and read-only adapter.
-Next connect mutable filesystem transactions, WebDAV, live native-reader
+The filesystem provider now lifts Vectis's direct-root/managed-cache engine,
+conditions, quotas, collections, copy/move and recovery, with incremental PUT
+transactions and a shared worker pool. Next connect WebDAV, live native-reader
 adapters and REST/OpenAPI.
 Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memory
 measurements for the combined proxy review. Retain the

@@ -108,8 +108,9 @@ stat/open/list operations. Opened-object metadata, file sources and bounded
 listing iteration keep their existing public ownership. A bounded iterator AGAIN
 retries on the owner loop with the same retained resource; it does not collect a
 directory tree. The caller retains the asset provider through storage-provider
-ownership. Mutable filesystem transactions, the WebDAV HTTP facade and the live
-native-reader body/source adapters remain subsequent surfaces of the full goal.
+ownership. The filesystem provider below supplies mutable transactions. The WebDAV
+HTTP facade and live native-reader body/source adapters remain subsequent surfaces
+of the full goal.
 
 The [public fixture](../tests/storage-runtime.c) drives the real server and
 post-fork executor: copied arguments/chunks, native versus owner thread callbacks,
@@ -120,3 +121,84 @@ cancellation before/after a reported commit. Independent HTTP requests complete
 while native work is held. A separate short abandonment case verifies parent
 escalation for an uncooperative thread. The ordinary fixture also runs against
 relocated static/shared SDKs and on musl default worker-thread stacks.
+
+## Filesystem provider
+
+`rotmos_storage_filesystem_new(server, config, out, error)` copies an inert
+filesystem declaration. Providers in one HTTP worker share a bounded pool of two
+native threads and 32 accepted jobs. The first operation starts that pool after
+the final fork; worker stopping closes it. Full/busy queues retry on an owner-loop
+timer under the operation's existing bound and deadline; cancellation can retire
+an unsubmitted operation without starting native work. Declaring multiple mounts
+does not multiply threads or consume one pool per provider. The server outlives
+its providers. The [public filesystem fixture](../tests/storage-filesystem.c)
+exercises more than 40 provider declarations in one worker, exceeding the shared
+job queue to prove bounded admission retries and cancellation before submission.
+
+The configuration preserves Vectis's `cache_dir`, `site_id`, optional `root_dir`,
+`max_file_bytes`, `max_total_bytes` and `max_resources`. Paths are absolute;
+site names have at most 63 letters/digits/hyphens/underscores. Zero quotas select
+16 MiB per file, 128 MiB live total and 4096 resources. Resource paths preserve
+the filesystem engine's 1024-byte normalized path limit and segment vocabulary
+(letters, digits, dots, underscores and hyphens). Dot/parent segments, symlinks,
+special files and internal transaction names cannot become user resources.
+
+With `root_dir`, content operations use that direct mutable root. Without it,
+content stays in `cache_dir/webdav/site_id/content`; the sibling `tombstones`
+tree and `.lock` keep their existing roles and names. Managed deletes mask the
+resource and descendants; recreation clears the relevant tombstone. Source
+conditions, collection handling, quota accounting, COPY depth 0/infinity, MOVE,
+Overwrite and source/destination ancestry rejection retain the existing storage
+semantics. Host-owned packed content and authentication adapters remain outside
+this filesystem engine. `rotmos_storage_filesystem_content_directory` calculates
+the configured content directory without creating it, for host extraction and
+hydration.
+
+PUT begin creates one bounded transaction resource and a randomly named
+`.vectis-tmp-` file in the destination parent. Writes copy only the offered chunk
+to that file; no complete upload is materialized. At most 16 open write resources
+per provider can own partial files, each capped by its per-file quota. Partial
+files and preserved recovery directories do not count as live content, so their
+separate bound is explicit. Uploads hold no mutation lock between operations.
+Finish reacquires the shared mutation lock, checks the original entity-tag
+conditions again, resolves the same parent, recomputes quotas, fsyncs data and
+renames the transaction into place. A competing commit makes an old conditional
+upload fail without overwriting the winner. Abort or resource close removes owned
+partial output. `created` reports whether a committed destination was new; HTTP
+facades can select 201/204 without an unlocked lookup.
+
+Native jobs perform lock waits, directory scans, SHA-256 entity tags, file writes,
+copy/move and cleanup. Lock acquisition uses cooperative nonblocking flock
+attempts on the native thread. Content hashing and copies use 2 KiB chunks and
+check cancellation. Listing retains one directory cursor and returns one immediate
+child per operation, with explicit END; it never constructs a tree/vector.
+Opened read results keep one descriptor for metadata and subsequent bounded
+pread calls. Those asset reads are ordinary synchronous filesystem calls; the
+live native-reader transport adapter remains a separate implementation surface.
+
+Conditions and quota accounting share the storage mutation lock with every
+provider using the same cache/site. External filesystem writers must coordinate
+separately. The provider advertises write, conditional, copy and move capabilities;
+it does not advertise cross-resource atomicity or directory-fsync crash durability.
+A successful PUT acknowledges data fsync plus replacement, rather than a stronger
+filesystem durability contract.
+
+A direct MOVE can fail while removing its source after installing the complete
+destination. The result reports `committed`, `partial` and a recovery path if an
+overwritten destination remains under `.vectis-txn-.../backup` in the destination
+parent. Direct-root recovery paths are resource-relative; managed rollback
+recovery paths refer to the retained metadata transaction directory. Cleanup or
+rollback failure must preserve that directory instead of deleting the backup.
+The native-job acknowledgement preserves these outcomes after cancellation;
+request close does not imply rollback or release a still-running job. Inspect and
+recover these retained copies before retrying. Live-content quotas and the bound
+on open transaction resources do not cap accumulated recovery copies or files
+left by process/OS cleanup failure.
+
+The short direct/managed fixtures cover incremental visibility/abort, copied
+chunks, SHA-256 validators, retained old descriptors after replacement, competing
+conditional uploads, total/file/resource quotas, finite listing/depth, tombstones,
+symlink and malformed-condition rejection, and lock-wait timeout while owner-loop
+timers continue. Unprivileged direct-root runs also force source and backup cleanup
+permission failures and verify retained recovery copies. Both modes run against
+relocated installed static/shared consumers.

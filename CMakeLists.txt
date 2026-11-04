@@ -46,7 +46,7 @@ include(cmake/KoreBackend.cmake)
 
 add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/json.c src/json_array.c src/json_route.c src/xml.c src/xml_sax.c src/xml_mapping.c src/xml_generator.c src/xml_route.c
-  src/executor.c src/storage.c src/storage_assets.c src/asset.c src/asset_filesystem.c src/static.c src/static_policy.c
+  src/executor.c src/storage.c src/storage_assets.c src/storage_filesystem.c src/storage_fs_disk.c src/asset.c src/asset_filesystem.c src/static.c src/static_policy.c
   src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
   src/config_normalize.c src/server.c src/router.c src/route_path.c
   src/request.c src/request_decode.c src/router_dispatch.c
@@ -147,7 +147,7 @@ if(BUILD_TESTING)
   add_test(NAME rotmos.json-runtime COMMAND rotmos_json_runtime)
   add_test(NAME rotmos.json-spool-policy COMMAND rotmos_json_runtime no-spool)
   set_tests_properties(rotmos.json-runtime rotmos.json-spool-policy PROPERTIES TIMEOUT 10)
-  foreach(codec json xml xml-mapped xml-runtime asset static-runtime storage-runtime)
+  foreach(codec json xml xml-mapped xml-runtime asset static-runtime storage-runtime storage-filesystem)
     add_executable(rotmos_${codec} "tests/${codec}.c")
     target_link_libraries(rotmos_${codec} PRIVATE rotmos::shared Threads::Threads)
     target_compile_definitions(rotmos_${codec} PRIVATE
@@ -159,6 +159,8 @@ if(BUILD_TESTING)
   endforeach()
   add_test(NAME rotmos.storage-abandon COMMAND rotmos_storage-runtime abandon)
   set_tests_properties(rotmos.storage-abandon PROPERTIES TIMEOUT 5)
+  add_test(NAME rotmos.storage-filesystem-managed COMMAND rotmos_storage-filesystem managed)
+  set_tests_properties(rotmos.storage-filesystem-managed PROPERTIES TIMEOUT 8)
   add_executable(rotmos_proxy_websocket tests/proxy-websocket.c)
   target_link_libraries(rotmos_proxy_websocket PRIVATE rotmos::shared OpenSSL::SSL)
   target_compile_definitions(rotmos_proxy_websocket PRIVATE

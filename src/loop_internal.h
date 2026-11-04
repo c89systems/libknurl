@@ -69,6 +69,7 @@ struct rotmos_storage_operation;
 struct rotmos_loop {
     unsigned long identity;
     struct rotmos_executor *executors;
+    struct rotmos_executor *storage_executor;
     struct rotmos_storage_operation *storage_operations;
     size_t executor_count, storage_count;
     int executor_stopping, http_worker;

@@ -1943,8 +1943,10 @@ temporary files are explicitly bounded. Any retained legacy materialized PUT
 path is named and capped; a streaming upload path never collects the whole file.
 
 The [storage operation/executor implementation](storage.md) supplies this public
-contract and a read-only asset adapter; mutable filesystem/DAV integration remains
-part of the complete implementation goal.
+contract, read-only asset adapter and mutable filesystem provider. The latter
+preserves Vectis's direct-root/managed-cache layout and mutation semantics, uses
+incremental PUT transactions and shares one bounded native pool per HTTP worker.
+The WebDAV HTTP facade remains part of the complete implementation goal.
 
 Each provider call receives an opaque `rotmos_storage_operation` and immutable
 arguments. OK completes synchronously; AGAIN transfers completion responsibility

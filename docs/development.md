@@ -94,7 +94,9 @@ and public packed-provider adapters to opened-object metadata, bounded range
 sources, conditional requests, safe redirects and ordinary route hooks. Provider
 listing is incremental. [Storage operations and native jobs](storage.md) add acknowledged cancellation,
 retained result/resource ownership, owner-loop publication and bounded post-fork
-execution. WebDAV mutations and the live native-reader adapters remain part of
+execution. The filesystem provider supplies incremental PUT transactions,
+locked conditions/quotas and Vectis-compatible direct/managed roots. The WebDAV
+HTTP facade and the live native-reader adapters remain part of
 the full implementation goal.
 
 [Application WebSockets](websockets.md) expose transactional acceptance, a copied

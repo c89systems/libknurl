@@ -12,7 +12,7 @@ file(COPY "${ROTMOS_ROOT}/tests/consumer/CMakeLists.txt"
   "${ROTMOS_ROOT}/tests/json.c" "${ROTMOS_ROOT}/tests/xml.c" "${ROTMOS_ROOT}/tests/xml-mapped.c" "${ROTMOS_ROOT}/tests/xml-runtime.c"
   "${ROTMOS_ROOT}/tests/json-runtime.c"
   "${ROTMOS_ROOT}/tests/asset.c" "${ROTMOS_ROOT}/tests/static-runtime.c"
-  "${ROTMOS_ROOT}/tests/storage-runtime.c"
+  "${ROTMOS_ROOT}/tests/storage-runtime.c" "${ROTMOS_ROOT}/tests/storage-filesystem.c"
   DESTINATION "${TEST_ROOT}/source")
 file(STRINGS "${ROTMOS_ROOT}/VERSION" version LIMIT_COUNT 1)
 function(run)
@@ -47,6 +47,8 @@ foreach(variant static shared)
     run("${TEST_ROOT}/${variant}/asset_consumer")
     run("${TEST_ROOT}/${variant}/static-runtime_consumer")
     run("${TEST_ROOT}/${variant}/storage-runtime_consumer")
+    run("${TEST_ROOT}/${variant}/storage-filesystem_consumer")
+    run("${TEST_ROOT}/${variant}/storage-filesystem_consumer" managed)
     run("${TEST_ROOT}/${variant}/json-runtime_consumer")
     run("${TEST_ROOT}/${variant}/json-runtime_consumer" no-spool)
   endif()

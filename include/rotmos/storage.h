@@ -65,7 +65,9 @@ typedef struct rotmos_storage_result {
     rotmos_storage_resource *resource;
     size_t accepted;
     const char *recovery_path;
-    int has_info, has_entry, committed, partial;
+    /* Commit/partial outcomes survive interruption. Created distinguishes a
+     * committed new destination from replacement without an unlocked stat. */
+    int has_info, has_entry, committed, partial, created;
 } rotmos_storage_result;
 typedef struct rotmos_storage_outcome {
     rotmos_status cause;
@@ -186,6 +188,28 @@ rotmos_storage_resource_close(rotmos_storage_resource *, rotmos_error *);
  */
 ROTMOS_API rotmos_status rotmos_storage_provider_assets(
     rotmos_asset_provider *, rotmos_storage_provider **, rotmos_error *);
+typedef struct rotmos_storage_filesystem_config {
+    const char *cache_dir, *site_id, *root_dir;
+    size_t max_file_bytes, max_total_bytes, max_resources;
+} rotmos_storage_filesystem_config;
+ROTMOS_API void
+rotmos_storage_filesystem_config_init(rotmos_storage_filesystem_config *);
+/* Pure path calculation for host-owned asset extraction/hydration. Does not
+ * create directories; output is cleared on failure. */
+ROTMOS_API rotmos_status rotmos_storage_filesystem_content_directory(
+    const rotmos_storage_filesystem_config *, char *, size_t, rotmos_error *);
+/* Inert declaration over a borrowed server. Filesystem providers share one
+ * bounded executor in that HTTP worker, created on its first operation.
+ * Absolute cache/root paths; NULL root
+ * selects cache_dir/webdav/site_id/content and the existing tombstone tree.
+ * Zero quotas select 16 MiB/file, 128 MiB total and 4096 resources. At most 16
+ * uncommitted PUT transactions per provider; each is capped by max_file_bytes.
+ * Conditions are rechecked with quota accounting under the mutation lock at
+ * finish. No filesystem I/O or threads are started by construction. Server
+ * outlives the provider; bound providers are not reusable across runs. */
+ROTMOS_API rotmos_status rotmos_storage_filesystem_new(
+    rotmos_server *, const rotmos_storage_filesystem_config *,
+    rotmos_storage_provider **, rotmos_error *);
 #ifdef __cplusplus
 }
 #endif
