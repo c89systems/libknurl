@@ -58,3 +58,4 @@
 0058-retained-peer-access-logs.patch
 0059-shared-response-head-codec.patch
 0060-shared-file-response-metadata.patch
+0061-direct-acme-host-persistence.patch

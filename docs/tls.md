@@ -14,7 +14,8 @@ client certificates are optional; a supplied invalid certificate still fails.
 Each material accepts a regular file, copied bytes or an opener returning an
 unowned public `rotmos_source`. Construction only copies declarations. Explicit
 validation and each run open their own inputs and consume them synchronously to
-EOF, under `max_material_bytes` per input (zero selects 1 MiB). AGAIN fails with
+EOF, under `max_material_bytes` per input (zero adds no caller ceiling). The
+PEM reader enforces OpenSSL's signed-int input range on consumed bytes. AGAIN fails with
 STATE; no background material reader is implied. Successful opener transfer
 receives one close notification on consumption or failure. The source must be
 ready for bounded synchronous consumption; a host adapter owns any blocking
@@ -62,13 +63,12 @@ take precedence over `SSL_CERT_FILE`/`SSL_CERT_DIR`; file bytes and resolved
 directory paths are captured before forks. The selected SDK supplies defaults
 when these inputs are absent.
 
-The [generation store](acme-state.md) runs RESTORE in the quiescent parent.
-After IPC initialization, the key manager recovers pending state, prepares a
-private working generation and loads or generates its keys. Initial complete
-key state and each completed certificate pass through PERSIST and acknowledged
-publication before certificate distribution. The parent enforces the dedicated
-child budget through snapshot preparation, persistence and publication. Returned
-failures or timeout reach child observations and the selected death policy.
+The [host state bridge](acme-state.md) runs RESTORE in the quiescent parent,
+using the configured Kore runtime directory. The key manager loads or generates
+keys there. Kore writes a completed certificate, then calls PERSIST before
+distributing it to workers, matching Vectis's existing hook. Startup does not
+add a persistence call. The parent enforces the configured persistence budget.
+Returned failures or timeout reach child observations and the selected death policy.
 Manual in-memory identities continue to work when the ACME key manager is active.
 Certificate updates reuse prepared protocol, cipher, chain and client-auth
 policy; material callbacks are not reopened in HTTP workers.
@@ -90,7 +90,7 @@ HTTP remains gated and subject to the identity's client-auth policy.
 
 The [runtime fixture](../tests/acme-runtime.c) exercises actual private
 key-manager signing, TLS 1.2/1.3, mTLS, repeated listeners, two HTTP workers,
-pending challenge handling, acknowledged replacement, persistence failure and
+pending challenge handling, certificate replacement, persistence failure and
 parent-enforced timeout/recovery. Its [private driver](../tests/acme-backend.c)
 submits the real ACME-to-key-manager certificate/challenge messages; it does not
 simulate a remote ACME directory, JWS account/order exchange or renewal schedule.
@@ -129,17 +129,19 @@ before returning through the C frame. ERROR return/failure follows the native
 notification contract and cannot replace the primary persistence/restore failure.
 
 RESTORE runs in the quiescent parent; PERSIST runs in the key manager after fork,
-before acknowledged publication. Clients with threads must be created in the
+after Kore writes a certificate and before distribution. Clients with threads must be created in the
 owning process. The callback owns durable storage selection and hydration; it
-receives the candidate directory, with no Vectis/Lockd type or implicit XDG path.
-The configured deadline, restart policy, publication and rollback remain in the
-public C ACME engine. Construction and validate invoke no ACME state callback or
+receives the configured runtime directory, with no Vectis/Lockd type or implicit XDG path.
+The configured deadline and restart policy remain in the public C ACME engine.
+Runtime files remain after failed persistence; there is no generation-store rollback.
+Construction and validate invoke no ACME state callback or
 CA traffic. A successful RESTORE callback which requests stop completes cleanup
 without starting children. Effective configuration copies ordinary ACME values.
 
 The [installed Lua fixture](../tests/lua/tls.lua) covers live mutual TLS with
 callback certificate/key/chain, copied declarations, source reset/close and
 busy/closed ownership, bounded input, callback/OOM failures and startup reentry.
-It also exercises actual parent RESTORE and key-manager PERSIST/ERROR delivery,
-failed persistence propagation and stop before fork. Full remote issuance and
-in-flight fault combinations remain part of the final integration review.
+It also exercises actual parent RESTORE/ERROR delivery, stop before fork and
+startup without an invented PERSIST call. The C reference provider exercises
+real key-manager PERSIST during issuance/renewal. Lua issuance-driven PERSIST
+and in-flight fault combinations remain part of the final integration review.

@@ -59,6 +59,7 @@ static int material_valid(const rotmos_tls_material *material, size_t maximum)
     case ROTMOS_MATERIAL_MEMORY:
         return material->path == NULL && material->bytes.data != NULL &&
                material->bytes.length != 0 &&
+               material->bytes.length <= INT_MAX - 1UL &&
                material->bytes.length <= maximum && material->open == NULL;
     case ROTMOS_MATERIAL_CALLBACK:
         return material->path == NULL && material->bytes.data == NULL &&
@@ -81,10 +82,7 @@ static rotmos_status tls_validate(rotmos_tls_config *config,
         config->version > ROTMOS_TLS_VERSION_1_3)
         return invalid(error, "unknown TLS protocol version selection");
     if (config->max_material_bytes == 0)
-        config->max_material_bytes = 1024UL * 1024UL;
-    if (config->max_material_bytes > INT_MAX - 1UL)
-        return invalid(error,
-                       "TLS material bound exceeds OpenSSL's input range");
+        config->max_material_bytes = (size_t)-1;
     if (!optional_text(config->cipher_list) ||
         !optional_text(config->acme.email) ||
         !optional_text(config->acme.directory_url) ||

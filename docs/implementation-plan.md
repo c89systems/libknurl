@@ -93,7 +93,16 @@ One combined runtime case checks proxy, DAV, uploads, WebSockets and SSE. Native
 reader ownership now preserves host request facades through cancellation/ACK;
 successful unselected uploads return the baseline 204. WebSocket send/input/close
 byte behavior follows Kore, including outgoing continuation and empty peer-close
-replies. Live TLS/mTLS/ACME provider forwarding and remaining service options
-still need baseline adapter evidence. Then finish the
-remaining surface audit and consolidated consumer/artifact gates. The complete
+replies. Manual TLS now maps file/memory/borrowed-source inputs through the
+reference adapter, including reset without taking host source ownership, live
+TLS/mTLS and redirects. ACME host hydration/persistence forwards through the
+same adapter during real local-CA issuance/renewal. The unrequested generation
+store and extra startup PERSIST are removed; Kore uses the host's runtime root
+directly and preserves its failure/restart file behavior. A zero TLS material
+ceiling adds no caller cap; consumed PEM bytes retain the backend's intrinsic
+input range. Lua startup/restore/error behavior is aligned; issuance-driven Lua
+PERSIST still needs its host-VM integration case.
+Legacy Lua TLS materials now reset through the public source API before their
+first read; failed reset closes once, and open/read diagnostics survive cleanup.
+Then finish the remaining surface audit and consolidated consumer/artifact gates. The complete
 Vectis adapter and final compatibility claim remain open.

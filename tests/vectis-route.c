@@ -426,7 +426,7 @@ reference_status reference_response_text(struct reference_response *r, int code,
 }
 struct source_forward {
     struct reference_source *host;
-    int taken;
+    int taken, material;
 };
 void reference_body_config_init(struct reference_body_config *config)
 {
@@ -655,7 +655,9 @@ static rotmos_status source_read(void *buffer, size_t capacity, size_t *count,
     *count = f->host->read(f->host, buffer, capacity, &host);
     return *count != 0 ? ROTMOS_OK
            : host.code != 0
-               ? source_error(&host, error, "failed to read response source")
+               ? source_error(&host, error,
+                              f->material ? "failed to read TLS source"
+                                          : "failed to read response source")
                : ROTMOS_EOF;
 }
 static rotmos_status source_reset(void *data, rotmos_error *error)
@@ -666,7 +668,9 @@ static rotmos_status source_reset(void *data, rotmos_error *error)
     if (status == 0)
         return ROTMOS_OK;
     host.code = status;
-    return source_error(&host, error, "failed to reset response source");
+    return source_error(&host, error,
+                        f->material ? "failed to reset TLS source"
+                                    : "failed to reset response source");
 }
 static void source_close(void *data, rotmos_status cause)
 {
@@ -675,6 +679,37 @@ static void source_close(void *data, rotmos_status cause)
     if (f->taken && f->host->close != NULL)
         f->host->close(f->host);
     free(f);
+}
+rotmos_status reference_source_borrow(struct reference_source *host,
+                                      rotmos_source **out, rotmos_error *error)
+{
+    struct source_forward *f;
+    rotmos_source_config config;
+    rotmos_status status;
+    *out = NULL;
+    if (host == NULL || host->read == NULL)
+        return ROTMOS_INVALID;
+    f = calloc(1, sizeof(*f));
+    if (f == NULL)
+        return ROTMOS_NOMEM;
+    f->host = host;
+    f->material = 1;
+    rotmos_source_config_init(&config);
+    config.read = source_read;
+    config.reset = host->reset != NULL ? source_reset : NULL;
+    config.close = source_close;
+    config.userdata = f;
+    status = rotmos_source_new(&config, out, error);
+    if (status != ROTMOS_OK)
+        free(f);
+    else if (host->reset != NULL) {
+        status = rotmos_source_reset(*out, error);
+        if (status != ROTMOS_OK) {
+            (void)rotmos_source_destroy(*out, NULL);
+            *out = NULL;
+        }
+    }
+    return status;
 }
 static reference_status response_source(struct reference_response *r, int code,
                                         const char *type,

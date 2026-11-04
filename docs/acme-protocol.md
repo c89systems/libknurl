@@ -4,7 +4,7 @@
 
 
 ACME runs in its auxiliary process through the selected SDK's libcurl. The
-key manager owns account/domain private keys, CSR signing, persisted candidates
+key manager owns account/domain private keys, CSR signing, persisted certificates
 and certificate distribution. HTTP workers own installed TLS contexts. The
 application serving gate does not stop TLS-ALPN-01.
 

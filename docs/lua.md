@@ -308,7 +308,7 @@ TLS material path; declaration itself opens nothing. `start_paused=true`,
 ACME identities use `mode="acme"` and an explicit `tls.acme` declaration with
 email, directory_url, runtime_directory, optional CA inputs/persistence deadline
 and `state(server, context)`. The copied context identifies restore/persist/error,
-parent/key-manager process and candidate directory. Durable storage stays with
+parent/key-manager process and configured Kore runtime directory. Durable storage stays with
 the host. The [TLS callback contract](tls.md) describes source ownership,
 reentry, failure handling and publication order.
 

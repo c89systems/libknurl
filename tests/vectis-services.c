@@ -523,6 +523,58 @@ reference_status reference_webdav_register(
     s = rotmos_router_webdav(rotmos_server_router(app->server), &c, NULL, &e);
     return reference_error_from_rotmos(s, &e, error);
 }
+static rotmos_status tls_open(rotmos_source **out, void *data,
+                              rotmos_error *error)
+{
+    return reference_source_borrow(data, out, error);
+}
+static void tls_material(const struct reference_tls_material *in,
+                         rotmos_tls_material *out)
+{
+    rotmos_tls_material_init(out);
+    if (in->path != NULL) {
+        out->kind = ROTMOS_MATERIAL_FILE;
+        out->path = in->path;
+    } else if (in->memory != NULL && in->memory_size != 0) {
+        out->kind = ROTMOS_MATERIAL_MEMORY;
+        out->bytes.data = in->memory;
+        out->bytes.length = in->memory_size;
+    } else if (in->source != NULL) {
+        out->kind = ROTMOS_MATERIAL_CALLBACK;
+        out->open = tls_open;
+        out->userdata = in->source;
+    }
+}
+static rotmos_status tls_state(rotmos_server *server,
+                               const rotmos_process_context *process,
+                               rotmos_acme_event event, rotmos_bytes domain,
+                               rotmos_bytes directory, void *data,
+                               rotmos_error *error)
+{
+    struct reference_tls_binding *b = data;
+    reference_error e;
+    reference_status status;
+    reference_acme_state_fn call;
+    (void)server;
+    (void)process;
+    (void)domain;
+    reference_error_clear(&e);
+    if (event == ROTMOS_ACME_ERROR) {
+        if (b->state.error != NULL) {
+            (void)reference_error_from_rotmos(error->status, error, &e);
+            b->state.error(&e, b->state.userdata);
+        }
+        return ROTMOS_OK;
+    }
+    call = event == ROTMOS_ACME_RESTORE ? b->state.hydrate : b->state.persist;
+    if (call == NULL) {
+        strcpy(e.message, "provide host hydration and persistence callbacks");
+        return reference_error_to_rotmos(REFERENCE_INVALID, &e, error);
+    }
+    status = call(directory.data, b->domains, b->domain_count,
+                  b->state.userdata, &e);
+    return reference_error_to_rotmos(status, &e, error);
+}
 reference_status reference_tls_translate(const struct reference_tls_config *in,
                                          rotmos_server_config *out,
                                          struct reference_tls_binding *b,
@@ -538,11 +590,11 @@ reference_status reference_tls_translate(const struct reference_tls_config *in,
         in->mode == ROTMOS_TLS_ACME ? in->domains : &b->manual_domain;
     b->identity.domain_count =
         in->mode == ROTMOS_TLS_ACME ? in->domain_count : 1;
-    b->identity.bundle = in->bundle;
-    b->identity.certificate = in->certificate;
-    b->identity.private_key = in->private_key;
-    b->identity.extra_chain = in->ca_bundle;
-    b->identity.client_ca = in->client_ca_bundle;
+    tls_material(&in->bundle, &b->identity.bundle);
+    tls_material(&in->certificate, &b->identity.certificate);
+    tls_material(&in->private_key, &b->identity.private_key);
+    tls_material(&in->ca_bundle, &b->identity.extra_chain);
+    tls_material(&in->client_ca_bundle, &b->identity.client_ca);
     b->identity.require_client_certificate = in->require_client_certificate;
     rotmos_listener_config_init(&b->listeners[0]);
     b->listeners[0].bind = in->bind;
@@ -554,12 +606,17 @@ reference_status reference_tls_translate(const struct reference_tls_config *in,
     out->listener_count = 1;
     out->tls.version = (rotmos_tls_version)in->version;
     out->tls.cipher_list = in->cipher_list;
-    out->tls.max_material_bytes = (size_t)-1;
     out->tls.identities = in->mode == ROTMOS_TLS_DISABLED ? NULL : &b->identity;
     out->tls.identity_count = in->mode == ROTMOS_TLS_DISABLED ? 0 : 1;
     out->tls.acme.email = in->acme_email;
     out->tls.acme.directory_url = in->acme_directory_url;
     out->tls.acme.runtime_directory = in->acme_state_dir;
+    b->state = in->state;
+    b->domains = in->domains;
+    b->domain_count = in->domain_count;
+    out->tls.acme.state = in->mode == ROTMOS_TLS_ACME ? tls_state : NULL;
+    out->tls.acme.userdata = b;
+    out->tls.acme.persist_timeout_ms = in->persist_timeout_ms;
     if (in->http_redirect_enabled && in->mode != ROTMOS_TLS_DISABLED) {
         rotmos_listener_config_init(&b->listeners[1]);
         b->listeners[1].kind = ROTMOS_LISTENER_REDIRECT;

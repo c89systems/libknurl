@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <rotmos/rotmos.h>
 #include "acme-ca.h"
+#include "vectis-services.h"
 
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -60,54 +61,56 @@ static void cleanup(void)
         (void)test_ca_remove(fixture->root);
 }
 
-static rotmos_status state(rotmos_server *server,
-                           const rotmos_process_context *process,
-                           rotmos_acme_event event, rotmos_bytes domain,
-                           rotmos_bytes directory, void *userdata,
-                           rotmos_error *error)
+static reference_status restore(const char *directory,
+                                const char *const *domains, size_t domain_count,
+                                void *data, reference_error *error)
 {
-    struct fixture *fixture;
+    struct fixture *fixture = data;
     char *name;
     size_t size;
-    char note;
-    (void)server;
     (void)error;
-    fixture = userdata;
-    if (process->process_id != (long)getpid())
-        return ROTMOS_INVALID;
-    if (event == ROTMOS_ACME_ERROR)
-        return ROTMOS_INVALID;
-    if (event == ROTMOS_ACME_PERSIST) {
-        if (process->role != ROTMOS_PROCESS_KEY_MANAGER)
-            return ROTMOS_INVALID;
-        note = domain.length != 0 ? 'P' : 'K';
-        return write(fixture->notes[1], &note, 1) == 1 ? ROTMOS_OK : ROTMOS_IO;
-    }
-    if (process->role != ROTMOS_PROCESS_PARENT)
-        return ROTMOS_INVALID;
+    if (getpid() != fixture->parent || domain_count != 1 ||
+        strcmp(domains[0], "localhost") != 0 ||
+        strcmp(directory, fixture->root))
+        return REFERENCE_INVALID;
     ++fixture->restored;
-    size = directory.length + 64;
+    size = strlen(directory) + 64;
     name = malloc(size);
     if (name == NULL)
-        return ROTMOS_NOMEM;
-    (void)snprintf(name, size, "%s/certificates", (const char *)directory.data);
+        return REFERENCE_NOMEM;
+    (void)snprintf(name, size, "%s/certificates", (const char *)directory);
     if (mkdir(name, 0700) != 0 && errno != EEXIST) {
         free(name);
-        return ROTMOS_IO;
+        return REFERENCE_STATE;
     }
     (void)snprintf(name, size, "%s/certificates/localhost",
-                   (const char *)directory.data);
+                   (const char *)directory);
     if (mkdir(name, 0700) != 0 && errno != EEXIST) {
         free(name);
-        return ROTMOS_IO;
+        return REFERENCE_STATE;
     }
     free(name);
-    if (!test_ca_write(directory.data, "account-key.pem",
+    if (!test_ca_write(directory, "account-key.pem",
                        fixture->ca->account_pem) ||
-        !test_ca_write(directory.data, "certificates/localhost/key.pem",
+        !test_ca_write(directory, "certificates/localhost/key.pem",
                        fixture->ca->domain_pem))
-        return ROTMOS_IO;
-    return ROTMOS_OK;
+        return REFERENCE_STATE;
+    return REFERENCE_OK;
+}
+
+static reference_status persist(const char *directory,
+                                const char *const *domains, size_t domain_count,
+                                void *data, reference_error *error)
+{
+    struct fixture *fixture = data;
+    const char note = 'P';
+    (void)error;
+    if (getpid() == fixture->parent || domain_count != 1 ||
+        strcmp(domains[0], "localhost") != 0 ||
+        strcmp(directory, fixture->root))
+        return REFERENCE_INVALID;
+    return write(fixture->notes[1], &note, 1) == 1 ? REFERENCE_OK
+                                                   : REFERENCE_STATE;
 }
 
 static rotmos_status process_start(rotmos_server *server,
@@ -293,6 +296,10 @@ int main(int argc, char **argv)
 {
     struct fixture *fixture;
     rotmos_server_config config;
+    rotmos_server_config secure;
+    struct reference_tls_config baseline;
+    struct reference_tls_binding binding;
+    reference_error host_error;
     rotmos_listener_config listeners[2];
     rotmos_tls_identity identity;
     rotmos_route_config route;
@@ -363,6 +370,22 @@ int main(int argc, char **argv)
     config.http.backend_curl_timeout_seconds = 1;
     if (fixture->mode == 3)
         config.http.backend_curl_recv_max_bytes.low = 64;
+    memset(&baseline, 0, sizeof(baseline));
+    baseline.mode = ROTMOS_TLS_ACME;
+    baseline.bind = "127.0.0.1";
+    baseline.domains = &domain;
+    baseline.domain_count = 1;
+    baseline.acme_email = "fixture@example.test";
+    baseline.acme_directory_url = fixture->directory_url;
+    baseline.acme_state_dir = fixture->root;
+    baseline.state.hydrate = restore;
+    baseline.state.persist = persist;
+    baseline.state.userdata = fixture;
+    rotmos_server_config_init(&secure);
+    CHECK(reference_tls_translate(&baseline, &secure, &binding, &host_error) ==
+          REFERENCE_OK);
+    identity = binding.identity;
+    config.tls = secure.tls;
     config.tls.identities = &identity;
     config.tls.identity_count = 1;
     config.tls.acme.email = "fixture@example.test";
@@ -372,8 +395,6 @@ int main(int argc, char **argv)
         config.tls.acme.ca_file = fixture->ca_file;
     if (fixture->mode == 2)
         config.tls.acme.ca_directory = fixture->root;
-    config.tls.acme.state = state;
-    config.tls.acme.userdata = fixture;
     config.callbacks.on_process_start = process_start;
     config.callbacks.on_parent_ready = ready;
     config.callbacks.on_worker_event = worker_event;

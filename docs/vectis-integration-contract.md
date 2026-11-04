@@ -83,6 +83,12 @@ The [combined case](../tests/vectis-services-runtime.c) exercises real proxy
 requests, local/error replies, file output, implicit 204, reader progress before
 EOF, cancellation metadata, acquisition failures, DAV PUT/GET/PROPFIND/auth,
 WebSocket raw frames and SSE through the ordinary source adapter. TLS declarations
-are checked as values here. Live manual TLS/mTLS, ACME durable-provider forwarding
-and the remaining service options still need baseline adapter evidence; existing
-engine tests alone do not complete that obligation.
+are checked as values here. The [TLS fixture](../tests/tls-runtime.c) also uses
+that adapter for file/memory/borrowed material, cipher/version, live TLS/mTLS and
+raw-URI redirects. Borrowed source reset/read goes through public sources without
+closing the host owner. The [ACME protocol fixture](../tests/acme-protocol.c)
+forwards host hydrate/persist callbacks through real issuance/renewal against a
+local HTTPS CA. The directory is the configured Kore runtime root, exactly as
+the host's existing state helpers expect. The generation store and extra startup
+PERSIST are removed. Remaining service options and issuance-driven Lua PERSIST
+still need their corresponding adapter evidence.

@@ -86,6 +86,8 @@ struct reference_source {
     void (*close)(struct reference_source *);
     void *impl;
 };
+rotmos_status reference_source_borrow(struct reference_source *,
+                                      rotmos_source **, rotmos_error *);
 void reference_error_clear(reference_error *);
 reference_status reference_error_from_rotmos(rotmos_status,
                                              const rotmos_error *,

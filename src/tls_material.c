@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -34,9 +35,16 @@ rotmos_status rotmos_tls_material_read(const rotmos_tls_material *material,
     int fd;
     *out = NULL;
     *length = 0;
+    /* The configured ceiling may be SIZE_MAX. The PEM BIO input length is
+     * signed int; enforce that intrinsic bound on consumed bytes instead. */
+    if (maximum > INT_MAX - 1UL)
+        maximum = INT_MAX - 1UL;
     if (material->kind == ROTMOS_MATERIAL_NONE)
         return ROTMOS_OK;
     if (material->kind == ROTMOS_MATERIAL_MEMORY) {
+        if (material->bytes.length > maximum)
+            return rotmos_fail(error, ROTMOS_LIMIT, "tls_material",
+                               "TLS material exceeds the PEM input range");
         data = malloc(material->bytes.length + 1);
         if (data == NULL)
             return rotmos_fail(error, ROTMOS_NOMEM, "tls_material",
@@ -65,13 +73,18 @@ rotmos_status rotmos_tls_material_read(const rotmos_tls_material *material,
                                "TLS material exceeds max_material_bytes");
         }
     } else {
+        rotmos_error_clear(error);
         status = material->open(&source, material->userdata, error);
-        if (status != ROTMOS_OK)
+        if (status != ROTMOS_OK) {
+            if (status > ROTMOS_EOF && status <= ROTMOS_BACKEND &&
+                error != NULL && error->status == status)
+                return status;
             return rotmos_fail(error,
                                status > ROTMOS_EOF && status <= ROTMOS_BACKEND
                                    ? status
                                    : ROTMOS_INVALID,
                                "tls_material", "TLS material open failed");
+        }
         if (source == NULL || source->borrowed || source->owner != NULL ||
             source->busy)
             return rotmos_fail(
@@ -123,6 +136,9 @@ rotmos_status rotmos_tls_material_read(const rotmos_tls_material *material,
                               status == ROTMOS_EOF ? ROTMOS_OK : status);
     if (status != ROTMOS_EOF || used == 0) {
         rotmos_tls_material_clear(data, used);
+        if (status > ROTMOS_EOF && status <= ROTMOS_BACKEND && error != NULL &&
+            error->status == status)
+            return status;
         return rotmos_fail(error,
                            status == ROTMOS_EOF ? ROTMOS_INVALID : status,
                            "tls_material",

@@ -17,22 +17,6 @@ static int failed(struct rotmos_runtime *runtime, rotmos_status status)
     return 0;
 }
 
-static int observe_failure(struct rotmos_runtime *runtime, const char *domain,
-                           rotmos_status status)
-{
-    rotmos_error cause;
-    const char *directory;
-    cause = runtime->error;
-    directory = runtime->acme->candidate != NULL ? runtime->acme->candidate
-                                                 : runtime->acme->work;
-    (void)runtime->server->config.tls.acme.state(
-        runtime->server, &runtime->server->process, ROTMOS_ACME_ERROR,
-        rotmos_view(domain != NULL ? domain : ""),
-        rotmos_view(directory != NULL ? directory : runtime->acme->root),
-        runtime->server->config.tls.acme.userdata, &cause);
-    return failed(runtime, status);
-}
-
 static void operation(struct rotmos_runtime *runtime, const char *domain)
 {
     size_t i;
@@ -84,8 +68,7 @@ rotmos_status rotmos_kore_acme_prepare(struct rotmos_runtime *runtime,
             break;
     if (i == config->identity_count)
         return ROTMOS_OK;
-    status = rotmos_acme_store_new(config, KORE_DEFAULT_CIPHER_LIST,
-                                   &runtime->acme, error);
+    status = rotmos_acme_runtime_directory(config, &runtime->acme_root, error);
     if (status != ROTMOS_OK)
         return status;
     url = curl_url();
@@ -154,7 +137,7 @@ rotmos_status rotmos_kore_acme_prepare(struct rotmos_runtime *runtime,
 
 void rotmos_kore_acme_configure(struct rotmos_runtime *runtime)
 {
-    if (runtime->acme == NULL)
+    if (runtime->acme_root == NULL)
         return;
     kore_free(acme_email);
     kore_free(acme_provider);
@@ -164,8 +147,8 @@ void rotmos_kore_acme_configure(struct rotmos_runtime *runtime)
 
 void rotmos_kore_acme_clear(struct rotmos_runtime *runtime)
 {
-    rotmos_acme_store_free(runtime->acme);
-    runtime->acme = NULL;
+    free(runtime->acme_root);
+    runtime->acme_root = NULL;
     rotmos_tls_material_clear(runtime->acme_ca, runtime->acme_ca_length);
     runtime->acme_ca = NULL;
     runtime->acme_ca_length = 0;
@@ -176,22 +159,13 @@ void rotmos_kore_acme_clear(struct rotmos_runtime *runtime)
 int rotmos_kore_acme_start(void *userdata)
 {
     struct rotmos_runtime *runtime;
-    rotmos_status status;
     runtime = userdata;
-    if (runtime->acme == NULL)
+    if (runtime->acme_root == NULL)
         return 1;
-    operation(runtime, NULL);
-    status =
-        rotmos_acme_store_recover(runtime->acme, runtime->server,
-                                  &runtime->server->process, &runtime->error);
-    if (status == ROTMOS_OK)
-        status = rotmos_acme_store_begin(runtime->acme, &runtime->error);
-    if (status == ROTMOS_OK && chdir(runtime->acme->work) != 0)
-        status = rotmos_fail(&runtime->error, ROTMOS_IO, "acme_start",
-                             "cannot enter private ACME working generation");
-    if (status != ROTMOS_OK)
-        return failed(runtime, status);
-    /* Keep the budget armed through key generation and initial persistence. */
+    if (chdir(runtime->acme_root) != 0)
+        return failed(runtime,
+                      rotmos_fail(&runtime->error, ROTMOS_IO, "acme_start",
+                                  "cannot enter ACME runtime directory"));
     return 1;
 }
 
@@ -200,65 +174,19 @@ int rotmos_kore_acme_persist(void *userdata, const char *domain)
     struct rotmos_runtime *runtime;
     rotmos_status status;
     runtime = userdata;
-    if (runtime->acme == NULL)
+    if (runtime->acme_root == NULL)
         return 1;
     operation(runtime, domain);
-    status = rotmos_acme_store_stage(runtime->acme, &runtime->error);
-    if (status != ROTMOS_OK)
-        return observe_failure(runtime, domain, status);
-    if (status == ROTMOS_OK)
-        status = rotmos_acme_store_persist(runtime->acme, runtime->server,
-                                           &runtime->server->process, domain,
-                                           &runtime->error);
+    status =
+        rotmos_acme_state_call(&runtime->server->config.tls, runtime->server,
+                               &runtime->server->process, ROTMOS_ACME_PERSIST,
+                               domain, runtime->acme_root, &runtime->error);
     if (status != ROTMOS_OK)
         return failed(runtime, status);
-    status = rotmos_acme_store_publish(runtime->acme, &runtime->error);
-    if (status != ROTMOS_OK)
-        return observe_failure(runtime, domain, status);
     kore_library_worker_deadline(0);
     __atomic_store_n(&runtime->shared->acme_identity_valid, 0,
                      __ATOMIC_RELEASE);
     return 1;
-}
-
-int rotmos_kore_acme_install(void *userdata, struct kore_domain *domain,
-                             const void *data, size_t length)
-{
-    struct rotmos_runtime *runtime;
-    const unsigned char *bytes;
-    size_t offset;
-    ssize_t count;
-    int fd;
-    rotmos_status status;
-    runtime = userdata;
-    operation(runtime, domain->domain);
-    if (length == 0 || length > runtime->server->config.tls.max_material_bytes)
-        return observe_failure(
-            runtime, domain->domain,
-            rotmos_fail(&runtime->error, ROTMOS_LIMIT, "acme_install",
-                        "ACME certificate exceeds material bound"));
-    fd = open(domain->certfile,
-              O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
-    status = fd < 0 ? ROTMOS_IO : ROTMOS_OK;
-    bytes = data;
-    offset = 0;
-    while (status == ROTMOS_OK && offset < length) {
-        count = write(fd, bytes + offset, length - offset);
-        if (count < 0 && errno == EINTR)
-            continue;
-        if (count <= 0)
-            status = ROTMOS_IO;
-        else
-            offset += (size_t)count;
-    }
-    if (fd >= 0 && close(fd) != 0)
-        status = ROTMOS_IO;
-    if (status != ROTMOS_OK)
-        return observe_failure(
-            runtime, domain->domain,
-            rotmos_fail(&runtime->error, status, "acme_install",
-                        "cannot finish private ACME candidate"));
-    return rotmos_kore_acme_persist(runtime, domain->domain);
 }
 
 int rotmos_kore_acme_request(void *userdata, struct kore_curl *request)

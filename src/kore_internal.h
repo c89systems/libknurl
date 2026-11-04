@@ -68,7 +68,7 @@ struct rotmos_runtime {
     size_t response_count;
     rotmos_websocket *websockets;
     struct rotmos_tls_prepared tls;
-    struct rotmos_acme_store *acme;
+    char *acme_root;
     unsigned char *acme_ca;
     size_t acme_ca_length;
     char *acme_ca_directory;
@@ -161,8 +161,6 @@ void rotmos_kore_acme_configure(struct rotmos_runtime *runtime);
 void rotmos_kore_acme_clear(struct rotmos_runtime *runtime);
 int rotmos_kore_acme_start(void *userdata);
 int rotmos_kore_acme_persist(void *userdata, const char *domain);
-int rotmos_kore_acme_install(void *userdata, struct kore_domain *domain,
-                             const void *data, size_t length);
 int rotmos_kore_acme_request(void *userdata, struct kore_curl *request);
 void rotmos_kore_tls_updated(void *userdata, struct kore_domain *domain,
                              int usable);

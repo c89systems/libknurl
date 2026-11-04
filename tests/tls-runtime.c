@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <rotmos/rotmos.h>
+#include "vectis-services.h"
 
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
@@ -50,6 +51,41 @@ struct material {
     struct fixture *fixture;
     size_t position;
 };
+struct borrowed_material {
+    struct reference_source source;
+    const char *bytes;
+    size_t position;
+    int resets, closes;
+};
+static size_t borrowed_read(struct reference_source *source, void *buffer,
+                            size_t capacity,
+                            struct reference_source_error *error)
+{
+    struct borrowed_material *m = source->impl;
+    size_t count = strlen(m->bytes) - m->position;
+    (void)error;
+    if (count > capacity)
+        count = capacity;
+    if (count > 19)
+        count = 19;
+    memcpy(buffer, m->bytes + m->position, count);
+    m->position += count;
+    return count;
+}
+static int borrowed_reset(struct reference_source *source,
+                          struct reference_source_error *error)
+{
+    struct borrowed_material *m = source->impl;
+    (void)error;
+    m->position = 0;
+    ++m->resets;
+    return 0;
+}
+static void borrowed_close(struct reference_source *source)
+{
+    struct borrowed_material *m = source->impl;
+    ++m->closes;
+}
 
 struct tunnel {
     struct fixture *fixture;
@@ -643,6 +679,12 @@ static int file_bound(const rotmos_server_config *config)
 static int run(struct fixture *fixture)
 {
     rotmos_server_config config;
+    rotmos_server_config translated;
+    struct reference_tls_config baseline;
+    struct reference_tls_binding binding;
+    struct reference_tls_binding secure_binding;
+    struct borrowed_material borrowed;
+    reference_error host_error;
     rotmos_listener_config listeners[7];
     rotmos_tls_identity identities[4];
     rotmos_route_config route;
@@ -711,6 +753,19 @@ static int run(struct fixture *fixture)
     config.workers.shutdown_timeout_ms = 1000;
     config.tls.identities = identities;
     config.tls.identity_count = 4;
+    memset(&baseline, 0, sizeof(baseline));
+    baseline.mode = ROTMOS_TLS_MANUAL;
+    baseline.domain = "secure.local";
+    baseline.bundle.memory = fixture->bundle;
+    baseline.bundle.memory_size = strlen(fixture->bundle);
+    baseline.ca_bundle.memory = fixture->ca_pem;
+    baseline.ca_bundle.memory_size = strlen(fixture->ca_pem);
+    baseline.client_ca_bundle = baseline.ca_bundle;
+    baseline.require_client_certificate = 1;
+    rotmos_server_config_init(&translated);
+    CHECK(reference_tls_translate(&baseline, &translated, &secure_binding,
+                                  &host_error) == REFERENCE_OK);
+    identities[1] = secure_binding.identity;
     config.tls.cipher_list = "ECDHE-ECDSA-AES128-GCM-SHA256";
     config.tls.version = fixture->version == TLS1_2_VERSION
                              ? ROTMOS_TLS_VERSION_1_2
@@ -746,6 +801,38 @@ static int run(struct fixture *fixture)
         fixture->material_outcome = ROTMOS_OK;
         CHECK(fixture->opens == fixture->closes && !fixture->failure);
     }
+    memset(&baseline, 0, sizeof(baseline));
+    memset(&borrowed, 0, sizeof(borrowed));
+    borrowed.source.read = borrowed_read;
+    borrowed.source.reset = borrowed_reset;
+    borrowed.source.close = borrowed_close;
+    borrowed.source.impl = &borrowed;
+    borrowed.bytes = fixture->key_pem;
+    borrowed.position = strlen(borrowed.bytes);
+    baseline.mode = ROTMOS_TLS_MANUAL;
+    baseline.version = config.tls.version;
+    baseline.cipher_list = config.tls.cipher_list;
+    baseline.bind = "127.0.0.1";
+    baseline.domain = "localhost";
+    baseline.certificate.path = fixture->path;
+    baseline.private_key.source = &borrowed.source;
+    baseline.ca_bundle.memory = fixture->ca_pem;
+    baseline.ca_bundle.memory_size = strlen(fixture->ca_pem);
+    baseline.http_redirect_enabled = 1;
+    baseline.presented_https_port = 8443;
+    rotmos_server_config_init(&translated);
+    CHECK(reference_tls_translate(&baseline, &translated, &binding,
+                                  &host_error) == REFERENCE_OK);
+    identities[3].private_key = identities[0].private_key;
+    identities[0] = binding.identity;
+    /* This generic fixture also exercises a multi-name public identity. */
+    identities[0].domains = domains;
+    identities[0].domain_count = 2;
+    config.tls = translated.tls;
+    config.tls.identities = identities;
+    config.tls.identity_count = 4;
+    listeners[4] = binding.listeners[1];
+    listeners[4].port = 0;
     old_opens = fixture->opens;
     CHECK(rotmos_server_new(&config, &server, &error) == ROTMOS_OK);
     CHECK(fixture->opens == old_opens);
@@ -774,7 +861,9 @@ static int run(struct fixture *fixture)
     CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     CHECK(fixture->opens == old_opens + 2 &&
           fixture->closes == fixture->opens && !fixture->failure);
+    CHECK(borrowed.resets == 2 && borrowed.closes == 0);
     CHECK(rotmos_server_destroy(server, &error) == ROTMOS_OK);
+    CHECK(borrowed.closes == 0);
     return 0;
 }
 

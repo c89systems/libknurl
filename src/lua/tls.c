@@ -10,6 +10,7 @@ struct material_call {
     rotmos_source **out;
     rotmos_status status;
     rotmos_error *error;
+    int reset;
 };
 struct acme_call {
     struct tls_callback *callback;
@@ -93,6 +94,7 @@ static int material_invoke(lua_State *L)
     source->L = L;
     source->material_server = server;
     source->owned = 0;
+    call->reset = source->legacy && source->resettable;
     *call->out = source->native;
     return 0;
 }
@@ -108,7 +110,15 @@ static rotmos_status material_open(rotmos_source **out, void *data,
     call.error = error;
     *out = NULL;
     status = rl_protect(callback->server->L, material_invoke, &call, error);
-    return status == ROTMOS_OK ? call.status : status;
+    if (status == ROTMOS_OK)
+        status = call.status;
+    if (status == ROTMOS_OK && call.reset)
+        status = rotmos_source_reset(*out, error);
+    if (status != ROTMOS_OK && *out != NULL) {
+        (void)rotmos_source_destroy(*out, NULL);
+        *out = NULL;
+    }
+    return status;
 }
 int rl_material_config(lua_State *L, int owner, int index,
                        rotmos_tls_material *material, rotmos_error *error)

@@ -670,9 +670,10 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             runtime->status =
                 rotmos_kore_tls_registry(runtime, &runtime->error);
         if (runtime->status == ROTMOS_OK && !runtime->cancelled &&
-            runtime->acme != NULL)
-            runtime->status = rotmos_acme_store_restore(
-                runtime->acme, server, &server->process, &runtime->error);
+            runtime->acme_root != NULL)
+            runtime->status = rotmos_acme_state_call(
+                &server->config.tls, server, &server->process,
+                ROTMOS_ACME_RESTORE, NULL, runtime->acme_root, &runtime->error);
         runtime->cancelled = startup_cancel(runtime);
         if (runtime->status == ROTMOS_OK && !runtime->cancelled) {
             hooks.arg = runtime;
@@ -699,10 +700,9 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             hooks.connection_status = rotmos_kore_connection_status;
             hooks.worker_event = rotmos_kore_worker_event;
             hooks.tls_updated = rotmos_kore_tls_updated;
-            if (runtime->acme != NULL) {
+            if (runtime->acme_root != NULL) {
                 hooks.keymgr_prepare = rotmos_kore_acme_start;
                 hooks.acme_persist = rotmos_kore_acme_persist;
-                hooks.acme_install = rotmos_kore_acme_install;
                 hooks.acme_request = rotmos_kore_acme_request;
             }
             runtime->initialized = 1;

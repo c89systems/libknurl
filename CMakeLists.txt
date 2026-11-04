@@ -64,7 +64,7 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/proxy_url.c src/proxy_director.c src/proxy_response.c src/proxy_local.c
   src/proxy_ws_handshake.c src/proxy_ws_wire.c src/proxy_ws_rejection.c
   src/tls.c src/tls_material.c src/kore_tls.c src/kore_process.c
-  src/acme_store.c src/acme_files.c src/kore_acme.c src/kore_tls_state.c)
+  src/acme_state.c src/kore_acme.c src/kore_tls_state.c)
 target_include_directories(rotmos_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(rotmos_objects PRIVATE "${kore_source_dir}/include/kore")
 target_link_libraries(rotmos_objects PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::LibXml2 lonejson::lonejson pslog::pslog_shared)
@@ -207,7 +207,7 @@ if(BUILD_TESTING)
   add_test(NAME rotmos.storage-filesystem-managed COMMAND rotmos_storage-filesystem managed)
   set_tests_properties(rotmos.storage-filesystem-managed PROPERTIES TIMEOUT 8)
   add_executable(rotmos_proxy_websocket tests/proxy-websocket.c)
-  target_link_libraries(rotmos_proxy_websocket PRIVATE rotmos::shared OpenSSL::SSL)
+  target_link_libraries(rotmos_proxy_websocket PRIVATE rotmos::shared cpkt::openssl_ssl_shared)
   target_compile_definitions(rotmos_proxy_websocket PRIVATE
     $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   rotmos_c89(rotmos_proxy_websocket)
@@ -246,7 +246,7 @@ if(BUILD_TESTING)
   add_test(NAME rotmos.websocket-tls COMMAND rotmos_websocket_runtime tls)
   set_tests_properties(rotmos.websocket-runtime rotmos.websocket-tls PROPERTIES TIMEOUT 15)
 
-  add_executable(rotmos_acme_protocol tests/acme-protocol.c tests/acme-ca.c)
+  add_executable(rotmos_acme_protocol tests/acme-protocol.c tests/acme-ca.c tests/vectis-services.c tests/vectis-route.c)
   target_compile_definitions(rotmos_acme_protocol PRIVATE
     $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   target_link_libraries(rotmos_acme_protocol PRIVATE rotmos::shared
@@ -323,7 +323,7 @@ if(BUILD_TESTING)
   rotmos_local_runtime(rotmos_process_backend)
   add_test(NAME rotmos.process-backend COMMAND rotmos_process_backend)
   set_tests_properties(rotmos.process-backend PROPERTIES TIMEOUT 8)
-  add_executable(rotmos_tls_runtime tests/tls-runtime.c)
+  add_executable(rotmos_tls_runtime tests/tls-runtime.c tests/vectis-services.c tests/vectis-route.c)
   target_link_libraries(rotmos_tls_runtime PRIVATE rotmos::shared cpkt::openssl_ssl_shared Threads::Threads)
   rotmos_c89(rotmos_tls_runtime)
   rotmos_local_runtime(rotmos_tls_runtime)

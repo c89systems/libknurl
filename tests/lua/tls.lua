@@ -1,5 +1,5 @@
 local rotmos=require('rotmos')
-local function ok(value,err) if not value then error(err and err.message or 'operation failed') end;return value end
+local function ok(value,err) if not value then error(debug.traceback(err and err.message or 'operation failed'),2) end;return value end
 local function failure(value,err,status) assert(value==nil and err.status==status,err and err.message) end
 local function state(value,err) failure(value,err,rotmos.status.STATE) end
 local pem=fixture.tls_setup(fixture.root..'/tls-callback-key.pem')
@@ -73,10 +73,24 @@ for _,mode in ipairs{'again','empty','read-error','close-error','read-close-erro
   if mode=='read-close-error' or mode=='read-error' or mode=='empty' then assert(err.status==rotmos.status.INVALID) end
   if mode=='again' or mode=='close-error' or mode=='invalid' then assert(err.status==rotmos.status.STATE) end
   if mode=='bound' then assert(err.status==rotmos.status.LIMIT) end
-  if mode=='returned-error' then assert(err.status==rotmos.status.CONFLICT) end
+  if mode=='returned-error' then assert(err.status==rotmos.status.CONFLICT and err.message:find('opener returned error',1,true)) end
+  if mode=='read-error' or mode=='read-close-error' then assert(err.message:find('primary read failure',1,true)) end
   if mode=='oom' then assert(err.status==rotmos.status.NOMEM) end
   if selected then assert(closed==1);state(selected:read(1)) else assert(closed==0) end
   ok(s:close())
+end
+-- A failed legacy reset closes the accepted source once without reading it.
+do
+  local closed=0
+  local s=ok(rotmos.server{listeners={{kind='https',identity_index=1}},tls={identities={{domains={'localhost'},
+    private_key={bytes=pem.private_key},certificate={open=function() return {
+      reset=function() return nil,{status=rotmos.status.CONFLICT,message='legacy reset marker'} end,
+      read=function() error('failed reset was read') end,
+      close=function() closed=closed+1 end,
+    } end}}}}})
+  local value,err=s:validate()
+  failure(value,err,rotmos.status.CONFLICT);assert(err.message:find('legacy reset marker',1,true))
+  assert(closed==1);ok(s:close());assert(closed==1)
 end
 -- A busy source must stay with its Lua caller when the opener rejects transfer.
 local busy,owner,inside
@@ -94,14 +108,14 @@ local close_failure=ok(rotmos.server{workers=1,listeners={{kind='https',identity
   end}}}},on_worker_event=function() started=started+1 end,on_parent_ready=function() error('failed material became ready') end})
 state(close_failure:run());assert(started==0);ok(close_failure:close())
 -- ACME callbacks use the actual parent/key-manager boundary. Persistence and
--- ERROR failure cannot publish a generation or replace the primary error.
-for _,mode in ipairs{'restore','stop','persist'} do
+-- Startup does not persist keys; ERROR observers cannot replace the cause.
+for _,mode in ipairs{'restore','stop','pending'} do
   local root=fixture.workspace..'/acme-'..mode
   fixture.private_directory(root)
   local reader,writer=fixture.fd_pair()
   local restored,children,observed=0,0,0
   local callback=function(s,event)
-    assert(event.runtime_directory:sub(1,#root)==root and type(event.domain)=='string')
+    assert(event.runtime_directory==root and type(event.domain)=='string')
     state(s:close());state(s:validate());state(s:run())
     if event.event=='restore' then
       restored=restored+1;assert(event.process.role=='parent' and event.error==nil)
@@ -110,12 +124,11 @@ for _,mode in ipairs{'restore','stop','persist'} do
       restore_keys(event.runtime_directory)
     elseif event.event=='persist' then
       assert(event.process.role=='key_manager' and event.process.process_id>0 and event.error==nil)
-      fixture.fd_write(writer,'P')
-      return nil,{status=rotmos.status.INVALID,message='persist marker'}
+      error('startup must not call PERSIST')
     else
       assert(event.event=='error' and event.error.status~=rotmos.status.OK)
       if mode=='restore' then assert(event.error.status==rotmos.status.CONFLICT)
-      else assert(event.error.status==rotmos.status.INVALID);fixture.fd_write(writer,'E') end
+      else error('unexpected state error') end
       error('ignored ERROR observer failure')
     end
   end
@@ -128,17 +141,17 @@ for _,mode in ipairs{'restore','stop','persist'} do
           observed=observed+1
         end
       end,
-      on_parent_ready=function() error('failed persistence became ready') end}
+      on_parent_ready=function(s) assert(mode=='pending');ok(s:stop()) end}
   local s=ok(rotmos.server(config))
   assert(restored==0);ok(s:validate());assert(restored==0)
   local effective=ok(s:effective_config());assert(effective.tls.acme.email=='test@example.invalid' and effective.tls.acme.persist_timeout_ms==5000)
   config.tls.acme.state=function() error('mutated state callback') end
   local value,err=s:run()
-  if mode=='stop' then ok(value,err);assert(not value.has_failure and children==0)
+  if mode=='stop' or mode=='pending' then ok(value,err);assert(not value.has_failure and (mode=='pending' or children==0))
   else assert(value==nil and err.status) end
   assert(restored==1)
   if mode=='restore' then assert(err.status==rotmos.status.CONFLICT and children==0)
-  elseif mode=='persist' then assert(err.status==rotmos.status.INVALID and observed>0 and ok(fixture.fd_read(reader))=='PE') end
+  elseif mode=='pending' then assert(children>0 and observed==0) end
   ok(s:close());fixture.fd_close(reader);fixture.fd_close(writer)
 end
 for n=0,40,4 do

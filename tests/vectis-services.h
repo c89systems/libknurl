@@ -212,8 +212,23 @@ reference_webdav_register(struct reference_app *,
                           struct reference_webdav_binding *,
                           rotmos_storage_provider *, reference_error *);
 
-/* Vectis resolves app paths/durable storage before this translation. Each
- * material's public path/bytes/open declaration carries the resolved source. */
+/* Vectis resolves app paths and selects its durable-storage client. */
+struct reference_tls_material {
+    const char *path;
+    struct reference_source *source;
+    const void *memory;
+    size_t memory_size;
+};
+typedef reference_status (*reference_acme_state_fn)(
+    const char *runtime_directory, const char *const *domains,
+    size_t domain_count, void *userdata, reference_error *);
+typedef void (*reference_acme_error_fn)(const reference_error *,
+                                        void *userdata);
+struct reference_acme_provider {
+    reference_acme_state_fn hydrate, persist;
+    reference_acme_error_fn error;
+    void *userdata;
+};
 struct reference_tls_config {
     int mode, version;
     const char *cipher_list, *bind, *domain, *const *domains;
@@ -223,13 +238,18 @@ struct reference_tls_config {
     int http_redirect_enabled, require_client_certificate;
     const char *http_redirect_bind, *acme_email, *acme_directory_url,
         *acme_state_dir;
-    rotmos_tls_material bundle, certificate, private_key, ca_bundle,
+    struct reference_tls_material bundle, certificate, private_key, ca_bundle,
         client_ca_bundle;
+    struct reference_acme_provider state;
+    long persist_timeout_ms;
 };
 struct reference_tls_binding {
     rotmos_tls_identity identity;
     rotmos_listener_config listeners[2];
     const char *manual_domain;
+    struct reference_acme_provider state;
+    const char *const *domains;
+    size_t domain_count;
 };
 reference_status reference_tls_translate(const struct reference_tls_config *,
                                          rotmos_server_config *,

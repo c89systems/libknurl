@@ -354,7 +354,9 @@ static int exchange(struct fixture *fixture, size_t listener, int stage)
                ASN1_STRING_length(value) == 34 &&
                ASN1_STRING_get0_data(value)[2] == 42;
     } else if (okay) {
-        serial = stage == 3 && fixture->mode != 1 && listener != 2 ? 2 : 1;
+        /* Kore retains the written runtime certificate after failed durable
+         * persistence; a replacement key manager loads that working state. */
+        serial = stage == 3 && listener != 2 ? 2 : 1;
         okay = ASN1_INTEGER_get(X509_get_serialNumber(peer)) == serial;
         get = listener == 2 ? "GET / HTTP/1.1\r\nHost: "
                               "manual.local\r\nConnection: close\r\n\r\n"

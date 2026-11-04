@@ -134,8 +134,13 @@ or invents protocol close codes. Explicit send budgets are independent of the
 server default; zero preserves Kore's send behavior in both C and Lua.
 Raw CLOSE and Lua no-argument close only queue a frame, preserving later sends
 and introducing no handshake deadline; the explicit close helper remains separate.
-Live TLS/mTLS and ACME durable-provider forwarding through the
-baseline adapter remain open alongside the remaining service-option parity.
+Live TLS/mTLS now uses the baseline adapter's file/memory/borrowed-source
+translation. Host hydration/persistence also forwards through actual ACME
+issuance/renewal. The unrequested generation store and initial-key PERSIST are
+removed. Kore keeps its own runtime file/restart behavior, with no new layout
+or rollback. The adapter's no-added-material-cap setting now works; the
+intrinsic PEM input range is checked during consumption. Issuance-driven Lua
+PERSIST and the remaining service-option parity still need evidence.
 
 ## Evidence limits and work state
 
