@@ -27,12 +27,14 @@ struct fixture {
     struct reference_upload_binding upload[3];
     struct reference_websocket_binding websocket;
     struct reference_webdav_binding dav;
+    rotmos_asset_provider *packed;
     pthread_t owner;
     char directory[96], cache[128], file[128];
     int origin, progress[2], failed, opened, finished, closed, ws_opened,
         ws_closed;
     unsigned int native_done, cancelled;
     int acquired, released, owner_read;
+    int packed_opened, packed_closed, provider_closed;
     pid_t child, upstream;
     unsigned short port;
 };
@@ -48,6 +50,33 @@ static int write_all(int fd, const void *bytes, size_t size)
         size -= (size_t)n;
     }
     return 0;
+}
+static void packed_retired(void *data)
+{
+    struct fixture *f = data;
+    ++f->packed_closed;
+}
+static void provider_closed(void *data)
+{
+    struct fixture *f = data;
+    ++f->provider_closed;
+}
+static rotmos_status packed_open(const char *path, rotmos_asset **out,
+                                 void *data, rotmos_error *error)
+{
+    struct fixture *f = data;
+    rotmos_asset_info info;
+    rotmos_bytes bytes;
+    if (strcmp(path, "/item"))
+        return ROTMOS_EOF;
+    memset(&info, 0, sizeof(info));
+    info.kind = ROTMOS_ASSET_FILE;
+    info.size.low = 4;
+    info.etag = "\"packed\"";
+    bytes.data = "pack";
+    bytes.length = 4;
+    ++f->packed_opened;
+    return rotmos_asset_memory(&info, bytes, packed_retired, f, out, error);
 }
 static int read_all(int fd, void *bytes, size_t size)
 {
@@ -461,6 +490,8 @@ static reference_status route(struct reference_app *app,
 {
     struct fixture *f = data;
     struct event_source *source;
+    if (reference_request_kore(r) == NULL)
+        return REFERENCE_STATE;
     if (!strcmp(reference_request_path(r), "/events")) {
         source = calloc(1, sizeof(*source));
         if (!source)
@@ -473,7 +504,8 @@ static reference_status route(struct reference_app *app,
     }
     if (f->failed || f->opened != 1 || f->closed != 1 || f->finished != 1 ||
         f->ws_opened != 1 || f->ws_closed != 1 || f->acquired != 3 ||
-        f->released != 1 ||
+        f->released != 1 || f->packed_opened != 4 || f->packed_closed != 4 ||
+        f->provider_closed != 0 ||
         !__atomic_load_n(&f->native_done, __ATOMIC_ACQUIRE) ||
         !__atomic_load_n(&f->cancelled, __ATOMIC_ACQUIRE))
         return REFERENCE_STATE;
@@ -557,6 +589,26 @@ static int client(struct fixture *f, unsigned short port)
     CHECK(!exchange(port, "GET", "/dead", "", "", 529, "gateway", NULL));
     CHECK(!exchange(port, "POST", "/upload", "abc", "", 204, "", NULL));
     CHECK(!exchange(port, "POST", "/file", "abc", "", 200, "3", NULL));
+    CHECK(!exchange(port, "GET", "/static-file", "", "", 200, "abc",
+                    "content-type: text/x-host"));
+    CHECK(!exchange(port, "GET", "/files", "", "", 404, "", NULL));
+    CHECK(!exchange(port, "GET", "/index?raw=%2f", "", "", 308, "",
+                    "location: /index/?raw=%2f"));
+    CHECK(!exchange(port, "GET", "/index/", "", "", 200, "abc", NULL));
+    CHECK(!exchange(port, "HEAD", "/index/", "", "", 200, "",
+                    "content-length: 3"));
+    CHECK(!exchange(port, "GET", "/static-file", "", "Range: bytes=1-2\r\n",
+                    206, "bc", "content-range: bytes 1-2/3"));
+    CHECK(!exchange(port, "GET", "/pack/item", "", "", 200, "pack",
+                    "cache-control: no-cache"));
+    CHECK(!exchange(port, "HEAD", "/pack/item", "", "", 200, "",
+                    "content-length: 4"));
+    CHECK(!exchange(port, "GET", "/pack/item", "", "Range: bytes=1-2\r\n", 206,
+                    "ac", NULL));
+    CHECK(!exchange(port, "GET", "/pack/item", "",
+                    "If-None-Match: \"packed\"\r\n", 304, "", NULL));
+    CHECK(!exchange(port, "GET", "/pack/missing", "", "", 404, "not found\n",
+                    "cache-control: no-store"));
     CHECK(!exchange(port, "POST", "/owner/ok", "x", "", 204, "", NULL));
     CHECK(!exchange(port, "POST", "/owner/fail", "x", "", 500, "", NULL));
     CHECK(!exchange(port, "POST", "/owner/again", "x", "", 500, "", NULL));
@@ -635,6 +687,11 @@ int main(void)
     struct reference_route_config ordinary;
     struct reference_tls_config tls;
     struct reference_tls_binding translated_tls;
+    struct reference_static_file_config static_file;
+    struct reference_static_directory_config directory;
+    struct reference_static_embedded_config embedded;
+    struct reference_embedded_fs fs;
+    rotmos_asset_provider_config assets;
     rotmos_server_config config, secure;
     rotmos_listener_config listener;
     rotmos_upload_reader_config owned_reader;
@@ -676,6 +733,33 @@ int main(void)
     config.callbacks.on_parent_ready = ready;
     config.callbacks.on_process_start = started;
     CHECK(rotmos_server_new(&config, &f->app.server, &error) == ROTMOS_OK);
+    memset(&static_file, 0, sizeof(static_file));
+    static_file.path = "/static-file";
+    static_file.file_path = f->file;
+    static_file.content_type = "text/x-host";
+    CHECK(reference_static_file(&f->app, &static_file, &translated) ==
+          REFERENCE_OK);
+    memset(&directory, 0, sizeof(directory));
+    directory.path_prefix = "/files";
+    directory.root_dir = f->cache;
+    CHECK(reference_static_directory(&f->app, &directory, &translated) ==
+          REFERENCE_OK);
+    directory.path_prefix = "/index";
+    directory.index_enabled = 1;
+    directory.index_file = "uploaded";
+    CHECK(reference_static_directory(&f->app, &directory, &translated) ==
+          REFERENCE_OK);
+    rotmos_asset_provider_config_init(&assets);
+    assets.open = packed_open;
+    assets.close = provider_closed;
+    assets.userdata = f;
+    CHECK(rotmos_asset_provider_new(&assets, &f->packed, &error) == ROTMOS_OK);
+    fs.provider = f->packed;
+    memset(&embedded, 0, sizeof(embedded));
+    embedded.path_prefix = "/pack";
+    embedded.fs = &fs;
+    CHECK(reference_static_embedded(&f->app, &embedded, &translated) ==
+          REFERENCE_OK);
     memset(&proxy, 0, sizeof(proxy));
     proxy.path = "/proxy/:id";
     proxy.path_kind = 1;
@@ -778,6 +862,9 @@ int main(void)
     CHECK(waitpid(f->upstream, &status, 0) == f->upstream &&
           WIFEXITED(status) && WEXITSTATUS(status) == 0);
     CHECK(rotmos_server_destroy(f->app.server, &error) == ROTMOS_OK);
+    CHECK(f->provider_closed == 0);
+    CHECK(rotmos_asset_provider_close(f->packed, &error) == ROTMOS_OK &&
+          f->provider_closed == 1);
     reference_route_cleanup(&f->app);
     close(f->origin);
     for (i = 0; i < 2; ++i)

@@ -67,7 +67,7 @@ trip or mandatory table conversion between parser and handler.
 choose a different output schema and status per response. An unselected successful
 reply retains the ordinary 204 behavior. `rotmos_reply_json_materialized` finishes
 serialization synchronously and accepts stack records. Its separately named
-materialized operation has a finite output bound, defaulting to 10 MiB; failure
+materialized operation accepts an optional output bound; zero adds no ceiling. Failure
 leaves the prior reply intact. `rotmos_json_serialize_materialized` returns an owned
 byte value released by `rotmos_owned_bytes_cleanup`.
 

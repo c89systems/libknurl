@@ -50,7 +50,7 @@ finite fallback without recursively calling application error policy.
 
 `rotmos_reply_rest_json` synchronously composes a buffered response from a public
 LoneJSON value. Initialize `rotmos_rest_reply_config`; zero/default values select
-200, `application/json; charset=utf-8`, a 10 MiB output bound and a newline.
+200, `application/json; charset=utf-8`, no added output ceiling and a newline.
 `newline_disabled` omits the newline. The bound includes it. Add or replace
 headers through the normal reply operations. Failure preserves the previous
 selected reply. `rotmos_reply_error_json` supplies the same generic envelope

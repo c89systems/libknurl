@@ -378,7 +378,7 @@ atomic backpressure, copied handshake fields and terminal callback errors.
 and `write(options, sink)`. They use the installed C codecs and LoneJSON's
 released public Lua interop. Options select `schema` and `value`/`table` input;
 the explicitly materialized `serialize` also accepts external `record` userdata
-and a finite `max_bytes` (zero selects the C default, 10 MiB). XML mapping options
+and optional `max_bytes` (zero adds no output ceiling). XML mapping options
 match the public C config, including root/text/attribute names and limits.
 
 The callback and source forms assign tables into private records before output,

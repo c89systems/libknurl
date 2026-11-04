@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <rotmos/rotmos.h>
+#include "vectis-services.h"
 #include <rotmos/lonejson.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -209,6 +210,98 @@ static int graph(void)
     free(names);
     return 0;
 }
+static reference_status reference_never(struct reference_app *app,
+                                        struct reference_request *request,
+                                        struct reference_response *reply,
+                                        void *data, reference_error *error)
+{
+    (void)app;
+    (void)request;
+    (void)reply;
+    (void)data;
+    (void)error;
+    ++called;
+    return REFERENCE_STATE;
+}
+static int reference_metadata(void)
+{
+    struct reference_app app;
+    struct reference_route_config route;
+    struct reference_openapi_document document;
+    reference_openapi_route_doc doc;
+    reference_openapi_schema schema;
+    struct reference_mutable_bytes bytes;
+    reference_error host;
+    rotmos_server_config config;
+    rotmos_listener_config listener;
+    rotmos_error error;
+    char *text, *large;
+    size_t length = 10485761UL;
+    memset(&app, 0, sizeof(app));
+    rotmos_server_config_init(&config);
+    rotmos_listener_config_init(&listener);
+    config.listeners = &listener;
+    config.listener_count = 1;
+    CHECK(rotmos_server_new(&config, &app.server, &error) == ROTMOS_OK);
+    memset(&route, 0, sizeof(route));
+    route.method = ROTMOS_HTTP_GET;
+    route.path = "/items/:id";
+    route.path_kind = 1;
+    route.handler = reference_never;
+    CHECK(reference_route_register(&app, &route, &host) == REFERENCE_OK);
+    reference_openapi_route_doc_init(&doc);
+    doc.summary = "Vectis metadata";
+    schema = reference_openapi_lonejson_schema("Item", &record_map);
+    CHECK(reference_openapi_request_json(&doc, schema, &host) == REFERENCE_OK);
+    CHECK(reference_openapi_response_json(&doc, 200, "OK", schema, &host) ==
+          REFERENCE_OK);
+    CHECK(reference_openapi_attach(&app, ROTMOS_HTTP_METHODS_GET, route.path,
+                                   &doc, &host) == REFERENCE_OK);
+    CHECK(reference_openapi_attach(&app, ROTMOS_HTTP_METHODS_GET, route.path,
+                                   &doc, &host) == REFERENCE_CONFLICT);
+    reference_openapi_route_doc_cleanup(&doc);
+    CHECK(reference_openapi_generate(&app, NULL, 0, &bytes, &host) ==
+          REFERENCE_OK);
+    text = malloc(bytes.size + 1);
+    CHECK(text != NULL);
+    memcpy(text, bytes.data, bytes.size);
+    text[bytes.size] = 0;
+    CHECK(strstr(text, "Vectis API") && strstr(text, "/items/{id}") &&
+          strstr(text, "#/components/schemas/Item"));
+    free(text);
+    reference_mutable_bytes_cleanup(&bytes);
+    reference_openapi_document_init(&document);
+    CHECK(!strcmp(document.title, "Vectis API") &&
+          !strcmp(document.version, "0.0.0"));
+    CHECK(reference_openapi_generate(&app, &document, 1, &bytes, &host) ==
+              REFERENCE_OK &&
+          bytes.size > 0);
+    reference_mutable_bytes_cleanup(&bytes);
+    CHECK(reference_openapi_generate(&app, NULL, 99, &bytes, &host) ==
+              REFERENCE_INVALID &&
+          !bytes.data && !bytes.size);
+    large = malloc(length + 1);
+    CHECK(large != NULL);
+    memset(large, 's', length);
+    large[length] = 0;
+    route.path = "/large";
+    route.path_kind = 0;
+    CHECK(reference_route_register(&app, &route, &host) == REFERENCE_OK);
+    reference_openapi_route_doc_init(&doc);
+    doc.summary = large;
+    CHECK(reference_openapi_attach(&app, ROTMOS_HTTP_METHODS_GET, route.path,
+                                   &doc, &host) == REFERENCE_OK);
+    free(large);
+    CHECK(reference_openapi_generate(&app, NULL, 0, &bytes, &host) ==
+              REFERENCE_OK &&
+          bytes.size > length);
+    reference_mutable_bytes_cleanup(&bytes);
+    CHECK(rotmos_router_route_count(rotmos_server_router(app.server)) == 2 &&
+          !called);
+    CHECK(rotmos_server_destroy(app.server, &error) == ROTMOS_OK);
+    reference_route_cleanup(&app);
+    return 0;
+}
 static void *on_default_stack(void *data)
 {
     *(int *)data = graph();
@@ -219,6 +312,7 @@ int main(void)
     pthread_t thread;
     int result = 1;
     CHECK(metadata() == 0);
+    CHECK(reference_metadata() == 0);
     CHECK(pthread_create(&thread, NULL, on_default_stack, &result) == 0);
     CHECK(pthread_join(thread, NULL) == 0 && result == 0);
     return 0;

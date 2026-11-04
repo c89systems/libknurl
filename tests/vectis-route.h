@@ -29,6 +29,8 @@ struct reference_app {
     size_t requests, closed;
 };
 struct reference_request;
+struct http_request;
+struct http_request *reference_request_kore(struct reference_request *);
 struct reference_mutable_bytes {
     void *data;
     size_t size;

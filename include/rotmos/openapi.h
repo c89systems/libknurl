@@ -51,7 +51,7 @@ ROTMOS_API rotmos_status rotmos_router_openapi_doc(
     rotmos_router *, rotmos_http_methods, const char *path,
     const rotmos_openapi_route_doc *, rotmos_error *);
 /* Materialized JSON/YAML OpenAPI 3.1.0 metadata. NULL document selects
- * defaults; zero max_bytes selects 10 MiB. Output is owned through
+ * defaults; zero max_bytes adds no output ceiling. Output is owned through
  * owned_bytes_cleanup; failure leaves an empty output. Generation never invokes
  * route callbacks. */
 ROTMOS_API rotmos_status rotmos_router_openapi(const rotmos_router *,

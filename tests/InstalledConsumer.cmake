@@ -18,6 +18,7 @@ file(COPY "${ROTMOS_ROOT}/tests/consumer/CMakeLists.txt"
   "${ROTMOS_ROOT}/tests/vectis-response-head.c"
   "${ROTMOS_ROOT}/tests/vectis-request-reply.c"
   "${ROTMOS_ROOT}/tests/tls-runtime.c"
+  "${ROTMOS_ROOT}/tests/materialized-output.c"
   "${ROTMOS_ROOT}/tests/vectis-services.c" "${ROTMOS_ROOT}/tests/vectis-services.h" "${ROTMOS_ROOT}/tests/vectis-services-runtime.c"
   "${ROTMOS_ROOT}/tests/asset.c" "${ROTMOS_ROOT}/tests/static-runtime.c"
   "${ROTMOS_ROOT}/tests/storage-filesystem.c" "${ROTMOS_ROOT}/tests/webdav-runtime.c"
@@ -57,6 +58,7 @@ foreach(variant static shared)
     run("${TEST_ROOT}/${variant}/vectis-request-reply_consumer")
     run("${TEST_ROOT}/${variant}/vectis-services-runtime_consumer")
     run("${TEST_ROOT}/${variant}/tls-runtime_consumer")
+    run("${TEST_ROOT}/${variant}/materialized-output_consumer")
     run("${TEST_ROOT}/${variant}/vectis-response-head_consumer")
     run("${TEST_ROOT}/${variant}/vectis-response-head_consumer" bounded)
     run("${TEST_ROOT}/${variant}/vectis-response-head_consumer" plain)

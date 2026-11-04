@@ -66,7 +66,7 @@ typedef rotmos_status (*rotmos_xml_sink_fn)(const void *, size_t, void *,
 ROTMOS_API rotmos_status rotmos_xml_write_sink(
     const struct lonejson_record_view *, const rotmos_xml_config *,
     rotmos_xml_sink_fn, void *, rotmos_error *);
-/* Explicit output collection; max_bytes=0 selects 10 MiB. Empty out required.
+/* Explicit output collection; max_bytes=0 adds no ceiling. Empty out required.
  */
 ROTMOS_API rotmos_status rotmos_xml_serialize_materialized(
     const struct lonejson_record_view *, const rotmos_xml_config *, size_t,

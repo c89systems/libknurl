@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "vectis-route.h"
+#include <rotmos/kore.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -157,6 +158,12 @@ int reference_request_is_closed(const struct reference_request *request)
 {
     return request == NULL ||
            __atomic_load_n(&request->closed, __ATOMIC_ACQUIRE);
+}
+struct http_request *reference_request_kore(struct reference_request *request)
+{
+    return request != NULL && request->metadata == NULL
+               ? rotmos_kore_request(request->request)
+               : NULL;
 }
 void reference_route_callbacks(struct reference_app *app,
                                rotmos_server_callbacks *callbacks)

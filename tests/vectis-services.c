@@ -2,6 +2,129 @@
 #include <stdlib.h>
 #include <string.h>
 
+reference_status
+reference_static_file(struct reference_app *app,
+                      const struct reference_static_file_config *in,
+                      reference_error *error)
+{
+    rotmos_static_config c;
+    rotmos_error e;
+    rotmos_status s;
+    if (app == NULL || in == NULL)
+        return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
+    rotmos_static_config_init(&c);
+    c.path = in->path;
+    c.file_path = in->file_path;
+    c.content_type = in->content_type;
+    c.methods = in->methods;
+    s = rotmos_router_static_file(rotmos_server_router(app->server), &c, NULL,
+                                  &e);
+    return reference_error_from_rotmos(s, &e, error);
+}
+reference_status
+reference_static_directory(struct reference_app *app,
+                           const struct reference_static_directory_config *in,
+                           reference_error *error)
+{
+    rotmos_static_config c;
+    rotmos_error e;
+    rotmos_status s;
+    if (app == NULL || in == NULL)
+        return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
+    rotmos_static_config_init(&c);
+    c.path = in->path_prefix;
+    c.root_dir = in->root_dir;
+    c.content_type = in->content_type;
+    c.index_file = in->index_file;
+    c.index_enabled = in->index_enabled;
+    c.methods = in->methods;
+    s = rotmos_router_static_directory(rotmos_server_router(app->server), &c,
+                                       NULL, &e);
+    return reference_error_from_rotmos(s, &e, error);
+}
+reference_status
+reference_static_embedded(struct reference_app *app,
+                          const struct reference_static_embedded_config *in,
+                          reference_error *error)
+{
+    rotmos_static_config c;
+    rotmos_error e;
+    rotmos_status s;
+    if (app == NULL || in == NULL || in->fs == NULL)
+        return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
+    rotmos_static_config_init(&c);
+    c.path = in->path_prefix;
+    c.provider = in->fs->provider;
+    c.index_enabled = 1;
+    c.content_type = in->content_type;
+    c.cache_control = in->cache_control;
+    c.not_found_body = in->not_found_body;
+    c.not_found_content_type = in->not_found_content_type;
+    c.methods = in->methods;
+    s = rotmos_router_static_assets(rotmos_server_router(app->server), &c, NULL,
+                                    &e);
+    return reference_error_from_rotmos(s, &e, error);
+}
+void reference_openapi_document_init(struct reference_openapi_document *doc)
+{
+    if (doc != NULL) {
+        doc->title = "Vectis API";
+        doc->version = "0.0.0";
+    }
+}
+reference_status
+reference_openapi_request_json(reference_openapi_route_doc *doc,
+                               reference_openapi_schema schema,
+                               reference_error *error)
+{
+    rotmos_error e;
+    rotmos_status s = rotmos_openapi_request_json(doc, schema, &e);
+    return reference_error_from_rotmos(s, &e, error);
+}
+reference_status reference_openapi_response_json(
+    reference_openapi_route_doc *doc, int code, const char *description,
+    reference_openapi_schema schema, reference_error *error)
+{
+    rotmos_error e;
+    rotmos_status s =
+        rotmos_openapi_response_json(doc, code, description, schema, &e);
+    return reference_error_from_rotmos(s, &e, error);
+}
+reference_status reference_openapi_attach(
+    struct reference_app *app, unsigned int methods, const char *path,
+    const reference_openapi_route_doc *doc, reference_error *error)
+{
+    rotmos_error e;
+    rotmos_status s = rotmos_router_openapi_doc(
+        app != NULL ? rotmos_server_router(app->server) : NULL, methods, path,
+        doc, &e);
+    return reference_error_from_rotmos(s, &e, error);
+}
+reference_status reference_openapi_generate(
+    struct reference_app *app, const struct reference_openapi_document *in,
+    int format, struct reference_mutable_bytes *out, reference_error *error)
+{
+    rotmos_openapi_document doc;
+    rotmos_owned_bytes bytes;
+    rotmos_error e;
+    rotmos_status s;
+    if (out == NULL)
+        return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
+    out->data = NULL;
+    out->size = 0;
+    rotmos_openapi_document_init(&doc);
+    doc.title = in != NULL && in->title != NULL ? in->title : "Vectis API";
+    doc.version = in != NULL && in->version != NULL ? in->version : "0.0.0";
+    s = rotmos_router_openapi(app != NULL ? rotmos_server_router(app->server)
+                                          : NULL,
+                              &doc, (rotmos_openapi_format)format, &bytes, &e);
+    if (s == ROTMOS_OK) {
+        out->data = bytes.data;
+        out->size = bytes.length;
+    }
+    return reference_error_from_rotmos(s, &e, error);
+}
+
 struct proxy_string {
     struct proxy_string *next;
     rotmos_bytes view;

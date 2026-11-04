@@ -29,7 +29,7 @@ Attachment is inert and forbidden while the router is running. Route count still
 counts actual route declarations; annotations can be supplied before their routes.
 
 Initialize `rotmos_openapi_document` and call `rotmos_router_openapi`. NULL uses
-the defaults: title `librotmos API`, version `0.0.0`, and a 10 MiB output bound.
+the defaults: title `librotmos API`, version `0.0.0`, and no added output ceiling.
 Set max_bytes for another finite bound. Release successful output with
 `rotmos_owned_bytes_cleanup`; failure returns an empty output. Generation is
 synchronous and never creates a server, runs callbacks, or performs network I/O.

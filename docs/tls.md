@@ -143,5 +143,9 @@ callback certificate/key/chain, copied declarations, source reset/close and
 busy/closed ownership, bounded input, callback/OOM failures and startup reentry.
 It also exercises actual parent RESTORE/ERROR delivery, stop before fork and
 startup without an invented PERSIST call. The C reference provider exercises
-real key-manager PERSIST during issuance/renewal. Lua issuance-driven PERSIST
-and in-flight fault combinations remain part of the final integration review.
+real key-manager PERSIST during issuance/renewal. The [Lua issuance fixture](../tests/lua/acme.lua)
+reuses that local CA in the host VM, with actual challenge verification and live
+certificate serving. Returned, thrown and OOM persistence failures reach the
+parent; ERROR observer failure preserves their cause. Callback owners remain
+retained after the registration table changes. In-flight fault combinations
+remain part of the final integration review.

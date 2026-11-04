@@ -101,8 +101,18 @@ store and extra startup PERSIST are removed; Kore uses the host's runtime root
 directly and preserves its failure/restart file behavior. A zero TLS material
 ceiling adds no caller cap; consumed PEM bytes retain the backend's intrinsic
 input range. Lua startup/restore/error behavior is aligned; issuance-driven Lua
-PERSIST still needs its host-VM integration case.
+PERSIST now uses the local CA in the existing host VM, including live serving
+and returned/thrown/OOM failure with original error preservation.
 Legacy Lua TLS materials now reset through the public source API before their
 first read; failed reset closes once, and open/read diagnostics survive cleanup.
-Then finish the remaining surface audit and consolidated consumer/artifact gates. The complete
-Vectis adapter and final compatibility claim remain open.
+Static file/directory/packed and OpenAPI forwarding now use their existing public
+engines, with borrowed owner and metadata/default/HEAD/range/conditional cases.
+Materialized JSON/XML, REST and OpenAPI output no longer add a 10 MiB ceiling;
+positive caller bounds remain available. The C backend accessor is forwarded.
+
+The next consolidated audit must close concrete remaining boundaries: baseline
+typed JSON/XML declaration/map conversion (the current typed fixture mainly
+proves callback shape), host policy/observation forwarding, and the complete
+installed backend workflow. Core SDK archive/dependency-manifest packaging and
+final artifact verification are also unfinished; Lua source delivery is present.
+The complete Vectis adapter and final compatibility claim remain open.

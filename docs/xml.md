@@ -142,8 +142,8 @@ operate on the closing generator.
 ordinary source/HTTP response path. Failed source/reply registration takes no
 release notification. `rotmos_xml_write_sink` synchronously drains that generator;
 the sink must accept a complete chunk or fail. `rotmos_xml_serialize_materialized`
-and `rotmos_reply_xml_materialized` explicitly collect bounded output, defaulting
-to 10 MiB. Stack records are safe with these synchronous calls. Returned byte
+and `rotmos_reply_xml_materialized` explicitly collect output with an optional
+bound; zero adds no ceiling. Stack records are safe with these synchronous calls. Returned byte
 spans require their lengths and `rotmos_owned_bytes_cleanup`.
 
 The [mapped fixture](../tests/xml-mapped.c) covers Vectis mapping behavior,

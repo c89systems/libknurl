@@ -44,7 +44,7 @@ rotmos_status rotmos_reply_rest_json(rotmos_reply *reply,
     if (config == NULL)
         config = &defaults;
     memset(&sink, 0, sizeof(sink));
-    sink.bound = config->max_bytes != 0 ? config->max_bytes : 10485760UL;
+    sink.bound = config->max_bytes != 0 ? config->max_bytes : (size_t)-1;
     runtime = lonejson_new(NULL, &native);
     if (runtime == NULL)
         return rotmos_json_error(native.code, &native, error);

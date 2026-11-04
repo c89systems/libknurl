@@ -791,7 +791,7 @@ rotmos_xml_serialize_materialized(const lonejson_record_view *record,
     if (out == NULL || out->data != NULL || out->length != 0)
         return fail(error, ROTMOS_INVALID, "empty XML byte output required");
     memset(&m, 0, sizeof(m));
-    m.bound = bound ? bound : 10485760u;
+    m.bound = bound ? bound : (size_t)-1;
     status = rotmos_xml_write_sink(record, config, collect, &m, error);
     if (status == ROTMOS_OK)
         *out = m.bytes;

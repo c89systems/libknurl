@@ -139,8 +139,14 @@ translation. Host hydration/persistence also forwards through actual ACME
 issuance/renewal. The unrequested generation store and initial-key PERSIST are
 removed. Kore keeps its own runtime file/restart behavior, with no new layout
 or rollback. The adapter's no-added-material-cap setting now works; the
-intrinsic PEM input range is checked during consumption. Issuance-driven Lua
-PERSIST and the remaining service-option parity still need evidence.
+intrinsic PEM input range is checked during consumption. Lua PERSIST now runs
+through real local-CA issuance in the existing host VM; returned/thrown/OOM
+failure and error-observer preservation are covered. Static file/directory/packed
+and OpenAPI facade forwarding also use the installed public engines. Their cases
+check default indexes, custom MIME, HEAD/ranges/conditions, provider ownership,
+schema/path/default metadata and generation without route execution. The invented
+10 MiB output defaults are removed from materialized JSON/XML, REST and OpenAPI;
+explicit bounds still fail without replacing an existing reply/output owner.
 
 ## Evidence limits and work state
 

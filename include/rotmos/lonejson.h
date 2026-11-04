@@ -57,7 +57,7 @@ rotmos_source_json(const rotmos_json_source_config *config, rotmos_source **out,
 ROTMOS_API rotmos_status
 rotmos_reply_json(rotmos_reply *reply, int status,
                   const rotmos_json_source_config *config, rotmos_error *error);
-/* Explicitly materializes output with a finite bound; zero selects 10 MiB.
+/* Explicitly materializes output; zero adds no output ceiling.
  * These calls finish synchronously, so a C stack record is safe. */
 ROTMOS_API rotmos_status rotmos_json_serialize_materialized(
     const lonejson_schema_view *schema, const void *record, size_t max_bytes,
@@ -206,8 +206,9 @@ ROTMOS_API rotmos_status rotmos_route_group_rest_route(
     rotmos_route_group *, const rotmos_rest_route_config *, rotmos_route **,
     rotmos_error *);
 /* Synchronous bounded JSON composition; copies before returning. Defaults:
- * 200, application/json; charset=utf-8, 10 MiB and a trailing newline. Failure
- * preserves the existing staged reply. Header composition uses reply helpers.
+ * 200, application/json; charset=utf-8, no output ceiling and a trailing
+ * newline. Failure preserves the existing staged reply. Header composition uses
+ * reply helpers.
  */
 ROTMOS_API rotmos_status
 rotmos_reply_rest_json(rotmos_reply *, const lonejson_json_value *,

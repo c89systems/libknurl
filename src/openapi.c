@@ -301,7 +301,7 @@ rotmos_status rotmos_router_openapi(const rotmos_router *router,
         return rotmos_fail(error, ROTMOS_NOMEM, "openapi",
                            "allocating document generation");
     out->buffer.bound =
-        document->max_bytes != 0 ? document->max_bytes : 10485760UL;
+        document->max_bytes != 0 ? document->max_bytes : (size_t)-1;
     for (e = router->openapi; e != NULL && status == ROTMOS_OK; e = e->next) {
         status = collect(out, e->doc.request_schema, error);
         for (i = 0; i < e->doc.response_count && status == ROTMOS_OK; ++i)

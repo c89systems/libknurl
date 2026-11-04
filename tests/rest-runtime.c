@@ -376,6 +376,8 @@ static int replies(void)
     rotmos_reply *reply;
     rotmos_rest_reply_config config;
     rotmos_error error;
+    char *large;
+    size_t length = 10485761UL;
     runtime = lonejson_new(NULL, &native);
     CHECK(runtime != NULL);
     lonejson_json_value_init(runtime, &value);
@@ -397,8 +399,19 @@ static int replies(void)
     CHECK(rotmos_reply_status_code(reply) == 202 &&
           rotmos_reply_body(reply).length == 2 &&
           !memcmp(rotmos_reply_body(reply).data, "{}", 2));
+    large = malloc(length + 2);
+    CHECK(large != NULL);
+    large[0] = '"';
+    memset(large + 1, 'x', length);
+    large[length + 1] = '"';
+    CHECK(lonejson_json_value_set_buffer(&value, large, length + 2, &native) ==
+          LONEJSON_STATUS_OK);
+    CHECK(rotmos_reply_rest_json(reply, &value, NULL, &error) == ROTMOS_OK &&
+          rotmos_reply_body(reply).length == length + 3);
+    CHECK(((const char *)rotmos_reply_body(reply).data)[length + 2] == '\n');
     CHECK(rotmos_reply_destroy(reply, &error) == ROTMOS_OK);
     lonejson_json_value_cleanup(&value);
+    free(large);
     lonejson_free(runtime);
     return 0;
 }

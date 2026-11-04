@@ -359,7 +359,7 @@ rotmos_json_serialize_materialized(const lonejson_schema_view *schema,
     if (status != ROTMOS_OK)
         return status;
     memset(&sink, 0, sizeof(sink));
-    sink.bound = max_bytes != 0 ? max_bytes : 10485760UL;
+    sink.bound = max_bytes != 0 ? max_bytes : (size_t)-1;
     code = lonejson_serialize_sink(runtime, schema->map, record,
                                    rotmos_json_buffer_write, &sink, &native);
     status = rotmos_json_error(code, &native, error);

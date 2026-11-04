@@ -90,5 +90,18 @@ closing the host owner. The [ACME protocol fixture](../tests/acme-protocol.c)
 forwards host hydrate/persist callbacks through real issuance/renewal against a
 local HTTPS CA. The directory is the configured Kore runtime root, exactly as
 the host's existing state helpers expect. The generation store and extra startup
-PERSIST are removed. Remaining service options and issuance-driven Lua PERSIST
-still need their corresponding adapter evidence.
+PERSIST are removed. The [Lua issuance fixture](../tests/lua/acme.lua) also exercises
+the shipped facade/binding in its host VM through real issuance, live certificate
+serving and returned/thrown/OOM PERSIST failure, with original error preservation.
+
+The same C service adapter now maps file/directory/packed mounts, with no file
+or asset execution in its wrappers. The combined case checks index defaults,
+canonical redirects, custom content type, HEAD/ranges/conditions, missing packed
+entries and borrowed provider ownership. OpenAPI builders reuse identical public
+value layouts; app/title/error/output translation delegates attachment and JSON/
+YAML generation to the router. The [OpenAPI case](../tests/openapi.c) checks that
+adapter with baseline defaults, schema references, normalized paths, duplicate
+annotations and generation without handler execution. Default materialized codec,
+REST and OpenAPI output no longer acquire an unrequested 10 MiB ceiling; explicit
+limits retain their failure behavior. Remaining declaration/provider forwarding
+and final artifact gates still need the consolidated audit.

@@ -2,6 +2,65 @@
 #define ROTMOS_REFERENCE_VECTIS_SERVICES_H
 #include "vectis-route.h"
 
+struct reference_static_file_config {
+    const char *path, *file_path, *content_type;
+    unsigned int methods;
+};
+struct reference_static_directory_config {
+    const char *path_prefix, *root_dir, *content_type, *index_file;
+    int index_enabled;
+    unsigned int methods;
+};
+/* Host-owned packed lookup is registered as a public asset provider. */
+struct reference_embedded_fs {
+    rotmos_asset_provider *provider;
+};
+struct reference_static_embedded_config {
+    const char *path_prefix;
+    const struct reference_embedded_fs *fs;
+    const char *content_type, *cache_control, *not_found_body,
+        *not_found_content_type;
+    unsigned int methods;
+};
+reference_status
+reference_static_file(struct reference_app *,
+                      const struct reference_static_file_config *,
+                      reference_error *);
+reference_status
+reference_static_directory(struct reference_app *,
+                           const struct reference_static_directory_config *,
+                           reference_error *);
+reference_status
+reference_static_embedded(struct reference_app *,
+                          const struct reference_static_embedded_config *,
+                          reference_error *);
+
+/* These public value layouts/builders match Vectis exactly. */
+typedef rotmos_openapi_schema reference_openapi_schema;
+typedef rotmos_openapi_route_doc reference_openapi_route_doc;
+#define reference_openapi_route_doc_init rotmos_openapi_route_doc_init
+#define reference_openapi_route_doc_cleanup rotmos_openapi_route_doc_cleanup
+#define reference_openapi_lonejson_schema rotmos_openapi_lonejson_schema
+struct reference_openapi_document {
+    const char *title, *version;
+};
+void reference_openapi_document_init(struct reference_openapi_document *);
+reference_status reference_openapi_request_json(reference_openapi_route_doc *,
+                                                reference_openapi_schema,
+                                                reference_error *);
+reference_status reference_openapi_response_json(reference_openapi_route_doc *,
+                                                 int, const char *,
+                                                 reference_openapi_schema,
+                                                 reference_error *);
+reference_status reference_openapi_attach(struct reference_app *, unsigned int,
+                                          const char *,
+                                          const reference_openapi_route_doc *,
+                                          reference_error *);
+reference_status
+reference_openapi_generate(struct reference_app *,
+                           const struct reference_openapi_document *, int,
+                           struct reference_mutable_bytes *, reference_error *);
+
 /* Consumer-side value/callback translation of Vectis 6b1e263. Opaque outbound
  * proxy and WebSocket handles alias the public library handles. Contexts are
  * owned by the host and retained until server destruction; no server machinery
