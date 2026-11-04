@@ -122,4 +122,12 @@ host correlation/admission/observation callbacks through public configuration.
 The normal handler's explicit Kore accessor is exercised in installed static
 and shared consumers. Its opaque native pointer remains revision-specific; the
 adapter imports no private backend header or transport implementation.
-The consolidated operation/facade audit and consumer cutover remain open.
+Request JSON parsing and request/source array iteration now accept the baseline
+raw-map/storage/callback types. Source descriptors retain source-over-path-over-
+memory precedence. Borrowed readers start at their current position and remain
+open. Selected-array rewriting forwards LoneJSON's existing options and sink
+callbacks; baseline KEEP/DROP and failure cases prove output before input EOF
+and preserve the legacy LoneJSON error category. Lua ordinary JSON parsing and
+JSON/XML sink writing use the same public Core operations, with Lua-owned
+record interop and protected callbacks. The consolidated operation/facade audit
+and consumer cutover remain open.

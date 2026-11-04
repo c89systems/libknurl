@@ -1,6 +1,7 @@
 #ifndef ROTMOS_REFERENCE_VECTIS_ROUTE_H
 #define ROTMOS_REFERENCE_VECTIS_ROUTE_H
 #include <rotmos/rotmos.h>
+#include <rotmos/lonejson.h>
 
 /* Test-only baseline declarations. The application/server/route wrappers own
  * only associations and type/error conversion, never HTTP or source execution.
@@ -89,6 +90,24 @@ struct reference_source {
     void (*close)(struct reference_source *);
     void *impl;
 };
+struct reference_input_source {
+    const char *path;
+    struct reference_source *source;
+    const void *memory;
+    size_t memory_size;
+};
+typedef reference_status (*reference_array_item)(void *, size_t, void *,
+                                                 reference_error *);
+reference_status reference_request_array_each(struct reference_request *,
+                                              const char *,
+                                              const lonejson_map *, void *,
+                                              reference_array_item, void *,
+                                              reference_error *);
+reference_status reference_request_json_into(struct reference_request *,
+                                             const lonejson_map *, void *,
+                                             reference_error *);
+rotmos_status reference_input_open(const struct reference_input_source *,
+                                   rotmos_source **, rotmos_error *);
 rotmos_status reference_source_borrow(struct reference_source *,
                                       rotmos_source **, rotmos_error *);
 void reference_error_clear(reference_error *);

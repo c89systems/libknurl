@@ -37,7 +37,7 @@ ROTMOS_API void rotmos_body_result_cleanup(rotmos_body_result *result);
 ROTMOS_API void
 rotmos_body_policy_init_materialized(rotmos_body_policy *policy);
 ROTMOS_API void rotmos_body_policy_init_stream(rotmos_body_policy *policy);
-/* Borrowed completed transport body; STREAM never provides a reader/result. */
+/* Borrowed completed transport body; NONE/STREAM provide no reader/result. */
 ROTMOS_API rotmos_body *rotmos_request_body(rotmos_request *request);
 ROTMOS_API rotmos_body_storage rotmos_body_kind(const rotmos_body *body);
 ROTMOS_API rotmos_status rotmos_body_length(const rotmos_body *body,

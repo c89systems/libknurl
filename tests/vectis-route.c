@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "vectis-route.h"
+#include "vectis-forward.h"
 #include <rotmos/kore.h>
 #include <stdlib.h>
 #include <string.h>
@@ -659,13 +660,23 @@ static rotmos_status source_read(void *buffer, size_t capacity, size_t *count,
 {
     struct source_forward *f = data;
     struct reference_source_error host = {0, NULL};
+    rotmos_status status;
     *count = f->host->read(f->host, buffer, capacity, &host);
-    return *count != 0 ? ROTMOS_OK
-           : host.code != 0
-               ? source_error(&host, error,
-                              f->material ? "failed to read TLS source"
-                                          : "failed to read response source")
-               : ROTMOS_EOF;
+    if (*count != 0)
+        return ROTMOS_OK;
+    if (host.code == 0)
+        return ROTMOS_EOF;
+    status =
+        source_error(&host, error,
+                     f->material == 1   ? "failed to read TLS source"
+                     : f->material == 2 ? "failed to read input source"
+                                        : "failed to read response source");
+    if (f->material == 2) {
+        status = ROTMOS_IO;
+        if (error != NULL)
+            error->status = status;
+    }
+    return status;
 }
 static rotmos_status source_reset(void *data, rotmos_error *error)
 {
@@ -687,20 +698,36 @@ static void source_close(void *data, rotmos_status cause)
         f->host->close(f->host);
     free(f);
 }
-rotmos_status reference_source_borrow(struct reference_source *host,
-                                      rotmos_source **out, rotmos_error *error)
+static rotmos_status source_fail(rotmos_error *error, rotmos_status status,
+                                 const char *message)
+{
+    rotmos_error_clear(error);
+    if (error != NULL) {
+        error->status = status;
+        error->source = ROTMOS_ERROR_CORE;
+        strcpy(error->operation, "reference_source");
+        strncpy(error->message, message, sizeof(error->message) - 1);
+    }
+    return status;
+}
+static rotmos_status source_wrap(struct reference_source *host, int reset,
+                                 int context, rotmos_source **out,
+                                 rotmos_error *error)
 {
     struct source_forward *f;
     rotmos_source_config config;
     rotmos_status status;
+    if (out == NULL)
+        return source_fail(error, ROTMOS_INVALID, "source output is required");
     *out = NULL;
     if (host == NULL || host->read == NULL)
-        return ROTMOS_INVALID;
+        return source_fail(error, ROTMOS_INVALID, "source reader is required");
     f = calloc(1, sizeof(*f));
     if (f == NULL)
-        return ROTMOS_NOMEM;
+        return source_fail(error, ROTMOS_NOMEM,
+                           "cannot allocate source association");
     f->host = host;
-    f->material = 1;
+    f->material = context;
     rotmos_source_config_init(&config);
     config.read = source_read;
     config.reset = host->reset != NULL ? source_reset : NULL;
@@ -709,7 +736,7 @@ rotmos_status reference_source_borrow(struct reference_source *host,
     status = rotmos_source_new(&config, out, error);
     if (status != ROTMOS_OK)
         free(f);
-    else if (host->reset != NULL) {
+    else if (reset && host->reset != NULL) {
         status = rotmos_source_reset(*out, error);
         if (status != ROTMOS_OK) {
             (void)rotmos_source_destroy(*out, NULL);
@@ -717,6 +744,153 @@ rotmos_status reference_source_borrow(struct reference_source *host,
         }
     }
     return status;
+}
+rotmos_status reference_source_borrow(struct reference_source *host,
+                                      rotmos_source **out, rotmos_error *error)
+{
+    return source_wrap(host, 1, 1, out, error);
+}
+rotmos_status reference_input_open(const struct reference_input_source *in,
+                                   rotmos_source **out, rotmos_error *error)
+{
+    rotmos_bytes bytes;
+    if (out == NULL)
+        return source_fail(error, ROTMOS_INVALID, "source output is required");
+    *out = NULL;
+    if (in != NULL) {
+        if (in->source != NULL)
+            return source_wrap(in->source, 0, 2, out, error);
+        if (in->path != NULL)
+            return rotmos_source_file(in->path, out, error);
+        if (in->memory != NULL || in->memory_size != 0) {
+            bytes.data = in->memory;
+            bytes.length = in->memory_size;
+            return rotmos_source_bytes(bytes, out, error);
+        }
+    }
+    return source_fail(error, ROTMOS_INVALID, "input source is empty");
+}
+struct array_forward {
+    reference_array_item callback;
+    void *userdata;
+};
+static reference_status reader_error(reference_error *error,
+                                     rotmos_status status, const char *message)
+{
+    rotmos_error native;
+    source_fail(&native, status, message);
+    return reference_error_from_rotmos(status, &native, error);
+}
+static reference_status request_reader(struct reference_request *request,
+                                       reference_error *error)
+{
+    if (request == NULL)
+        return reader_error(error, ROTMOS_INVALID, "request is required");
+    if (request->metadata != NULL)
+        return reader_error(error, ROTMOS_INVALID,
+                            "streaming upload body requires its reader");
+    if (request->request == NULL)
+        return reader_error(error, ROTMOS_STATE, "request has closed");
+    if (rotmos_body_kind(rotmos_request_body(request->request)) ==
+        ROTMOS_BODY_STORAGE_NONE)
+        return reader_error(error, ROTMOS_INVALID,
+                            "request body reader is not available");
+    return REFERENCE_OK;
+}
+static rotmos_status forward_item(size_t index,
+                                  const lonejson_record_view *view, void *data,
+                                  rotmos_error *error)
+{
+    struct array_forward *forward = data;
+    reference_error translated;
+    reference_status status;
+    reference_error_clear(&translated);
+    status =
+        forward->callback(forward->userdata, index, view->record, &translated);
+    return reference_error_to_rotmos(status, &translated, error);
+}
+static reference_status array_result(rotmos_status status, rotmos_error *native,
+                                     reference_error *error)
+{
+    /* Vectis labels stream-open/next failures INVALID_JSON. Application item
+     * callback errors pass through unchanged; runtime creation keeps NOMEM. */
+    if (status == ROTMOS_IO ||
+        (status != ROTMOS_OK && !strcmp(native->operation, "lonejson"))) {
+        status = native->status = ROTMOS_INVALID;
+        native->source = ROTMOS_ERROR_LONEJSON;
+        native->native_code = (long)LONEJSON_STATUS_INVALID_JSON;
+    }
+    return reference_error_from_rotmos(status, native, error);
+}
+reference_status
+reference_request_array_each(struct reference_request *request,
+                             const char *selector, const lonejson_map *map,
+                             void *item, reference_array_item callback,
+                             void *userdata, reference_error *error)
+{
+    struct array_forward forward;
+    lonejson_schema_view schema;
+    rotmos_error native;
+    rotmos_status status;
+    reference_status translated;
+    if (callback == NULL || item == NULL)
+        return reader_error(error, ROTMOS_INVALID,
+                            "provide array callback and item storage");
+    translated = request_reader(request, error);
+    if (translated != REFERENCE_OK)
+        return translated;
+    forward.callback = callback;
+    forward.userdata = userdata;
+    status = rotmos_json_schema_from_map(NULL, map, &schema, &native);
+    if (status == ROTMOS_OK)
+        status = rotmos_request_json_array_each(request->request, selector,
+                                                &schema, item, forward_item,
+                                                &forward, &native);
+    return array_result(status, &native, error);
+}
+reference_status reference_request_json_into(struct reference_request *request,
+                                             const lonejson_map *map,
+                                             void *record,
+                                             reference_error *error)
+{
+    lonejson_schema_view schema;
+    rotmos_error native;
+    rotmos_status status;
+    reference_status translated = request_reader(request, error);
+    if (translated != REFERENCE_OK)
+        return translated;
+    status = rotmos_json_schema_from_map(NULL, map, &schema, &native);
+    if (status == ROTMOS_OK)
+        status = rotmos_request_json_into(request->request, &schema, record,
+                                          &native);
+    return reference_error_from_rotmos(status, &native, error);
+}
+reference_status
+reference_array_each_source(const struct reference_input_source *in,
+                            const char *selector, const lonejson_map *map,
+                            void *item, reference_array_item callback,
+                            void *userdata, reference_error *error)
+{
+    struct array_forward forward;
+    lonejson_schema_view schema;
+    rotmos_source *source = NULL;
+    rotmos_error native;
+    rotmos_status status;
+    if (callback == NULL || item == NULL)
+        return reader_error(error, ROTMOS_INVALID,
+                            "provide array callback and item storage");
+    forward.callback = callback;
+    forward.userdata = userdata;
+    status = rotmos_json_schema_from_map(NULL, map, &schema, &native);
+    if (status == ROTMOS_OK)
+        status = reference_input_open(in, &source, &native);
+    if (status != ROTMOS_OK)
+        return reference_error_from_rotmos(status, &native, error);
+    if (status == ROTMOS_OK)
+        status = rotmos_json_array_each_source(source, selector, &schema, item,
+                                               forward_item, &forward, &native);
+    rotmos_source_destroy(source, NULL);
+    return array_result(status, &native, error);
 }
 static reference_status response_source(struct reference_response *r, int code,
                                         const char *type,

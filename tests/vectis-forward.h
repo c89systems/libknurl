@@ -3,12 +3,21 @@
 #include "vectis-route.h"
 #include <rotmos/lonejson.h>
 #include <rotmos/xml.h>
-typedef rotmos_status (*reference_array_item)(void *, size_t, void *,
-                                              rotmos_error *);
-rotmos_status reference_request_array_each(rotmos_request *, const char *,
-                                           const lonejson_schema_view *, void *,
-                                           reference_array_item, void *,
-                                           rotmos_error *);
+reference_status
+reference_array_each_source(const struct reference_input_source *, const char *,
+                            const lonejson_map *, void *, reference_array_item,
+                            void *, reference_error *);
+struct reference_sink {
+    int (*write)(struct reference_sink *, const void *, size_t,
+                 struct reference_source_error *);
+    void (*close)(struct reference_sink *);
+    void *impl;
+};
+reference_status
+reference_array_rewrite_source(const struct reference_input_source *,
+                               const char *, struct reference_sink *,
+                               const lonejson_array_rewrite_options *,
+                               reference_error *);
 
 /* Baseline declaration shapes, including explicit map/storage sizes. These are
  * test-only consumer declarations, never a second shipped server API. */

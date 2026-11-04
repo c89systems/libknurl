@@ -56,6 +56,10 @@ f=assert(io.open(fixture.workspace..'/input.xml','wb'));f:write('<doc id="9">fil
 assert(ok(rotmos.xml.parse_record{schema=xml,path=fixture.workspace..'/input.xml',attribute_prefix='@'}).text=='file')
 local cr=ok(rotmos.json.parse_record{schema=captured,data='{"payload":{"n":1}}'})
 assert(ok(rotmos.json.serialize{schema=captured,record=cr})=='{"payload":{"n":1}}')
+local no_clear=require('lonejson').new{clear_destination_by_default=false}
+local no_clear_schema=no_clear.schema('capture',{no_clear.field('payload',no_clear.json_value())})
+local no_clear_record=ok(rotmos.json.parse_record{schema=no_clear_schema,data='{"payload":{"n":[1,true,null]}}'})
+assert(ok(rotmos.json.serialize{schema=no_clear_schema,record=no_clear_record})=='{"payload":{"n":[1,true,null]}}')
 for n=0,40,4 do
   fixture.fail_call(n,function() return rotmos.json.parse_record{schema=text,path=fixture.workspace..'/input.json'} end)
   fixture.fail_call(n,function() return rotmos.xml.parse_record{schema=xml,path=fixture.workspace..'/input.xml',attribute_prefix='@'} end)

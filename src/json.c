@@ -99,8 +99,13 @@ rotmos_status rotmos_json_runtime(const lonejson_schema_view *schema,
     *out = schema != NULL ? schema->runtime : NULL;
     if (*out == NULL) {
         *out = lonejson_new(NULL, &native);
-        if (*out == NULL)
-            return rotmos_json_error(native.code, &native, error);
+        if (*out == NULL) {
+            rotmos_status status =
+                rotmos_json_error(native.code, &native, error);
+            if (error != NULL)
+                strcpy(error->operation, "json_runtime");
+            return status;
+        }
         *owned = 1;
     }
     return ROTMOS_OK;
@@ -108,6 +113,7 @@ rotmos_status rotmos_json_runtime(const lonejson_schema_view *schema,
 
 struct json_reader {
     rotmos_body *body;
+    rotmos_source *source;
     rotmos_error failure;
 };
 static lonejson_read_result body_read(void *data, unsigned char *bytes,
@@ -118,13 +124,68 @@ static lonejson_read_result body_read(void *data, unsigned char *bytes,
     rotmos_status status;
     r = data;
     memset(&result, 0, sizeof(result));
-    status = rotmos_body_read(r->body, bytes, capacity, &result.bytes_read,
-                              &r->failure);
+    status = r->source != NULL
+                 ? rotmos_source_read(r->source, bytes, capacity,
+                                      &result.bytes_read, &r->failure)
+                 : rotmos_body_read(r->body, bytes, capacity,
+                                    &result.bytes_read, &r->failure);
+    if (status == ROTMOS_AGAIN)
+        status = rotmos_fail(&r->failure, ROTMOS_STATE, "json_parse",
+                             "synchronous parsing needs a blocking reader");
     if (status == ROTMOS_EOF)
         result.eof = 1;
-    else if (status != ROTMOS_OK)
+    else if (status != ROTMOS_OK) {
+        if (r->failure.status != status)
+            (void)rotmos_fail(&r->failure, status, "json_parse",
+                              "JSON input failed");
         result.error_code = EIO;
+    }
     return result;
+}
+static rotmos_status parse_reader(struct json_reader *reader,
+                                  const lonejson_schema_view *schema,
+                                  lonejson *runtime, void *record,
+                                  rotmos_error *error)
+{
+    lonejson_schema_view borrowed;
+    lonejson_error native;
+    lonejson_status code;
+    rotmos_status status;
+    int owned;
+    memset(&borrowed, 0, sizeof(borrowed));
+    borrowed.runtime = runtime;
+    status = rotmos_json_runtime(schema != NULL ? schema : &borrowed, &runtime,
+                                 &owned, error);
+    if (status != ROTMOS_OK)
+        return status;
+    if (schema != NULL)
+        code = lonejson_parse_reader(runtime, schema->map, record, body_read,
+                                     reader, &native);
+    else
+        code = lonejson_validate_reader(runtime, body_read, reader, &native);
+    status = rotmos_json_error(code, &native, error);
+    if (reader->failure.status != ROTMOS_OK) {
+        status = reader->failure.status;
+        if (error != NULL)
+            *error = reader->failure;
+    }
+    if (owned)
+        lonejson_free(runtime);
+    return status;
+}
+rotmos_status rotmos_json_parse_source(rotmos_source *source,
+                                       const lonejson_schema_view *schema,
+                                       void *record, rotmos_error *error)
+{
+    struct json_reader reader;
+    if (source == NULL || record == NULL)
+        return rotmos_fail(error, ROTMOS_INVALID, "json_parse",
+                           "provide source and initialized record");
+    if (rotmos_json_schema_check(schema, error) != ROTMOS_OK)
+        return ROTMOS_INVALID;
+    memset(&reader, 0, sizeof(reader));
+    reader.source = source;
+    return parse_reader(&reader, schema, NULL, record, error);
 }
 static rotmos_status parse_body(rotmos_request *request,
                                 const lonejson_schema_view *schema,
@@ -132,13 +193,9 @@ static rotmos_status parse_body(rotmos_request *request,
                                 rotmos_error *error)
 {
     struct json_reader reader;
-    lonejson_schema_view borrowed;
-    lonejson_error native;
-    lonejson_status code;
     rotmos_status status;
     rotmos_status rewind_status;
     rotmos_error rewind_error;
-    int owned;
     if (schema != NULL) {
         status = rotmos_json_schema_check(schema, error);
         if (status != ROTMOS_OK)
@@ -157,18 +214,7 @@ static rotmos_status parse_body(rotmos_request *request,
     status = rotmos_body_rewind(reader.body, error);
     if (status != ROTMOS_OK)
         return status;
-    memset(&borrowed, 0, sizeof(borrowed));
-    borrowed.runtime = runtime;
-    status = rotmos_json_runtime(schema != NULL ? schema : &borrowed, &runtime,
-                                 &owned, error);
-    if (status != ROTMOS_OK)
-        return status;
-    if (schema != NULL)
-        code = lonejson_parse_reader(runtime, schema->map, record, body_read,
-                                     &reader, &native);
-    else
-        code = lonejson_validate_reader(runtime, body_read, &reader, &native);
-    status = rotmos_json_error(code, &native, error);
+    status = parse_reader(&reader, schema, runtime, record, error);
     if (status == ROTMOS_LIMIT) {
         status = ROTMOS_INVALID;
         if (error != NULL)
@@ -185,8 +231,6 @@ static rotmos_status parse_body(rotmos_request *request,
         if (error != NULL)
             *error = rewind_error;
     }
-    if (owned)
-        lonejson_free(runtime);
     return status;
 }
 rotmos_status rotmos_request_json_into(rotmos_request *request,
@@ -397,44 +441,131 @@ rotmos_status rotmos_reply_json_materialized(rotmos_reply *reply, int code,
     return status;
 }
 
-struct json_file {
-    const lonejson_schema_view *schema;
-    const void *record;
-    int fd;
+struct json_sink {
+    rotmos_json_sink_fn write;
+    void *userdata;
     rotmos_error failure;
 };
-static lonejson_status json_file_sink(void *data, const void *bytes,
-                                      size_t count, lonejson_error *error)
+static lonejson_status sink_write(void *data, const void *bytes, size_t count,
+                                  lonejson_error *error)
 {
-    struct json_file *s = data;
+    struct json_sink *sink = data;
+    rotmos_status status;
+    const unsigned char *cursor = bytes;
+    size_t part;
     (void)error;
-    if (s->failure.status != ROTMOS_OK ||
-        rotmos_file_write(s->fd, bytes, count, &s->failure) != ROTMOS_OK)
+    if (sink->failure.status != ROTMOS_OK)
         return LONEJSON_STATUS_IO_ERROR;
+    while (count != 0) {
+        part = count > 4096 ? 4096 : count;
+        status = sink->write(cursor, part, sink->userdata, &sink->failure);
+        if (status == ROTMOS_AGAIN || status == ROTMOS_EOF ||
+            status < ROTMOS_OK || status > ROTMOS_BACKEND)
+            status = rotmos_fail(&sink->failure, ROTMOS_INVALID, "json_sink",
+                                 "synchronous sink must accept or fail");
+        if (status != ROTMOS_OK) {
+            if (sink->failure.status != status)
+                (void)rotmos_fail(&sink->failure, status, "json_sink",
+                                  "JSON sink rejected output");
+            return LONEJSON_STATUS_IO_ERROR;
+        }
+        cursor += part;
+        count -= part;
+    }
     return LONEJSON_STATUS_OK;
 }
-static rotmos_status json_file_write(int fd, void *data, rotmos_error *error)
+rotmos_status rotmos_json_write_sink(const lonejson_schema_view *schema,
+                                     const void *record,
+                                     rotmos_json_sink_fn write, void *userdata,
+                                     rotmos_error *error)
 {
-    struct json_file *s = data;
+    struct json_sink sink;
     lonejson *runtime;
     lonejson_error native;
     lonejson_status code;
     rotmos_status status;
     int owned;
-    s->fd = fd;
-    status = rotmos_json_runtime(s->schema, &runtime, &owned, error);
+    if (record == NULL || write == NULL)
+        return rotmos_fail(error, ROTMOS_INVALID, "json_sink",
+                           "provide record and sink callback");
+    status = rotmos_json_schema_check(schema, error);
     if (status != ROTMOS_OK)
         return status;
-    code = lonejson_serialize_sink(runtime, s->schema->map, s->record,
-                                   json_file_sink, s, &native);
+    status = rotmos_json_runtime(schema, &runtime, &owned, error);
+    if (status != ROTMOS_OK)
+        return status;
+    memset(&sink, 0, sizeof(sink));
+    sink.write = write;
+    sink.userdata = userdata;
+    code = lonejson_serialize_sink(runtime, schema->map, record, sink_write,
+                                   &sink, &native);
     if (owned)
         lonejson_free(runtime);
-    if (s->failure.status != ROTMOS_OK) {
+    if (sink.failure.status != ROTMOS_OK) {
         if (error != NULL)
-            *error = s->failure;
-        return s->failure.status;
+            *error = sink.failure;
+        return sink.failure.status;
     }
     return rotmos_json_error(code, &native, error);
+}
+rotmos_status rotmos_json_array_rewrite_source(
+    rotmos_source *source, const char *selector, lonejson *runtime,
+    const lonejson_array_rewrite_options *options, rotmos_json_sink_fn write,
+    void *userdata, rotmos_error *error)
+{
+    struct json_reader reader;
+    struct json_sink sink;
+    lonejson_schema_view schema;
+    lonejson_error native;
+    lonejson_status code;
+    rotmos_status status;
+    int owned;
+    if (source == NULL || options == NULL || write == NULL)
+        return rotmos_fail(error, ROTMOS_INVALID, "json_rewrite",
+                           "provide source, rewrite options and sink");
+    memset(&schema, 0, sizeof(schema));
+    schema.runtime = runtime;
+    status = rotmos_json_runtime(&schema, &runtime, &owned, error);
+    if (status != ROTMOS_OK)
+        return status;
+    memset(&reader, 0, sizeof(reader));
+    reader.source = source;
+    memset(&sink, 0, sizeof(sink));
+    sink.write = write;
+    sink.userdata = userdata;
+    code = lonejson_array_rewrite_reader(runtime, selector, body_read, &reader,
+                                         sink_write, &sink, options, &native);
+    if (owned)
+        lonejson_free(runtime);
+    status = rotmos_json_error(code, &native, error);
+    if (reader.failure.status != ROTMOS_OK) {
+        status = reader.failure.status;
+        if (error != NULL)
+            *error = reader.failure;
+    } else if (sink.failure.status != ROTMOS_OK) {
+        status = sink.failure.status;
+        if (error != NULL)
+            *error = sink.failure;
+    }
+    return status;
+}
+struct json_file {
+    const lonejson_schema_view *schema;
+    const void *record;
+    int fd;
+};
+static rotmos_status json_file_sink(const void *bytes, size_t count, void *data,
+                                    rotmos_error *error)
+{
+    struct json_file *s = data;
+    return rotmos_file_write(s->fd, bytes, count, error);
+}
+static rotmos_status json_file_write(int fd, void *data, rotmos_error *error)
+{
+    struct json_file *s = data;
+    s->fd = fd;
+    return rotmos_json_write_sink(s->schema, s->record, json_file_sink, s,
+                                  error);
 }
 rotmos_status rotmos_reply_json_spooled(rotmos_reply *reply, int code,
                                         const lonejson_schema_view *schema,

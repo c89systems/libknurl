@@ -161,6 +161,70 @@ static int selected_items(void)
     }
     return 0;
 }
+static int parse_sources(void)
+{
+    struct array_input input;
+    struct record record;
+    lonejson_schema_view schema;
+    rotmos_source_config config;
+    rotmos_source *source;
+    rotmos_error error;
+    int scenario;
+    CHECK(rotmos_json_schema_from_map(NULL, &map, &schema, &error) ==
+          ROTMOS_OK);
+    for (scenario = 0; scenario < 4; ++scenario) {
+        memset(&input, 0, sizeof(input));
+        memset(&record, 0, sizeof(record));
+        input.text = scenario == 1 ? "{\"message\":\"broken\""
+                                   : "{\"message\":\"parsed\"}";
+        input.fail = scenario == 2   ? ROTMOS_IO
+                     : scenario == 3 ? ROTMOS_AGAIN
+                                     : ROTMOS_OK;
+        rotmos_source_config_init(&config);
+        config.read = array_read;
+        config.close = array_close;
+        config.userdata = &input;
+        CHECK(rotmos_source_new(&config, &source, &error) == ROTMOS_OK);
+        CHECK(rotmos_json_parse_source(source, &schema, &record, &error) ==
+              (scenario == 0   ? ROTMOS_OK
+               : scenario == 1 ? ROTMOS_INVALID
+               : scenario == 2 ? ROTMOS_IO
+                               : ROTMOS_STATE));
+        CHECK(input.closed == 0);
+        if (scenario == 0)
+            CHECK(input.ended && record.message != NULL &&
+                  !strcmp(record.message, "parsed"));
+        lonejson_cleanup(&map, &record);
+        CHECK(rotmos_source_destroy(source, &error) == ROTMOS_OK &&
+              input.closed == 1);
+    }
+    return 0;
+}
+struct sink_fixture {
+    char *buffer;
+    size_t length, calls;
+    int fail;
+};
+static rotmos_status write_sink(const void *bytes, size_t length, void *data,
+                                rotmos_error *error)
+{
+    struct sink_fixture *sink = data;
+    ++sink->calls;
+    if (sink->fail == 2)
+        return ROTMOS_AGAIN;
+    if (length > 4096 || sink->length + length > 131100)
+        return ROTMOS_LIMIT;
+    if (sink->fail && sink->calls == 2) {
+        rotmos_error_clear(error);
+        error->status = ROTMOS_IO;
+        error->native_code = 17;
+        strcpy(error->message, "sink stopped");
+        return ROTMOS_IO;
+    }
+    memcpy(sink->buffer + sink->length, bytes, length);
+    sink->length += length;
+    return ROTMOS_OK;
+}
 int main(void)
 {
     struct record record;
@@ -176,7 +240,9 @@ int main(void)
     char *collected;
     size_t count;
     size_t length;
+    struct sink_fixture sink;
     CHECK(selected_items() == 0);
+    CHECK(parse_sources() == 0);
     CHECK(rotmos_json_schema_from_map(NULL, &large_map, &schema, &error) ==
               ROTMOS_OK &&
           schema.record_size == sizeof(struct large_record));
@@ -194,6 +260,23 @@ int main(void)
     CHECK(rotmos_json_serialize_materialized(&schema, &record, 0, &bytes,
                                              &error) == ROTMOS_OK &&
           bytes.length > 131072);
+    memset(&sink, 0, sizeof(sink));
+    sink.buffer = collected;
+    CHECK(rotmos_json_write_sink(&schema, &record, write_sink, &sink, &error) ==
+              ROTMOS_OK &&
+          sink.length == bytes.length && sink.calls > 32 &&
+          memcmp(collected, bytes.data, sink.length) == 0);
+    sink.length = sink.calls = 0;
+    sink.fail = 1;
+    CHECK(rotmos_json_write_sink(&schema, &record, write_sink, &sink, &error) ==
+              ROTMOS_IO &&
+          sink.calls == 2 && error.native_code == 17 &&
+          !strcmp(error.message, "sink stopped"));
+    sink.calls = 0;
+    sink.fail = 2;
+    CHECK(rotmos_json_write_sink(&schema, &record, write_sink, &sink, &error) ==
+              ROTMOS_INVALID &&
+          sink.calls == 1 && strstr(error.message, "synchronous sink") != NULL);
     rotmos_json_source_config_init(&config);
     config.record.schema = schema;
     config.record.record = &record;

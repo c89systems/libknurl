@@ -104,48 +104,73 @@ struct array_fixture {
     size_t count;
     int fail;
 };
-static rotmos_status array_item(void *data, size_t index, void *record,
-                                rotmos_error *error)
+static reference_status array_item(void *data, size_t index, void *record,
+                                   reference_error *error)
 {
     struct array_fixture *fixture = data;
     struct input *input = record;
     if (record != fixture->storage || index != fixture->count ||
         strcmp(input->message, index == 0 ? "one" : "two") != 0)
-        return ROTMOS_STATE;
+        return REFERENCE_STATE;
     ++fixture->count;
-    (void)error;
-    return fixture->fail ? ROTMOS_IO : ROTMOS_OK;
+    if (fixture->fail) {
+        reference_error_clear(error);
+        error->code = REFERENCE_STATE;
+        error->source = 1;
+        error->dependency_code = 77;
+        strcpy(error->message, "array stopped");
+        return REFERENCE_STATE;
+    }
+    return REFERENCE_OK;
 }
 static rotmos_status array_route(rotmos_request *request, rotmos_reply *reply,
                                  void *data, rotmos_error *error)
 {
     struct input item;
     struct array_fixture fixture;
-    lonejson_schema_view schema;
-    rotmos_status status;
+    reference_status status;
+    reference_error host_error;
     char first;
     size_t count;
-    (void)data;
     memset(&item, 0, sizeof(item));
     memset(&fixture, 0, sizeof(fixture));
     fixture.storage = &item;
     fixture.fail = 1;
-    if (rotmos_body_kind(rotmos_request_body(request)) != ROTMOS_BODY_FILE ||
-        rotmos_json_schema_from_map(NULL, &input_map, &schema, error) !=
-            ROTMOS_OK)
+    if (data != NULL) {
+        struct reference_request *host = rotmos_request_userdata(request);
+        if (rotmos_request_body(request) != NULL ||
+            reference_request_array_each(host, "items", &input_map, &item,
+                                         array_item, &fixture,
+                                         &host_error) != REFERENCE_INVALID ||
+            host_error.source != 1 ||
+            strstr(host_error.message, "reader") == NULL ||
+            reference_request_json_into(host, &input_map, &item, &host_error) !=
+                REFERENCE_INVALID ||
+            reference_request_json_into(host, &input_map, &item, NULL) !=
+                REFERENCE_INVALID)
+            return ROTMOS_STATE;
+        ++array_called;
+        return rotmos_reply_text(reply, 200, "text/plain", "missing reader",
+                                 error);
+    }
+    if (rotmos_body_kind(rotmos_request_body(request)) != ROTMOS_BODY_FILE)
         return ROTMOS_STATE;
-    status = reference_request_array_each(request, "items", &schema, &item,
-                                          array_item, &fixture, error);
-    if (status != ROTMOS_IO || fixture.count != 1 || item.message != NULL ||
+    status = reference_request_array_each(rotmos_request_userdata(request),
+                                          "items", &input_map, &item,
+                                          array_item, &fixture, &host_error);
+    if (status != REFERENCE_STATE || host_error.dependency_code != 77 ||
+        strcmp(host_error.message, "array stopped") || fixture.count != 1 ||
+        item.message != NULL ||
         rotmos_body_read(rotmos_request_body(request), &first, 1, &count,
                          error) != ROTMOS_OK ||
         first != '{' || count != 1)
         return ROTMOS_STATE;
     fixture.fail = 0;
     fixture.count = 0;
-    status = reference_request_array_each(request, "items", &schema, &item,
-                                          array_item, &fixture, error);
-    if (status != ROTMOS_OK || fixture.count != 2 || item.message != NULL ||
+    status = reference_request_array_each(rotmos_request_userdata(request),
+                                          "items", &input_map, &item,
+                                          array_item, &fixture, &host_error);
+    if (status != REFERENCE_OK || fixture.count != 2 || item.message != NULL ||
         rotmos_body_read(rotmos_request_body(request), &first, 1, &count,
                          error) != ROTMOS_OK ||
         first != '{' || count != 1)
@@ -204,10 +229,18 @@ static reference_status host_echo(struct reference_app *app,
 {
     const struct input *in = input;
     struct output *out = output;
-    (void)error;
+    struct input repeated;
     if (app == NULL || reference_request_kore(request) == NULL || in == NULL ||
         out == NULL || data == NULL || strcmp(data, "forwarded") != 0)
         return REFERENCE_STATE;
+    memset(&repeated, 0, sizeof(repeated));
+    if (reference_request_json_into(request, &input_map, &repeated, error) !=
+            REFERENCE_OK ||
+        repeated.message == NULL || strcmp(repeated.message, in->message)) {
+        lonejson_cleanup(&input_map, &repeated);
+        return REFERENCE_STATE;
+    }
+    lonejson_cleanup(&input_map, &repeated);
     ++called;
     (void)snprintf(out->result, sizeof(out->result), "%s", in->message);
     return REFERENCE_OK;
@@ -290,7 +323,7 @@ static rotmos_status stop(rotmos_request *request, rotmos_reply *reply,
 {
     (void)data;
     stopped = called == 3 && typed_called == 4 && replaced == 1 &&
-              array_called == 1 && record_acquired == 7 && record_released == 7;
+              array_called == 2 && record_acquired == 7 && record_released == 7;
     if (!stopped) {
         (void)fprintf(stderr, "JSON counts: echo=%d typed=%d replaced=%d\n",
                       called, typed_called, replaced);
@@ -452,6 +485,8 @@ static int client(unsigned short port)
     CHECK(exchange(port, "/generated", "{\"message\":\"generated\"}", 422,
                    "{\"reason\":\"generated\"}", 0, 0) == 0);
     CHECK(exchange(port, "/empty", "", 204, "", 0, 0) == 0);
+    CHECK(exchange(port, "/missing-reader", "", 200, "missing reader", 0, 0) ==
+          0);
     CHECK(exchange(port, "/array",
                    "{\"items\":[{\"message\":\"one\"},{\"message\":\"two\"}]}",
                    200, "array", 0, 0) == 0);
@@ -669,6 +704,14 @@ int main(int argc, char **argv)
     ordinary.handler = array_route;
     rotmos_body_policy_init_materialized(&ordinary.body);
     ordinary.body.memory_buffer_limit_bytes = 8;
+    CHECK(rotmos_router_route(rotmos_server_router(server), &ordinary, NULL,
+                              &error) == ROTMOS_OK);
+    rotmos_route_config_init(&ordinary);
+    ordinary.method = ROTMOS_HTTP_POST;
+    ordinary.path = "/missing-reader";
+    ordinary.body.mode = ROTMOS_BODY_NONE;
+    ordinary.handler = array_route;
+    ordinary.userdata = "missing";
     CHECK(rotmos_router_route(rotmos_server_router(server), &ordinary, NULL,
                               &error) == ROTMOS_OK);
     rotmos_route_config_init(&ordinary);

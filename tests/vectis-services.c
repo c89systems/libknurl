@@ -651,7 +651,7 @@ static rotmos_status tls_open(rotmos_source **out, void *data,
 {
     return reference_source_borrow(data, out, error);
 }
-static void tls_material(const struct reference_tls_material *in,
+static void tls_material(const struct reference_input_source *in,
                          rotmos_tls_material *out)
 {
     rotmos_tls_material_init(out);

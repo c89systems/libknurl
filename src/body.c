@@ -195,6 +195,7 @@ rotmos_body *rotmos_request_body(rotmos_request *request)
     return request != NULL && request->body_store != NULL &&
                    request->body_store->complete &&
                    request->body_store->failure == ROTMOS_OK &&
+                   request->body_store->policy.mode != ROTMOS_BODY_NONE &&
                    request->body_store->policy.mode != ROTMOS_BODY_STREAM
                ? request->body_store
                : NULL;

@@ -42,10 +42,10 @@ status = rotmos_router_json_route(rotmos_server_router(server), &json, NULL, &er
 ```
 
 The default transport policy is MATERIALIZED with the ordinary inherited body
-limit and 256 KiB memory threshold. Select a finite memory-only budget, or declare
-`server_config.limits.body_spool_directory` and allow spooling. Startup validates
-the whole declared policy; it rejects a potentially spilling plan without that
-permission and directory. Vectis maps its existing effective body/spool settings.
+limit and 256 KiB memory threshold. Select a finite memory-only budget or allow
+spooling, with an optional `server_config.limits.body_spool_directory`. A NULL
+directory uses the ordinary temporary directory. Registration validates the
+whole declared policy. Vectis maps its existing effective body/spool settings.
 Explicit BUFFERED policies retain their memory-bound rules. A JSON policy supplied
 to this typed facade selects its materialized transport path. Generic raw JSON
 body-plan execution remains a separate implementation surface.
@@ -58,6 +58,14 @@ Decoding a typed object still materializes that record. Callers of `json_into`
 initialize their destination and clean up partial fields through LoneJSON.
 Errors retain the LoneJSON status and line/column/offset in the public error;
 input shape/field-overflow failures become HTTP 400 in the typed facade.
+
+`rotmos_json_parse_source` uses the same mapped reader path from a borrowed
+source's current position. It never resets or closes the source. The caller
+initializes and cleans the record, including partial failures. `AGAIN` is a
+terminal STATE error for this synchronous call; a live blocking source belongs
+on a native reader thread. Lua `parse`/`parse_record` and `request.json_record`
+create their own record with public LoneJSON interop and use these Core parse
+operations. The binding has no separate body-reader or rewind implementation.
 
 Auth/before hooks finish before typed decoding and handler execution. After hooks
 may inspect or replace the selected staged source before transport submission.
@@ -73,6 +81,14 @@ serialization synchronously and accepts stack records. Its separately named
 materialized operation accepts an optional output bound; zero adds no ceiling. Failure
 leaves the prior reply intact. `rotmos_json_serialize_materialized` returns an owned
 byte value released by `rotmos_owned_bytes_cleanup`.
+
+`rotmos_json_write_sink` emits bounded chunks synchronously through LoneJSON's
+sink serializer without collecting output. A failed callback stops output and
+preserves its status/diagnostics. `rotmos.json.write` binds this operation;
+`rotmos.xml.write` binds the existing XML sink operation. The binding protects
+Lua callbacks, counts accepted bytes and retains its private record; it does
+not construct a temporary Source or run another serialization path. External
+mutable records use buffered serialization; callback writers require value tables.
 
 `rotmos_reply_json_spooled` preserves Vectis's `response_json_generated` behavior:
 LoneJSON's public sink serializer writes directly into a private unlinked response
@@ -104,6 +120,13 @@ a synchronous reader returning AGAIN fails with STATE. No document/array is
 collected. Callback failures stop immediately and retain their error details.
 The source and item storage must remain valid and exclusively used through
 return. The unused owned-record push-parser wrapper has been removed.
+
+`rotmos_json_array_rewrite_source` lifts Vectis's reader/sink rewrite helper via
+LoneJSON's public rewrite options. It borrows the current source position, mapped
+item storage and callbacks, supports the dependency's KEEP/DROP/replacement and
+append operations, and emits output before input EOF. Neither the document nor
+selected array is collected. The C reference adapter preserves the original
+source/path/memory declaration precedence and legacy error translation.
 
 Lua `rotmos.json.array_each{schema,selector,callback,source=...}` binds that public
 C operation. Supply exactly one of `source`, `path` or already-buffered `data`.

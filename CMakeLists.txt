@@ -451,6 +451,14 @@ if(BUILD_TESTING)
     "-DROTMOS_CAN_RUN=${rotmos_can_run}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/InstalledConsumer.cmake")
   set_tests_properties(rotmos.installed-consumer PROPERTIES TIMEOUT 60)
+  add_test(NAME rotmos.installed-json-consumer COMMAND "${CMAKE_COMMAND}"
+    "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}" "-DROTMOS_BINARY=${CMAKE_CURRENT_BINARY_DIR}"
+    "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/json-consumer"
+    "-DTOOLCHAIN=${rotmos_toolchain}" "-DROTMOS_TARGET=${ROTMOS_TARGET}"
+    "-DROTMOS_SDK_ROOT=${ROTMOS_SDK_ROOT}" "-DROTMOS_CAN_RUN=${rotmos_can_run}"
+    "-DROTMOS_CONSUMER_SURFACES=json;json-runtime;vectis-typed"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/InstalledConsumer.cmake")
+  set_tests_properties(rotmos.installed-json-consumer PROPERTIES TIMEOUT 30)
   add_test(NAME kore.patch-replay
     COMMAND "${CMAKE_COMMAND}"
       "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
@@ -480,7 +488,8 @@ if(BUILD_TESTING)
     # gates. Keep new runtime cases from silently escaping cross-target gating.
     get_property(runtime_tests DIRECTORY PROPERTY TESTS)
     list(FILTER runtime_tests INCLUDE REGEX "^rotmos\\.")
-    list(REMOVE_ITEM runtime_tests rotmos.public-boundary rotmos.installed-consumer rotmos.sdk-package)
+    list(REMOVE_ITEM runtime_tests rotmos.public-boundary rotmos.installed-consumer
+      rotmos.installed-json-consumer rotmos.sdk-package)
     set_tests_properties(${runtime_tests} PROPERTIES DISABLED TRUE)
   endif()
 endif()

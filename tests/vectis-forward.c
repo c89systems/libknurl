@@ -3,30 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 
-struct array_forward {
-    reference_array_item callback;
-    void *userdata;
-};
-static rotmos_status forward_item(size_t index,
-                                  const lonejson_record_view *view, void *data,
-                                  rotmos_error *error)
-{
-    struct array_forward *forward = data;
-    return forward->callback(forward->userdata, index, view->record, error);
-}
-rotmos_status reference_request_array_each(rotmos_request *request,
-                                           const char *selector,
-                                           const lonejson_schema_view *schema,
-                                           void *item,
-                                           reference_array_item callback,
-                                           void *userdata, rotmos_error *error)
-{
-    struct array_forward forward;
-    forward.callback = callback;
-    forward.userdata = userdata;
-    return rotmos_request_json_array_each(request, selector, schema, item,
-                                          forward_item, &forward, error);
-}
 static reference_status invalid(reference_error *error, const char *message)
 {
     reference_error_clear(error);
@@ -36,6 +12,49 @@ static reference_status invalid(reference_error *error, const char *message)
         (void)snprintf(error->message, sizeof(error->message), "%s", message);
     }
     return REFERENCE_INVALID;
+}
+static rotmos_status rewrite_sink(const void *bytes, size_t length, void *data,
+                                  rotmos_error *error)
+{
+    struct reference_sink *sink = data;
+    struct reference_source_error cause = {0, NULL};
+    if (sink->write(sink, bytes, length, &cause))
+        return ROTMOS_OK;
+    rotmos_error_clear(error);
+    error->status = ROTMOS_INVALID;
+    error->source = ROTMOS_ERROR_LONEJSON;
+    error->native_code = (long)LONEJSON_STATUS_IO_ERROR;
+    (void)snprintf(error->message, sizeof(error->message), "%s",
+                   cause.message != NULL ? cause.message
+                                         : "rewrite sink failed");
+    return ROTMOS_INVALID;
+}
+reference_status reference_array_rewrite_source(
+    const struct reference_input_source *in, const char *selector,
+    struct reference_sink *sink, const lonejson_array_rewrite_options *options,
+    reference_error *error)
+{
+    rotmos_source *source = NULL;
+    rotmos_error native;
+    rotmos_status status;
+    if (sink == NULL || sink->write == NULL || options == NULL)
+        return invalid(error, "provide JSON rewrite sink and options");
+    status = reference_input_open(in, &source, &native);
+    if (status != ROTMOS_OK)
+        return reference_error_from_rotmos(status, &native, error);
+    if (status == ROTMOS_OK)
+        status = rotmos_json_array_rewrite_source(
+            source, selector, NULL, options, rewrite_sink, sink, &native);
+    rotmos_source_destroy(source, NULL);
+    if (status == ROTMOS_IO) {
+        status = native.status = ROTMOS_INVALID;
+        native.source = ROTMOS_ERROR_LONEJSON;
+        native.native_code = (long)LONEJSON_STATUS_IO_ERROR;
+    }
+    if (status != ROTMOS_OK && native.source == ROTMOS_ERROR_LONEJSON &&
+        strcmp(native.operation, "json_runtime"))
+        status = native.status = ROTMOS_INVALID;
+    return reference_error_from_rotmos(status, &native, error);
 }
 /* Vectis's declared record-size validation; this is not an encoded-output cap.
  * JSON permits absent maps. XML requires a map. Core schema views remain the

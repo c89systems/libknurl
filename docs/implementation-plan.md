@@ -127,6 +127,16 @@ extracted-byte verification checks inventory/digests, metadata, licenses, target
 architecture, ABI identities, paths, exports and relocated static/shared CMake
 and pkg-config examples. Lua source delivery remains a separate product using
 the host VM. These are development rehearsals, not a release or upload manifest.
-The next work is the consolidated operation-by-operation adapter/facade audit
-and remaining compatibility/fault gates. The complete Vectis compatibility claim
+JSON request/source parsing and synchronous JSON/XML sink writing now share the
+public C operations with Lua. Vectis's selected-array rewrite helper delegates
+to the released LoneJSON reader/sink rewriter. The reference adapter uses raw
+map/item/callback signatures, source precedence and legacy error conversion,
+including borrowed reader position and caller ownership. The cases also
+preserve NONE's lack of a body reader and missing-reader failures;
+the shared Core getter now hides NONE storage rather than exposing an empty
+reader to adapters. Focused installed JSON consumer targets reuse the ordinary
+CMake/CTest fixture without rebuilding every
+unrelated consumer for this surface.
+The next work is the remaining operation-by-operation adapter/facade audit and
+compatibility/fault gates. The complete Vectis compatibility claim
 and separately authorized consumer cutover remain open.

@@ -272,12 +272,6 @@ reference_webdav_register(struct reference_app *,
                           rotmos_storage_provider *, reference_error *);
 
 /* Vectis resolves app paths and selects its durable-storage client. */
-struct reference_tls_material {
-    const char *path;
-    struct reference_source *source;
-    const void *memory;
-    size_t memory_size;
-};
 typedef reference_status (*reference_acme_state_fn)(
     const char *runtime_directory, const char *const *domains,
     size_t domain_count, void *userdata, reference_error *);
@@ -297,7 +291,7 @@ struct reference_tls_config {
     int http_redirect_enabled, require_client_certificate;
     const char *http_redirect_bind, *acme_email, *acme_directory_url,
         *acme_state_dir;
-    struct reference_tls_material bundle, certificate, private_key, ca_bundle,
+    struct reference_input_source bundle, certificate, private_key, ca_bundle,
         client_ca_bundle;
     struct reference_acme_provider state;
     long persist_timeout_ms;

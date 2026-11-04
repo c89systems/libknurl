@@ -1,7 +1,6 @@
 #include "binding.h"
 #include <rotmos/lonejson.h>
 #include <lonejson_lua.h>
-#include <errno.h>
 
 #define RL_CODEC "rotmos.codec_owner"
 struct codec {
@@ -370,22 +369,52 @@ static int sink_trampoline(lua_State *L)
             rl_callback_error(L, -1, c->error, "writer sink rejected bytes");
     return 0;
 }
+struct writer_sink {
+    lua_State *L;
+    rotmos_u64 written;
+};
+static rotmos_status writer_sink(const void *bytes, size_t length, void *data,
+                                 rotmos_error *error)
+{
+    struct writer_sink *sink = data;
+    struct sink_call call;
+    rotmos_status status;
+    rotmos_u64 amount;
+    const unsigned char *cursor = bytes;
+    size_t part;
+    memset(&call, 0, sizeof(call));
+    call.error = error;
+    while (length != 0) {
+        part = length > 4096 ? 4096 : length;
+        call.bytes = cursor;
+        call.length = part;
+        status = rl_protect_value(sink->L, sink_trampoline, &call, 2, error);
+        if (status == ROTMOS_OK)
+            status = call.status;
+        if (status != ROTMOS_OK)
+            return status;
+        rotmos_u64_from_size(part, &amount, NULL);
+        status = rotmos_u64_add(sink->written, amount, &sink->written, error);
+        if (status != ROTMOS_OK)
+            return status;
+        cursor += part;
+        length -= part;
+    }
+    return ROTMOS_OK;
+}
 static int write(lua_State *L, int xml)
 {
-    struct rl_source *s;
-    struct sink_call call;
+    struct codec *c;
+    struct writer_sink sink;
     rotmos_error error;
     rotmos_status status;
-    rotmos_u64 written, amount;
-    unsigned char *buffer;
-    size_t count;
+    int owner;
     if (!lua_isfunction(L, 2) && !lua_istable(L, 2))
         return rl_error(
             L,
             (rl_fail(&error, ROTMOS_INVALID, "writer sink required"), &error));
     if (lua_istable(L, 2)) {
-        /* Vectis snapshots a table sink's function before output. Mutating the
-         * table during a callback cannot replace the active sink. */
+        /* Snapshot the sink before serialization, as in Vectis. */
         lua_getfield(L, 2, "write");
         if (!lua_isfunction(L, -1))
             return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
@@ -393,88 +422,28 @@ static int write(lua_State *L, int xml)
                                 &error));
         lua_replace(L, 2);
     }
-    if (source(L, xml) != 1)
-        return 2;
-    s = luaL_testudata(L, -1, RL_SOURCE);
-    buffer = lua_newuserdatauv(L, 4096, 0);
-    /* Native close runs outside a Source method frame here. Pin the actual
-     * Source before callbacks so cleanup never mistakes options for userdata.
-     */
-    lua_pushvalue(L, -2);
-    s->root = luaL_ref(L, LUA_REGISTRYINDEX);
-    memset(&call, 0, sizeof(call));
-    call.bytes = buffer;
-    call.error = &error;
-    written.high = written.low = 0;
-    for (;;) {
-        status = rotmos_source_read(s->native, buffer, 4096, &count, &error);
-        if (status == ROTMOS_EOF) {
-            status = ROTMOS_OK;
-            break;
-        }
-        if (status != ROTMOS_OK)
-            break;
-        call.length = count;
-        status = rl_protect_value(L, sink_trampoline, &call, 2, &error);
-        if (status == ROTMOS_OK)
-            status = call.status;
-        if (status != ROTMOS_OK)
-            break;
-        rotmos_u64_from_size(count, &amount, NULL);
-        status = rotmos_u64_add(written, amount, &written, &error);
-        if (status != ROTMOS_OK)
-            break;
-    }
-    rotmos_source_destroy(s->native, NULL);
+    c = prepare(L, 1, xml, 1, &error);
+    if (c == NULL)
+        return rl_error(L, &error);
+    owner = lua_absindex(L, -1);
+    memset(&sink, 0, sizeof(sink));
+    sink.L = L;
+    if (c->max_bytes != 0)
+        status = rl_fail(&error, ROTMOS_INVALID,
+                         "max_bytes is for materialized serialization");
+    else
+        status = xml ? rotmos_xml_write_sink(&c->record, &c->xml, writer_sink,
+                                             &sink, &error)
+                     : rotmos_json_write_sink(&c->schema, c->record.record,
+                                              writer_sink, &sink, &error);
+    cleanup(L, owner, c);
     if (status != ROTMOS_OK)
         return rl_error(L, &error);
     lua_pushboolean(L, 1);
-    rl_push_u64(L, written);
+    rl_push_u64(L, sink.written);
     return 2;
 }
-struct input_reader {
-    rotmos_source *source;
-    rotmos_body *body;
-    rotmos_error failure;
-};
-static lonejson_read_result input_read(void *data, unsigned char *buffer,
-                                       size_t capacity)
-{
-    struct input_reader *reader = data;
-    lonejson_read_result result;
-    rotmos_status status;
-    memset(&result, 0, sizeof(result));
-    status = reader->body != NULL
-                 ? rotmos_body_read(reader->body, buffer, capacity,
-                                    &result.bytes_read, &reader->failure)
-                 : rotmos_source_read(reader->source, buffer, capacity,
-                                      &result.bytes_read, &reader->failure);
-    if (status == ROTMOS_EOF)
-        result.eof = 1;
-    else if (status != ROTMOS_OK)
-        result.error_code = EIO;
-    return result;
-}
-static rotmos_status parse_json(lua_State *L, int schema,
-                                struct input_reader *reader, int *record,
-                                rotmos_error *error)
-{
-    lonejson_error cause;
-    lonejson_status status;
-    *record = 0;
-    status = lonejson_lua_parse_reader_to_record(L, schema, input_read, reader,
-                                                 record, &cause);
-    if (reader->failure.status != ROTMOS_OK) {
-        *error = reader->failure;
-        return error->status;
-    }
-    if (status != LONEJSON_STATUS_OK) {
-        if (*record != 0)
-            (void)lonejson_lua_clear_record(L, *record, NULL);
-        return json_error(error, &cause);
-    }
-    return ROTMOS_OK;
-}
+
 static rotmos_status new_record(lua_State *L, int owner, struct codec *c,
                                 rotmos_error *error)
 {
@@ -493,12 +462,11 @@ static rotmos_status new_record(lua_State *L, int owner, struct codec *c,
 static int parse(lua_State *L, int xml, int table)
 {
     struct codec *c;
-    struct input_reader reader;
     rotmos_error error;
     rotmos_status status;
     rotmos_bytes bytes;
     const char *path = NULL;
-    int owner, options, record = 0, has_data;
+    int owner, options, has_data;
     c = prepare(L, 1, xml, 2, &error);
     if (c == NULL)
         return rl_error(L, &error);
@@ -525,22 +493,12 @@ static int parse(lua_State *L, int xml, int table)
                           : rotmos_source_bytes(bytes, &c->input, &error);
     if (status != ROTMOS_OK)
         return rl_error(L, &error);
-    if (xml) {
-        status = new_record(L, owner, c, &error);
-        if (status == ROTMOS_OK)
-            status = rotmos_xml_parse_source(c->input, &c->schema, &c->xml,
-                                             c->record.record, &error);
-    } else {
-        memset(&reader, 0, sizeof(reader));
-        reader.source = c->input;
-        lua_getiuservalue(L, owner, 1);
-        status = parse_json(L, lua_absindex(L, -1), &reader, &record, &error);
-        if (status == ROTMOS_OK) {
-            lua_pushvalue(L, record);
-            lua_setiuservalue(L, owner, 2);
-            c->private_record = 1;
-        }
-    }
+    status = new_record(L, owner, c, &error);
+    if (status == ROTMOS_OK)
+        status = xml ? rotmos_xml_parse_source(c->input, &c->schema, &c->xml,
+                                               c->record.record, &error)
+                     : rotmos_json_parse_source(c->input, &c->schema,
+                                                c->record.record, &error);
     rotmos_source_destroy(c->input, NULL);
     c->input = NULL;
     if (status != ROTMOS_OK) {
@@ -566,33 +524,29 @@ invalid:
 int rl_request_json_record(lua_State *L)
 {
     struct rl_request *request;
-    struct input_reader reader;
-    lonejson_schema_view schema;
-    lonejson_error cause;
-    rotmos_error error, rewind_error;
-    rotmos_status status, rewind_status;
-    int record;
+    struct codec *c;
+    rotmos_error error;
+    rotmos_status status;
+    int owner;
     if (!rl_request_check(L, 1, &request, &error))
         return rl_error(L, &error);
-    memset(&schema, 0, sizeof(schema));
-    schema.size = sizeof(schema);
-    schema.abi_version = LONEJSON_VIEW_ABI_VERSION;
-    if (lonejson_lua_check_schema(L, 2, &schema, &cause) != LONEJSON_STATUS_OK)
-        return rl_error(L, (json_error(&error, &cause), &error));
-    memset(&reader, 0, sizeof(reader));
-    reader.body = rotmos_request_body(request->native);
-    if (rotmos_body_rewind(reader.body, &error) != ROTMOS_OK)
+    lua_newtable(L);
+    lua_pushvalue(L, 2);
+    lua_setfield(L, -2, "schema");
+    c = prepare(L, -1, 0, 3, &error);
+    if (c == NULL)
         return rl_error(L, &error);
-    status = parse_json(L, 2, &reader, &record, &error);
-    rewind_status = rotmos_body_rewind(reader.body, &rewind_error);
-    if (status == ROTMOS_OK && rewind_status != ROTMOS_OK) {
-        status = rewind_status;
-        error = rewind_error;
+    owner = lua_absindex(L, -1);
+    status = new_record(L, owner, c, &error);
+    if (status == ROTMOS_OK)
+        status = rotmos_request_json_into(request->native, &c->schema,
+                                          c->record.record, &error);
+    if (status != ROTMOS_OK) {
+        cleanup(L, owner, c);
+        return rl_error(L, &error);
     }
-    if (status == ROTMOS_LIMIT)
-        error.status = status = ROTMOS_INVALID;
-    if (status != ROTMOS_OK)
-        return rl_error(L, &error);
+    c->private_record = 0;
+    lua_getiuservalue(L, owner, 2);
     return 1;
 }
 int rl_request_xml_record(lua_State *L)

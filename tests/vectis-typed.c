@@ -38,6 +38,206 @@ static reference_status typed(struct reference_app *app,
     (void)data;
     return reference_json_reply_status(reply, 204, error);
 }
+struct array_source {
+    struct reference_source source;
+    const char *text;
+    size_t position, count;
+    int resets, closed, fail;
+    void *item;
+};
+static size_t read_array(struct reference_source *source, void *buffer,
+                         size_t capacity, struct reference_source_error *error)
+{
+    struct array_source *input = source->impl;
+    size_t count = strlen(input->text) - input->position;
+    if (input->fail == 2) {
+        error->code = 3;
+        error->message = "input failed";
+        return 0;
+    }
+    if (count > capacity)
+        count = capacity;
+    if (count > 7)
+        count = 7;
+    memcpy(buffer, input->text + input->position, count);
+    input->position += count;
+    return count;
+}
+static int reset_array(struct reference_source *source,
+                       struct reference_source_error *error)
+{
+    struct array_source *input = source->impl;
+    (void)error;
+    ++input->resets;
+    input->position = 0;
+    return 0;
+}
+static void close_array(struct reference_source *source)
+{
+    struct array_source *input = source->impl;
+    ++input->closed;
+}
+static reference_status array_item(void *data, size_t index, void *item,
+                                   reference_error *error)
+{
+    struct array_source *input = data;
+    struct record *record = item;
+    if (item != input->item || index != input->count ||
+        strcmp(record->value, index == 0 ? "one" : "two") ||
+        (index == 0 && input->position >= strlen(input->text)))
+        return REFERENCE_STATE;
+    ++input->count;
+    if (input->fail) {
+        reference_error_clear(error);
+        error->code = REFERENCE_TIMEOUT;
+        error->source = 1;
+        error->dependency_code = 19;
+        strcpy(error->message, "callback timeout");
+        return REFERENCE_TIMEOUT;
+    }
+    return REFERENCE_OK;
+}
+static int array_sources(void)
+{
+    struct reference_input_source source;
+    struct array_source input;
+    struct record item;
+    reference_error error;
+    int scenario;
+    for (scenario = 0; scenario < 3; ++scenario) {
+        memset(&source, 0, sizeof(source));
+        memset(&input, 0, sizeof(input));
+        memset(&item, 0, sizeof(item));
+        input.text = "skip[{\"value\":\"one\"},{\"value\":\"two\"}]";
+        input.position = 4;
+        input.source.read = read_array;
+        input.source.reset = reset_array;
+        input.source.close = close_array;
+        input.source.impl = &input;
+        input.item = &item;
+        input.fail = scenario;
+        source.source = &input.source;
+        source.path = "must-not-open";
+        source.memory = "not selected";
+        source.memory_size = 12;
+        CHECK(reference_array_each_source(&source, NULL, &map, &item,
+                                          array_item, &input, &error) ==
+              (scenario == 0   ? REFERENCE_OK
+               : scenario == 1 ? REFERENCE_TIMEOUT
+                               : REFERENCE_INVALID));
+        CHECK(input.resets == 0 && input.closed == 0 &&
+              input.count == (scenario == 0   ? 2
+                              : scenario == 1 ? 1
+                                              : 0));
+        if (scenario == 1)
+            CHECK(error.dependency_code == 19 &&
+                  !strcmp(error.message, "callback timeout"));
+        if (scenario == 2)
+            CHECK(error.source == 4 &&
+                  error.dependency_code == LONEJSON_STATUS_INVALID_JSON &&
+                  strstr(error.message, "input failed") != NULL);
+    }
+    return 0;
+}
+struct rewrite {
+    struct reference_sink sink;
+    struct array_source *input;
+    char bytes[128];
+    size_t length, items;
+    int mode, progress, closed;
+};
+static int rewrite_write(struct reference_sink *sink, const void *bytes,
+                         size_t length, struct reference_source_error *error)
+{
+    struct rewrite *output = sink->impl;
+    if (output->mode == 2) {
+        error->code = 3;
+        error->message = "intentional sink failure";
+        return 0;
+    }
+    if (length >= sizeof(output->bytes) - output->length)
+        return 0;
+    memcpy(output->bytes + output->length, bytes, length);
+    output->length += length;
+    output->bytes[output->length] = 0;
+    if (strstr(output->bytes, "one") != NULL &&
+        output->input->position < strlen(output->input->text))
+        output->progress = 1;
+    return 1;
+}
+static void rewrite_close(struct reference_sink *sink)
+{
+    struct rewrite *output = sink->impl;
+    ++output->closed;
+}
+/* Baseline KEEP/DROP and failure cases from Vectis's SDK-surface fixture. */
+static lonejson_status
+rewrite_item(void *data, const lonejson_array_rewrite_context *context,
+             void *item, lonejson_array_rewrite_result *result,
+             lonejson_error *error)
+{
+    struct rewrite *output = data;
+    struct record *record = item;
+    (void)context;
+    ++output->items;
+    if (output->mode == 1) {
+        lonejson_error_init(error);
+        error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+        strcpy(error->message, "rewrite callback stopped");
+        return LONEJSON_STATUS_CALLBACK_FAILED;
+    }
+    result->action = !strcmp(record->value, "one")
+                         ? LONEJSON_ARRAY_REWRITE_KEEP
+                         : LONEJSON_ARRAY_REWRITE_DROP;
+    return LONEJSON_STATUS_OK;
+}
+static int rewriting(void)
+{
+    struct rewrite output;
+    struct array_source input;
+    struct reference_input_source source;
+    struct record item;
+    lonejson_array_rewrite_options options;
+    reference_error error;
+    int scenario;
+    for (scenario = 0; scenario < 3; ++scenario) {
+        memset(&output, 0, sizeof(output));
+        memset(&input, 0, sizeof(input));
+        memset(&source, 0, sizeof(source));
+        memset(&item, 0, sizeof(item));
+        memset(&options, 0, sizeof(options));
+        input.text = "skip[{\"value\":\"one\"},{\"value\":\"two\"}]";
+        input.position = 4;
+        input.source.read = read_array;
+        input.source.reset = reset_array;
+        input.source.close = close_array;
+        input.source.impl = &input;
+        source.source = &input.source;
+        output.sink.write = rewrite_write;
+        output.sink.close = rewrite_close;
+        output.sink.impl = &output;
+        output.input = &input;
+        output.mode = scenario;
+        options.item_map = &map;
+        options.item_dst = &item;
+        options.item = rewrite_item;
+        options.user = &output;
+        CHECK(reference_array_rewrite_source(&source, "", &output.sink,
+                                             &options, &error) ==
+              (scenario ? REFERENCE_INVALID : REFERENCE_OK));
+        CHECK(input.resets == 0 && input.closed == 0 && output.closed == 0);
+        if (scenario == 0)
+            CHECK(output.items == 2 && output.progress &&
+                  !strcmp(output.bytes, "[{\"value\":\"one\"}]"));
+        else
+            CHECK(error.source == 4 &&
+                  strstr(error.message,
+                         scenario == 1 ? "rewrite callback stopped"
+                                       : "intentional sink failure") != NULL);
+        lonejson_cleanup(&map, &item);
+    }
+    return 0;
+}
 int main(void)
 {
     struct reference_app app;
@@ -49,6 +249,8 @@ int main(void)
     rotmos_error native;
     reference_error error;
     lonejson_map large = map;
+    CHECK(array_sources() == 0);
+    CHECK(rewriting() == 0);
     memset(&app, 0, sizeof(app));
     memset(&host, 0, sizeof(host));
     host.app = &app;

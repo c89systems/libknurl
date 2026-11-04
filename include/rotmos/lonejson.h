@@ -22,6 +22,13 @@ ROTMOS_API rotmos_status rotmos_request_json_into(
 ROTMOS_API rotmos_status rotmos_request_json_validate(rotmos_request *request,
                                                       lonejson *runtime,
                                                       rotmos_error *error);
+/* Synchronous mapped input from the current source position. Borrows source
+ * and consumes through EOF; never resets or closes it. AGAIN fails with STATE;
+ * live blocking readers belong on native threads. Caller supplies initialized
+ * mutable record storage and owns cleanup, including partial parse failure. */
+ROTMOS_API rotmos_status rotmos_json_parse_source(rotmos_source *,
+                                                  const lonejson_schema_view *,
+                                                  void *, rotmos_error *);
 
 typedef rotmos_status (*rotmos_json_array_item_fn)(
     size_t index, const lonejson_record_view *item, void *userdata,
@@ -65,6 +72,23 @@ ROTMOS_API rotmos_status rotmos_json_serialize_materialized(
 ROTMOS_API rotmos_status rotmos_reply_json_materialized(
     rotmos_reply *reply, int status, const lonejson_schema_view *schema,
     const void *record, size_t max_bytes, rotmos_error *error);
+typedef rotmos_status (*rotmos_json_sink_fn)(const void *, size_t, void *,
+                                             rotmos_error *);
+/* Synchronous bounded generation into a sink. The sink accepts the complete
+ * offered chunk with OK or fails terminally. No complete JSON buffer/file is
+ * created. Borrows record/schema unchanged through return. */
+ROTMOS_API rotmos_status rotmos_json_write_sink(const lonejson_schema_view *,
+                                                const void *,
+                                                rotmos_json_sink_fn, void *,
+                                                rotmos_error *);
+/* Vectis selected-array rewriting through LoneJSON's public mapped callback
+ * options. Borrows source, optional runtime, options/item storage and sink.
+ * Reads from the current position without reset/close. Output flows before
+ * input EOF; no complete document/array is collected. */
+ROTMOS_API rotmos_status
+rotmos_json_array_rewrite_source(rotmos_source *, const char *, lonejson *,
+                                 const lonejson_array_rewrite_options *,
+                                 rotmos_json_sink_fn, void *, rotmos_error *);
 /* Synchronously serializes into a private file, without a full JSON buffer or
  * retaining the record/schema after return. Directory/ownership follow
  * rotmos_reply_source_spooled. Failure preserves the existing reply. */
