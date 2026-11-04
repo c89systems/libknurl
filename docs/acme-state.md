@@ -1,9 +1,10 @@
 # ACME state publication
 
 The backend-internal generation store implements the ACME publication contract.
-It is not an installed application API. Public ACME startup remains rejected
-until the Kore issuance adapter, trust snapshot and TLS identity observations
-are connected.
+It is not an installed application API. The [Kore adapter](../src/kore_acme.c)
+connects it to public server startup, key-manager recovery, certificate
+installation and the parent-enforced child-operation budget. See the
+[TLS runtime contract](tls.md) for declarations and identity observations.
 
 The configured runtime root must be prepared, owned by the current user and
 accessible only to that user. The store owns its `.rotmos` subdirectory. One
@@ -60,5 +61,8 @@ contexts and the public callback signature. It covers failure before
 acknowledgement, interruption inside PERSIST, interruption after acknowledgement,
 ordinary owner restart, new RESTORE hydration, failed RESTORE, late callbacks,
 complete multi-domain snapshots, wrong keys, oversized inputs and symlinks.
-These are publication-core checks. They do not establish ACME issuance,
-parent-enforced PERSIST deadlines or wire-level certificate activation.
+These are publication-core checks. The separate
+[runtime fixture](../tests/acme-runtime.c) proves wire-level certificate
+activation, failed PERSIST preservation, key-manager restart, enforced PERSIST
+timeout and pending TLS-ALPN-01 challenges through the public server. Remote
+account/order transport and scheduled renewal remain separate integration work.

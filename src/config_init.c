@@ -127,6 +127,7 @@ void rotmos_server_config_init(rotmos_server_config *config)
     config->callbacks.on_worker_stopping = NULL;
     config->callbacks.on_worker_exit = NULL;
     config->callbacks.on_worker_event = NULL;
+    config->callbacks.on_tls_identity = NULL;
     config->callbacks.userdata = NULL;
     config->supervision.enabled = 0;
     config->supervision.control_fd = -1;

@@ -22,22 +22,23 @@ The end state is a mechanical Vectis cutover through public C and Lua APIs.
   branch without pushing. No replacement-readiness claim until the full contract
   is implemented and verified.
 
-The ACME publication core is in `src/acme_store.c` and `src/acme_files.c`.
-The next adapter slice must connect it to the existing public server lifecycle:
+The [ACME adapter](tls.md) connects the publication core to public startup,
+key-manager recovery, certificate installation, prepared TLS policy and identity
+observations. The runtime fixture drives the actual certificate/challenge IPC
+boundary and verifies TLS activation, persistence failure/restart and hard
+deadline recovery. It does not drive remote directory/account/order exchanges.
 
-- Preflight checks the prepared root and explicit/environment CA inputs without
-  callbacks or traffic; snapshot trust before forks.
-- RESTORE runs in the quiescent parent against a fresh generation. Key-manager
-  recovery/work preparation runs after its IPC initialization, before loading
-  keys or distributing certificates.
-- Replace the backend's direct live-certificate write with private working-file
-  completion, snapshot validation, PERSIST, acknowledgement and publication.
-  Keep the dedicated child budget armed through that bounded operation.
-- Preserve manual in-memory identities when ACME enables the key manager.
-  Apply cached protocol/client-auth policy after native ACME context updates.
-- Report pending/usable identity state and preserve TLS-ALPN-01 challenge
-  handling while application serving is paused. Connect the callback error to
-  parent failure/recovery observations.
-- Prove actual certificate activation, failed persistence and restart behavior
-  through the public server before allowing ACME runs. The publication fixture
-  alone does not prove that integration.
+The next ACME integration work should exercise a local deterministic CA fixture
+through HTTP(S), including the existing-key/account recovery path, JWS/CSR,
+TLS-ALPN-01 authorization, issuance and renewal. Prove explicit/environment trust
+precedence and pre-fork capture against actual HTTPS requests, transport
+timeout/response limits and paused application serving. Inspect auxiliary
+restart/re-registration across that complete exchange and extend final failure
+unwinding coverage where the real protocol reveals gaps. Keep those checks
+bounded and avoid external CA services.
+
+The full goal also retains application WebSockets, upstream/reverse proxy and
+HTTP framing, WebDAV, REST/OpenAPI/assets, JSON/XML2 codecs, admission/logging,
+the native-reader executor, Lua facade/public C binding, installed-consumer
+coverage and final lifecycle/packaging proof. ACME progress does not narrow that
+scope or establish Vectis replacement readiness.

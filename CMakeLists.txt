@@ -54,7 +54,7 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/file.c src/dispatch.c src/kore_body.c src/body_reader.c
   src/channel.c src/channel_upgrade.c src/kore_channel.c
   src/tls.c src/tls_material.c src/kore_tls.c src/kore_process.c
-  src/acme_store.c src/acme_files.c)
+  src/acme_store.c src/acme_files.c src/kore_acme.c src/kore_tls_state.c)
 target_include_directories(rotmos_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(rotmos_objects PRIVATE "${kore_source_dir}/include/kore")
 target_link_libraries(rotmos_objects PRIVATE OpenSSL::SSL CURL::libcurl lonejson::lonejson pslog::pslog_shared)
@@ -70,7 +70,9 @@ rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_body.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_channel.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_tls.c"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_process.c")
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_process.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_acme.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_tls_state.c")
 rotmos_c89(rotmos_objects)
 foreach(variant static shared)
   string(TOUPPER "${variant}" kind)
@@ -121,6 +123,24 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_acme_runtime tests/acme-runtime.c tests/acme-backend.c)
+  add_dependencies(rotmos_acme_runtime kore-source)
+  target_include_directories(rotmos_acme_runtime PRIVATE "${kore_source_dir}/include/kore")
+  target_compile_definitions(rotmos_acme_runtime PRIVATE
+    $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
+  rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/acme-backend.c")
+  target_link_libraries(rotmos_acme_runtime PRIVATE rotmos::static Threads::Threads
+    OpenSSL::SSL CURL::libcurl lonejson::lonejson_static pslog::pslog_static)
+  rotmos_c89(rotmos_acme_runtime)
+  rotmos_local_runtime(rotmos_acme_runtime)
+  add_test(NAME rotmos.acme-runtime COMMAND rotmos_acme_runtime)
+  add_test(NAME rotmos.acme-persist-failure COMMAND rotmos_acme_runtime fail)
+  add_test(NAME rotmos.acme-persist-timeout COMMAND rotmos_acme_runtime timeout)
+  add_test(NAME rotmos.acme-pending COMMAND rotmos_acme_runtime pending)
+  add_test(NAME rotmos.tls-unbound COMMAND rotmos_acme_runtime unbound)
+  set_tests_properties(rotmos.acme-runtime rotmos.acme-persist-failure
+    rotmos.acme-persist-timeout rotmos.acme-pending rotmos.tls-unbound PROPERTIES TIMEOUT 8)
   add_executable(rotmos_acme_state tests/acme-state.c)
   target_compile_definitions(rotmos_acme_state PRIVATE
     $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)

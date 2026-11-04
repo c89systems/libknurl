@@ -8,12 +8,16 @@
 #include "request_internal.h"
 #include "loop_internal.h"
 #include "tls_internal.h"
+#include "acme_internal.h"
 
 #include <setjmp.h>
 #include <pthread.h>
 
 struct rotmos_runtime_shared {
     int serving;
+    int acme_identity_valid;
+    size_t acme_identity;
+    size_t acme_domain;
     struct {
         int valid;
         rotmos_error error;
@@ -21,6 +25,11 @@ struct rotmos_runtime_shared {
 };
 
 struct rotmos_delivery;
+
+struct rotmos_tls_binding {
+    struct kore_domain *domain;
+    size_t identity;
+};
 
 struct rotmos_runtime {
     rotmos_server *server;
@@ -55,6 +64,16 @@ struct rotmos_runtime {
     struct rotmos_delivery *response_tail;
     size_t response_count;
     struct rotmos_tls_prepared tls;
+    struct rotmos_acme_store *acme;
+    unsigned char *acme_ca;
+    size_t acme_ca_length;
+    char *acme_ca_directory;
+    struct rotmos_tls_binding *tls_bindings;
+    size_t tls_binding_count;
+    int *tls_installed;
+    size_t tls_installed_bytes;
+    int *tls_observed;
+    int *tls_seen;
     int has_failure;
     rotmos_worker_event last_failure;
     rotmos_u64 recovered_failures;
@@ -114,5 +133,23 @@ void rotmos_kore_child_failure(struct rotmos_runtime *runtime,
 void rotmos_kore_worker_event(void *userdata, const struct kore_worker *child,
                               int kind, int status, int expected,
                               int abandoned);
+rotmos_status rotmos_kore_acme_prepare(struct rotmos_runtime *runtime,
+                                       rotmos_error *error);
+void rotmos_kore_acme_configure(struct rotmos_runtime *runtime);
+void rotmos_kore_acme_clear(struct rotmos_runtime *runtime);
+int rotmos_kore_acme_start(void *userdata);
+int rotmos_kore_acme_persist(void *userdata, const char *domain);
+int rotmos_kore_acme_install(void *userdata, struct kore_domain *domain,
+                             const void *data, size_t length);
+int rotmos_kore_acme_request(void *userdata, struct kore_curl *request);
+void rotmos_kore_tls_updated(void *userdata, struct kore_domain *domain,
+                             int usable);
+rotmos_status rotmos_kore_tls_registry(struct rotmos_runtime *runtime,
+                                       rotmos_error *error);
+void rotmos_kore_tls_worker(struct rotmos_runtime *runtime, size_t index,
+                            int starting);
+void rotmos_kore_tls_observe(struct rotmos_runtime *runtime,
+                             const rotmos_error *failure);
+void rotmos_kore_tls_clear(struct rotmos_runtime *runtime);
 
 #endif

@@ -106,7 +106,8 @@ rotmos_status rotmos_tls_identity_prepare(const rotmos_tls_config *config,
     ctx = NULL;
     key = NULL;
     status = ROTMOS_OK;
-    for (i = 0; i < 5 && status == ROTMOS_OK; ++i)
+    for (i = identity->mode == ROTMOS_TLS_ACME ? 3 : 0;
+         i < 5 && status == ROTMOS_OK; ++i)
         status = rotmos_tls_material_read(inputs[i], config->max_material_bytes,
                                           &material[i], &lengths[i], error);
     if (status != ROTMOS_OK)
@@ -147,21 +148,24 @@ rotmos_status rotmos_tls_identity_prepare(const rotmos_tls_config *config,
         !SSL_CTX_set_max_proto_version(ctx, maximum) ||
         !SSL_CTX_set_cipher_list(ctx, ciphers) ||
         !SSL_CTX_set_session_id_context(ctx, session, sizeof(session) - 1) ||
-        !certificates(ctx, chain_data, chain_length, 0, 1) ||
+        (identity->mode != ROTMOS_TLS_ACME &&
+         !certificates(ctx, chain_data, chain_length, 0, 1)) ||
         (lengths[3] != 0 &&
          !certificates(ctx, material[3], lengths[3], 0, 0))) {
         status = ROTMOS_INVALID;
         goto done;
     }
-    key_input = BIO_new_mem_buf(key_data, (int)key_length);
-    if (key_input != NULL) {
-        key = PEM_read_bio_PrivateKey(key_input, NULL, no_password, NULL);
-        BIO_free(key_input);
-    }
-    if (key == NULL || !SSL_CTX_use_PrivateKey(ctx, key) ||
-        !SSL_CTX_check_private_key(ctx)) {
-        status = ROTMOS_INVALID;
-        goto done;
+    if (identity->mode != ROTMOS_TLS_ACME) {
+        key_input = BIO_new_mem_buf(key_data, (int)key_length);
+        if (key_input != NULL) {
+            key = PEM_read_bio_PrivateKey(key_input, NULL, no_password, NULL);
+            BIO_free(key_input);
+        }
+        if (key == NULL || !SSL_CTX_use_PrivateKey(ctx, key) ||
+            !SSL_CTX_check_private_key(ctx)) {
+            status = ROTMOS_INVALID;
+            goto done;
+        }
     }
     if (lengths[4] != 0) {
         if (!certificates(ctx, material[4], lengths[4], 1, 0)) {
@@ -211,11 +215,6 @@ rotmos_status rotmos_tls_prepare(const rotmos_tls_config *config,
                            "cannot allocate TLS identity contexts");
     out->count = config->identity_count;
     for (i = 0; i < out->count; ++i) {
-        if (config->identities[i].mode != ROTMOS_TLS_MANUAL) {
-            rotmos_tls_prepared_clear(out);
-            return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "tls_prepare",
-                               "ACME identity activation is not connected yet");
-        }
         status = rotmos_tls_identity_prepare(
             config, &config->identities[i],
             config->cipher_list != NULL ? config->cipher_list : default_ciphers,
@@ -226,6 +225,39 @@ rotmos_status rotmos_tls_prepare(const rotmos_tls_config *config,
         }
     }
     rotmos_error_clear(error);
+    return ROTMOS_OK;
+}
+
+rotmos_status rotmos_tls_policy_apply(SSL_CTX *policy, SSL_CTX *context,
+                                      const char *ciphers, rotmos_error *error)
+{
+    STACK_OF(X509) * chain;
+    STACK_OF(X509_NAME) * names;
+    int i;
+    chain = NULL;
+    if (!SSL_CTX_set_min_proto_version(context,
+                                       SSL_CTX_get_min_proto_version(policy)) ||
+        !SSL_CTX_set_max_proto_version(context,
+                                       SSL_CTX_get_max_proto_version(policy)) ||
+        !SSL_CTX_set_cipher_list(context, ciphers))
+        return rotmos_fail(error, ROTMOS_INVALID, "tls_policy",
+                           "cannot apply prepared TLS protocol/cipher policy");
+    SSL_CTX_set1_cert_store(context, SSL_CTX_get_cert_store(policy));
+    SSL_CTX_set_verify(context, SSL_CTX_get_verify_mode(policy), NULL);
+    SSL_CTX_set_verify_depth(context, SSL_CTX_get_verify_depth(policy));
+    names = SSL_CTX_get_client_CA_list(policy);
+    if (names != NULL) {
+        names = SSL_dup_CA_list(names);
+        if (names == NULL)
+            return rotmos_fail(error, ROTMOS_NOMEM, "tls_policy",
+                               "cannot retain prepared client CA names");
+        SSL_CTX_set_client_CA_list(context, names);
+    }
+    (void)SSL_CTX_get0_chain_certs(policy, &chain);
+    for (i = 0; chain != NULL && i < sk_X509_num(chain); ++i)
+        if (!SSL_CTX_add1_chain_cert(context, sk_X509_value(chain, i)))
+            return rotmos_fail(error, ROTMOS_NOMEM, "tls_policy",
+                               "cannot retain prepared extra chain");
     return ROTMOS_OK;
 }
 

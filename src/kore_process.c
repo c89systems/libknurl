@@ -37,6 +37,11 @@ void rotmos_kore_worker_event(void *userdata, const struct kore_worker *child,
     if (kind == KORE_LIBRARY_WORKER_SPAWNING) {
         __atomic_store_n(&runtime->shared->failures[index].valid, 0,
                          __ATOMIC_RELEASE);
+        if (child->id < KORE_WORKER_KEYMGR)
+            rotmos_kore_tls_worker(runtime, child->id - 1U, 0);
+        if (child->id == KORE_WORKER_KEYMGR)
+            __atomic_store_n(&runtime->shared->acme_identity_valid, 0,
+                             __ATOMIC_RELEASE);
         return;
     }
     memset(&event, 0, sizeof(event));
@@ -87,6 +92,9 @@ void rotmos_kore_worker_event(void *userdata, const struct kore_worker *child,
     if (event.error.status != ROTMOS_OK) {
         runtime->last_failure = event;
         runtime->has_failure = 1;
+        if (event.kind == ROTMOS_WORKER_EXITED &&
+            event.process.role == ROTMOS_PROCESS_KEY_MANAGER)
+            rotmos_kore_tls_observe(runtime, &event.error);
         if (event.kind == ROTMOS_WORKER_EXITED && expected &&
             event.exit_status != 0 && !abandoned) {
             runtime->status = event.error.status;
@@ -102,6 +110,9 @@ void rotmos_kore_worker_event(void *userdata, const struct kore_worker *child,
             }
         }
     }
+    if (event.kind == ROTMOS_WORKER_EXITED &&
+        event.process.role == ROTMOS_PROCESS_HTTP)
+        rotmos_kore_tls_worker(runtime, event.process.worker_index, 0);
     if (event.kind == ROTMOS_WORKER_RESTARTED &&
         runtime->recovery_pending[index]) {
         one.high = 0;

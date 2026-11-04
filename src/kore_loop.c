@@ -141,6 +141,8 @@ void rotmos_kore_loop_turn(void *userdata)
     rotmos_loop *loop;
     runtime = userdata;
     loop = runtime->server->loop;
+    if (worker == NULL)
+        rotmos_kore_tls_observe(runtime, NULL);
     rotmos_kore_responses_turn(runtime);
     if (loop != NULL) {
         rotmos_loop_turn(loop);

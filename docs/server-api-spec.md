@@ -187,6 +187,7 @@ explicitly named copy/take. Config, plan and error types each have an initialize
 | `rotmos_server_set_pslog` | Inert logger/access policy registration from the optional header, allowed only outside a run |
 | `rotmos_request_json_validate_materialized`, `rotmos_request_json_parse_materialized` | Optional LoneJSON validation/map decode; no live-body streaming implication |
 | `rotmos_server_process_context` | Public parent/HTTP/key-manager/ACME role and process/worker identity snapshot for real binding/lifecycle consumers |
+| `rotmos_server_tls_identity_state` | Active-run pending/usable view aggregated across every HTTPS binding and HTTP worker; no HTTPS binding means pending |
 
 Factories, writes, state changes and indexed lookups use status plus output
 parameters when failure/absence is meaningful. No new allocation-returning
@@ -365,6 +366,7 @@ Provide typed hook slots, not string-to-function or void-pointer symbol tables:
 | `on_worker_stopping` | Each owned child before teardown, including partial returned initialization failures; request cancellation without blocking, then retire post-fork application work during bounded drain |
 | `on_worker_exit` | Each owned child after backend teardown; no request, channel, timer, backend allocator or TLS access; returns child exit status |
 | `on_worker_event` | Parent observation of owned child start, exit, restart and escalation; distinguishes HTTP/key-manager/ACME roles |
+| `on_tls_identity` | Parent-loop initial state, context-installation/availability changes and bounded key-manager failure; failure retains current pending/usable state and domain when known |
 | `on_parent_stopping` / `on_parent_stopped` | Parent; stop intake first, then release parent resources after child reaping |
 
 Startup hook errors propagate to the parent and prevent readiness. Cleanup runs
@@ -1183,6 +1185,14 @@ standalone applications can implement it over their own private durable
 directory without a Lockd dependency. Runtime readiness reports each TLS
 identity as pending or usable; it does not imply that a remote CA already issued
 a certificate. Supply an identity-change observation for activation/failure.
+The public `rotmos_server_tls_identity_state` getter returns STATE outside an
+active run and INVALID for an absent identity or output. USABLE requires an
+installed application certificate at every HTTPS binding in every HTTP worker.
+Challenge contexts do not count; identities without HTTPS bindings stay pending.
+`callbacks.on_tls_identity` reports initial state, context installation changes,
+HTTP worker availability changes and key-manager failure. Repeated USABLE
+observations can report replacement and do not count remote issuances. USABLE
+does not certify CA trust or validity dates; the host still supplies client trust.
 Paused application serving must not disable the backend's configured ACME
 challenge handling, or initial issuance could never complete. That exception
 does not bypass application auth on arbitrary routes.
@@ -2240,6 +2250,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0051 | Prepend returned framer tails to retained pipeline data and restore/read only bounded prefixes; allow channel tails larger than the native header receive buffer without loss or overflow |
 | 0052 | Install prepared in-memory manual TLS contexts; select the accepting listener's initial identity and derive SNI/HTTP client-auth policy from its context, including optional client certificates and an explicit verification store |
 | 0053 | Parent observations of owned child start/exit/restart/escalation; auxiliary loop/teardown hooks and restart policy; cleanup after returned initialization errors; atomic child-operation deadlines with an IPC wake and shutdown enforcement; bounded auxiliary accept-control indexing |
+| 0054 | Prepare private ACME work after key-manager IPC setup; persist complete initial keys and install acknowledged candidates before distribution; preserve in-memory manual identities; update every matching listener context through cached policy hooks; capture ACME transport policy; reset/free ACME globals; release transient TLS references, clear expected PEM EOF errors and disable accept only when registered during shutdown |
 
 ## 22. Investigation references
 

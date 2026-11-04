@@ -60,6 +60,24 @@ typedef enum rotmos_acme_event {
     ROTMOS_ACME_ERROR
 } rotmos_acme_event;
 
+typedef enum rotmos_tls_identity_state {
+    ROTMOS_TLS_PENDING = 0,
+    ROTMOS_TLS_USABLE
+} rotmos_tls_identity_state;
+
+/* Usable means every configured HTTPS domain is installed in every HTTP
+ * worker. Failure observations retain that state and carry a separate cause. */
+typedef struct rotmos_tls_identity_event {
+    size_t identity_index;
+    rotmos_tls_identity_state state;
+    rotmos_bytes domain;
+    rotmos_error error;
+} rotmos_tls_identity_event;
+
+typedef void (*rotmos_tls_identity_fn)(rotmos_server *server,
+                                       const rotmos_tls_identity_event *event,
+                                       void *userdata);
+
 typedef rotmos_status (*rotmos_acme_state_fn)(
     rotmos_server *server, const rotmos_process_context *process,
     rotmos_acme_event event, rotmos_bytes domain,
@@ -88,6 +106,11 @@ typedef struct rotmos_tls_config {
 ROTMOS_API void rotmos_tls_material_init(rotmos_tls_material *material);
 ROTMOS_API void rotmos_tls_identity_init(rotmos_tls_identity *identity);
 ROTMOS_API void rotmos_tls_config_init(rotmos_tls_config *config);
+/* Active-run view; outside a run returns STATE. An identity with no HTTPS
+ * listener remains pending. The output borrows no backend structures. */
+ROTMOS_API rotmos_status rotmos_server_tls_identity_state(
+    const rotmos_server *server, size_t index, rotmos_tls_identity_state *out,
+    rotmos_error *error);
 
 #ifdef __cplusplus
 }

@@ -183,6 +183,7 @@ typedef struct rotmos_server_callbacks {
     rotmos_process_fn on_worker_stopping;
     rotmos_worker_exit_fn on_worker_exit;
     rotmos_worker_event_fn on_worker_event;
+    rotmos_tls_identity_fn on_tls_identity;
     void *userdata;
 } rotmos_server_callbacks;
 

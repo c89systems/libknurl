@@ -1,4 +1,5 @@
 #include "kore_internal.h"
+#include "acme.h"
 
 #include <arpa/inet.h>
 #include <fnmatch.h>
@@ -24,11 +25,21 @@ void rotmos_kore_listener_domains(struct rotmos_runtime *runtime,
         if (!kore_domain_attach(domain, server))
             fatal("cannot attach listener domain");
         if (identity != NULL) {
-            if (!SSL_CTX_up_ref(
-                    runtime->tls.contexts[listener->identity_index]))
-                fatal("cannot retain TLS identity context");
-            kore_library_tls_context_install(
-                domain, runtime->tls.contexts[listener->identity_index]);
+            runtime->tls_bindings[runtime->tls_binding_count].domain = domain;
+            runtime->tls_bindings[runtime->tls_binding_count++].identity =
+                listener->identity_index;
+            if (identity->mode == ROTMOS_TLS_ACME) {
+                domain->acme = 1;
+                ++acme_domains;
+                kore_acme_get_paths(domain->domain, &domain->certkey,
+                                    &domain->certfile);
+            } else {
+                if (!SSL_CTX_up_ref(
+                        runtime->tls.contexts[listener->identity_index]))
+                    fatal("cannot retain TLS identity context");
+                kore_library_tls_context_install(
+                    domain, runtime->tls.contexts[listener->identity_index]);
+            }
         }
         route = kore_route_create(domain, "^/", HANDLER_TYPE_DYNAMIC);
         if (route == NULL)

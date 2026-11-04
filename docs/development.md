@@ -72,7 +72,8 @@ memory and synchronous source callbacks, including bundles, extra server chains
 and independent client-auth trust. Preparation checks key pairs and protocol/
 cipher policy before forks and installs in-memory contexts without temporary key
 files. HTTPS domains, SNI, required/optional mTLS and checked 308 redirects use
-the configured listener identity. ACME activation remains separate work.
+the configured listener identity. ACME identities use a private key manager,
+acknowledged state generations and cached TLS policy on context updates.
 
 Parent and HTTP-worker loops expose borrowed FD watches, monotonic wide timers,
 deferred callbacks and coalescing wakers. Readiness is dispatched after native
@@ -89,7 +90,7 @@ startup cancellation and repeated runs. The installed-consumer check repeats the
 HTTP fixture through both static and shared imported targets after relocating
 the library and its three released dependency prefixes.
 
-This is partial runtime coverage. Preflight explicitly rejects ACME identities,
+This is partial runtime coverage. Preflight explicitly rejects
 access logs, trusted proxies, autoblock,
 typed JSON and native-reader upload facades until those paths are connected.
 Native-reader sources require an executor that is not connected yet. Interim
@@ -101,13 +102,17 @@ start/exit/restart/escalation, returned hook errors, abandonment and bounded
 failure/recovery results. Native key-manager/ACME loops use the same loop and
 teardown hooks; their fixture proves auxiliary restart/terminate policy. A
 dedicated child-operation budget wakes the parent and remains enforced during
-shutdown. ACME persistence must connect that primitive before activation is
-enabled. The [ACME generation store](acme-state.md) stages complete bounded
+shutdown. ACME preparation/persistence/publication uses that budget.
+The [ACME generation store](acme-state.md) stages complete bounded
 snapshots, runs restore/persist/error callbacks with real process context, and
 publishes acknowledged certificate/key pairs through one atomic selection.
 Its focused fork fixture covers interruption on both sides of acknowledgement
-and preservation of active state on failure. The issuance adapter and parent
-deadline binding remain implementation work. The contract is in the
+and preservation of active state on failure. The runtime fixture proves private
+key-manager signing, actual TLS activation, persistence failure/restart and hard
+timeout/recovery across two workers and repeated listeners. Public pending/usable
+observations track HTTP worker contexts; challenges remain pending and work
+while application serving is paused. Remote ACME account/order traffic and
+scheduled-renewal integration remain verification work. The contract is in the
 [server API specification](server-api-spec.md) and
 [Vectis integration contract](vectis-integration-contract.md).
 

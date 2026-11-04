@@ -218,6 +218,7 @@ static int worker_start(void *userdata)
     runtime->worker_started = 1;
     if (runtime->server->process.role != ROTMOS_PROCESS_HTTP)
         return 1;
+    rotmos_kore_tls_worker(runtime, runtime->server->process.worker_index, 1);
     return rotmos_runtime_hook(
                runtime, runtime->server->config.callbacks.on_worker_start) ==
            ROTMOS_OK;
@@ -273,6 +274,8 @@ static int worker_exit(void *userdata)
     runtime = userdata;
     rotmos_kore_loop_finish(runtime);
     wake_close(runtime);
+    rotmos_kore_acme_clear(runtime);
+    rotmos_tls_prepared_clear(&runtime->tls);
     status = 0;
     if (runtime->server->config.callbacks.on_worker_exit != NULL)
         status = runtime->server->config.callbacks.on_worker_exit(
@@ -322,10 +325,6 @@ static rotmos_status validate_config(rotmos_server *server, rotmos_error *error)
         return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "server_validate",
                            "Access logs and admission "
                            "policy are unavailable in the current runtime");
-    for (i = 0; i < server->config.tls.identity_count; ++i)
-        if (server->config.tls.identities[i].mode != ROTMOS_TLS_MANUAL)
-            return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "server_validate",
-                               "ACME identity activation is not connected yet");
     for (i = 0; i < server->router->count; ++i) {
         route = &server->router->routes[i]->config;
         if (route->on_headers != NULL)
@@ -356,6 +355,7 @@ static rotmos_status validate_config(rotmos_server *server, rotmos_error *error)
 rotmos_status rotmos_server_validate(rotmos_server *server, rotmos_error *error)
 {
     struct rotmos_tls_prepared tls;
+    struct rotmos_runtime preparation;
     rotmos_status status;
     status = validate_config(server, error);
     if (status != ROTMOS_OK)
@@ -363,6 +363,12 @@ rotmos_status rotmos_server_validate(rotmos_server *server, rotmos_error *error)
     status = rotmos_tls_prepare(&server->config.tls, KORE_DEFAULT_CIPHER_LIST,
                                 &tls, error);
     rotmos_tls_prepared_clear(&tls);
+    if (status == ROTMOS_OK) {
+        memset(&preparation, 0, sizeof(preparation));
+        preparation.server = server;
+        status = rotmos_kore_acme_prepare(&preparation, error);
+        rotmos_kore_acme_clear(&preparation);
+    }
     return status;
 }
 
@@ -477,6 +483,7 @@ static void bind_listeners(struct rotmos_runtime *runtime)
             runtime->bound[i].port = ntohs(ipv6->sin6_port);
         }
         runtime->bound[i].name = config->name;
+        runtime->bound[i].tls = server->tls;
         runtime->bound[i].address = rotmos_view(runtime->addresses[i]);
         ++runtime->bound_count;
         rotmos_kore_listener_domains(runtime, server, config);
@@ -607,6 +614,16 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             runtime->status = rotmos_tls_prepare(
                 &server->config.tls, KORE_DEFAULT_CIPHER_LIST, &runtime->tls,
                 &runtime->error);
+        if (runtime->status == ROTMOS_OK && !runtime->cancelled)
+            runtime->status =
+                rotmos_kore_acme_prepare(runtime, &runtime->error);
+        if (runtime->status == ROTMOS_OK && !runtime->cancelled)
+            runtime->status =
+                rotmos_kore_tls_registry(runtime, &runtime->error);
+        if (runtime->status == ROTMOS_OK && !runtime->cancelled &&
+            runtime->acme != NULL)
+            runtime->status = rotmos_acme_store_restore(
+                runtime->acme, server, &server->process, &runtime->error);
         if (runtime->status == ROTMOS_OK && !runtime->cancelled) {
             hooks.arg = runtime;
             hooks.fatal = fatal_error;
@@ -626,15 +643,22 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             hooks.request_release = rotmos_kore_response_release;
             hooks.net_progress = rotmos_kore_response_progress;
             hooks.worker_event = rotmos_kore_worker_event;
+            hooks.tls_updated = rotmos_kore_tls_updated;
+            if (runtime->acme != NULL) {
+                hooks.keymgr_prepare = rotmos_kore_acme_start;
+                hooks.acme_persist = rotmos_kore_acme_persist;
+                hooks.acme_install = rotmos_kore_acme_install;
+                hooks.acme_request = rotmos_kore_acme_request;
+            }
             runtime->initialized = 1;
             runtime->curl_timeout = kore_curl_timeout;
             runtime->curl_recv_max = kore_curl_recv_max;
             kore_library_init(&hooks);
             configure(runtime);
+            rotmos_kore_acme_configure(runtime);
             runtime->callbacks.http_request = rotmos_kore_dispatch;
             runtime->callbacks.http_request_free = rotmos_kore_request_free;
             bind_listeners(runtime);
-            rotmos_tls_prepared_clear(&runtime->tls);
             if (!kore_library_parent_start()) {
                 runtime->cancelled = startup_cancel(runtime);
                 if (!runtime->cancelled)
@@ -663,6 +687,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
                 if (!runtime->gate_selected)
                     (void)rotmos_server_set_serving(
                         server, !server->config.start_paused, NULL);
+                rotmos_kore_tls_observe(runtime, NULL);
             }
         }
         while (runtime->status == ROTMOS_OK && runtime->ready &&
@@ -689,6 +714,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
         rotmos_kore_loop_shutdown(runtime);
     rotmos_kore_loop_finish(runtime);
     rotmos_tls_prepared_clear(&runtime->tls);
+    rotmos_kore_acme_clear(runtime);
     while (runtime->installed_signals != 0) {
         --runtime->installed_signals;
         (void)sigaction(handled_signals[runtime->installed_signals],
@@ -735,6 +761,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
     server->router->frozen = 0;
     (void)pthread_mutex_unlock(&runtime_lock);
     (void)munmap(runtime->shared, sizeof(*runtime->shared));
+    rotmos_kore_tls_clear(runtime);
     free(runtime->native_servers);
     free(runtime->bound);
     free(runtime->addresses);

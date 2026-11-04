@@ -51,8 +51,45 @@ bounded output and TLS close notifications. Prepared trust stores use OpenSSL's
 Forced WANT_READ/WANT_WRITE faults, slow/disconnected peers and complete failure
 unwinding remain integration coverage.
 
-The [ACME generation store](acme-state.md) supplies candidate publication and
-callback ordering. ACME identity activation, identity observations and connecting
-the dedicated child-operation budget to persistence remain required under the
-[server specification](server-api-spec.md). Preflight rejects ACME until that
-workflow is connected; a successful manual TLS check is not ACME evidence.
+An ACME identity declares explicit DNS names and `ROTMOS_TLS_ACME`. Configure
+`tls.acme` with the account email, HTTP(S) directory URL, prepared private runtime
+root, state callback and persistence budget. Preflight validates the root and CA
+inputs without callbacks, directory creation or traffic. Explicit CA settings
+take precedence over `SSL_CERT_FILE`/`SSL_CERT_DIR`; file bytes and resolved
+directory paths are captured before forks. The selected SDK supplies defaults
+when these inputs are absent.
+
+The [generation store](acme-state.md) runs RESTORE in the quiescent parent.
+After IPC initialization, the key manager recovers pending state, prepares a
+private working generation and loads or generates its keys. Initial complete
+key state and each completed certificate pass through PERSIST and acknowledged
+publication before certificate distribution. The parent enforces the dedicated
+child budget through snapshot preparation, persistence and publication. Returned
+failures or timeout reach child observations and the selected death policy.
+Manual in-memory identities continue to work when the ACME key manager is active.
+Certificate updates reuse prepared protocol, cipher, chain and client-auth
+policy; material callbacks are not reopened in HTTP workers.
+
+`rotmos_server_tls_identity_state` returns PENDING or USABLE during an active
+run. USABLE means every HTTPS binding for that identity has installed a usable
+certificate in every HTTP worker. It does not attest remote CA trust, validity
+dates or availability of an external service. Unbound identities remain pending.
+`callbacks.on_tls_identity` runs on the parent loop for initial state,
+installation changes, worker availability changes and key-manager failures.
+Repeated USABLE observations can reflect certificate replacement; they are not
+a remote issuance count. Failure events retain the current state, include the
+bounded cause, and identify the domain when the interrupted operation knew it.
+
+TLS-ALPN-01 challenge certificates remain pending and are not application
+identities. Challenges work while application serving is paused and bypass
+client authentication only for the negotiated challenge connection. Ordinary
+HTTP remains gated and subject to the identity's client-auth policy.
+
+The [runtime fixture](../tests/acme-runtime.c) exercises actual private
+key-manager signing, TLS 1.2/1.3, mTLS, repeated listeners, two HTTP workers,
+pending challenge handling, acknowledged replacement, persistence failure and
+parent-enforced timeout/recovery. Its [private driver](../tests/acme-backend.c)
+submits the real ACME-to-key-manager certificate/challenge messages; it does not
+simulate a remote ACME directory, JWS account/order exchange or renewal schedule.
+That transport/protocol integration and complete allocation/fatal unwinding
+remain required coverage.

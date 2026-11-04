@@ -22,5 +22,7 @@ rotmos_status rotmos_tls_prepare(const rotmos_tls_config *config,
                                  struct rotmos_tls_prepared *out,
                                  rotmos_error *error);
 void rotmos_tls_prepared_clear(struct rotmos_tls_prepared *prepared);
+rotmos_status rotmos_tls_policy_apply(SSL_CTX *policy, SSL_CTX *context,
+                                      const char *ciphers, rotmos_error *error);
 
 #endif
