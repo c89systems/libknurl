@@ -2251,6 +2251,7 @@ Makefile path. Their presence is not proof that a runtime feature guard is enabl
 | 0052 | Install prepared in-memory manual TLS contexts; select the accepting listener's initial identity and derive SNI/HTTP client-auth policy from its context, including optional client certificates and an explicit verification store |
 | 0053 | Parent observations of owned child start/exit/restart/escalation; auxiliary loop/teardown hooks and restart policy; cleanup after returned initialization errors; atomic child-operation deadlines with an IPC wake and shutdown enforcement; bounded auxiliary accept-control indexing |
 | 0054 | Prepare private ACME work after key-manager IPC setup; persist complete initial keys and install acknowledged candidates before distribution; preserve in-memory manual identities; update every matching listener context through cached policy hooks; capture ACME transport policy; reset/free ACME globals; release transient TLS references, clear expected PEM EOF errors and disable accept only when registered during shutdown |
+| 0055 | Wait for HTTP-worker challenge installation acknowledgements; replay account state after ACME restart; deduplicate domain orders across listeners; own order/signing timers and references; advance completed steps immediately and retry unavailable account/directory services; classify account-not-found by problem type; remove stale parent IPC cache references and restrict HTTP-worker broadcasts |
 
 ## 22. Investigation references
 

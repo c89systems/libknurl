@@ -24,7 +24,7 @@ chain, trust and cipher checks. The adapter creates no temporary key files and
 requires no external DH parameter file. Temporary input copies and owned copied
 configuration material are cleansed when released. Contexts remain owned through
 the listener/domain lifecycle and are released on failure or stop. A new run
-prepares fresh inputs; certificate replacement uses a complete server restart.
+prepares fresh inputs; manual certificate replacement uses a complete server restart.
 Encrypted private keys require a host-supplied decrypted material source; the
 library never prompts for passwords.
 
@@ -91,5 +91,7 @@ pending challenge handling, acknowledged replacement, persistence failure and
 parent-enforced timeout/recovery. Its [private driver](../tests/acme-backend.c)
 submits the real ACME-to-key-manager certificate/challenge messages; it does not
 simulate a remote ACME directory, JWS account/order exchange or renewal schedule.
-That transport/protocol integration and complete allocation/fatal unwinding
-remain required coverage.
+The separate [protocol fixture](acme-protocol.md) drives a local HTTPS CA through
+account recovery, signed orders, CSR, TLS-ALPN-01, issuance and renewal selection
+after ACME-process restart. It also covers captured trust and transport bounds.
+Complete allocation/fatal unwinding and in-flight protocol fault coverage remain.

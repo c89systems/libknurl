@@ -111,8 +111,10 @@ and preservation of active state on failure. The runtime fixture proves private
 key-manager signing, actual TLS activation, persistence failure/restart and hard
 timeout/recovery across two workers and repeated listeners. Public pending/usable
 observations track HTTP worker contexts; challenges remain pending and work
-while application serving is paused. Remote ACME account/order traffic and
-scheduled-renewal integration remain verification work. The contract is in the
+while application serving is paused. The [ACME protocol fixture](acme-protocol.md)
+consumes the shared public API and drives a local HTTPS CA through account
+recovery, JWS/CSR, challenge verification, issuance, restart and renewal selection,
+with captured trust and bounded transport cases. The contract is in the
 [server API specification](server-api-spec.md) and
 [Vectis integration contract](vectis-integration-contract.md).
 

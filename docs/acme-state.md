@@ -64,5 +64,7 @@ complete multi-domain snapshots, wrong keys, oversized inputs and symlinks.
 These are publication-core checks. The separate
 [runtime fixture](../tests/acme-runtime.c) proves wire-level certificate
 activation, failed PERSIST preservation, key-manager restart, enforced PERSIST
-timeout and pending TLS-ALPN-01 challenges through the public server. Remote
-account/order transport and scheduled renewal remain separate integration work.
+timeout and pending TLS-ALPN-01 challenges through the public server.
+The [protocol fixture](acme-protocol.md) adds HTTPS account/order transport,
+CSR and live challenge verification, issuance and renewal selection after an
+ACME-process restart.

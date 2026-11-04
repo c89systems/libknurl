@@ -26,16 +26,19 @@ The [ACME adapter](tls.md) connects the publication core to public startup,
 key-manager recovery, certificate installation, prepared TLS policy and identity
 observations. The runtime fixture drives the actual certificate/challenge IPC
 boundary and verifies TLS activation, persistence failure/restart and hard
-deadline recovery. It does not drive remote directory/account/order exchanges.
+deadline recovery. The [protocol fixture](acme-protocol.md) drives real HTTPS
+directory/account/order exchanges, validates JWS/CSR and live TLS-ALPN-01,
+and verifies issuance plus renewal selection after ACME-process restart.
+It also covers explicit/environment trust capture and transport bounds.
 
-The next ACME integration work should exercise a local deterministic CA fixture
-through HTTP(S), including the existing-key/account recovery path, JWS/CSR,
-TLS-ALPN-01 authorization, issuance and renewal. Prove explicit/environment trust
-precedence and pre-fork capture against actual HTTPS requests, transport
-timeout/response limits and paused application serving. Inspect auxiliary
-restart/re-registration across that complete exchange and extend final failure
-unwinding coverage where the real protocol reveals gaps. Keep those checks
-bounded and avoid external CA services.
+The next broad surface is the application WebSocket API and facade, using the
+existing public request/channel/loop lifetime contracts. Preserve Vectis handler
+behavior, bounded messages/output, fragmentation, ping/pong, close/error
+notification and owner-loop execution without exposing private Kore structures.
+Add short observable framing, ownership and failure cases. Continue with the
+upstream HTTP/framing/proxy surface and provider/codecs afterwards. Retain the
+remaining ACME in-flight fault and final integration checks for the combined
+review rather than repeating the full protocol matrix for each new surface.
 
 The full goal also retains application WebSockets, upstream/reverse proxy and
 HTTP framing, WebDAV, REST/OpenAPI/assets, JSON/XML2 codecs, admission/logging,

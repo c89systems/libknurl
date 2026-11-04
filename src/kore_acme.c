@@ -265,8 +265,23 @@ int rotmos_kore_acme_request(void *userdata, struct kore_curl *request)
 {
     struct rotmos_runtime *runtime;
     struct curl_blob blob;
+    const curl_version_info_data *defaults;
+    const char *directory;
     long timeout;
     runtime = userdata;
+    /* Generic Kore curl initialization imports the current environment. Reset
+     * both components before applying the captured ACME policy. */
+    defaults = curl_version_info(CURLVERSION_NOW);
+    if (defaults == NULL)
+        return 0;
+    directory = defaults->capath;
+    if (directory == NULL && defaults->cainfo == NULL)
+        directory = X509_get_default_cert_dir();
+    if (curl_easy_setopt(request->handle, CURLOPT_CAINFO, defaults->cainfo) !=
+            CURLE_OK ||
+        curl_easy_setopt(request->handle, CURLOPT_CAPATH, directory) !=
+            CURLE_OK)
+        return 0;
     timeout =
         runtime->server->config.http.backend_curl_timeout_seconds != 0
             ? (long)runtime->server->config.http.backend_curl_timeout_seconds

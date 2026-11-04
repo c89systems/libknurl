@@ -1,0 +1,985 @@
+--- a/include/kore/acme.h
++++ b/include/kore/acme.h
+@@ -32,6 +32,7 @@
+ #define KORE_ACME_SIGN			(KORE_MSG_ACME_BASE + 3)
+ #define KORE_ACME_SIGN_RESULT		(KORE_MSG_ACME_BASE + 4)
+ #define KORE_ACME_PROC_READY		(KORE_MSG_ACME_BASE + 5)
++#define KORE_ACME_ACCOUNT_REQUEST (KORE_MSG_ACME_BASE + 6)
+ #define KORE_ACME_ACCOUNT_CREATE	(KORE_MSG_ACME_BASE + 10)
+ #define KORE_ACME_ACCOUNT_RESOLVE	(KORE_MSG_ACME_BASE + 11)
+ #define KORE_ACME_ORDER_CREATE		(KORE_MSG_ACME_BASE + 12)
+@@ -43,6 +44,7 @@
+ #define KORE_ACME_CHALLENGE_CERT	(KORE_MSG_ACME_BASE + 20)
+ #define KORE_ACME_CHALLENGE_SET_CERT	(KORE_MSG_ACME_BASE + 21)
+ #define KORE_ACME_CHALLENGE_CLEAR_CERT	(KORE_MSG_ACME_BASE + 22)
++#define KORE_ACME_CHALLENGE_READY (KORE_MSG_ACME_BASE + 23)
+ 
+ void	kore_acme_init(void);
+ void	kore_acme_run(void);
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -133,12 +133,15 @@
+ 
+ struct acme_request {
+ 	struct kore_curl	curl;
++	int account_missing;
+ };
+ 
+ struct acme_sign_op {
+ 	u_int32_t			id;
+ 	struct kore_timer		*t;
+ 	void				*udata;
++	struct acme_order *order;
++	int owns_userdata;
+ 	char				*nonce;
+ 	char				*payload;
+ 	char				*protected;
+@@ -177,6 +180,7 @@
+ 	int				flags;
+ 	int				auths;
+ 	u_int64_t			start;
++	struct kore_timer *timer;
+ 	char				*id;
+ 	char				*final;
+ 	char				*domain;
+@@ -194,6 +198,9 @@
+ struct acme_challenge {
+ 	int		status;
+ 	int		flags;
++	unsigned char ready[KORE_WORKER_MAX];
++	unsigned char digest[SHA256_DIGEST_LENGTH];
++	unsigned int ready_count;
+ 	char		*url;
+ 	char		*type;
+ 	char		*token;
+@@ -227,7 +234,17 @@
+ static void	acme_sign_expire(void *, u_int64_t);
+ static void	acme_sign_result(struct kore_msg *, const void *);
+ static void	acme_sign_submit(struct kore_json_item *, const char *, void *,
+-		    void (*cb)(struct acme_sign_op *, struct kore_buf *));
++		    void (*cb)(struct acme_sign_op *, struct kore_buf *), struct acme_order *);
++static void acme_sign_free(struct acme_sign_op *);
++static void acme_order_schedule(struct acme_order *, u_int64_t);
++static void acme_challenge_ready(struct kore_msg *, const void *);
++static void acme_reset_orders(void);
++static void acme_directory_retry(void *, u_int64_t);
++static void acme_account_retry(void *, u_int64_t);
++static struct kore_timer *directory_retry;
++static struct kore_timer *account_retry;
++static int account_pending;
++static int account_resolve;
+ 
+ static void	acme_rsakey_exp(struct kore_msg *, const void *);
+ static void	acme_rsakey_mod(struct kore_msg *, const void *);
+@@ -320,6 +337,7 @@
+ };
+ 
+ struct acme_badreq_doc {
++	char *type;
+ 	char				*detail;
+ };
+ 
+@@ -372,6 +390,7 @@
+ LONEJSON_MAP_DEFINE(acme_auth_map, struct acme_auth_doc, acme_auth_fields);
+ 
+ static const lonejson_field acme_badreq_fields[] = {
++	LONEJSON_FIELD_STRING_ALLOC(struct acme_badreq_doc, type, "type"),
+ 	LONEJSON_FIELD_STRING_ALLOC(struct acme_badreq_doc, detail, "detail")
+ };
+ LONEJSON_MAP_DEFINE(acme_badreq_map, struct acme_badreq_doc, acme_badreq_fields);
+@@ -432,6 +451,7 @@
+ 	kore_msg_register(KORE_ACME_RSAKEY_E, acme_rsakey_exp);
+ 	kore_msg_register(KORE_ACME_RSAKEY_N, acme_rsakey_mod);
+ 	kore_msg_register(KORE_ACME_SIGN_RESULT, acme_sign_result);
++	kore_msg_register(KORE_ACME_CHALLENGE_READY, acme_challenge_ready);
+ 	kore_msg_register(KORE_ACME_ORDER_CREATE, acme_order_create);
+ 	kore_msg_register(KORE_ACME_ACCOUNT_CREATE, acme_account_create);
+ 	kore_msg_register(KORE_ACME_ACCOUNT_RESOLVE, acme_account_resolve);
+@@ -464,8 +484,11 @@
+ 		quit = 1;
+ 	if (!quit)
+ 		kore_worker_started();
+-	if (!quit)
++	if (!quit) {
+ 		acme_parse_directory();
++		if (worker->restarted)
++			kore_msg_send(KORE_WORKER_KEYMGR, KORE_ACME_ACCOUNT_REQUEST, NULL, 0);
++	}
+ 
+ 	while (quit != 1) {
+ 		now = kore_time_ms();
+@@ -499,6 +522,15 @@
+ 			quit = 1;
+ 	}
+ 
++	acme_reset_orders();
++	if (directory_retry != NULL) {
++		kore_timer_remove(directory_retry);
++		directory_retry = NULL;
++	}
++	if (account_retry != NULL) {
++		kore_timer_remove(account_retry);
++		account_retry = NULL;
++	}
+ 	if (kore_library_hooks.worker_stopping != NULL)
+ 		kore_library_hooks.worker_stopping(kore_library_hooks.arg);
+ 	if (kore_library_hooks.worker_cleanup != NULL)
+@@ -542,6 +574,20 @@
+ }
+ 
+ static void
++acme_directory_retry(void *unused, u_int64_t now)
++{
++	directory_retry = NULL;
++	acme_parse_directory();
++}
++
++static void
++acme_account_retry(void *unused, u_int64_t now)
++{
++	account_retry = NULL;
++	acme_account_reg(ACME_RESOLVE_ACCOUNT);
++}
++
++static void
+ acme_parse_directory(void)
+ {
+ 	struct acme_request	req;
+@@ -552,6 +598,7 @@
+ 
+ 	if (!acme_request_run(&req)) {
+ 		acme_request_cleanup(&req);
++		directory_retry = kore_timer_add(acme_directory_retry, 1000, NULL, KORE_TIMER_ONESHOT);
+ 		return;
+ 	}
+ 
+@@ -560,6 +607,7 @@
+ 		    "request to '%s' failed: got %ld - expected 200",
+ 		    req.curl.url, req.curl.http.status);
+ 		acme_request_cleanup(&req);
++		directory_retry = kore_timer_add(acme_directory_retry, 1000, NULL, KORE_TIMER_ONESHOT);
+ 		return;
+ 	}
+ 
+@@ -605,6 +653,11 @@
+ 
+ cleanup:
+ 	acme_request_cleanup(&req);
++	if (nonce_url == NULL || order_url == NULL || account_url == NULL) {
++		directory_retry = kore_timer_add(acme_directory_retry, 1000, NULL, KORE_TIMER_ONESHOT);
++	} else if (account_pending) {
++		acme_account_reg(account_resolve);
++	}
+ }
+ 
+ static char *
+@@ -643,12 +696,14 @@
+ static void
+ acme_account_create(struct kore_msg *msg, const void *data)
+ {
++	acme_reset_orders();
+ 	acme_account_reg(ACME_CREATE_ACCOUNT);
+ }
+ 
+ static void
+ acme_account_resolve(struct kore_msg *msg, const void *data)
+ {
++	acme_reset_orders();
+ 	acme_account_reg(ACME_RESOLVE_ACCOUNT);
+ }
+ 
+@@ -659,8 +714,14 @@
+ 	char			mail[1024];
+ 	struct kore_json_item	*json, *contact;
+ 
++	account_pending = 1;
++	account_resolve = resolve_only;
+ 	if (account_url == NULL)
+ 		return;
++	if (account_retry != NULL) {
++		kore_timer_remove(account_retry);
++		account_retry = NULL;
++	}
+ 
+ 	kore_free(account_id);
+ 	account_id = NULL;
+@@ -687,7 +748,7 @@
+ 
+ 	acme_sign_submit(json, account_url,
+ 	    resolve_only ? kore_strdup("acme-resolve") : NULL,
+-	    acme_account_reg_submit);
++	    acme_account_reg_submit, NULL);
+ 	kore_json_item_free(json);
+ }
+ 
+@@ -702,7 +763,7 @@
+ 
+ 	if (!acme_request_run(&req)) {
+ 		if (op->udata != NULL &&
+-		    req.curl.http.status == HTTP_STATUS_BAD_REQUEST) {
++		    req.account_missing) {
+ 			acme_request_cleanup(&req);
+ 			kore_log(LOG_INFO,
+ 			    "ACME account is absent; registering the existing key");
+@@ -730,11 +791,14 @@
+ 	}
+ 
+ 	account_id = kore_strdup(header);
++	account_pending = 0;
+ 	kore_log(LOG_INFO, "account_id =  %s", account_id);
+ 	kore_msg_send(KORE_WORKER_KEYMGR, KORE_ACME_PROC_READY, NULL, 0);
+ 
+ cleanup:
+ 	acme_request_cleanup(&req);
++	if (account_pending && account_retry == NULL)
++		account_retry = kore_timer_add(acme_account_retry, 1000, NULL, KORE_TIMER_ONESHOT);
+ }
+ 
+ static void
+@@ -756,7 +820,7 @@
+ 	kore_json_create_string(identifier, "type", "dns");
+ 	kore_json_create_string(identifier, "value", domain);
+ 
+-	acme_sign_submit(json, order_url, domain, acme_order_create_submit);
++	acme_sign_submit(json, order_url, domain, acme_order_create_submit, NULL);
+ 	kore_json_item_free(json);
+ }
+ 
+@@ -844,8 +908,7 @@
+ 		order->state = ACME_ORDER_STATE_UPDATE;
+ 		order->final = kore_strdup(doc.finalize);
+ 
+-		kore_timer_add(acme_order_process, ACME_ORDER_TICK,
+-		    order, KORE_TIMER_ONESHOT);
++		acme_order_schedule(order, 0);
+ 
+ 		for (i = 0; i < doc.authorizations.count; i++) {
+ 			auth = kore_calloc(1, sizeof(*auth));
+@@ -912,8 +975,7 @@
+ 		order->domain = kore_strdup(domain);
+ 		order->state = ACME_ORDER_STATE_UPDATE;
+ 		order->final = kore_strdup(final->data.string);
+-		kore_timer_add(acme_order_process, ACME_ORDER_TICK,
+-		    order, KORE_TIMER_ONESHOT);
++		acme_order_schedule(order, 0);
+ 
+ 		TAILQ_FOREACH(item, &array->data.items, list) {
+ 			if (item->type != KORE_JSON_TYPE_STRING)
+@@ -941,7 +1003,7 @@
+ static void
+ acme_order_update(struct acme_order *order)
+ {
+-	acme_sign_submit(NULL, order->id, order, acme_order_update_submit);
++	acme_sign_submit(NULL, order->id, order, acme_order_update_submit, order);
+ }
+ 
+ static void
+@@ -1059,8 +1121,9 @@
+ 	if (ret == KORE_RESULT_ERROR)
+ 		order->state = ACME_ORDER_STATE_ERROR;
+ 	else
+-		order->state = ACME_ORDER_STATE_UPDATE_AUTH;
+-
++		order->state = order->status == ACME_STATUS_VALID ?
++		    ACME_ORDER_STATE_FETCH_CERT : ACME_ORDER_STATE_UPDATE_AUTH;
++	acme_order_schedule(order, 0);
+ 	acme_request_cleanup(&req);
+ }
+ 
+@@ -1090,10 +1153,19 @@
+  * active awuthoritizations to get the latest data.
+  */
+ static void
++acme_order_schedule(struct acme_order *order, u_int64_t delay)
++{
++	if (order->timer != NULL)
++		kore_timer_remove(order->timer);
++	order->timer = kore_timer_add(acme_order_process, delay, order, KORE_TIMER_ONESHOT);
++}
++
++static void
+ acme_order_process(void *udata, u_int64_t now)
+ {
+ 	struct acme_auth	*auth;
+ 	struct acme_order	*order = udata;
++	order->timer = NULL;
+ 
+ 	if ((now - order->start) >= ACME_ORDER_TIMEOUT) {
+ 		acme_order_auth_deactivate(order);
+@@ -1105,16 +1177,16 @@
+ 	case ACME_ORDER_STATE_WAITING:
+ 		break;
+ 	case ACME_ORDER_STATE_UPDATE:
++		order->state = ACME_ORDER_STATE_WAITING;
+ 		acme_order_update(order);
+-		order->state = ACME_ORDER_STATE_WAITING;
+ 		break;
+ 	case ACME_ORDER_STATE_UPDATE_AUTH:
++		order->state = ACME_ORDER_STATE_WAITING;
+ 		order->auths = 0;
+ 		LIST_FOREACH(auth, &order->auth, list) {
+ 			acme_order_auth_update(order, auth);
+ 			order->auths++;
+ 		}
+-		order->state = ACME_ORDER_STATE_WAITING;
+ 		break;
+ 	case ACME_ORDER_STATE_CANCELLED:
+ 		acme_order_remove(order, "cancelled");
+@@ -1125,8 +1197,8 @@
+ 		order = NULL;
+ 		break;
+ 	case ACME_ORDER_STATE_FETCH_CERT:
++		order->state = ACME_ORDER_STATE_WAITING;
+ 		acme_order_fetch_certificate(order);
+-		order->state = ACME_ORDER_STATE_WAITING;
+ 		break;
+ 	case ACME_ORDER_STATE_RUNNING:
+ 		switch (order->status) {
+@@ -1172,13 +1244,11 @@
+ 		fatal("%s: invalid order state %d", "acme_order_process", order->state);
+ 	}
+ 
+-	if (order != NULL) {
+-		/* Do not go back to update if we are ready for the cert. */
+-		if (order->state != ACME_ORDER_STATE_FETCH_CERT)
++	if (order != NULL && order->timer == NULL) {
++		if (order->state == ACME_ORDER_STATE_RUNNING)
+ 			order->state = ACME_ORDER_STATE_UPDATE;
+-
+-		kore_timer_add(acme_order_process, ACME_ORDER_TICK,
+-		    order, KORE_TIMER_ONESHOT);
++		acme_order_schedule(order, order->state == ACME_ORDER_STATE_WAITING ||
++		    order->state == ACME_ORDER_STATE_UPDATE ? ACME_ORDER_TICK : 0);
+ 	}
+ }
+ 
+@@ -1186,7 +1256,17 @@
+ acme_order_remove(struct acme_order *order, const char *reason)
+ {
+ 	struct acme_auth	*auth;
+-
++	struct acme_sign_op *op, *next;
++	if (order->timer != NULL)
++		kore_timer_remove(order->timer);
++	for (op = LIST_FIRST(&signops); op != NULL; op = next) {
++		next = LIST_NEXT(op, list);
++		if (op->order == order) {
++			kore_timer_remove(op->t);
++			LIST_REMOVE(op, list);
++			acme_sign_free(op);
++		}
++	}
+ 	LIST_REMOVE(order, list);
+ 
+ 	while ((auth = LIST_FIRST(&order->auth)) != NULL) {
+@@ -1207,7 +1287,7 @@
+ 
+ 	kore_log(LOG_INFO, "[%s] order removed (%s)", order->domain, reason);
+ 
+-	if (strcmp(reason, "completed"))
++	if (strcmp(reason, "completed") && strcmp(reason, "restart"))
+ 		acme_order_retry(order->domain);
+ 
+ 	kore_free(order->domain);
+@@ -1220,7 +1300,7 @@
+ acme_order_fetch_certificate(struct acme_order *order)
+ {
+ 	acme_sign_submit(NULL, order->certloc, order,
+-	    acme_order_fetch_certificate_submit);
++	    acme_order_fetch_certificate_submit, order);
+ }
+ 
+ static void
+@@ -1260,6 +1340,7 @@
+ 
+ 	acme_request_cleanup(&req);
+ 	order->state = ACME_ORDER_STATE_COMPLETE;
++	acme_order_schedule(order, 0);
+ }
+ 
+ static void
+@@ -1271,6 +1352,7 @@
+ 	kore_log(LOG_INFO, "[%s] requesting CSR", order->domain);
+ 
+ 	order->flags |= ACME_ORDER_CSR_REQUESTED;
++	order->state = ACME_ORDER_STATE_WAITING;
+ 	acme_keymgr_key_req(order->domain, NULL, 0, KORE_ACME_CSR_REQUEST);
+ }
+ 
+@@ -1303,7 +1385,7 @@
+ 
+ 	json = kore_json_create_object(NULL, NULL);
+ 	kore_json_create_string(json, "csr", b64);
+-	acme_sign_submit(json, url, url, acme_generic_submit);
++	acme_sign_submit(json, url, url, acme_generic_submit, order);
+ 
+ 	kore_json_item_free(json);
+ 	kore_free(b64);
+@@ -1337,6 +1419,8 @@
+ 	struct acme_auth	*auth;
+ 
+ 	LIST_FOREACH(auth, &order->auth, list) {
++		if (auth->challenge == NULL)
++			continue;
+ 		if (auth->challenge->status == ACME_STATUS_PENDING ||
+ 		    auth->challenge->status == ACME_STATUS_VALID ||
+ 		    auth->challenge->status == ACME_STATUS_PROCESSING)
+@@ -1394,7 +1478,7 @@
+ static void
+ acme_order_auth_update(struct acme_order *order, struct acme_auth *auth)
+ {
+-	acme_sign_submit(NULL, auth->url, auth, acme_order_auth_update_submit);
++	acme_sign_submit(NULL, auth->url, auth, acme_order_auth_update_submit, order);
+ }
+ 
+ static void
+@@ -1642,7 +1726,8 @@
+ 	}
+ #endif
+ 
+-	if (auth->challenge == NULL) {
++	if (auth->challenge == NULL && auth->status != ACME_STATUS_VALID &&
++	    auth->status != ACME_STATUS_PROCESSING) {
+ 		kore_log(LOG_NOTICE,
+ 		    "[%s:auth] no supported challenges found", order->domain);
+ 		goto cleanup;
+@@ -1661,7 +1746,8 @@
+ 			order->state = ACME_ORDER_STATE_RUNNING;
+ 		}
+ 	}
+-
++	if (ret != KORE_RESULT_OK || order->auths == 0)
++		acme_order_schedule(order, 0);
+ 	acme_request_cleanup(&req);
+ }
+ 
+@@ -1725,6 +1811,7 @@
+ 	kore_buf_init(&auth, 128);
+ 	kore_buf_appendf(&auth, "%s.%s", challenge->token, thumb);
+ 	(void)SHA256(auth.data, auth.offset, digest);
++	memcpy(challenge->digest, digest, sizeof(digest));
+ 
+ 	kore_buf_cleanup(&auth);
+ 	kore_free(thumb);
+@@ -1732,8 +1819,56 @@
+ 	acme_keymgr_key_req(order->domain, digest, sizeof(digest),
+ 	    KORE_ACME_CHALLENGE_CERT);
+ 
+-	/* XXX - this maybe too fast, keymgr may not have had time. */
+-	acme_challenge_respond(order, challenge->url, "tls-alpn-01");
++	/* HTTP workers acknowledge installation before the CA is notified. */
++}
++
++static void
++acme_challenge_ready(struct kore_msg *msg, const void *data)
++{
++	struct acme_order *order;
++	struct acme_auth *auth;
++	struct acme_challenge *challenge;
++	const struct kore_x509_msg *req;
++	const unsigned char *cursor, *digest;
++	X509 *certificate;
++	ASN1_OBJECT *oid;
++	X509_EXTENSION *extension;
++	ASN1_OCTET_STRING *value;
++	int index;
++	if (msg->src == 0 || msg->src >= KORE_WORKER_MAX ||
++	    msg->src > worker_count - 2 ||
++	    !kore_worker_keymgr_response_verify(msg, data, NULL))
++		return;
++	req = data;
++	cursor = req->data;
++	certificate = d2i_X509(NULL, &cursor, req->data_len);
++	if (certificate == NULL)
++		return;
++	oid = OBJ_txt2obj("1.3.6.1.5.5.7.1.31", 1);
++	index = X509_get_ext_by_OBJ(certificate, oid, -1);
++	ASN1_OBJECT_free(oid);
++	extension = index >= 0 ? X509_get_ext(certificate, index) : NULL;
++	value = extension != NULL ? X509_EXTENSION_get_data(extension) : NULL;
++	if (value == NULL || ASN1_STRING_length(value) != 34) {
++		X509_free(certificate);
++		return;
++	}
++	digest = ASN1_STRING_get0_data(value) + 2;
++	LIST_FOREACH(order, &orders, list) {
++		if (strcmp(order->domain, req->domain))
++			continue;
++		LIST_FOREACH(auth, &order->auth, list) {
++			challenge = auth->challenge;
++			if (challenge == NULL || !(challenge->flags & ACME_FLAG_CHALLENGE_CREATED) ||
++			    challenge->ready[msg->src] ||
++			    memcmp(challenge->digest, digest, SHA256_DIGEST_LENGTH))
++				continue;
++			challenge->ready[msg->src] = 1;
++			if (++challenge->ready_count == (unsigned int)(worker_count - 2))
++				acme_challenge_respond(order, challenge->url, "tls-alpn-01");
++		}
++	}
++	X509_free(certificate);
+ }
+ 
+ static void
+@@ -1749,7 +1884,7 @@
+ 	copy = kore_strdup(url);
+ 
+ 	json = kore_json_create_object(NULL, NULL);
+-	acme_sign_submit(json, url, copy, acme_generic_submit);
++	acme_sign_submit(json, url, copy, acme_generic_submit, order);
+ 	kore_json_item_free(json);
+ }
+ 
+@@ -1757,6 +1892,8 @@
+ acme_generic_submit(struct acme_sign_op *op, struct kore_buf *payload)
+ {
+ 	struct acme_request	req;
++	int success;
++	success = 0;
+ 
+ 	acme_request_prepare(&req, HTTP_METHOD_POST, op->udata,
+ 	    payload->data, payload->offset);
+@@ -1772,10 +1909,15 @@
+ 		goto cleanup;
+ 	}
+ 
++	success = 1;
+ 	kore_log(LOG_INFO, "submitted %lu bytes to %s", (unsigned long)(payload->offset), req.curl.url);
+ 
+ cleanup:
+ 	acme_request_cleanup(&req);
++	if (op->order != NULL) {
++		op->order->state = success ? ACME_ORDER_STATE_UPDATE : ACME_ORDER_STATE_ERROR;
++		acme_order_schedule(op->order, 0);
++	}
+ }
+ 
+ static void
+@@ -1859,11 +2001,12 @@
+ #if defined(KORE_USE_LONEJSON)
+ 		memset(&doc, 0, sizeof(doc));
+ 		if (acme_ljson_parse(&acme_badreq_map, &doc, body, len,
+-		    "acme bad request payload") == KORE_RESULT_OK &&
+-		    doc.detail != NULL) {
++		    "acme bad request payload") == KORE_RESULT_OK) {
++			req->account_missing = doc.type != NULL && strcmp(doc.type,
++			    "urn:ietf:params:acme:error:accountDoesNotExist") == 0;
+ 			kore_log(LOG_NOTICE,
+ 			    "request to '%s' failed with 400 - detail: %s",
+-			    req->curl.url, doc.detail);
++			    req->curl.url, doc.detail != NULL ? doc.detail : "ACME error");
+ 		} else {
+ 			kore_log(LOG_NOTICE,
+ 			    "request to '%s' failed with 400 - body: %.*s",
+@@ -1873,13 +2016,16 @@
+ #else
+ 		{
+ 			struct kore_json		json;
+-			struct kore_json_item		*detail;
++			struct kore_json_item		*detail, *type;
+ 
+ 			kore_json_init(&json, body, len);
+ 			if (!kore_json_parse(&json)) {
+ 				detail = NULL;
+ 			} else {
+ 				detail = kore_json_find_string(json.root, "detail");
++				type = kore_json_find_string(json.root, "type");
++				req->account_missing = type != NULL && strcmp(type->data.string,
++				    "urn:ietf:params:acme:error:accountDoesNotExist") == 0;
+ 			}
+ 
+ 			if (detail != NULL) {
+@@ -1924,7 +2070,7 @@
+ 
+ static void
+ acme_sign_submit(struct kore_json_item *json, const char *url, void *udata,
+-    void (*cb)(struct acme_sign_op *, struct kore_buf *))
++    void (*cb)(struct acme_sign_op *, struct kore_buf *), struct acme_order *owner)
+ {
+ 	struct acme_sign_op	*op;
+ 	struct kore_buf		buf;
+@@ -1932,6 +2078,16 @@
+ 
+ 	if ((nonce = acme_nonce_fetch()) == NULL) {
+ 		kore_log(LOG_ERR, "failed to fetch nonce from servers");
++		if (owner != NULL) {
++			owner->state = ACME_ORDER_STATE_ERROR;
++			acme_order_schedule(owner, 0);
++		}
++		if (cb == acme_order_create_submit)
++			acme_order_retry(udata);
++		if (cb == acme_account_reg_submit && account_retry == NULL)
++			account_retry = kore_timer_add(acme_account_retry, 1000, NULL, KORE_TIMER_ONESHOT);
++		if (owner == NULL || cb == acme_generic_submit)
++			kore_free(udata);
+ 		return;
+ 	}
+ 
+@@ -1944,6 +2100,8 @@
+ 	LIST_INSERT_HEAD(&signops, op, list);
+ 
+ 	op->cb = cb;
++	op->order = owner;
++	op->owns_userdata = owner == NULL || cb == acme_generic_submit;
+ 	op->udata = udata;
+ 	op->nonce = nonce;
+ 	op->id = signop_id++;
+@@ -1968,11 +2126,40 @@
+ 
+ 	LIST_REMOVE(op, list);
+ 
++	if (op->order != NULL) {
++		op->order->state = ACME_ORDER_STATE_ERROR;
++		acme_order_schedule(op->order, 0);
++	} else if (op->cb == acme_order_create_submit) {
++		acme_order_retry(op->udata);
++	} else if (op->cb == acme_account_reg_submit && account_retry == NULL) {
++		account_retry = kore_timer_add(acme_account_retry, 1000, NULL, KORE_TIMER_ONESHOT);
++	}
++	acme_sign_free(op);
++}
++
++static void
++acme_sign_free(struct acme_sign_op *op)
++{
+ 	kore_free(op->protected);
+ 	kore_free(op->payload);
+-	kore_free(op->udata);
++	if (op->owns_userdata)
++		kore_free(op->udata);
+ 	kore_free(op->nonce);
+ 	kore_free(op);
++}
++
++static void
++acme_reset_orders(void)
++{
++	struct acme_order *order;
++	struct acme_sign_op *op;
++	while ((order = LIST_FIRST(&orders)) != NULL)
++		acme_order_remove(order, "restart");
++	while ((op = LIST_FIRST(&signops)) != NULL) {
++		LIST_REMOVE(op, list);
++		kore_timer_remove(op->t);
++		acme_sign_free(op);
++	}
+ }
+ 
+ static void
+@@ -2016,11 +2203,7 @@
+ 
+ 	op->cb(op, &buf);
+ 
+-	kore_free(op->protected);
+-	kore_free(op->payload);
+-	kore_free(op->udata);
+-	kore_free(op->nonce);
+-	kore_free(op);
++	acme_sign_free(op);
+ 
+ 	kore_free(sig);
+ 	kore_buf_cleanup(&buf);
+--- a/src/keymgr_openssl.c
++++ b/src/keymgr_openssl.c
+@@ -229,12 +229,19 @@
+ struct acme_order {
+ 	int			state;
+ 	struct kore_timer	*timer;
+-	char			*domain;
++	char *domain;
++	LIST_ENTRY(acme_order) list;
+ };
++static LIST_HEAD(keymgr_acme_orders, acme_order) acme_orders =
++    LIST_HEAD_INITIALIZER(acme_orders);
+ 
+ static char	*keymgr_bignum_base64(const BIGNUM *);
+ 
+ static void	keymgr_acme_init(void);
++static void keymgr_acme_account_send(int);
++static void keymgr_acme_account_request(struct kore_msg *, const void *);
++static void keymgr_acme_orders_clear(void);
++static void keymgr_acme_order_done(const char *);
+ static void	keymgr_acme_renewal(void *, u_int64_t);
+ static void	keymgr_acme_check(struct kore_domain *);
+ static void	keymgr_acme_sign(struct kore_msg *, const void *);
+@@ -431,6 +438,9 @@
+ 
+ 	if (initialized == 0)
+ 		return;
++#if defined(KORE_USE_ACME)
++	keymgr_acme_orders_clear();
++#endif
+ 
+ 	for (key = TAILQ_FIRST(&keys); key != NULL; key = next) {
+ 		next = TAILQ_NEXT(key, list);
+@@ -803,11 +813,8 @@
+ static void
+ keymgr_acme_init(void)
+ {
+-	const RSA	*rsa;
+-	struct key	*key;
+-	char		*e, *n;
+-	int		needsreg;
+-	const BIGNUM	*be, *bn;
++	struct key *key;
++	int needsreg;
+ 
+ 	if (acme_provider == NULL)
+ 		return;
+@@ -837,26 +844,9 @@
+ 		kore_log(LOG_INFO, "loaded existing ACME account key");
+ 	}
+ 
+-	rsa = EVP_PKEY_get0_RSA(key->pkey);
+-	RSA_get0_key(rsa, &bn, &be, NULL);
+-
+-	e = keymgr_bignum_base64(be);
+-	n = keymgr_bignum_base64(bn);
+-
+-	kore_msg_send(KORE_WORKER_ACME, KORE_ACME_RSAKEY_E, e, strlen(e));
+-	kore_msg_send(KORE_WORKER_ACME, KORE_ACME_RSAKEY_N, n, strlen(n));
+-
+-	kore_free(e);
+-	kore_free(n);
+-
+-	if (needsreg) {
+-		kore_msg_send(KORE_WORKER_ACME,
+-		    KORE_ACME_ACCOUNT_CREATE, NULL, 0);
+-	} else {
+-		kore_msg_send(KORE_WORKER_ACME,
+-		    KORE_ACME_ACCOUNT_RESOLVE, NULL, 0);
+-	}
+-
++	keymgr_acme_account_send(needsreg);
++
++	kore_msg_register(KORE_ACME_ACCOUNT_REQUEST, keymgr_acme_account_request);
+ 	kore_msg_register(KORE_ACME_SIGN, keymgr_acme_sign);
+ 	kore_msg_register(KORE_ACME_CSR_REQUEST, keymgr_msg_recv);
+ 	kore_msg_register(KORE_ACME_PROC_READY, keymgr_acme_ready);
+@@ -866,6 +856,65 @@
+ }
+ 
+ static void
++keymgr_acme_account_send(int needsreg)
++{
++	struct key *key;
++	const RSA *rsa;
++	const BIGNUM *be, *bn;
++	char *e, *n;
++	TAILQ_FOREACH(key, &keys, list) {
++		if (key->dom == NULL && key->pkey != NULL)
++			break;
++	}
++	if (key == NULL)
++		fatalx("ACME account key is unavailable");
++	rsa = EVP_PKEY_get0_RSA(key->pkey);
++	RSA_get0_key(rsa, &bn, &be, NULL);
++	e = keymgr_bignum_base64(be);
++	n = keymgr_bignum_base64(bn);
++	kore_msg_send(KORE_WORKER_ACME, KORE_ACME_RSAKEY_E, e, strlen(e));
++	kore_msg_send(KORE_WORKER_ACME, KORE_ACME_RSAKEY_N, n, strlen(n));
++	kore_free(e);
++	kore_free(n);
++	kore_msg_send(KORE_WORKER_ACME, needsreg ? KORE_ACME_ACCOUNT_CREATE :
++	    KORE_ACME_ACCOUNT_RESOLVE, NULL, 0);
++}
++
++static void
++keymgr_acme_account_request(struct kore_msg *msg, const void *data)
++{
++	if (msg->src != KORE_WORKER_ACME)
++		return;
++	keymgr_acme_orders_clear();
++	acmeproc_ready = 0;
++	keymgr_acme_account_send(0);
++}
++
++static void
++keymgr_acme_order_done(const char *domain)
++{
++	struct acme_order *order;
++	LIST_FOREACH(order, &acme_orders, list) {
++		if (strcmp(order->domain, domain) == 0) {
++			LIST_REMOVE(order, list);
++			if (order->timer != NULL)
++				kore_timer_remove(order->timer);
++			kore_free(order->domain);
++			kore_free(order);
++			return;
++		}
++	}
++}
++
++static void
++keymgr_acme_orders_clear(void)
++{
++	struct acme_order *order;
++	while ((order = LIST_FIRST(&acme_orders)) != NULL)
++		keymgr_acme_order_done(order->domain);
++}
++
++static void
+ keymgr_acme_domainkey(struct kore_domain *dom, struct key *key)
+ {
+ 	char		*p;
+@@ -891,12 +940,16 @@
+ {
+ 	struct acme_order	*order;
+ 
++	LIST_FOREACH(order, &acme_orders, list) {
++		if (strcmp(order->domain, domain) == 0)
++			return;
++	}
+ 	order = kore_calloc(1, sizeof(*order));
+-
++	LIST_INSERT_HEAD(&acme_orders, order, list);
+ 	order->state = ACME_ORDER_STATE_INIT;
+ 	order->domain = kore_strdup(domain);
+ 	order->timer = kore_timer_add(keymgr_acme_order_start,
+-	    1000, order, KORE_TIMER_ONESHOT);
++	    0, order, KORE_TIMER_ONESHOT);
+ }
+ 
+ static void
+@@ -912,6 +965,7 @@
+ keymgr_acme_order_start(void *udata, u_int64_t now)
+ {
+ 	struct acme_order	*order = udata;
++	order->timer = NULL;
+ 
+ 	switch (order->state) {
+ 	case ACME_ORDER_STATE_INIT:
+@@ -922,9 +976,8 @@
+ 	case ACME_ORDER_STATE_SUBMIT:
+ 		kore_msg_send(KORE_WORKER_ACME, KORE_ACME_ORDER_CREATE,
+ 		    order->domain, strlen(order->domain));
+-		kore_free(order->domain);
+-		kore_free(order);
+-		order = NULL;
++		/* Keep ownership until certificate installation or order failure. */
++		return;
+ 		break;
+ 	default:
+ 		fatalx("%s: unknown order state %d", "keymgr_acme_order_start", order->state);
+@@ -1108,6 +1161,7 @@
+ 		fatalx("failed to persist ACME candidate state");
+ 
+ distribute:
++	keymgr_acme_order_done(key->dom->domain);
+ 	keymgr_submit_certificates(key->dom, KORE_MSG_WORKER_ALL);
+ 
+ 	keymgr_x509_msg(key->dom->domain, NULL, 0,
+@@ -1118,6 +1172,8 @@
+ keymgr_acme_order_failed(const void *data, size_t len, struct key *key)
+ {
+ 	u_int32_t	retry;
++
++	keymgr_acme_order_done(key->dom->domain);
+ 
+ 	if (len != sizeof(retry)) {
+ 		kore_log(LOG_ERR, "%s: invalid payload (%lu)", "keymgr_acme_order_failed", (unsigned long)(len));
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -1299,6 +1299,11 @@
+ 				worker_keymgr_domain_response(dom, msg, req);
+ 		}
+ 	}
++#if defined(KORE_USE_ACME)
++	if (msg->id == KORE_ACME_CHALLENGE_SET_CERT)
++		kore_msg_send(KORE_WORKER_ACME, KORE_ACME_CHALLENGE_READY,
++		    req, msg->length);
++#endif
+ }
+ 
+ static void
+--- a/src/msg.c
++++ b/src/msg.c
+@@ -20,6 +20,7 @@
+ #include <signal.h>
+ 
+ #include "kore.h"
++#include "library.h"
+ #include "http.h"
+ 
+ #if defined(KORE_USE_ACME)
+@@ -89,6 +90,7 @@
+ void
+ kore_msg_parent_add(struct kore_worker *kw)
+ {
++	size_t index;
+ 	kw->msg[0] = kore_connection_new(NULL);
+ 	kw->msg[0]->fd = kw->pipe[0];
+ 	kw->msg[0]->read = net_read;
+@@ -99,10 +101,16 @@
+ 	kw->msg[0]->disconnect = msg_disconnected_worker;
+ 	kw->msg[0]->handle = kore_connection_handle;
+ 
+-	conncache = kore_realloc(conncache,
+-	    (cacheidx + 1) * sizeof(struct connection *));
+-
+-	conncache[cacheidx++] = kw->msg[0];
++	for (index = 0; index < cacheidx; ++index) {
++		if (conncache[index] == NULL)
++			break;
++	}
++	if (index == cacheidx) {
++		conncache = kore_realloc(conncache,
++		    (cacheidx + 1) * sizeof(struct connection *));
++		++cacheidx;
++	}
++	conncache[index] = kw->msg[0];
+ 
+ 	TAILQ_INSERT_TAIL(&connections, kw->msg[0], list);
+ 	kore_platform_event_all(kw->msg[0]->fd, kw->msg[0]);
+@@ -113,9 +121,9 @@
+ void
+ kore_msg_parent_remove(struct kore_worker *kw)
+ {
+-	kore_connection_disconnect(kw->msg[0]);
++	if (kw->msg[0] != NULL)
++		kore_connection_disconnect(kw->msg[0]);
+ 	kore_connection_prune(KORE_CONNECTION_PRUNE_DISCONNECT);
+-	(void)close(kw->pipe[1]);
+ }
+ 
+ void
+@@ -243,6 +251,8 @@
+ 
+ 		for (i = 0; i < cacheidx; i++) {
+ 			c = conncache[i];
++			if (c == NULL)
++				continue;
+ 			if (c->proto != CONN_PROTO_MSG)
+ 				fatal("connection not a msg connection");
+ 
+@@ -257,7 +267,7 @@
+ 			dst = *(u_int16_t *)c->hdlr_extra;
+ 
+ 			if (destination == KORE_MSG_WORKER_ALL) {
+-				if (kore_keymgr_active && dst == 0)
++				if (dst == KORE_WORKER_KEYMGR || dst == KORE_WORKER_ACME)
+ 					deliver = 0;
+ 			} else {
+ 				if (dst != destination)
+@@ -282,6 +292,22 @@
+ static void
+ msg_disconnected_worker(struct connection *c)
+ {
++	struct kore_worker *kw;
++	size_t index;
++	for (index = 0; index < cacheidx; ++index) {
++		if (conncache[index] == c)
++			conncache[index] = NULL;
++	}
++	if (c->hdlr_extra != NULL && kore_worker_available()) {
++		kw = kore_worker_data_byid(*(u_int16_t *)c->hdlr_extra);
++		if (kw != NULL && kw->msg[0] == c) {
++			kw->msg[0] = NULL;
++			kw->pipe[0] = -1;
++			if (kw->pipe[1] >= 0)
++				(void)close(kw->pipe[1]);
++			kw->pipe[1] = -1;
++		}
++	}
+ 	c->hdlr_extra = NULL;
+ }
+ 

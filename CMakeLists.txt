@@ -123,6 +123,22 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_acme_protocol tests/acme-protocol.c tests/acme-ca.c)
+  target_compile_definitions(rotmos_acme_protocol PRIVATE
+    $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  target_link_libraries(rotmos_acme_protocol PRIVATE rotmos::shared
+    cpkt::openssl_ssl_shared lonejson::lonejson Threads::Threads)
+  rotmos_c89(rotmos_acme_protocol)
+  rotmos_local_runtime(rotmos_acme_protocol)
+  add_test(NAME rotmos.acme-protocol COMMAND rotmos_acme_protocol)
+  add_test(NAME rotmos.acme-trust-environment COMMAND rotmos_acme_protocol environment)
+  add_test(NAME rotmos.acme-trust-directory COMMAND rotmos_acme_protocol directory)
+  add_test(NAME rotmos.acme-receive-limit COMMAND rotmos_acme_protocol limit)
+  add_test(NAME rotmos.acme-transport-timeout COMMAND rotmos_acme_protocol timeout)
+  add_test(NAME rotmos.acme-account-errors COMMAND rotmos_acme_protocol badnonce)
+  set_tests_properties(rotmos.acme-protocol rotmos.acme-trust-environment
+    rotmos.acme-trust-directory rotmos.acme-receive-limit
+    rotmos.acme-transport-timeout rotmos.acme-account-errors PROPERTIES TIMEOUT 10)
   add_executable(rotmos_acme_runtime tests/acme-runtime.c tests/acme-backend.c)
   add_dependencies(rotmos_acme_runtime kore-source)
   target_include_directories(rotmos_acme_runtime PRIVATE "${kore_source_dir}/include/kore")
