@@ -1302,7 +1302,9 @@ global close follows response/plan cleanup and final observation, including
 resolver/start/admission failures before dispatch. Parser failures before managed
 request initialization remain transport-only events. The same implementation
 now supplies the process-shared autoblock engine and production profile;
-[logging](logging.md) connects public pslog configuration and independent file
+its Lua bindings use these public callbacks for policy, observations and
+supervision, preserving one scoped request table through routing and cleanup.
+[Logging](logging.md) connects public pslog configuration and independent file
 access output to the existing backend formatter and bounded IPC.
 
 The pslog integration accepts a borrowed native logger and copied access-log
@@ -1795,7 +1797,7 @@ destruction and emits bounded owned JSON/YAML. Recursive schema collection is
 iterative. Overlapping path/method annotations, duplicate response statuses and
 conflicting schema names fail explicitly. Lua metadata bindings retain schema
 owners through server close and use the same registry for generation. Remaining
-Lua policy/provider integration and final
+Lua provider/persistence integration and final
 combined transport/fault coverage remain part of the full implementation goal.
 
 ### Server-sent events

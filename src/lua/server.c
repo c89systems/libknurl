@@ -36,7 +36,7 @@ static int l_gc(lua_State *L)
     }
     return 0;
 }
-static void process_snapshot(lua_State *L, const rotmos_process_context *p)
+void rl_process_push(lua_State *L, const rotmos_process_context *p)
 {
     static const char *names[] = {"parent", "http", "key_manager", "acme"};
     lua_createtable(L, 0, 4);
@@ -70,7 +70,7 @@ static int process_trampoline(lua_State *L)
         return 0;
     }
     lua_pushvalue(L, root);
-    process_snapshot(L, c->process);
+    rl_process_push(L, c->process);
     lua_call(L, 2, 2);
     if (lua_isboolean(L, -2) && !lua_toboolean(L, -2))
         c->status = rl_fail(c->error, ROTMOS_STATE,
@@ -197,6 +197,8 @@ static int l_new(lua_State *L)
     config.callbacks.on_request_start = rl_request_start;
     config.callbacks.on_request_close = rl_request_close;
     config.callbacks.userdata = s;
+    if (!rl_policy_config(L, index, &config, s, &error))
+        return rl_error(L, &error);
     status = rotmos_server_new(&config, &s->native, &error);
     if (status != ROTMOS_OK)
         return rl_error(L, &error);
@@ -230,13 +232,21 @@ static int l_run(lua_State *L)
     }
     if (status != ROTMOS_OK)
         return rl_error(L, &error);
-    lua_createtable(L, 0, 3);
+    lua_createtable(L, 0, 6);
     lua_pushinteger(L, result.reason);
     lua_setfield(L, -2, "reason");
     lua_pushboolean(L, result.escalated);
     lua_setfield(L, -2, "escalated");
     lua_pushinteger(L, result.signal_number);
     lua_setfield(L, -2, "signal_number");
+    lua_pushboolean(L, result.has_failure);
+    lua_setfield(L, -2, "has_failure");
+    rl_push_u64(L, result.recovered_failures);
+    lua_setfield(L, -2, "recovered_failures");
+    if (result.has_failure) {
+        rl_worker_event_push(L, &result.last_failure);
+        lua_setfield(L, -2, "last_failure");
+    }
     return 1;
 }
 static int l_stop(lua_State *L)
@@ -761,6 +771,9 @@ void rl_servers_open(lua_State *L)
         {"route_count", l_route_count},
         {"openapi_doc", rl_openapi_doc},
         {"openapi", rl_openapi},
+        {"control_interest", rl_control_interest},
+        {"supervision_take", rl_supervision_take},
+        {"tls_identity_state", rl_tls_identity_state},
         {NULL, NULL}};
     luaL_newmetatable(L, RL_SERVER);
     lua_pushcfunction(L, l_gc);

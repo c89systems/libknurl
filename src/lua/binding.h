@@ -113,6 +113,8 @@ int rl_request_check(lua_State *, int, struct rl_request **, rotmos_error *);
 void rl_request_push(lua_State *, struct rl_request *);
 rotmos_status rl_request_start(rotmos_server *, rotmos_request *, void *,
                                rotmos_error *);
+rotmos_status rl_request_ensure(struct rl_server *, rotmos_request *,
+                                rotmos_error *);
 void rl_request_close(rotmos_server *, rotmos_request *,
                       const rotmos_request_outcome *, void *);
 rotmos_status rl_reply(lua_State *, int, rotmos_reply *, rotmos_request *,
@@ -134,6 +136,18 @@ void rl_sources_open(lua_State *);
 void rl_codecs_open(lua_State *);
 void rl_xml_objects_open(lua_State *);
 void rl_rest_open(lua_State *);
+int rl_policy_config(lua_State *, int, rotmos_server_config *,
+                     struct rl_server *, rotmos_error *);
+rotmos_status rl_policy_start(struct rl_server *, rotmos_request *,
+                              rotmos_error *);
+void rl_policy_close(struct rl_server *, rotmos_request *,
+                     const rotmos_request_outcome *);
+void rl_process_push(lua_State *, const rotmos_process_context *);
+void rl_worker_event_push(lua_State *, const rotmos_worker_event *);
+int rl_control_interest(lua_State *);
+int rl_supervision_take(lua_State *);
+int rl_tls_identity_state(lua_State *);
+void rl_policy_open(lua_State *);
 void rl_openapi_open(lua_State *);
 int rl_openapi_doc(lua_State *);
 int rl_openapi(lua_State *);

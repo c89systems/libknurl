@@ -447,13 +447,17 @@ int rl_config_parse(lua_State *L, int options, rotmos_server_config *c,
                     rotmos_error *error)
 {
     static const char *const allowed[] = {
-        "name",     "profile", "listeners", "signals",   "workers",
-        "io",       "limits",  "http",      "callbacks", "tls",
-        "timeouts", "proxy",   "client_ip", "autoblock", "start_paused"};
+        "name",      "profile",    "listeners",    "signals",
+        "workers",   "io",         "limits",       "http",
+        "callbacks", "tls",        "timeouts",     "proxy",
+        "client_ip", "autoblock",  "start_paused", "correlation_id",
+        "admission", "supervision"};
     static const char *const callbacks[] = {
         "on_process_start",   "on_parent_prepare", "on_parent_ready",
         "on_parent_stopping", "on_parent_stopped", "on_worker_start",
-        "on_worker_stopping", "on_worker_exit"};
+        "on_worker_stopping", "on_worker_exit",    "on_worker_event",
+        "on_tls_identity",    "on_request_start",  "on_request_close",
+        "on_observe"};
     static const char *const listener_fields[] = {"bind",
                                                   "name",
                                                   "port",
@@ -461,7 +465,7 @@ int rl_config_parse(lua_State *L, int options, rotmos_server_config *c,
                                                   "identity_index",
                                                   "presented_port",
                                                   "redirect_https_port"};
-    static const char *const client_fields[] = {"trusted_proxies"};
+    static const char *const client_fields[] = {"trusted_proxies", "resolve"};
     static const char *const signal_fields[] = {"mode"};
     struct scratch a;
     rotmos_listener_config *listeners;
@@ -715,6 +719,14 @@ void rl_config_push(lua_State *L, const rotmos_server_effective *e)
                    c->signals.mode == ROTMOS_SIGNALS_HOST ? "host" : "library");
     lua_setfield(L, -2, "mode");
     lua_setfield(L, -2, "signals");
+    lua_newtable(L);
+    lua_pushboolean(L, c->supervision.enabled);
+    lua_setfield(L, -2, "enabled");
+    lua_pushinteger(L, c->supervision.control_fd);
+    lua_setfield(L, -2, "control_fd");
+    lua_pushinteger(L, c->supervision.interest);
+    lua_setfield(L, -2, "interest");
+    lua_setfield(L, -2, "supervision");
     lua_newtable(L);
     lua_newtable(L);
     for (i = 0; i < c->client_ip.trusted_proxy_count; ++i) {

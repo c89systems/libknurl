@@ -1,9 +1,11 @@
 local native = require('rotmos.native')
 local M = { AGAIN = native.AGAIN, EOF = native.EOF, count = native.count, status = native.status }
 M.websocket,M.loop,M.sse_encode=native.websocket,native.loop,native.sse_encode
+M.control=native.control
 local Server, Group = {}, {}
 Server.__index, Group.__index = Server, Group
 local requests = setmetatable({}, {__mode='k'})
+local request_ready = setmetatable({}, {__mode='k'})
 local function copy(t)
   local out = {}
   for k,v in pairs(t or {}) do out[k]=v end
@@ -12,10 +14,20 @@ end
 local function invalid(message)
   return nil,{status=native.status.INVALID,kind='invalid argument',source=1,native_code=0,operation='lua',message=message,detail=''}
 end
-local function request(handle)
+local function request(handle,early)
   local out = requests[handle]
   if out then
     out.principal=handle:principal()
+    if early or not request_ready[handle] then
+      local fresh,err=handle:snapshot()
+      if not fresh then error(err.message) end
+      out.ip,out.correlation_id=fresh.ip,fresh.correlation_id
+      if not early then
+        for key,value in pairs(fresh) do out[key]=value end
+        out.body,out.body_path=fresh.body,fresh.body_path
+        request_ready[handle]=true
+      end
+    end
     return out
   end
   local err
@@ -39,6 +51,7 @@ local function request(handle)
   out.producer_resume=function() return handle:producer_resume() end
   out.event=lookup('event')
   requests[handle]=out
+  request_ready[handle]=not early
   return out
 end
 M.source=native.source
@@ -214,6 +227,16 @@ function Server:listener(index) return self._native:listener(index) end
 function Server:route_count() return self._native:route_count() end
 function Server:openapi_doc(opts) return self._native:openapi_doc(opts) end
 function Server:openapi(opts) return self._native:openapi(opts) end
+function Server:control_interest(interest) return self._native:control_interest(interest) end
+function Server:tls_identity_state(index) return self._native:tls_identity_state(index) end
+local function supervision_options(self,opts)
+  if type(opts)~='table' then return opts end
+  opts=copy(opts)
+  local fn=opts.on_event
+  if type(fn)=='function' then opts.on_event=function(_,events) return fn(self,events) end end
+  return opts
+end
+function Server:supervision_take(opts) return self._native:supervision_take(supervision_options(self,opts)) end
 function Server:proxy(opts)
   if type(opts)~='table' then return invalid('proxy declaration table required') end
   local handle,err=self._native:proxy(copy(opts))
@@ -427,16 +450,35 @@ function M.server(opts)
   if opts.signals==nil then opts.signals={mode='library'} end
   local self=setmetatable({},Server)
   local callbacks=copy(opts.callbacks)
-  for _,name in ipairs{'on_process_start','on_parent_prepare','on_parent_ready','on_parent_stopping','on_parent_stopped','on_worker_start','on_worker_stopping','on_worker_exit'} do
+  for _,name in ipairs{'on_process_start','on_parent_prepare','on_parent_ready','on_parent_stopping','on_parent_stopped',
+    'on_worker_start','on_worker_stopping','on_worker_exit','on_worker_event','on_tls_identity',
+    'on_request_start','on_request_close','on_observe'} do
     local fn=opts[name]
     if fn==nil then fn=callbacks[name] end
     if fn~=nil then
-      if type(fn)=='function' then callbacks[name]=function(_,process) return fn(self,process) end
+      if type(fn)=='function' then
+        if name=='on_request_start' then callbacks[name]=function(_,req) return fn(self,request(req,true)) end
+        elseif name=='on_request_close' then callbacks[name]=function(_,req,outcome) return fn(self,request(req,true),outcome) end
+        elseif name=='on_observe' then callbacks[name]=function(_,event)
+          if event.request then event.request=request(event.request,true) end
+          return fn(self,event)
+        end
+        else callbacks[name]=function(_,value) return fn(self,value) end end
       else callbacks[name]=fn end
     end
     opts[name]=nil
   end
   opts.callbacks=callbacks
+  for _,name in ipairs{'client_ip','correlation_id','admission'} do
+    if type(opts[name])=='table' then
+      local config=copy(opts[name])
+      local key=name=='admission' and 'on_request' or 'resolve'
+      local fn=config[key]
+      if type(fn)=='function' then config[key]=function(req) return fn(request(req,true)) end end
+      opts[name]=config
+    end
+  end
+  opts.supervision=supervision_options(self,opts.supervision)
   local handle,err=native.server(opts)
   if not handle then return nil,err end
   self._native=handle

@@ -7,11 +7,11 @@ Kore declarations, core-private headers, alternate router or transport executor.
 `<rotmos/lua.h>` belongs to this binding product; it is absent from the C SDK.
 
 The binding covers server declaration/run/stop/close, configuration and serving
-state, manual TLS/HTTPS/redirect listeners, lifecycle callbacks, route counts,
+state, manual TLS/HTTPS/redirect listeners, lifecycle/policy callbacks, route counts,
 ordinary routes, groups, callback auth, request lookups/events, buffered bodies,
 body readers/materialization, live and file uploads, static files/directories,
 filesystem WebDAV, reverse-proxy configuration/callbacks, WebSockets, SSE,
-loop registrations, staged bytes/files and live response sources. Its
+loop registrations, supervision, observations, staged bytes/files and live response sources. Its
 behavior comes from Vectis's [callback routes](../../vectis/manual/lua-app.md)
 and [existing bridge](../../vectis/src/vectis_cli.c), rather than a new server
 framework. The [integration contract](vectis-integration-contract.md) remains
@@ -500,10 +500,9 @@ allocation failures.
 
 ## Remaining binding surfaces
 
-The binding is incomplete. TLS material openers/ACME state callbacks,
-remaining policy/admission/observation/control callbacks, selected-array input,
-REST/OpenAPI, custom asset/storage providers and packed mounts,
-remaining direct dispatch/response operations still need
+The binding is incomplete. TLS material openers/ACME persistence callbacks,
+selected-array input, custom asset/storage providers and packed mounts,
+pslog logger interop and remaining direct dispatch/response operations still need
 their public C bindings. Known unsupported options return an error. No transport
 or application mechanism belongs in a temporary Vectis adapter to fill those
 gaps. Lua source archive, rockspec/source-rock packaging and final installed

@@ -23,16 +23,24 @@ static int start_trampoline(lua_State *L)
     rotmos_request_set_userdata(c->native, r);
     return 0;
 }
-rotmos_status rl_request_start(rotmos_server *server, rotmos_request *request,
-                               void *data, rotmos_error *error)
+rotmos_status rl_request_ensure(struct rl_server *s, rotmos_request *request,
+                                rotmos_error *error)
 {
     struct rl_call c;
-    struct rl_server *s = data;
-    (void)server;
+    if (rotmos_request_userdata(request) != NULL)
+        return ROTMOS_OK;
     memset(&c, 0, sizeof(c));
     c.server = s;
     c.native = request;
     return rl_protect(s->L, start_trampoline, &c, error);
+}
+rotmos_status rl_request_start(rotmos_server *server, rotmos_request *request,
+                               void *data, rotmos_error *error)
+{
+    struct rl_server *s = data;
+    rotmos_status status = rl_request_ensure(s, request, error);
+    (void)server;
+    return status == ROTMOS_OK ? rl_policy_start(s, request, error) : status;
 }
 void rl_request_close(rotmos_server *server, rotmos_request *request,
                       const rotmos_request_outcome *outcome, void *data)
@@ -42,7 +50,8 @@ void rl_request_close(rotmos_server *server, rotmos_request *request,
     size_t i, n;
     int top = lua_gettop(s->L);
     (void)server;
-    (void)outcome;
+    rl_policy_close(s, request, outcome);
+    r = rotmos_request_userdata(request);
     if (r == NULL)
         return;
     r->native = NULL;

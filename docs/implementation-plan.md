@@ -113,8 +113,8 @@ effective snapshots and the serving gate are connected. Callback auth lifts the
 existing decision/principal/challenge behavior through public staged route hooks;
 credentials and sessions remain host-owned. Its combined fixture covers the live
 wire behavior, copying, invalid decisions, protected getters and constructor
-allocation unwinding. Material openers/ACME callbacks, remaining policy/control
-hooks and the other Lua families remain part of the full goal.
+allocation unwinding. Material openers/ACME persistence and the other Lua families
+remain part of the full goal.
 
 Explicit [file-backed replies](responses.md) now lift Vectis's source and
 generated-JSON materializers through public `rotmos_reply_source_spooled` and
@@ -198,3 +198,19 @@ router metadata, with schema owners retained through server close. The installed
 fixture covers REST wire workflows, error identity, body/output bounds, metadata
 copies, schema lifetime and allocation unwinding. Remaining Lua families,
 packaging and final integration/artifact verification are still required.
+
+Lua policy and supervision now bind the public address/correlation resolvers,
+connection/request admission, request start/close, observations, worker/TLS identity
+events, control descriptor transfer/interest and active TLS identity state. Early
+callbacks and routes share scoped request tables, with body metadata filled when
+routing begins. Copied event/outcome fields retain exact counts. The short
+installed fixture covers real HTTP/TLS, failure cleanup and FD ownership without
+a parallel policy engine. TLS material openers/ACME persistence, selected-array
+input, custom providers, logging interop, remaining direct operations and final
+packaging/integration checks remain part of the full goal.
+
+The policy fixture's instrumented callback-failure path exposed an idle worker
+signal wakeup race. The backend adapter now preserves Kore's signal handling and
+notifies the existing runtime wake descriptor. Callback failure/reader retirement
+and orderly shutdown pass together under the scoped memory check, without adding
+polling, a backend hook or a host control protocol.

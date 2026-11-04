@@ -10,6 +10,7 @@
 #include <openssl/pem.h>
 #include <openssl/x509v3.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/time.h>
@@ -415,6 +416,161 @@ static int spawn_rest(lua_State *L)
         _exit(failed);
     }
     lua_pushboolean(L, 1);
+    return 1;
+}
+static int closed_exchange(unsigned short port, const char *path)
+{
+    struct sockaddr_in address;
+    struct timeval timeout;
+    int fd, valid;
+    ssize_t length;
+    char request[256], byte;
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+        return 1;
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(port);
+    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        close(fd);
+        return 1;
+    }
+    snprintf(request, sizeof(request),
+             "GET %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+             path);
+    (void)write(fd, request, strlen(request));
+    length = read(fd, &byte, 1);
+    valid = length == 0 || (length < 0 && errno == ECONNRESET);
+    close(fd);
+    return !valid;
+}
+static int spawn_observations(lua_State *L)
+{
+    static const struct {
+        const char *method, *path, *input;
+        size_t input_length;
+        int status;
+        const char *output;
+        size_t output_length;
+    } cases[] = {{"POST", "/echo", "A\0B", 3, 200, "A\0B", 3},
+                 {"GET", "/fallback", "", 0, 200, "fallback", 8},
+                 {"GET", "/bad-ip", "", 0, 500, NULL, 0},
+                 {"GET", "/ip-nul", "", 0, 500, NULL, 0},
+                 {"GET", "/bad-correlation", "", 0, 500, NULL, 0},
+                 {"GET", "/long-id", "", 0, 500, NULL, 0},
+                 {"GET", "/throw-resolver", "", 0, 500, NULL, 0},
+                 {"GET", "/start-fails", "", 0, 500, NULL, 0},
+                 {"GET", "/reject", "", 0, 429, "R\0J", 3},
+                 {"GET", "/reject-default", "", 0, 403, "", 0},
+                 {"GET", "/admit-bad", "", 0, 500, NULL, 0},
+                 {"GET", "/admit-source", "", 0, 500, NULL, 0},
+                 {"GET", "/admit-getter", "", 0, 500, NULL, 0},
+                 {"GET", "/admit-oom", "", 0, 500, NULL, 0},
+                 {"POST", "/before", "original", 8, 200, "changed", 7},
+                 {"GET", "/event", "", 0, 200, "event", 5},
+                 {"GET", "/tls", "", 0, 200, "tls", 3},
+                 {"GET", "/stop", "", 0, 200, "ok", 2}};
+    unsigned short http = (unsigned short)luaL_checkinteger(L, 1);
+    unsigned short tls = (unsigned short)luaL_checkinteger(L, 2);
+    int failed;
+    size_t i;
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        failed = closed_exchange(http, "/connection-denied");
+        if (!failed)
+            failed = closed_exchange(http, "/close");
+        for (i = 0; !failed && i < sizeof(cases) / sizeof(cases[0]); ++i) {
+            encrypted = !strcmp(cases[i].path, "/tls");
+            required_header = !strcmp(cases[i].path, "/reject")
+                                  ? "X-Admission: copied\r\n"
+                                  : NULL;
+            failed = rotmos_lua_test_exchange(
+                encrypted ? tls : http, cases[i].method, cases[i].path,
+                cases[i].input, cases[i].input_length, cases[i].status,
+                cases[i].output, cases[i].output_length);
+        }
+        if (failed)
+            kill(getppid(), SIGTERM);
+        _exit(failed);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int spawn_single(lua_State *L)
+{
+    unsigned short port = (unsigned short)luaL_checkinteger(L, 1);
+    int failed;
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        failed =
+            rotmos_lua_test_exchange(port, "GET", "/", "", 0, 200, "ok", 2);
+        if (failed)
+            kill(getppid(), SIGTERM);
+        _exit(failed);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int fd_pair(lua_State *L)
+{
+    int descriptors[2];
+    if (pipe(descriptors))
+        return luaL_error(L, "control pipe failed");
+    if (fcntl(descriptors[0], F_SETFL, O_NONBLOCK)) {
+        close(descriptors[0]);
+        close(descriptors[1]);
+        return luaL_error(L, "control pipe flags failed");
+    }
+    lua_pushinteger(L, descriptors[0]);
+    lua_pushinteger(L, descriptors[1]);
+    return 2;
+}
+static int fd_read(lua_State *L)
+{
+    int fd = (int)luaL_checkinteger(L, 1);
+    char buffer[64];
+    ssize_t length = read(fd, buffer, sizeof(buffer));
+    if (length < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            lua_pushnil(L);
+            return 1;
+        }
+        return luaL_error(L, "control pipe read failed");
+    }
+    lua_pushlstring(L, buffer, (size_t)length);
+    return 1;
+}
+static int fd_write(lua_State *L)
+{
+    int fd = (int)luaL_checkinteger(L, 1);
+    size_t length;
+    const char *value = luaL_checklstring(L, 2, &length);
+    if (write(fd, value, length) != (ssize_t)length)
+        return luaL_error(L, "control pipe write failed");
+    return 0;
+}
+static int fd_close(lua_State *L)
+{
+    if (close((int)luaL_checkinteger(L, 1)))
+        return luaL_error(L, "control pipe close failed");
+    return 0;
+}
+static int fd_closed(lua_State *L)
+{
+    int fd = (int)luaL_checkinteger(L, 1);
+    lua_pushboolean(L, fcntl(fd, F_GETFD) == -1 && errno == EBADF);
     return 1;
 }
 static int join(lua_State *L)
@@ -1265,6 +1421,20 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "spawn_typed");
     lua_pushcfunction(L, spawn_rest);
     lua_setfield(L, -2, "spawn_rest");
+    lua_pushcfunction(L, spawn_observations);
+    lua_setfield(L, -2, "spawn_observations");
+    lua_pushcfunction(L, spawn_single);
+    lua_setfield(L, -2, "spawn_single");
+    lua_pushcfunction(L, fd_pair);
+    lua_setfield(L, -2, "fd_pair");
+    lua_pushcfunction(L, fd_read);
+    lua_setfield(L, -2, "fd_read");
+    lua_pushcfunction(L, fd_write);
+    lua_setfield(L, -2, "fd_write");
+    lua_pushcfunction(L, fd_close);
+    lua_setfield(L, -2, "fd_close");
+    lua_pushcfunction(L, fd_closed);
+    lua_setfield(L, -2, "fd_closed");
     lua_pushstring(L, argv[2]);
     lua_setfield(L, -2, "root");
     if (argc == 4) {

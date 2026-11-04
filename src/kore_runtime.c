@@ -70,6 +70,43 @@ static void signal_received(int number)
         rotmos_server_notify_signal(active_runtime->server, number);
 }
 
+static void worker_signal_received(int number)
+{
+    /* Keep Kore's signal priority/meaning, and wake the selected event backend
+     * even when delivery precedes its blocking wait. A zero notification is
+     * only a wakeup; it does not turn a worker signal into a host stop request.
+     */
+    kore_signal(number);
+    if (active_runtime != NULL)
+        rotmos_server_notify_signal(active_runtime->server, 0);
+}
+
+static rotmos_status worker_signals(struct rotmos_runtime *runtime)
+{
+    static const int signals[] = {SIGHUP,  SIGQUIT, SIGTERM,
+                                  SIGUSR1, SIGCHLD, SIGINT};
+    struct sigaction action;
+    size_t i;
+    int native_code;
+    for (i = 0; i < sizeof(signals) / sizeof(signals[0]); ++i) {
+        if (sigaction(signals[i], NULL, &action) == -1)
+            break;
+        if (action.sa_handler != kore_signal)
+            continue;
+        action.sa_handler = worker_signal_received;
+        if (sigaction(signals[i], &action, NULL) == -1)
+            break;
+    }
+    if (i == sizeof(signals) / sizeof(signals[0]))
+        return ROTMOS_OK;
+    native_code = errno;
+    (void)rotmos_fail(&runtime->error, ROTMOS_IO, "worker_signals",
+                      "cannot install worker signal wakeup");
+    runtime->error.source = ROTMOS_ERROR_SYSTEM;
+    runtime->error.native_code = native_code;
+    return ROTMOS_IO;
+}
+
 void rotmos_server_notify_signal(rotmos_server *server, int number)
 {
     int saved;
@@ -213,8 +250,10 @@ static int worker_start(void *userdata)
     struct rotmos_runtime *runtime;
     runtime = userdata;
     kore_platform_event_level_read(runtime->wake[0], &runtime->wake_event);
-    runtime->status =
-        rotmos_loop_activate(runtime->server->loop, &runtime->error);
+    runtime->status = worker_signals(runtime);
+    if (runtime->status == ROTMOS_OK)
+        runtime->status =
+            rotmos_loop_activate(runtime->server->loop, &runtime->error);
     if (runtime->status != ROTMOS_OK) {
         rotmos_kore_child_failure(runtime, &runtime->error);
         return 0;
