@@ -2,6 +2,12 @@
 #define ROTMOS_TEST_VECTIS_FORWARD_H
 #include <rotmos/lonejson.h>
 #include <rotmos/xml.h>
+typedef rotmos_status (*reference_array_item)(void *, size_t, void *,
+                                              rotmos_error *);
+rotmos_status reference_request_array_each(rotmos_request *, const char *,
+                                           const lonejson_schema_view *, void *,
+                                           reference_array_item, void *,
+                                           rotmos_error *);
 
 /* Reference consumer, not a shipped API or a copy of Vectis's app. Matches
  * vectis_json_route_handler_fn's app/request/raw-record/userdata shape. The

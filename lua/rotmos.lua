@@ -41,7 +41,7 @@ local function request(handle,early)
   end
   out.header,out.query,out.param=lookup('header'),lookup('query'),lookup('param')
   out.body_bytes=function() return handle:body_bytes() end
-  for _,name in ipairs{'body_reader','body_materialize','body_spill','body_copy','json_record','xml_record'} do
+  for _,name in ipairs{'body_reader','body_materialize','body_spill','body_copy','json_record','json_array_each','xml_record'} do
     out[name]=function(a,b)
       if a==out then a=b end
       return handle[name](handle,a)

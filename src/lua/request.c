@@ -601,6 +601,7 @@ void rl_requests_open(lua_State *L)
         {"queries", queries},
         {"body_bytes", request_body},
         {"json_record", rl_request_json_record},
+        {"json_array_each", rl_request_json_array_each},
         {"xml_record", rl_request_xml_record},
         {"body_reader", rl_request_body_reader},
         {"body_materialize", rl_request_body_materialize},

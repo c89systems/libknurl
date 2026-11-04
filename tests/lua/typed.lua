@@ -6,6 +6,37 @@ local problem=json.schema('problem',{json.field('code',json.string())})
 local xml=json.schema('doc',{json.field('text',json.string()),json.field('@id',json.string())})
 local captured=json.schema('capture',{json.field('payload',json.json_value())})
 local input='{"text":"one"}'
+local array_input='{"items":[{"text":"one"},{"text":"two"}]}'
+local array_rows={}
+local parsed_items=0
+local at,done,closed=1,false,0
+local array_source=ok(rotmos.source{read=function()
+  if at>#array_input then done=true;return nil,rotmos.EOF end
+  local part=array_input:sub(at,at+2);at=at+#part;return part
+end,close=function() closed=closed+1 end})
+local array_ok,array_count=rotmos.json.array_each{schema=text,source=array_source,selector='items',callback=function(row,index)
+  assert(not done and index==parsed_items)
+  local value,err=array_source:close();assert(value==nil and err.status==rotmos.status.STATE)
+  array_rows[#array_rows+1]=row;parsed_items=parsed_items+1
+  collectgarbage('collect')
+end}
+ok(array_ok,array_count)
+assert(array_count==2 and parsed_items==2 and closed==0 and array_rows[1].text=='one' and array_rows[2].text=='two')
+ok(array_source:close());assert(closed==1)
+local good,err=rotmos.json.array_each{schema=text,data=array_input,selector='items',callback=function() error('array callback stopped') end}
+assert(good==nil and err.status==rotmos.status.STATE and err.message:find('array callback stopped',1,true))
+good,err=rotmos.json.array_each{schema=text,data='[{"text":"broken"',callback=function() error('partial item delivered') end}
+assert(good==nil and err.status==rotmos.status.INVALID)
+good,err=rotmos.json.array_each{schema=text,data='[{}]',callback=function() error('invalid item delivered') end}
+assert(good==nil and err.status==rotmos.status.INVALID)
+local callbacks=0
+good,err=rotmos.json.array_each{schema=text,data=array_input,selector='items',callback=function()
+  callbacks=callbacks+1;return nil,{status=rotmos.status.IO,message='item failure'}
+end}
+assert(good==nil and err.status==rotmos.status.IO and err.message=='item failure' and callbacks==1)
+local awaiting=ok(rotmos.source{read=function() return nil,rotmos.AGAIN end})
+good,err=rotmos.json.array_each{schema=text,source=awaiting,callback=function() error('unready item') end}
+assert(good==nil and err.status==rotmos.status.STATE);ok(awaiting:close())
 assert(ok(rotmos.json.parse{schema=text,data=input}).text=='one')
 local parsed=ok(rotmos.json.parse_record{schema=text,json=input})
 assert(parsed.text=='one' and ok(rotmos.json.serialize{schema=text,record=parsed})==input)
@@ -28,6 +59,7 @@ assert(ok(rotmos.json.serialize{schema=captured,record=cr})=='{"payload":{"n":1}
 for n=0,40,4 do
   fixture.fail_call(n,function() return rotmos.json.parse_record{schema=text,path=fixture.workspace..'/input.json'} end)
   fixture.fail_call(n,function() return rotmos.xml.parse_record{schema=xml,path=fixture.workspace..'/input.xml',attribute_prefix='@'} end)
+  fixture.fail_call(n,function() return rotmos.json.array_each{schema=text,data=array_input,selector='items',callback=function(row) assert(row.text) end} end)
   collectgarbage('collect')
 end
 local big_runtime=require('lonejson').new{spool_default={memory_limit=8,max_bytes=1048576,temp_dir=fixture.workspace}}
@@ -68,6 +100,15 @@ ok(server:json_typed_route{path='/echo',input_schema=text,handler=function(req,i
   local reader=ok(req.body_reader());assert(ok(reader:read(100))=='{"text":"direct"}');ok(reader:close())
   return {json_materialized={schema=text,record=input},content_type='application/vnd.rotmos+json'}
 end})
+ok(server:post('/array',function(req)
+  local rows={}
+  local success,count=req.json_array_each{schema=text,selector='items',callback=function(row,index)
+    assert(index==#rows);rows[#rows+1]=row
+  end}
+  ok(success,count);assert(count==2 and rows[1].text=='one' and rows[2].text=='two')
+  local reader=ok(req.body_reader());assert(ok(reader:read(100))==array_input);ok(reader:close())
+  return 'array'
+end,{body={mode='materialized',memory_buffer_limit_bytes=8}}))
 ok(server:get('/retained',function()
   collectgarbage('collect');assert(retained.text=='direct')
   local value,err=request.json_record(text);assert(value==nil and err.status==rotmos.status.STATE)

@@ -38,6 +38,61 @@ LONEJSON_MAP_DEFINE(output_map, struct output, output_fields);
 LONEJSON_MAP_DEFINE(problem_map, struct problem, problem_fields);
 static lonejson_schema_view problem_schema;
 static int called, typed_called, replaced, stopped, no_spool;
+static int array_called;
+struct array_fixture {
+    struct input *storage;
+    size_t count;
+    int fail;
+};
+static rotmos_status array_item(void *data, size_t index, void *record,
+                                rotmos_error *error)
+{
+    struct array_fixture *fixture = data;
+    struct input *input = record;
+    if (record != fixture->storage || index != fixture->count ||
+        strcmp(input->message, index == 0 ? "one" : "two") != 0)
+        return ROTMOS_STATE;
+    ++fixture->count;
+    (void)error;
+    return fixture->fail ? ROTMOS_IO : ROTMOS_OK;
+}
+static rotmos_status array_route(rotmos_request *request, rotmos_reply *reply,
+                                 void *data, rotmos_error *error)
+{
+    struct input item;
+    struct array_fixture fixture;
+    lonejson_schema_view schema;
+    rotmos_status status;
+    char first;
+    size_t count;
+    (void)data;
+    memset(&item, 0, sizeof(item));
+    memset(&fixture, 0, sizeof(fixture));
+    fixture.storage = &item;
+    fixture.fail = 1;
+    if (rotmos_body_kind(rotmos_request_body(request)) != ROTMOS_BODY_FILE ||
+        rotmos_json_schema_from_map(NULL, &input_map, &schema, error) !=
+            ROTMOS_OK)
+        return ROTMOS_STATE;
+    status = reference_request_array_each(request, "items", &schema, &item,
+                                          array_item, &fixture, error);
+    if (status != ROTMOS_IO || fixture.count != 1 || item.message != NULL ||
+        rotmos_body_read(rotmos_request_body(request), &first, 1, &count,
+                         error) != ROTMOS_OK ||
+        first != '{' || count != 1)
+        return ROTMOS_STATE;
+    fixture.fail = 0;
+    fixture.count = 0;
+    status = reference_request_array_each(request, "items", &schema, &item,
+                                          array_item, &fixture, error);
+    if (status != ROTMOS_OK || fixture.count != 2 || item.message != NULL ||
+        rotmos_body_read(rotmos_request_body(request), &first, 1, &count,
+                         error) != ROTMOS_OK ||
+        first != '{' || count != 1)
+        return ROTMOS_STATE;
+    ++array_called;
+    return rotmos_reply_text(reply, 200, "text/plain", "array", error);
+}
 struct fixture {
     pid_t child;
     char directory[64];
@@ -153,7 +208,8 @@ static rotmos_status stop(rotmos_request *request, rotmos_reply *reply,
                           void *data, rotmos_error *error)
 {
     (void)data;
-    stopped = called == 3 && typed_called == 3 && replaced == 1;
+    stopped =
+        called == 3 && typed_called == 3 && replaced == 1 && array_called == 1;
     if (!stopped) {
         (void)fprintf(stderr, "JSON counts: echo=%d typed=%d replaced=%d\n",
                       called, typed_called, replaced);
@@ -300,6 +356,9 @@ static int client(unsigned short port)
     CHECK(exchange(port, "/typed", "{\"message\":\"problem\"}", 422,
                    "{\"reason\":\"problem\"}", 0, 0) == 0);
     CHECK(exchange(port, "/empty", "", 204, "", 0, 0) == 0);
+    CHECK(exchange(port, "/array",
+                   "{\"items\":[{\"message\":\"one\"},{\"message\":\"two\"}]}",
+                   200, "array", 0, 0) == 0);
     CHECK(exchange(port, "/limit", "{\"message\":\"too much\"}", 413, "", 0,
                    0) == 0);
     CHECK(exchange(port, "/fixed",
@@ -456,6 +515,14 @@ int main(int argc, char **argv)
     CHECK(rotmos_router_json_typed_route(rotmos_server_router(server),
                                          &typed_config, NULL,
                                          &error) == ROTMOS_OK);
+    rotmos_route_config_init(&ordinary);
+    ordinary.method = ROTMOS_HTTP_POST;
+    ordinary.path = "/array";
+    ordinary.handler = array_route;
+    rotmos_body_policy_init_materialized(&ordinary.body);
+    ordinary.body.memory_buffer_limit_bytes = 8;
+    CHECK(rotmos_router_route(rotmos_server_router(server), &ordinary, NULL,
+                              &error) == ROTMOS_OK);
     rotmos_route_config_init(&ordinary);
     ordinary.method = ROTMOS_HTTP_GET;
     ordinary.path = "/stop";

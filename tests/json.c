@@ -26,66 +26,132 @@ static void closed(void *data, rotmos_status outcome)
     ++l->closed;
     l->outcome = outcome;
 }
-struct items {
-    rotmos_json_array *parser;
-    size_t count;
-    int reenter;
+struct array_input {
+    const char *text;
+    size_t position;
+    int ended, closed;
+    rotmos_status fail;
 };
-static rotmos_status item(const lonejson_record_view *view, void *data,
-                          rotmos_error *error)
+static rotmos_status array_read(void *buffer, size_t capacity, size_t *produced,
+                                void *data, rotmos_error *error)
+{
+    struct array_input *input = data;
+    size_t count = strlen(input->text) - input->position;
+    (void)error;
+    *produced = 0;
+    if (input->fail != ROTMOS_OK)
+        return input->fail;
+    if (count == 0) {
+        input->ended = 1;
+        return ROTMOS_EOF;
+    }
+    if (count > 7)
+        count = 7;
+    if (count > capacity)
+        count = capacity;
+    memcpy(buffer, input->text + input->position, count);
+    input->position += count;
+    *produced = count;
+    return ROTMOS_OK;
+}
+static void array_close(void *data, rotmos_status status)
+{
+    struct array_input *input = data;
+    (void)status;
+    ++input->closed;
+}
+struct items {
+    struct record *storage;
+    struct array_input *input;
+    size_t count;
+    int fail;
+};
+static rotmos_status item(size_t index, const lonejson_record_view *view,
+                          void *data, rotmos_error *error)
 {
     struct items *items;
     struct record *record;
     items = data;
     record = view->record;
-    if (record == NULL || record->message == NULL || view->schema.map != &map)
+    if (record != items->storage || record->message == NULL ||
+        view->schema.map != &map || index != items->count)
         return ROTMOS_INVALID;
+    if (index == 0 && items->input != NULL && items->input->ended)
+        return ROTMOS_STATE;
     ++items->count;
-    if (items->reenter &&
-        rotmos_json_array_destroy(items->parser, error) != ROTMOS_STATE)
-        return ROTMOS_INVALID;
+    if (items->fail && index == 1) {
+        rotmos_error_clear(error);
+        error->status = ROTMOS_STATE;
+        strcpy(error->message, "array callback stopped");
+        return ROTMOS_STATE;
+    }
     return ROTMOS_OK;
 }
 static int selected_items(void)
 {
-    static const char first[] = "{\"items\":[{\"message\":\"first\"},";
-    static const char last[] = "{\"message\":\"second\"}]}";
-    rotmos_json_array_config config;
+    static const char document[] = "{\"items\":[{\"message\":\"first\"},"
+                                   "{\"message\":\"second\"}]}";
+    lonejson_schema_view schema;
+    struct record storage;
     struct items items;
+    rotmos_source *source;
+    rotmos_source_config config;
+    struct array_input input;
+    rotmos_bytes bytes;
     rotmos_error error;
-    rotmos_json_array_config_init(&config);
-    CHECK(rotmos_json_schema_from_map(NULL, &map, &config.schema, &error) ==
+    int scenario;
+    CHECK(rotmos_json_schema_from_map(NULL, &map, &schema, &error) ==
           ROTMOS_OK);
-    memset(&items, 0, sizeof(items));
-    config.selector = "items";
-    config.item = item;
-    config.userdata = &items;
-    CHECK(rotmos_json_array_new(&config, &items.parser, &error) == ROTMOS_OK);
-    CHECK(rotmos_json_array_feed(items.parser, first, sizeof(first) - 1,
-                                 &error) == ROTMOS_OK &&
-          items.count == 1);
-    CHECK(rotmos_json_array_feed(items.parser, last, sizeof(last) - 1,
-                                 &error) == ROTMOS_OK &&
-          items.count == 2);
-    CHECK(rotmos_json_array_finish(items.parser, &error) == ROTMOS_OK);
-    CHECK(rotmos_json_array_finish(items.parser, &error) == ROTMOS_OK);
-    CHECK(rotmos_json_array_feed(items.parser, "", 0, &error) == ROTMOS_STATE);
-    CHECK(rotmos_json_array_destroy(items.parser, &error) == ROTMOS_OK);
-    items.count = 0;
-    items.reenter = 1;
-    CHECK(rotmos_json_array_new(&config, &items.parser, &error) == ROTMOS_OK);
-    CHECK(rotmos_json_array_feed(items.parser, first, sizeof(first) - 1,
-                                 &error) == ROTMOS_STATE &&
-          items.count == 1);
-    CHECK(rotmos_json_array_finish(items.parser, &error) == ROTMOS_STATE);
-    CHECK(rotmos_json_array_destroy(items.parser, &error) == ROTMOS_OK);
-    items.count = 0;
-    items.reenter = 0;
-    CHECK(rotmos_json_array_new(&config, &items.parser, &error) == ROTMOS_OK);
-    CHECK(rotmos_json_array_feed(items.parser, first, sizeof(first) - 1,
-                                 &error) == ROTMOS_OK);
-    CHECK(rotmos_json_array_finish(items.parser, &error) == ROTMOS_INVALID);
-    CHECK(rotmos_json_array_destroy(items.parser, &error) == ROTMOS_OK);
+    for (scenario = 0; scenario < 3; ++scenario) {
+        memset(&items, 0, sizeof(items));
+        memset(&storage, 0, sizeof(storage));
+        items.storage = &storage;
+        items.fail = scenario == 1;
+        bytes.data = document;
+        bytes.length = sizeof(document) - 1 - (scenario == 2 ? 5 : 0);
+        CHECK(rotmos_source_bytes(bytes, &source, &error) == ROTMOS_OK);
+        CHECK(rotmos_json_array_each_source(source, "items", &schema, &storage,
+                                            item, &items, &error) ==
+              (scenario == 0   ? ROTMOS_OK
+               : scenario == 1 ? ROTMOS_STATE
+                               : ROTMOS_INVALID));
+        CHECK(items.count == (scenario == 2 ? 1 : 2) &&
+              storage.message == NULL);
+        if (scenario == 1)
+            CHECK(strcmp(error.message, "array callback stopped") == 0);
+        CHECK(rotmos_source_reset(source, &error) == ROTMOS_OK);
+        CHECK(rotmos_json_array_each_source(source, "items", &schema, NULL,
+                                            item, &items,
+                                            &error) == ROTMOS_INVALID);
+        CHECK(rotmos_json_array_each_source(source, "items", &schema, &storage,
+                                            NULL, &items,
+                                            &error) == ROTMOS_INVALID);
+        CHECK(rotmos_source_destroy(source, &error) == ROTMOS_OK);
+    }
+    for (scenario = 0; scenario < 3; ++scenario) {
+        memset(&input, 0, sizeof(input));
+        input.text = document;
+        input.fail = scenario == 0   ? ROTMOS_OK
+                     : scenario == 1 ? ROTMOS_IO
+                                     : ROTMOS_AGAIN;
+        memset(&items, 0, sizeof(items));
+        items.input = &input;
+        items.storage = &storage;
+        rotmos_source_config_init(&config);
+        config.read = array_read;
+        config.close = array_close;
+        config.userdata = &input;
+        CHECK(rotmos_source_new(&config, &source, &error) == ROTMOS_OK);
+        CHECK(rotmos_json_array_each_source(source, "items", &schema, &storage,
+                                            item, &items, &error) ==
+              (scenario == 0   ? ROTMOS_OK
+               : scenario == 1 ? ROTMOS_IO
+                               : ROTMOS_STATE));
+        CHECK(input.closed == 0 && storage.message == NULL &&
+              items.count == (scenario == 0 ? 2 : 0));
+        CHECK(rotmos_source_destroy(source, &error) == ROTMOS_OK &&
+              input.closed == 1);
+    }
     return 0;
 }
 int main(void)

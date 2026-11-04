@@ -158,6 +158,7 @@ void rl_openapi_open(lua_State *);
 int rl_openapi_doc(lua_State *);
 int rl_openapi(lua_State *);
 int rl_request_json_record(lua_State *);
+int rl_request_json_array_each(lua_State *);
 int rl_request_xml_record(lua_State *);
 int rl_codec_route_check(lua_State *, int, int, rotmos_error *);
 rotmos_status rl_codec_reply(lua_State *, int, int, int, rotmos_reply *, int,

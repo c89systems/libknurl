@@ -317,6 +317,8 @@ static int spawn_typed(lua_State *L)
         {"POST", "/echo", "{\"text\":\"direct\"}", 200,
          "{\"text\":\"direct\"}"},
         {"GET", "/retained", "", 200, "ok"},
+        {"POST", "/array",
+         "{\"items\":[{\"text\":\"one\"},{\"text\":\"two\"}]}", 200, "array"},
         {"POST", "/xml", "<doc id=\"7\">xml</doc>", 200,
          "<doc id=\"7\">xml</doc>"},
         {"POST", "/xml-live", "<doc id=\"7\">xml</doc>", 200,

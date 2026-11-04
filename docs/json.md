@@ -89,21 +89,38 @@ and record owners can be retained by a Lua binding through that public callback.
 The source configuration is copied; the record itself is borrowed. Materialized
 serializers and generated sources are distinct operations.
 
-`rotmos_json_array_new/feed/finish/destroy` provide actual incremental selected-
-array input through LoneJSON's public push parser. The selector is copied. Each
-feed offers at most 64 KiB; completed items reach the callback before input EOF.
-One typed record is cleaned and reused after each synchronous callback. The
-callback accepts with OK or fails terminally; it cannot pause a partially consumed
-chunk with AGAIN. A producer waits for consumer capacity before offering its next
-chunk. The parser never collects an array, and recursive feed/finish/destroy
-latches STATE. Truncation and callback failures are sticky.
+`rotmos_json_array_each_source` and `rotmos_request_json_array_each` lift Vectis's
+selected-array pull loop. The caller supplies empty mapped item storage; each
+item is initialized, parsed, passed with a zero-based index, and cleaned before
+the next read, including callback/parse failures. The source stays borrowed and
+open. NULL/empty selector selects a root array; a non-empty selector names one
+direct object key. Request iteration rewinds its completed memory/file body
+before and after, including errors. Live blocking sources run on native threads;
+a synchronous reader returning AGAIN fails with STATE. No document/array is
+collected. Callback failures stop immediately and retain their error details.
+The source and item storage must remain valid and exclusively used through
+return. The unused owned-record push-parser wrapper has been removed.
+
+Lua `rotmos.json.array_each{schema,selector,callback,source=...}` binds that public
+C operation. Supply exactly one of `source`, `path` or already-buffered `data`.
+`request.json_array_each{schema,selector,callback}` binds its request counterpart.
+Both call `callback(table,index)` and return `true,count` or `nil,error`; callbacks
+can throw or return `nil,error` to stop. Each table comes from the binding's own
+Lua-owned record via released `lonejson_lua_record_to_table`, before C cleans the
+record. Retaining a table therefore does not require exposing C-owned storage or
+adding dependency APIs. A borrowed Lua Source rejects read/reset/close/transfer
+during iteration, remains open afterward, and retains its normal error state.
 
 The [API fixture](../tests/json.c) checks small generator reads over a 128 KiB
-record, explicit output limits, release ownership, selected-item delivery before
-EOF, reentry and truncation. The [wire fixture](../tests/json-runtime.c) checks
+record, explicit output limits, release ownership, caller-owned selected items
+before EOF, source failures, callback stopping, cleanup and truncation. The
+[wire fixture](../tests/json-runtime.c) checks
 copied registrations, group hooks, file-backed input and rewind, malformed and
 overflowing input, after-hook replacement, auth short circuit, per-response output
-schemas, a 64 KiB reply borrowing its input record, and startup spool policy.
+schemas, a 64 KiB reply borrowing its input record, file-backed array iteration
+through the reference adapter, rewind after callback failure and startup spool
+policy. Lua cases also cover retained tables, GC, allocation/callback failure,
+borrowed source ownership and request iteration.
 Both also run against relocated static/shared SDKs.
 
 The [Lua codecs](lua.md) now bind materialized serialization and generated

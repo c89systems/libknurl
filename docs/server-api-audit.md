@@ -50,8 +50,13 @@ Lua REST now forwards one encoder output directly, without the extra reader,
 JSON runtime, writer or output buffer. C XML routes now parse live upload input
 through the existing reader engine and return the record/handler to the owner
 loop after native ACK. Their reference forwarding case observes mapped parsing
-before EOF without transport spooling. Lua typed-route sharing, selected-array
-iteration and the remaining surface review are still open.
+before EOF without transport spooling. Selected-array operations now use the
+baseline pull loop, caller-owned record storage, zero-based indices and borrowed
+sources. Request iteration rewinds on success/failure; its reference adapter only
+forwards record/index/userdata. Lua binds these public operations with its own
+record and the existing public record-to-table conversion. The unused push-parser
+surface is removed. Lua typed-route sharing and the remaining surface review are
+still open.
 
 ## Evidence limits and work state
 

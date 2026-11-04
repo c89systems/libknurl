@@ -27,8 +27,10 @@ Retain the explicit seven-target/toolchain/build-directory rules in the spec.
 No host compiler fallback, sibling build input, private binding include, hidden
 materialization, new general-purpose SDK or speculative dependency API.
 
-The unverified selected-array ownership patch was discarded. It did not supply
-the baseline request/source iterator and must not determine that API's design.
+The unverified selected-array ownership patch was discarded. Selected-array
+request/source operations now follow Vectis's pull loop with caller-owned storage
+and index callbacks. Lua uses its own record plus the existing public conversion;
+the unused owned-record push-parser API is removed.
 The first reference-adapter case forwards the baseline typed JSON callback shape
 and asserts completed JSON bytes in an after-hook. Ordinary C JSON route output
 now materializes before that hook; explicit live typed replies remain separate.

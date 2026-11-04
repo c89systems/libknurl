@@ -23,31 +23,24 @@ ROTMOS_API rotmos_status rotmos_request_json_validate(rotmos_request *request,
                                                       lonejson *runtime,
                                                       rotmos_error *error);
 
-typedef struct rotmos_json_array rotmos_json_array;
 typedef rotmos_status (*rotmos_json_array_item_fn)(
-    const lonejson_record_view *item, void *userdata, rotmos_error *error);
-typedef struct rotmos_json_array_config {
-    lonejson_schema_view schema;
-    const char *selector;
-    rotmos_json_array_item_fn item;
-    void *userdata;
-} rotmos_json_array_config;
-ROTMOS_API void rotmos_json_array_config_init(rotmos_json_array_config *config);
-/* Incremental selected-array flow. Feed at most 64 KiB per call. An item is
- * borrowed only during its synchronous callback and is then cleaned/reused.
- * Callbacks accept an item with OK or fail terminally; AGAIN cannot pause a
- * partly consumed chunk. Supply capacity before feeding. No array is collected.
- * Recursive feed/finish/destroy is rejected and latches STATE. */
-ROTMOS_API rotmos_status rotmos_json_array_new(const rotmos_json_array_config *,
-                                               rotmos_json_array **,
-                                               rotmos_error *);
-ROTMOS_API rotmos_status rotmos_json_array_feed(rotmos_json_array *,
-                                                const void *, size_t,
-                                                rotmos_error *);
-ROTMOS_API rotmos_status rotmos_json_array_finish(rotmos_json_array *,
-                                                  rotmos_error *);
-ROTMOS_API rotmos_status rotmos_json_array_destroy(rotmos_json_array *,
-                                                   rotmos_error *);
+    size_t index, const lonejson_record_view *item, void *userdata,
+    rotmos_error *error);
+/* Synchronous selected-array iteration, matching Vectis. NULL/empty selector
+ * selects the root array; otherwise it selects one direct object key. Caller
+ * provides empty mapped storage, initialized and cleaned for every item,
+ * including failures. The callback borrows that same record at a zero-based
+ * index; copy values that must survive return. No array/body is collected.
+ * Non-OK callback results stop iteration. Sources are borrowed and read from
+ * their current position; AGAIN fails with STATE (use a blocking reader on a
+ * native thread for live input). Request bodies must be completed and are
+ * rewound before and after, including failure. */
+ROTMOS_API rotmos_status rotmos_json_array_each_source(
+    rotmos_source *, const char *selector, const lonejson_schema_view *,
+    void *item, rotmos_json_array_item_fn, void *userdata, rotmos_error *);
+ROTMOS_API rotmos_status rotmos_request_json_array_each(
+    rotmos_request *, const char *selector, const lonejson_schema_view *,
+    void *item, rotmos_json_array_item_fn, void *userdata, rotmos_error *);
 
 typedef struct rotmos_json_source_config {
     lonejson_record_view record;

@@ -660,6 +660,153 @@ int rl_codec_route_check(lua_State *L, int options, int xml,
     lua_pop(L, 1);
     return 1;
 }
+struct array_call {
+    lua_State *L;
+    int context;
+    size_t index, count;
+    rotmos_status status;
+    rotmos_error *error;
+};
+static int array_item_call(lua_State *L)
+{
+    struct array_call *call = lua_touserdata(L, 1);
+    lua_rawgeti(L, 2, 1);
+    lua_rawgeti(L, 2, 2);
+    if (lonejson_lua_record_to_table(L, -1) == 0)
+        return luaL_error(L, "selected-array record conversion failed");
+    lua_remove(L, -2);
+    rl_push_size(L, call->index);
+    lua_call(L, 2, 2);
+    call->status = lua_isnil(L, -1)
+                       ? ROTMOS_OK
+                       : rl_callback_error(L, -1, call->error,
+                                           "selected-array callback failed");
+    return 0;
+}
+static rotmos_status array_item(size_t index, const lonejson_record_view *view,
+                                void *data, rotmos_error *error)
+{
+    struct array_call *call = data;
+    rotmos_status status;
+    (void)view;
+    call->index = index;
+    call->error = error;
+    status =
+        rl_protect_value(call->L, array_item_call, call, call->context, error);
+    if (status == ROTMOS_OK)
+        status = call->status;
+    if (status == ROTMOS_OK)
+        ++call->count;
+    return status;
+}
+static int array_each(lua_State *L, int request_mode)
+{
+    static const char *const fields[] = {"schema", "selector", "callback",
+                                         "source", "data",     "path"};
+    struct rl_request *request = NULL;
+    struct rl_source *borrowed = NULL;
+    struct codec *c;
+    struct array_call call;
+    rotmos_source *source = NULL;
+    rotmos_bytes bytes;
+    rotmos_error error;
+    rotmos_status status;
+    const char *selector = NULL, *path = NULL;
+    int options = request_mode ? 2 : 1, owner, context, choices = 0, ref;
+    if (request_mode && !rl_request_check(L, 1, &request, &error))
+        return rl_error(L, &error);
+    if (!lua_istable(L, options) ||
+        !rl_fields(L, options, fields, request_mode ? 3 : 6, &error))
+        return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
+                                    "selected-array declaration required"),
+                            &error));
+    lua_newtable(L);
+    rl_field(L, options, "schema");
+    lua_setfield(L, -2, "schema");
+    c = prepare(L, -1, 0, 3, &error);
+    if (c == NULL)
+        return rl_error(L, &error);
+    owner = lua_absindex(L, -1);
+    status = new_record(L, owner, c, &error);
+    if (status != ROTMOS_OK)
+        return rl_error(L, &error);
+    lua_newtable(L);
+    context = lua_absindex(L, -1);
+    rl_field(L, options, "callback");
+    if (!lua_isfunction(L, -1))
+        goto invalid;
+    lua_rawseti(L, context, 1);
+    lua_getiuservalue(L, owner, 2);
+    lua_rawseti(L, context, 2);
+    if (!rl_field_string(L, options, "selector", &selector))
+        goto invalid;
+    memset(&call, 0, sizeof(call));
+    call.L = L;
+    call.context = context;
+    if (request_mode)
+        status = rotmos_request_json_array_each(request->native, selector,
+                                                &c->schema, c->record.record,
+                                                array_item, &call, &error);
+    else {
+        rl_field(L, options, "source");
+        if (!lua_isnil(L, -1)) {
+            ++choices;
+            borrowed = luaL_testudata(L, -1, RL_SOURCE);
+            if (borrowed == NULL || borrowed->native == NULL ||
+                !borrowed->owned || borrowed->active ||
+                borrowed->root != LUA_NOREF)
+                goto invalid;
+            source = borrowed->native;
+        }
+        ref = lua_absindex(L, -1);
+        rl_field(L, options, "data");
+        bytes.data = NULL;
+        bytes.length = 0;
+        if (!lua_isnil(L, -1)) {
+            ++choices;
+            if (lua_type(L, -1) != LUA_TSTRING)
+                goto invalid;
+            bytes.data = lua_tolstring(L, -1, &bytes.length);
+        }
+        if (!rl_field_string(L, options, "path", &path))
+            goto invalid;
+        choices += path != NULL;
+        if (choices != 1)
+            goto invalid;
+        if (borrowed != NULL) {
+            lua_pushvalue(L, ref);
+            borrowed->root = luaL_ref(L, LUA_REGISTRYINDEX);
+            borrowed->L = L;
+            borrowed->owned = 0;
+            status = ROTMOS_OK;
+        } else
+            status = path != NULL
+                         ? rotmos_source_file(path, &c->input, &error)
+                         : rotmos_source_bytes(bytes, &c->input, &error);
+        if (status == ROTMOS_OK)
+            status = rotmos_json_array_each_source(
+                borrowed != NULL ? source : c->input, selector, &c->schema,
+                c->record.record, array_item, &call, &error);
+        if (borrowed != NULL) {
+            borrowed->owned = 1;
+            luaL_unref(L, LUA_REGISTRYINDEX, borrowed->root);
+            borrowed->root = LUA_NOREF;
+        }
+    }
+    cleanup(L, owner, c);
+    if (status != ROTMOS_OK)
+        return rl_error(L, &error);
+    lua_pushboolean(L, 1);
+    rl_push_size(L, call.count);
+    return 2;
+invalid:
+    return rl_error(
+        L, (rl_fail(&error, ROTMOS_INVALID,
+                    "provide schema, callback and one source/data/path"),
+            &error));
+}
+static int json_array_each(lua_State *L) { return array_each(L, 0); }
+int rl_request_json_array_each(lua_State *L) { return array_each(L, 1); }
 static int json_parse(lua_State *L) { return parse(L, 0, 1); }
 static int json_parse_record(lua_State *L) { return parse(L, 0, 0); }
 static int xml_parse(lua_State *L) { return parse(L, 1, 1); }
@@ -673,6 +820,7 @@ static int xml_write(lua_State *L) { return write(L, 1); }
 void rl_codecs_open(lua_State *L)
 {
     static const luaL_Reg json[] = {{"serialize", json_serialize},
+                                    {"array_each", json_array_each},
                                     {"parse", json_parse},
                                     {"parse_record", json_parse_record},
                                     {"source", json_source},

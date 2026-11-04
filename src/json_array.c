@@ -1,188 +1,136 @@
 #include "json_internal.h"
 #include "internal.h"
-#include <stdlib.h>
+#include <errno.h>
 #include <string.h>
-struct rotmos_json_array {
-    lonejson_record_view view;
-    lonejson_array_stream *parser;
-    rotmos_json_array_item_fn item;
-    void *userdata;
-    char *selector;
+
+struct array_input {
+    rotmos_source *source;
+    rotmos_body *body;
     rotmos_error failure;
-    int owned;
-    int busy;
-    int finished;
 };
-void rotmos_json_array_config_init(rotmos_json_array_config *config)
+static lonejson_read_result read_input(void *data, unsigned char *bytes,
+                                       size_t capacity)
 {
-    if (config == NULL)
-        return;
-    memset(config, 0, sizeof(*config));
-    config->schema.size = sizeof(config->schema);
-    config->schema.abi_version = LONEJSON_VIEW_ABI_VERSION;
-}
-rotmos_status rotmos_json_array_new(const rotmos_json_array_config *config,
-                                    rotmos_json_array **out,
-                                    rotmos_error *error)
-{
-    rotmos_json_array *s;
+    struct array_input *input = data;
+    lonejson_read_result result;
     rotmos_status status;
+    memset(&result, 0, sizeof(result));
+    status = input->source != NULL
+                 ? rotmos_source_read(input->source, bytes, capacity,
+                                      &result.bytes_read, &input->failure)
+                 : rotmos_body_read(input->body, bytes, capacity,
+                                    &result.bytes_read, &input->failure);
+    if (status == ROTMOS_AGAIN)
+        status = rotmos_fail(&input->failure, ROTMOS_STATE, "json_array",
+                             "synchronous iteration needs a blocking reader");
+    if (status == ROTMOS_EOF)
+        result.eof = 1;
+    else if (status != ROTMOS_OK) {
+        if (input->failure.status != status)
+            (void)rotmos_fail(&input->failure, status, "json_array",
+                              "array input failed");
+        result.error_code = EIO;
+    }
+    return result;
+}
+static rotmos_status each(struct array_input *input, const char *selector,
+                          const lonejson_schema_view *schema, void *item,
+                          rotmos_json_array_item_fn callback, void *userdata,
+                          rotmos_error *error)
+{
+    lonejson_array_stream *stream;
+    lonejson_array_stream_result result;
+    lonejson_record_view view;
     lonejson_error native;
-    if (out != NULL)
-        *out = NULL;
-    if (config == NULL || out == NULL || config->item == NULL)
+    rotmos_status status;
+    int owned;
+    size_t index = 0;
+    if (item == NULL || callback == NULL)
         return rotmos_fail(error, ROTMOS_INVALID, "json_array",
-                           "provide schema, accepting callback and output");
-    status = rotmos_json_schema_check(&config->schema, error);
+                           "provide item storage and callback");
+    status = rotmos_json_schema_check(schema, error);
     if (status != ROTMOS_OK)
         return status;
-    s = calloc(1, sizeof(*s));
-    if (s == NULL)
-        return rotmos_fail(error, ROTMOS_NOMEM, "json_array",
-                           "cannot allocate selected-array parser");
-    s->view.size = sizeof(s->view);
-    s->view.abi_version = LONEJSON_VIEW_ABI_VERSION;
-    s->view.schema = config->schema;
-    s->item = config->item;
-    s->userdata = config->userdata;
-    s->selector =
-        rotmos_copy_text(config->selector != NULL ? config->selector : "");
-    status = rotmos_json_runtime(&config->schema, &s->view.schema.runtime,
-                                 &s->owned, error);
-    if (status == ROTMOS_OK) {
-        s->view.record = calloc(1, s->view.schema.record_size);
-        if (s->selector == NULL || s->view.record == NULL)
-            status =
-                rotmos_fail(error, ROTMOS_NOMEM, "json_array",
-                            "cannot allocate selected-array record/selector");
-    }
-    if (status == ROTMOS_OK) {
-        lonejson_init(s->view.schema.runtime, s->view.schema.map,
-                      s->view.record);
-        s->parser = lonejson_array_stream_open_push(s->view.schema.runtime,
-                                                    s->selector, &native);
-        if (s->parser == NULL)
-            status = rotmos_json_error(native.code, &native, error);
-    }
-    if (status != ROTMOS_OK) {
-        (void)rotmos_json_array_destroy(s, NULL);
+    memset(&view, 0, sizeof(view));
+    view.size = sizeof(view);
+    view.abi_version = LONEJSON_VIEW_ABI_VERSION;
+    view.schema = *schema;
+    view.record = item;
+    status = rotmos_json_runtime(schema, &view.schema.runtime, &owned, error);
+    if (status != ROTMOS_OK)
         return status;
-    }
-    *out = s;
-    rotmos_error_clear(error);
-    return ROTMOS_OK;
-}
-static lonejson_status item_ready(void *data, void *record)
-{
-    rotmos_json_array *s;
-    rotmos_error error;
-    rotmos_status status;
-    s = data;
-    if (s->failure.status != ROTMOS_OK || record != s->view.record)
-        return LONEJSON_STATUS_CALLBACK_FAILED;
-    rotmos_error_clear(&error);
-    status = s->item(&s->view, s->userdata, &error);
-    if (s->failure.status != ROTMOS_OK)
-        return LONEJSON_STATUS_CALLBACK_FAILED;
-    if (status != ROTMOS_OK) {
-        if (status <= ROTMOS_EOF || status > ROTMOS_BACKEND)
-            status = ROTMOS_INVALID;
-        if (error.status != status)
-            (void)rotmos_fail(&error, status, "json_array",
-                              "selected-array callback failed; callbacks "
-                              "cannot pause a chunk");
-        s->failure = error;
-        return LONEJSON_STATUS_CALLBACK_FAILED;
-    }
-    return LONEJSON_STATUS_OK;
-}
-static rotmos_status process(rotmos_json_array *s, const void *bytes,
-                             size_t length, int finish, rotmos_error *error)
-{
-    lonejson_error native;
-    lonejson_status code;
-    rotmos_status status;
-    if (s == NULL)
-        return rotmos_fail(error, ROTMOS_INVALID, "json_array",
-                           "parser is required");
-    if (s->busy) {
-        (void)rotmos_fail(
-            &s->failure, ROTMOS_STATE, "json_array",
-            "cannot reenter or destroy an active selected-array parser");
-        if (error != NULL)
-            *error = s->failure;
-        return ROTMOS_STATE;
-    }
-    if (s->failure.status != ROTMOS_OK) {
-        if (error != NULL)
-            *error = s->failure;
-        return s->failure.status;
-    }
-    if (s->finished) {
-        if (finish) {
-            rotmos_error_clear(error);
-            return ROTMOS_OK;
+    stream = lonejson_array_stream_open_reader(view.schema.runtime, selector,
+                                               read_input, input, &native);
+    if (stream == NULL)
+        status = rotmos_json_error(native.code, &native, error);
+    else {
+        for (;;) {
+            lonejson_init(view.schema.runtime, schema->map, item);
+            result =
+                lonejson_array_stream_next(stream, schema->map, item, &native);
+            if (result == LONEJSON_ARRAY_STREAM_ITEM) {
+                rotmos_error_clear(error);
+                status = callback(index++, &view, userdata, error);
+                if (status != ROTMOS_OK &&
+                    (error == NULL || error->status != status))
+                    (void)rotmos_fail(error, status, "json_array",
+                                      "selected-array callback stopped");
+            } else if (result == LONEJSON_ARRAY_STREAM_EOF)
+                status = ROTMOS_OK;
+            else
+                status = rotmos_json_error(native.code, &native, error);
+            lonejson_cleanup(schema->map, item);
+            if (status != ROTMOS_OK || result != LONEJSON_ARRAY_STREAM_ITEM)
+                break;
         }
-        return rotmos_fail(error, ROTMOS_STATE, "json_array",
-                           "parser is finished");
+        lonejson_array_stream_close(stream);
     }
-    if (length > 65536UL || (bytes == NULL && length != 0))
-        return rotmos_fail(error, ROTMOS_INVALID, "json_array",
-                           "feed at most 64 KiB of valid input");
-    s->busy = 1;
-    code = finish ? lonejson_array_stream_finish(s->parser, s->view.schema.map,
-                                                 s->view.record, item_ready, s,
-                                                 &native)
-                  : lonejson_array_stream_push(s->parser, s->view.schema.map,
-                                               s->view.record, bytes, length,
-                                               item_ready, s, &native);
-    s->busy = 0;
-    if (s->failure.status == ROTMOS_OK && code != LONEJSON_STATUS_OK)
-        (void)rotmos_json_error(code, &native, &s->failure);
-    status = s->failure.status;
-    if (status != ROTMOS_OK) {
+    if (owned)
+        lonejson_free(view.schema.runtime);
+    if (input->failure.status != ROTMOS_OK) {
+        status = input->failure.status;
         if (error != NULL)
-            *error = s->failure;
+            *error = input->failure;
+    }
+    if (status == ROTMOS_OK)
+        rotmos_error_clear(error);
+    return status;
+}
+rotmos_status rotmos_json_array_each_source(rotmos_source *source,
+                                            const char *selector,
+                                            const lonejson_schema_view *schema,
+                                            void *item,
+                                            rotmos_json_array_item_fn callback,
+                                            void *userdata, rotmos_error *error)
+{
+    struct array_input input;
+    if (source == NULL)
+        return rotmos_fail(error, ROTMOS_INVALID, "json_array",
+                           "source is required");
+    memset(&input, 0, sizeof(input));
+    input.source = source;
+    return each(&input, selector, schema, item, callback, userdata, error);
+}
+rotmos_status
+rotmos_request_json_array_each(rotmos_request *request, const char *selector,
+                               const lonejson_schema_view *schema, void *item,
+                               rotmos_json_array_item_fn callback,
+                               void *userdata, rotmos_error *error)
+{
+    struct array_input input;
+    rotmos_status status, rewind;
+    rotmos_error rewind_error;
+    memset(&input, 0, sizeof(input));
+    input.body = rotmos_request_body(request);
+    status = rotmos_body_rewind(input.body, error);
+    if (status != ROTMOS_OK)
         return status;
+    status = each(&input, selector, schema, item, callback, userdata, error);
+    rewind = rotmos_body_rewind(input.body, &rewind_error);
+    if (status == ROTMOS_OK && rewind != ROTMOS_OK) {
+        status = rewind;
+        if (error != NULL)
+            *error = rewind_error;
     }
-    if (finish)
-        s->finished = 1;
-    rotmos_error_clear(error);
-    return ROTMOS_OK;
-}
-rotmos_status rotmos_json_array_feed(rotmos_json_array *s, const void *bytes,
-                                     size_t length, rotmos_error *error)
-{
-    return process(s, bytes, length, 0, error);
-}
-rotmos_status rotmos_json_array_finish(rotmos_json_array *s,
-                                       rotmos_error *error)
-{
-    return process(s, NULL, 0, 1, error);
-}
-rotmos_status rotmos_json_array_destroy(rotmos_json_array *s,
-                                        rotmos_error *error)
-{
-    if (s != NULL) {
-        if (s->busy) {
-            (void)rotmos_fail(&s->failure, ROTMOS_STATE, "json_array",
-                              "cannot destroy an active selected-array parser");
-            if (error != NULL)
-                *error = s->failure;
-            return ROTMOS_STATE;
-        }
-        s->busy = 1;
-        if (s->parser != NULL)
-            lonejson_array_stream_close(s->parser);
-        if (s->view.record != NULL) {
-            lonejson_cleanup(s->view.schema.map, s->view.record);
-            free(s->view.record);
-        }
-        if (s->owned)
-            lonejson_free(s->view.schema.runtime);
-        free(s->selector);
-        free(s);
-    }
-    rotmos_error_clear(error);
-    return ROTMOS_OK;
+    return status;
 }
