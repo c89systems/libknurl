@@ -32,6 +32,7 @@ int luaopen_rotmos_native(lua_State *L)
     rl_requests_open(L);
     rl_sources_open(L);
     rl_bodies_open(L);
+    rl_replies_open(L);
     lua_pushstring(L, rotmos_version());
     lua_setfield(L, -2, "version");
     lua_newtable(L);

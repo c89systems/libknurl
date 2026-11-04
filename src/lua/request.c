@@ -11,7 +11,7 @@ static int start_trampoline(lua_State *L)
 {
     struct rl_call *c = lua_touserdata(L, 1);
     struct rl_request *r;
-    r = lua_newuserdatauv(L, sizeof(*r), 5);
+    r = lua_newuserdatauv(L, sizeof(*r), 7);
     memset(r, 0, sizeof(*r));
     r->native = c->native;
     r->root = LUA_NOREF;
@@ -92,6 +92,23 @@ static int valid(lua_State *L, struct rl_request **r, rotmos_error *e)
 {
     return rl_request_check(L, 1, r, e);
 }
+static void push_principal(lua_State *L, int index, rotmos_request *request)
+{
+    rotmos_bytes principal = rotmos_webdav_request_principal(request);
+    if (principal.data != NULL)
+        lua_pushlstring(L, principal.data, principal.length);
+    else
+        lua_getiuservalue(L, index, 3);
+}
+static int request_principal(lua_State *L)
+{
+    struct rl_request *request;
+    rotmos_error error;
+    if (!valid(L, &request, &error))
+        return rl_error(L, &error);
+    push_principal(L, 1, request->native);
+    return 1;
+}
 static int snapshot(lua_State *L)
 {
     struct rl_request *r;
@@ -102,7 +119,7 @@ static int snapshot(lua_State *L)
         return rl_error(L, &e);
     n = r->native;
     lua_createtable(L, 0, 15);
-    lua_getiuservalue(L, 1, 3);
+    push_principal(L, 1, n);
     lua_setfield(L, -2, "principal");
     bytes_field(L, "method", rotmos_request_method_token(n));
     bytes_field(L, "version", rotmos_request_version(n));
@@ -433,7 +450,10 @@ static int route_trampoline(lua_State *L)
         }
         lua_pushvalue(L, view);
         if (c->hook == 2) {
-            lua_getiuservalue(L, view, 2);
+            if (c->request->native_reply)
+                rl_reply_view_push(L, c);
+            else
+                lua_getiuservalue(L, view, 2);
             lua_call(L, 2, 2);
         } else
             lua_call(L, 1, 2);
@@ -443,8 +463,10 @@ static int route_trampoline(lua_State *L)
             return 0;
         }
         lua_pop(L, 1);
-        if (c->hook != 0 && (lua_isnil(L, -1) ||
-                             (lua_isboolean(L, -1) && lua_toboolean(L, -1))))
+        if (c->hook != 0 &&
+            (lua_isnil(L, -1) ||
+             (lua_isboolean(L, -1) && lua_toboolean(L, -1)) ||
+             (c->reply_view != NULL && lua_touserdata(L, -1) == c->reply_view)))
             invoke = 0;
     }
     if (c->hook == 1) {
@@ -457,10 +479,12 @@ static int route_trampoline(lua_State *L)
     if (invoke) {
         lua_pushvalue(L, -1);
         lua_setiuservalue(L, view, 2);
+        c->request->native_reply = 0;
     }
     if (c->hook == 0)
         return 0;
-    if (c->rule->is_group || c->rule->group == NULL) {
+    if (!c->request->native_reply &&
+        (c->rule->is_group || c->rule->group == NULL)) {
         lua_getiuservalue(L, view, 2);
         value = lua_absindex(L, -1);
         c->status = rl_reply(L, value, c->reply, c->native, c->error);
@@ -489,7 +513,13 @@ static rotmos_status route_call(rotmos_request *n, rotmos_reply *reply,
         return rl_fail(error, ROTMOS_STATE, "Lua request association missing");
     if (r->is_upload)
         c.request->streaming_upload = 1;
+    if (!r->is_group && hook == 3)
+        c.request->native_reply = r->native_reply;
+    if (!r->is_group && r->native_reply && hook == 1)
+        c.request->native_reply = 1;
     status = rl_protect(c.server->L, route_trampoline, &c, error);
+    if (c.reply_view != NULL)
+        c.reply_view->native = NULL;
     if (finish != NULL)
         *finish = c.finish;
     return status == ROTMOS_OK ? c.status : status;
@@ -518,6 +548,7 @@ void rl_requests_open(lua_State *L)
 {
     static const luaL_Reg methods[] = {
         {"snapshot", snapshot},
+        {"principal", request_principal},
         {"header", header},
         {"query", query},
         {"param", param},

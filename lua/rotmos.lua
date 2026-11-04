@@ -13,7 +13,10 @@ local function invalid(message)
 end
 local function request(handle)
   local out = requests[handle]
-  if out then return out end
+  if out then
+    out.principal=handle:principal()
+    return out
+  end
   local err
   out,err=handle:snapshot()
   if not out then error(err.message) end
@@ -92,6 +95,30 @@ local function upload(self,opts)
   return true
 end
 Server.upload,Group.upload=upload,upload
+local function convenience(self,name,opts)
+  if type(opts)~='table' then return invalid(name..' declaration table required') end
+  opts=copy(opts)
+  if name=='static_directory' then
+    opts.path=first(opts.path,opts.path_prefix,opts.prefix) or '/'
+    opts.root_dir=first(opts.root_dir,opts.root,opts.dir)
+    opts.index_enabled=first(opts.index_enabled,opts.index)
+    opts.path_prefix,opts.prefix,opts.root,opts.dir,opts.index=nil,nil,nil,nil,nil
+  elseif name=='webdav' then
+    opts.path_prefix=first(opts.path_prefix,opts.prefix) or '/'
+    opts.prefix=nil
+  else
+    opts.file_path=first(opts.file_path,opts.file)
+    opts.file=nil
+  end
+  opts=options(opts,nil,name=='upload_file' and native.BODY_STREAMING_UPLOAD or nil)
+  local handle,err=self._native[name](self._native,opts)
+  if not handle then return nil,err end
+  return true
+end
+for _,name in ipairs{'static_file','static_directory','upload_file','webdav'} do
+  Server[name]=function(self,opts) return convenience(self,name,opts) end
+  Group[name]=Server[name]
+end
 for name,method in pairs(native.methods) do
   local function verb(self,path,handler,opts)
     opts=copy(opts);opts.method=method;return route(self,path,handler,opts)

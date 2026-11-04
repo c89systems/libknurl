@@ -8,13 +8,6 @@ struct upload_call {
     rotmos_status status;
     rotmos_error *error;
 };
-void rl_rule_options(lua_State *L, struct rl_rule *rule)
-{
-    lua_rawgeti(L, LUA_REGISTRYINDEX, rule->server->root);
-    lua_getiuservalue(L, -1, 2);
-    lua_rawgeti(L, -1, rule->root);
-    lua_getiuservalue(L, -1, 1);
-}
 int rl_upload_prepare(lua_State *L, int index, rotmos_error *error)
 {
     static const char *const fields[] = {"open", "on_chunk", "on_complete",

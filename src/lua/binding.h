@@ -16,6 +16,17 @@
 #define RL_SOURCE "rotmos.source"
 #define RL_COUNT "rotmos.count"
 #define RL_BODY_RESULT "rotmos.body_result"
+#define RL_REPLY "rotmos.reply"
+struct rl_reply_view {
+    rotmos_reply *native;
+    rotmos_request *request;
+};
+struct rl_auth_result {
+    const char *action, *location, *type, *challenge, *principal;
+    rotmos_bytes body;
+    size_t code;
+    int present, snapshot;
+};
 struct rl_body_result {
     rotmos_body_result value;
     unsigned int readers;
@@ -33,6 +44,7 @@ struct rl_rule {
     int root;
     int is_group;
     int is_upload;
+    int native_reply;
     size_t buffer_bytes;
 };
 struct rl_request {
@@ -40,6 +52,7 @@ struct rl_request {
     int root;
     int streaming_upload, upload_opened, upload_closed, upload_finishing;
     struct rl_rule *upload;
+    int native_reply;
 };
 struct rl_source {
     rotmos_source *native;
@@ -63,6 +76,7 @@ struct rl_call {
     int hook, finish;
     rotmos_status status;
     rotmos_error *error;
+    struct rl_reply_view *reply_view;
 };
 rotmos_status rl_fail(rotmos_error *, rotmos_status, const char *);
 int rl_error(lua_State *, const rotmos_error *);
@@ -82,6 +96,8 @@ int rl_fields(lua_State *, int, const char *const *, size_t, rotmos_error *);
 int rl_config_parse(lua_State *, int, rotmos_server_config *, rotmos_error *);
 void rl_config_push(lua_State *, const rotmos_server_effective *);
 int rl_auth_prepare(lua_State *, int, rotmos_error *);
+rotmos_status rl_auth_decide(lua_State *, int, rotmos_request *, const char *,
+                             struct rl_auth_result *, rotmos_error *);
 rotmos_status rl_auth_apply(lua_State *, int, int, rotmos_request *,
                             rotmos_reply *, int *, rotmos_error *);
 rotmos_status rl_callback_error(lua_State *, int, rotmos_error *, const char *);
@@ -108,6 +124,22 @@ void rl_servers_open(lua_State *);
 void rl_requests_open(lua_State *);
 void rl_sources_open(lua_State *);
 void rl_bodies_open(lua_State *);
+void rl_replies_open(lua_State *);
+void rl_reply_view_push(lua_State *, struct rl_call *);
+struct rl_rule *rl_rule_new(lua_State *, rotmos_error *);
+int rl_rule_root(lua_State *, int, struct rl_rule *);
+int rl_rule_finish(lua_State *, int, int, struct rl_rule *, rotmos_status,
+                   const rotmos_error *);
+void rl_rule_hooks(rotmos_route_hooks *, struct rl_rule *);
+int rl_methods(lua_State *, int, rotmos_http_methods, rotmos_http_methods *);
+int rl_method_value(lua_State *, int, rotmos_http_method *);
+int rl_route_path(lua_State *, int, rotmos_route_config *);
+int rl_body_policy(lua_State *, int, rotmos_body_policy *, int, rotmos_error *);
+int rl_field_bool(lua_State *, int, const char *, int *);
+int rl_static_file(lua_State *);
+int rl_static_directory(lua_State *);
+int rl_upload_file(lua_State *);
+int rl_webdav(lua_State *);
 void rl_body_result_retire(struct rl_body_result *);
 int rl_request_body_reader(lua_State *);
 int rl_request_body_materialize(lua_State *);

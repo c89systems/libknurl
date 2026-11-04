@@ -122,25 +122,25 @@ invalid:
     lua_settop(L, base);
     return 0;
 }
-rotmos_status rl_auth_apply(lua_State *L, int options, int view,
-                            rotmos_request *request, rotmos_reply *reply,
-                            int *finish, rotmos_error *error)
+rotmos_status rl_auth_decide(lua_State *L, int options, rotmos_request *request,
+                             const char *resource, struct rl_auth_result *out,
+                             rotmos_error *error)
 {
     static const char *fields[] = {
         "action", "status_code",      "location", "content_type",
         "body",   "www_authenticate", "principal"};
     int auth, result, snapshot;
-    size_t i, code = 0, length;
+    size_t i, code = 0;
     const char *action = "deny", *location = NULL,
                *type = "text/plain; charset=utf-8", *challenge = NULL,
                *principal = NULL;
     rotmos_bytes body;
-    rotmos_status status;
+    memset(out, 0, sizeof(*out));
     options = lua_absindex(L, options);
-    view = lua_absindex(L, view);
     rl_field(L, options, "auth");
     if (lua_isnil(L, -1))
         return ROTMOS_OK;
+    out->present = 1;
     auth = lua_absindex(L, -1);
     rl_field(L, auth, "callback");
     lua_newtable(L);
@@ -153,8 +153,7 @@ rotmos_status rl_auth_apply(lua_State *L, int options, int view,
     lua_setfield(L, -2, "purpose");
     rl_field(L, auth, "allowed_modes");
     lua_setfield(L, -2, "allowed_modes");
-    body = rotmos_request_path(request);
-    lua_pushlstring(L, body.data, body.length);
+    lua_pushstring(L, resource);
     lua_setfield(L, -2, "resource");
     lua_call(L, 1, 2);
     if (!lua_isnil(L, -1))
@@ -192,6 +191,38 @@ rotmos_status rl_auth_apply(lua_State *L, int options, int view,
         body.data = lua_tolstring(L, -1, &body.length);
     }
     lua_pop(L, 1);
+    if (strcmp(action, "allow") && strcmp(action, "deny") &&
+        strcmp(action, "required") && strcmp(action, "redirect"))
+        return rl_fail(error, ROTMOS_INVALID,
+                       "auth action must be allow, deny, required or redirect");
+    out->action = action;
+    out->location = location;
+    out->type = type;
+    out->challenge = challenge;
+    out->principal = principal;
+    out->body = body;
+    out->code = code;
+    out->snapshot = snapshot;
+    return ROTMOS_OK;
+}
+rotmos_status rl_auth_apply(lua_State *L, int options, int view,
+                            rotmos_request *request, rotmos_reply *reply,
+                            int *finish, rotmos_error *error)
+{
+    struct rl_auth_result result;
+    rotmos_status status;
+    size_t length, code;
+    const char *action, *principal, *challenge, *location;
+    view = lua_absindex(L, view);
+    status = rl_auth_decide(L, options, request,
+                            rotmos_request_path(request).data, &result, error);
+    if (status != ROTMOS_OK || !result.present)
+        return status;
+    action = result.action;
+    principal = result.principal;
+    challenge = result.challenge;
+    location = result.location;
+    code = result.code;
     if (!strcmp(action, "allow")) {
         if (principal != NULL && principal[0] != 0) {
             length = strlen(principal);
@@ -228,7 +259,8 @@ rotmos_status rl_auth_apply(lua_State *L, int options, int view,
     } else
         return rl_fail(error, ROTMOS_INVALID,
                        "auth action must be allow, deny, required or redirect");
-    status = rotmos_reply_bytes(reply, (int)code, type, body, error);
+    status =
+        rotmos_reply_bytes(reply, (int)code, result.type, result.body, error);
     *finish = status == ROTMOS_OK;
     return status;
 }

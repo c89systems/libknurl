@@ -9,7 +9,8 @@ Kore declarations, core-private headers, alternate router or transport executor.
 The binding covers server declaration/run/stop/close, configuration and serving
 state, manual TLS/HTTPS/redirect listeners, lifecycle callbacks, route counts,
 ordinary routes, groups, callback auth, request lookups/events, buffered bodies,
-staged bytes/files and live response sources. Its
+body readers/materialization, live and file uploads, static files/directories,
+filesystem WebDAV, staged bytes/files and live response sources. Its
 behavior comes from Vectis's [callback routes](../../vectis/manual/lua-app.md)
 and [existing bridge](../../vectis/src/vectis_cli.c), rather than a new server
 framework. The [integration contract](vectis-integration-contract.md) remains
@@ -47,6 +48,16 @@ converted, under protection that includes response/source getters and allocation
 Nil means 204; strings and numbers produce text. Response declarations accept
 `status_code`/`status`, headers, content type and body/file/stream source. Repeated
 headers can use an ordered array of `{name=..., value=...}` pairs.
+
+Native route helpers supply their already staged result to after hooks as a
+borrowed reply view. `reply:snapshot()` copies status, payload kind, content type,
+ordered headers and a bytes payload when present. File/source payloads remain
+unread. `header_set(name, value)` / `header_add(name, value)` use public builders;
+`replace(declaration)` uses the ordinary response converter. Returning nil, true
+or that view preserves the native result; returning an ordinary Lua declaration
+replaces it and passes that declaration to subsequent group hooks. The view
+expires at the end of its individual callback, including on exception or OOM.
+Saved views return STATE; a subsequent after hook receives its own view.
 
 `spooled_source` is Vectis's explicit file-backed alternative to `stream_source`.
 The binding calls public `rotmos_reply_source_spooled`, closes the input once
@@ -115,6 +126,37 @@ owns its own partial cleanup. Successful close follows final response conversion
 and precedes network output/live source reset. A close exception turns an
 otherwise successful upload into a server error; cleanup cannot replace an
 earlier failure. Admission/auth rejection opens no upload state.
+
+`server:upload_file{path=..., file_path=..., max_body_bytes=...}` (also on a group)
+uses the public native file upload executor. `file` aliases `file_path`. POST is
+the default; method(s), path kind, upload body policy and auth/before/after hooks
+are supported. The explicit file opens/truncates after admission, is written
+incrementally, and remains a caller artifact, including partial output on error.
+Success is Vectis's 200 text response containing the uploaded byte count. No Lua
+callback runs on the native file worker.
+
+`static_file{path=..., file_path=...}` and
+`static_directory{path_prefix=..., root_dir=..., index=true}` work on a server or
+group. File accepts `file`; directory accepts `prefix`, `root` or `dir`. The
+canonical low-level keys are `path`, `root_dir` and `index_enabled`. Directory
+paths default to `/`; indexes default disabled. GET/HEAD masks, content/cache
+type policy, index file and optional not-found body/type map to public static
+configuration. File opens, confinement, range/conditional handling and slash
+redirects remain in the existing C asset engine. Registration copies declarations
+and performs no file lookup. Ordinary auth and route hooks apply.
+
+`webdav{path_prefix=..., cache_dir=..., site_id=..., root_dir=..., auth=...}` uses
+the public filesystem WebDAV mount, also on a group. `prefix` aliases the mount
+path, default `/`. File/total/resource quotas, body limit, content/cache policy
+and operation timeout/disable fields map directly to C. Vectis's
+`auth_required=true` and `conceal_unauthorized=true` defaults map to the public
+disabled flags; there is no implicit XDG/cache location. The callback provider
+receives each relative resource path, including child visibility and mutation
+checks. Its decoded decision stays rooted until the native engine copies it.
+WebDAV owns authorization, conceal/challenge/redirect behavior and principal scope;
+the binding adds no second mount auth gate. Request principal metadata refreshes
+after mount authorization and retains the WebDAV public 254-byte bound. Native
+storage work never accesses Lua. Route hooks may inspect/replace staged results.
 
 `rotmos.count(decimal_text)` or `rotmos.count(high, low)` represents unsigned
 64-bit quantities exactly. Values fitting Lua's integer range are integers;
@@ -197,13 +239,17 @@ preload/dynamic paths.
 The [body/upload fixture](../tests/lua/body-upload.lua) adds request/result reader
 lifetimes, explicit spill/copy ownership, delivery before EOF, aliases and
 callback order, prefix/AGAIN resumption and callback/cleanup/allocation failures.
+The [native-route fixture](../tests/lua/routes.lua) adds static range/conditional
+responses and indexes, copied declarations, staged hook mutation/replacement and
+scope expiry, admitted file uploads, protected WebDAV reads/writes/listing/quotas,
+resource auth, principal refresh and protected callback/allocation failures.
 
 ## Remaining binding surfaces
 
 The binding is incomplete. TLS material openers/ACME state callbacks,
-remaining policy/admission/observation/control callbacks, native upload-file
-convenience, schemas/JSON/XML, REST/OpenAPI,
-assets/WebDAV, proxy/WebSocket/SSE and direct loop/response operations still need
+remaining policy/admission/observation/control callbacks, schemas/JSON/XML,
+REST/OpenAPI, custom asset/storage providers and packed mounts,
+proxy/WebSocket/SSE and remaining direct loop/response operations still need
 their public C bindings. Known unsupported options return an error. No transport
 or application mechanism belongs in a temporary Vectis adapter to fill those
 gaps. Lua source archive, rockspec/source-rock packaging and final installed

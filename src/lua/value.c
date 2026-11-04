@@ -216,6 +216,16 @@ int rl_field_string(lua_State *L, int index, const char *name, const char **out)
     lua_pop(L, 1);
     return ok;
 }
+int rl_field_bool(lua_State *L, int index, const char *name, int *out)
+{
+    int ok;
+    rl_field(L, index, name);
+    ok = lua_isnil(L, -1) || lua_isboolean(L, -1);
+    if (lua_isboolean(L, -1))
+        *out = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    return ok;
+}
 void rl_push_u64(lua_State *L, rotmos_u64 value)
 {
     rotmos_u64 *out;

@@ -67,6 +67,7 @@ static int fail_call(lua_State *L)
 }
 static int encrypted;
 static const char *required_header;
+static const char *request_headers = "", *required_body;
 static const char *forwarded_address = "198.51.100.7";
 static SSL_CTX *client_context;
 static int exchange(unsigned short port, const char *method, const char *path,
@@ -104,8 +105,9 @@ static int exchange(unsigned short port, const char *method, const char *path,
     snprintf(head, sizeof(head),
              "%s %s HTTP/1.1\r\nHost: localhost\r\nX-Test: value\r\n"
              "Authorization: Bearer fixture-token\r\nX-Forwarded-For: %s\r\n"
-             "Content-Length: %lu\r\nConnection: close\r\n\r\n",
-             method, path, forwarded_address, (unsigned long)length);
+             "%sContent-Length: %lu\r\nConnection: close\r\n\r\n",
+             method, path, forwarded_address, request_headers,
+             (unsigned long)length);
     count = ssl ? SSL_write(ssl, head, (int)strlen(head))
                 : write(fd, head, strlen(head));
     if (count != (ssize_t)strlen(head))
@@ -169,7 +171,10 @@ static int exchange(unsigned short port, const char *method, const char *path,
         n = used - (size_t)(payload - reply);
         memcpy(decoded, payload, n);
     }
-    if (n != expected_length || memcmp(decoded, expected, expected_length)) {
+    decoded[n] = 0;
+    if ((expected != NULL && (n != expected_length ||
+                              memcmp(decoded, expected, expected_length))) ||
+        (required_body != NULL && strstr(decoded, required_body) == NULL)) {
         fprintf(stderr, "%s body length %lu expected %lu\n", path,
                 (unsigned long)n, (unsigned long)expected_length);
         goto done;
@@ -339,6 +344,74 @@ static int spawn_body(lua_State *L)
     }
     close(progress_read);
     progress_read = -1;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int drive_routes(unsigned short port)
+{
+    int failed = 0;
+#define R(method, path, body, length, status, expected, size)                  \
+    if (!failed)                                                               \
+    failed = exchange(port, method, path, body, length, status, expected, size)
+    R("GET", "/file", "", 0, 200, "A\0B", 3);
+    required_header = "content-length: 3\r\n";
+    R("HEAD", "/file", "", 0, 200, "", 0);
+    required_header = "content-range: bytes 1-2/3\r\n";
+    request_headers = "Range: bytes=1-2\r\n";
+    R("GET", "/file", "", 0, 206, "\0B", 2);
+    required_header = NULL;
+    request_headers = "If-None-Match: *\r\n";
+    R("GET", "/file", "", 0, 304, "", 0);
+    request_headers = "";
+    required_header = "location: /files/\r\n";
+    R("GET", "/files", "", 0, 308, "", 0);
+    required_header = NULL;
+    R("GET", "/files/", "", 0, 200, "index\n", 6);
+    R("GET", "/files/missing", "", 0, 404, "", 0);
+    R("GET", "/group/file", "", 0, 200, "A\0B", 3);
+    R("GET", "/replace", "", 0, 202, "replaced", 8);
+    R("GET", "/direct", "", 0, 201, "direct", 6);
+    R("GET", "/after-error", "", 0, 500, "", 0);
+    R("GET", "/after-oom", "", 0, 500, "", 0);
+    R("POST", "/upload-file", "A\0B", 3, 200, "3", 1);
+    R("POST", "/upload-limit", "four", 4, 413, "", 0);
+    R("PUT", "/dav/file", "A\0B", 3, 201, "", 0);
+    R("GET", "/dav/file", "", 0, 200, "A\0B", 3);
+    request_headers = "Depth: 1\r\n";
+    required_body = "/dav/file";
+    R("PROPFIND", "/dav/", "", 0, 207, NULL, 0);
+    required_body = NULL;
+    request_headers = "";
+    R("GET", "/dav/secret", "", 0, 404, "", 0);
+    required_header = "www-authenticate: Basic realm=\"routes\"\r\n";
+    R("GET", "/dav/challenge", "", 0, 401, "auth", 4);
+    required_header = "location: /login\r\n";
+    R("GET", "/dav/redirect", "", 0, 302, "", 0);
+    required_header = NULL;
+    R("GET", "/dav/error", "", 0, 500, "", 0);
+    R("GET", "/dav/oom", "", 0, 500, "", 0);
+    R("PUT", "/dav/oversized", "four", 4, 413, "", 0);
+    R("DELETE", "/dav/file", "", 0, 204, "", 0);
+    R("GET", "/dav/file", "", 0, 404, "", 0);
+    R("GET", "/stop", "", 0, 200, "ok", 2);
+#undef R
+    return failed;
+}
+static int spawn_routes(lua_State *L)
+{
+    int status;
+    unsigned short port = (unsigned short)lua_tointeger(L, 1);
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        status = drive_routes(port);
+        if (status)
+            kill(getppid(), SIGTERM);
+        _exit(status);
+    }
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -564,7 +637,7 @@ int main(int argc, char **argv)
 #if defined(ROTMOS_PRELOAD_TEST)
     rotmos_error error;
 #endif
-    if (argc != 3)
+    if (argc != 3 && argc != 4)
         return 2;
     L = lua_newstate(allocate, &allocation, 0);
     if (L == NULL)
@@ -623,8 +696,14 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "upload_progress");
     lua_pushcfunction(L, prepare_body);
     lua_setfield(L, -2, "prepare_body");
+    lua_pushcfunction(L, spawn_routes);
+    lua_setfield(L, -2, "spawn_routes");
     lua_pushstring(L, argv[2]);
     lua_setfield(L, -2, "root");
+    if (argc == 4) {
+        lua_pushstring(L, argv[3]);
+        lua_setfield(L, -2, "workspace");
+    }
     lua_setglobal(L, "fixture");
     lua_pushstring(L, "preserved");
     lua_setglobal(L, "host_marker");

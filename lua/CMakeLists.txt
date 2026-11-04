@@ -24,7 +24,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/facade.inc"
   COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/rotmos.lua"
     "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/facade.inc" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Embed.cmake"
   DEPENDS rotmos.lua cmake/Embed.cmake VERBATIM)
-add_library(rotmos_lua SHARED ../src/lua/rotmos_native.c ../src/lua/value.c ../src/lua/server.c ../src/lua/config.c ../src/lua/auth.c ../src/lua/request.c ../src/lua/source.c ../src/lua/body.c ../src/lua/upload.c "${CMAKE_CURRENT_BINARY_DIR}/facade.inc")
+add_library(rotmos_lua SHARED ../src/lua/rotmos_native.c ../src/lua/value.c ../src/lua/server.c ../src/lua/config.c ../src/lua/auth.c ../src/lua/request.c ../src/lua/source.c ../src/lua/body.c ../src/lua/upload.c ../src/lua/reply.c ../src/lua/routes.c "${CMAKE_CURRENT_BINARY_DIR}/facade.inc")
 add_library(rotmos::lua ALIAS rotmos_lua)
 set_target_properties(rotmos_lua PROPERTIES OUTPUT_NAME native PREFIX "" SUFFIX ".so" EXPORT_NAME lua C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -76,10 +76,16 @@ if(BUILD_TESTING)
       "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:rotmos_lua_${mode}_host>"
       "-DSCRIPT=${rotmos_root}/tests/lua/body-upload.lua" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
     set_tests_properties(rotmos.lua-body-upload-${mode} PROPERTIES TIMEOUT 10)
+    add_test(NAME rotmos.lua-routes-${mode} COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
+      "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:rotmos_lua_${mode}_host>"
+      "-DSCRIPT=${rotmos_root}/tests/lua/routes.lua" "-DWORKSPACE=${CMAKE_CURRENT_BINARY_DIR}/tests/routes"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
+    set_tests_properties(rotmos.lua-routes-${mode} PROPERTIES TIMEOUT 10)
     if(NOT ROTMOS_TARGET MATCHES "^x86_64-linux-(gnu|musl)$" OR NOT CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
       set_tests_properties(rotmos.lua-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-config-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-body-upload-${mode} PROPERTIES DISABLED TRUE)
+      set_tests_properties(rotmos.lua-routes-${mode} PROPERTIES DISABLED TRUE)
     endif()
   endforeach()
 endif()

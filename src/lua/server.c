@@ -323,7 +323,7 @@ static int l_route_count(lua_State *L)
     rl_push_size(L, rotmos_router_route_count(rotmos_server_router(s->native)));
     return 1;
 }
-static int method_value(lua_State *L, int index, rotmos_http_method *out)
+int rl_method_value(lua_State *L, int index, rotmos_http_method *out)
 {
     static const char *names[] = {"ANY",      "GET",    "POST", "PUT",
                                   "PATCH",    "DELETE", "HEAD", "OPTIONS",
@@ -356,41 +356,46 @@ static int method_value(lua_State *L, int index, rotmos_http_method *out)
     }
     return 0;
 }
-static int route_methods(lua_State *L, int index, rotmos_route_config *config,
-                         int upload)
+int rl_methods(lua_State *L, int index, rotmos_http_methods defaults,
+               rotmos_http_methods *out)
 {
     size_t i, n;
     rotmos_http_method method;
-    config->method = upload ? ROTMOS_HTTP_POST : ROTMOS_HTTP_GET;
+    index = lua_absindex(L, index);
+    *out = defaults;
     rl_field(L, index, "methods");
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
         rl_field(L, index, "method");
-        if (!lua_isnil(L, -1) && !method_value(L, -1, &config->method))
+    }
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return 1;
+    }
+    *out = 0;
+    if (!lua_istable(L, -1)) {
+        if (!rl_method_value(L, -1, &method))
             return 0;
-    } else if (!lua_istable(L, -1)) {
-        if (!method_value(L, -1, &config->method))
-            return 0;
+        *out = method == ROTMOS_HTTP_ANY ? ROTMOS_HTTP_METHODS_ALL
+                                         : ROTMOS_HTTP_METHOD_MASK(method);
     } else {
         n = lua_rawlen(L, -1);
         if (n == 0)
             return 0;
-        config->method = ROTMOS_HTTP_ANY;
         for (i = 0; i < n; ++i) {
             lua_rawgeti(L, -1, (lua_Integer)i + 1);
-            if (!method_value(L, -1, &method))
+            if (!rl_method_value(L, -1, &method))
                 return 0;
-            config->methods |= method == ROTMOS_HTTP_ANY
-                                   ? ROTMOS_HTTP_METHODS_ALL
-                                   : ROTMOS_HTTP_METHOD_MASK(method);
+            *out |= method == ROTMOS_HTTP_ANY ? ROTMOS_HTTP_METHODS_ALL
+                                              : ROTMOS_HTTP_METHOD_MASK(method);
             lua_pop(L, 1);
         }
     }
     lua_pop(L, 1);
     return 1;
 }
-static int body_policy(lua_State *L, int index, rotmos_body_policy *policy,
-                       int upload, rotmos_error *error)
+int rl_body_policy(lua_State *L, int index, rotmos_body_policy *policy,
+                   int upload, rotmos_error *error)
 {
     size_t mode = (size_t)policy->mode;
     static const char *const fields[] = {"mode", "max_bytes",
@@ -427,6 +432,108 @@ invalid:
     rl_fail(error, ROTMOS_INVALID, "invalid route body policy");
     return 0;
 }
+int rl_route_path(lua_State *L, int index, rotmos_route_config *config)
+{
+    const char *kind = NULL;
+    if (!rl_field_string(L, index, "path", &config->path) ||
+        config->path == NULL || !rl_field_string(L, index, "path_kind", &kind))
+        return 0;
+    if (config->path[0] == '^')
+        config->path_kind = ROTMOS_PATH_REGEX;
+    else if (strchr(config->path, ':') != NULL)
+        config->path_kind = ROTMOS_PATH_PARAMS;
+    if (kind == NULL)
+        return 1;
+    if (!strcmp(kind, "params"))
+        config->path_kind = ROTMOS_PATH_PARAMS;
+    else if (!strcmp(kind, "regex"))
+        config->path_kind = ROTMOS_PATH_REGEX;
+    else if (!strcmp(kind, "literal"))
+        config->path_kind = ROTMOS_PATH_LITERAL;
+    else
+        return 0;
+    return 1;
+}
+struct rl_rule *rl_rule_new(lua_State *L, rotmos_error *error)
+{
+    struct rl_server *server = rl_server(L, 1);
+    struct rl_rule *parent = NULL, *rule;
+    static const char *const hooks[] = {"before", "after"};
+    size_t i;
+    int index;
+    if (server == NULL) {
+        parent = luaL_testudata(L, 1, RL_GROUP);
+        if (parent != NULL)
+            server = parent->server;
+    }
+    if (server == NULL || server->native == NULL || !lua_istable(L, 2)) {
+        rl_fail(error, ROTMOS_STATE,
+                "active server/group and declaration required");
+        return NULL;
+    }
+    for (i = 0; i < sizeof(hooks) / sizeof(hooks[0]); ++i) {
+        rl_field(L, 2, hooks[i]);
+        if (!lua_isnil(L, -1) && !lua_isfunction(L, -1)) {
+            rl_fail(error, ROTMOS_INVALID, "route hooks must be functions");
+            return NULL;
+        }
+        lua_pop(L, 1);
+    }
+    rule = lua_newuserdatauv(L, sizeof(*rule), 2);
+    memset(rule, 0, sizeof(*rule));
+    rule->root = LUA_NOREF;
+    rule->server = server;
+    rule->group = parent == NULL ? NULL : parent->group;
+    index = lua_absindex(L, -1);
+    luaL_setmetatable(L, RL_RULE);
+    rl_table_copy(L, 2);
+    if (!rl_auth_prepare(L, -1, error))
+        return NULL;
+    lua_setiuservalue(L, index, 1);
+    if (parent == NULL)
+        lua_pushvalue(L, 1);
+    else
+        lua_getiuservalue(L, 1, 2);
+    lua_setiuservalue(L, index, 2);
+    return rule;
+}
+int rl_rule_root(lua_State *L, int index, struct rl_rule *rule)
+{
+    int root;
+    index = lua_absindex(L, index);
+    lua_getiuservalue(L, index, 2);
+    lua_getiuservalue(L, -1, 2);
+    root = lua_absindex(L, -1);
+    lua_pushvalue(L, index);
+    rule->root = luaL_ref(L, root);
+    return root;
+}
+int rl_rule_finish(lua_State *L, int index, int root, struct rl_rule *rule,
+                   rotmos_status status, const rotmos_error *error)
+{
+    if (status != ROTMOS_OK) {
+        if (rule->root != LUA_NOREF)
+            luaL_unref(L, root, rule->root);
+        return rl_error(L, error);
+    }
+    lua_settop(L, index);
+    return 1;
+}
+void rl_rule_hooks(rotmos_route_hooks *hooks, struct rl_rule *rule)
+{
+    memset(hooks, 0, sizeof(*hooks));
+    hooks->auth = rl_auth;
+    hooks->before = rl_before;
+    hooks->after = rl_after;
+    hooks->userdata = rule;
+}
+void rl_rule_options(lua_State *L, struct rl_rule *rule)
+{
+    lua_rawgeti(L, LUA_REGISTRYINDEX, rule->server->root);
+    lua_getiuservalue(L, -1, 2);
+    lua_rawgeti(L, -1, rule->root);
+    lua_getiuservalue(L, -1, 1);
+}
 static int rule(lua_State *L, int kind_id)
 {
     int group = kind_id == 1, upload = kind_id == 2;
@@ -437,7 +544,6 @@ static int rule(lua_State *L, int kind_id)
     rotmos_route_config config;
     rotmos_route_group_config gc;
     rotmos_upload_stream_config uc;
-    const char *kind = NULL;
     int root, index;
     static const char *const route_fields[] = {
         "path",    "path_kind", "method", "methods", "body",
@@ -448,8 +554,6 @@ static int rule(lua_State *L, int kind_id)
         "path",        "path_kind", "method",       "methods",       "body",
         "before",      "after",     "auth",         "open",          "on_chunk",
         "on_complete", "close",     "buffer_bytes", "max_body_bytes"};
-    static const char *const hooks[] = {"before", "after"};
-    size_t i;
     if (s == NULL) {
         parent = luaL_testudata(L, 1, RL_GROUP);
         if (parent != NULL)
@@ -473,34 +577,16 @@ static int rule(lua_State *L, int kind_id)
                             : sizeof(route_fields) / sizeof(route_fields[0]),
                    &e))
         return rl_error(L, &e);
-    for (i = 0; i < sizeof(hooks) / sizeof(hooks[0]); ++i) {
-        rl_field(L, 2, hooks[i]);
-        if (!lua_isnil(L, -1) && !lua_isfunction(L, -1))
-            return rl_error(L, (rl_fail(&e, ROTMOS_INVALID,
-                                        "route hooks must be functions"),
-                                &e));
-        lua_pop(L, 1);
-    }
-    r = lua_newuserdatauv(L, sizeof(*r), 2);
-    memset(r, 0, sizeof(*r));
-    r->root = LUA_NOREF;
-    r->server = s;
+    r = rl_rule_new(L, &e);
+    if (r == NULL)
+        return rl_error(L, &e);
     r->is_group = group;
     r->is_upload = upload;
     r->buffer_bytes = 262144UL;
-    r->group = parent != NULL ? parent->group : NULL;
     index = lua_absindex(L, -1);
-    luaL_setmetatable(L, group ? RL_GROUP : RL_RULE);
-    rl_table_copy(L, 2);
-    if (!rl_auth_prepare(L, -1, &e))
-        return rl_error(L, &e);
-    lua_setiuservalue(L, index, 1);
-    if (parent != NULL)
-        lua_getiuservalue(L, 1, 2);
-    else
-        lua_pushvalue(L, 1);
-    lua_pushvalue(L, -1);
-    lua_setiuservalue(L, index, 2);
+    if (group)
+        luaL_setmetatable(L, RL_GROUP);
+    lua_getiuservalue(L, index, 2);
     lua_getiuservalue(L, -1, 2);
     root = lua_absindex(L, -1);
     if (group) {
@@ -517,24 +603,12 @@ static int rule(lua_State *L, int kind_id)
                                      &r->group, &e);
     } else {
         rotmos_route_config_init(&config);
-        if (!rl_field_string(L, 2, "path", &config.path) ||
-            config.path == NULL || !rl_field_string(L, 2, "path_kind", &kind) ||
-            !route_methods(L, 2, &config, upload))
+        if (!rl_route_path(L, 2, &config) ||
+            !rl_methods(L, 2,
+                        ROTMOS_HTTP_METHOD_MASK(upload ? ROTMOS_HTTP_POST
+                                                       : ROTMOS_HTTP_GET),
+                        &config.methods))
             goto invalid;
-        if (config.path[0] == '^')
-            config.path_kind = ROTMOS_PATH_REGEX;
-        else if (strchr(config.path, ':') != NULL)
-            config.path_kind = ROTMOS_PATH_PARAMS;
-        if (kind != NULL) {
-            if (!strcmp(kind, "params"))
-                config.path_kind = ROTMOS_PATH_PARAMS;
-            else if (!strcmp(kind, "regex"))
-                config.path_kind = ROTMOS_PATH_REGEX;
-            else if (!strcmp(kind, "literal"))
-                config.path_kind = ROTMOS_PATH_LITERAL;
-            else
-                goto invalid;
-        }
         config.handler = rl_handler;
         config.userdata = r;
         config.hooks.auth = rl_auth;
@@ -562,7 +636,8 @@ static int rule(lua_State *L, int kind_id)
             lua_pop(L, 1);
         }
         rl_field(L, 2, "body");
-        if (!lua_isnil(L, -1) && !body_policy(L, -1, &config.body, upload, &e))
+        if (!lua_isnil(L, -1) &&
+            !rl_body_policy(L, -1, &config.body, upload, &e))
             goto failed;
         lua_pop(L, 1);
         lua_pushvalue(L, index);
@@ -597,19 +672,24 @@ static int l_group(lua_State *L) { return rule(L, 1); }
 static int l_upload(lua_State *L) { return rule(L, 2); }
 void rl_servers_open(lua_State *L)
 {
-    static const luaL_Reg methods[] = {{"run", l_run},
-                                       {"stop", l_stop},
-                                       {"close", l_close},
-                                       {"validate", l_validate},
-                                       {"effective_config", l_effective},
-                                       {"set_serving", l_serving},
-                                       {"state", l_state},
-                                       {"listener", l_listener},
-                                       {"route", l_route},
-                                       {"upload", l_upload},
-                                       {"group", l_group},
-                                       {"route_count", l_route_count},
-                                       {NULL, NULL}};
+    static const luaL_Reg methods[] = {
+        {"run", l_run},
+        {"stop", l_stop},
+        {"close", l_close},
+        {"validate", l_validate},
+        {"effective_config", l_effective},
+        {"set_serving", l_serving},
+        {"state", l_state},
+        {"listener", l_listener},
+        {"route", l_route},
+        {"upload", l_upload},
+        {"upload_file", rl_upload_file},
+        {"static_file", rl_static_file},
+        {"static_directory", rl_static_directory},
+        {"webdav", rl_webdav},
+        {"group", l_group},
+        {"route_count", l_route_count},
+        {NULL, NULL}};
     luaL_newmetatable(L, RL_SERVER);
     lua_pushcfunction(L, l_gc);
     lua_setfield(L, -2, "__gc");
@@ -624,6 +704,14 @@ void rl_servers_open(lua_State *L)
     lua_setfield(L, -2, "route");
     lua_pushcfunction(L, l_upload);
     lua_setfield(L, -2, "upload");
+    lua_pushcfunction(L, rl_upload_file);
+    lua_setfield(L, -2, "upload_file");
+    lua_pushcfunction(L, rl_static_file);
+    lua_setfield(L, -2, "static_file");
+    lua_pushcfunction(L, rl_static_directory);
+    lua_setfield(L, -2, "static_directory");
+    lua_pushcfunction(L, rl_webdav);
+    lua_setfield(L, -2, "webdav");
     lua_pop(L, 1);
     luaL_newmetatable(L, RL_RULE);
     lua_pop(L, 1);

@@ -133,5 +133,14 @@ request table/state, bounded chunk delivery, default POST/204 and close timing.
 Borrowed readers expire with their request; explicit copies retain independent
 memory/file ownership. The installed fixture withholds the rest of a socket body
 until Lua acknowledges its first chunk, and covers prefix/resume, lifetime and
-callback/allocation failures. Native upload-file convenience and the other
-remaining binding/packaging surfaces are still required.
+callback/allocation failures.
+
+Native Lua route conveniences now bind public static-file/directory,
+upload-file and filesystem WebDAV registrations. They share route declarations,
+auth decoding and callback ownership with ordinary Lua routes. Scoped staged
+reply views preserve native payloads through after hooks and expose only public
+builder/snapshot operations. WebDAV resource decisions remain in its C engine;
+Lua is never called from native file/storage work. The installed fixture covers
+wire behavior, scope/exception/OOM cleanup, principal refresh and registration
+allocation unwinding. Custom/packed asset/storage providers, proxy/WebSocket/SSE,
+typed routes and the other remaining binding/packaging surfaces are still required.
