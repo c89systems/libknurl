@@ -47,7 +47,11 @@ transport work. The runtime fixture verifies completed JSON bytes before an
 after-hook replaces the result. Ordinary C JSON routes now materialize before
 after-hooks; explicit live typed replies retain their own lifetime contract.
 Lua REST now forwards one encoder output directly, without the extra reader,
-JSON runtime, writer or output buffer. Remaining findings are still open.
+JSON runtime, writer or output buffer. C XML routes now parse live upload input
+through the existing reader engine and return the record/handler to the owner
+loop after native ACK. Their reference forwarding case observes mapped parsing
+before EOF without transport spooling. Lua typed-route sharing, selected-array
+iteration and the remaining surface review are still open.
 
 ## Evidence limits and work state
 

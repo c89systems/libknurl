@@ -23,9 +23,10 @@ typedef struct rotmos_xml_config {
 } rotmos_xml_config;
 ROTMOS_API void rotmos_xml_config_init(rotmos_xml_config *);
 /* Synchronous mapped input. Borrows source; consumes to EOF, never closes it.
- * AGAIN fails (use a completed source). Caller supplies initialized storage;
- * reset before parse and on failure, preserving fixed array backing. Maps and
- * optional runtime use the released public LoneJSON schema interface. */
+ * AGAIN fails; live blocking readers execute on native threads. Caller supplies
+ * initialized storage; reset before parse and on failure, preserving fixed
+ * array backing. Maps and optional runtime use the released public LoneJSON
+ * schema interface. */
 ROTMOS_API rotmos_status
 rotmos_xml_parse_source(rotmos_source *, const struct lonejson_schema_view *,
                         const rotmos_xml_config *, void *, rotmos_error *);
@@ -81,6 +82,7 @@ typedef struct rotmos_xml_route_config {
     const char *path;
     rotmos_route_path_kind path_kind;
     rotmos_body_policy body;
+    size_t buffer_bytes;
     const struct lonejson_schema_view *input;
     rotmos_xml_config xml;
     rotmos_xml_route_fn handler;
@@ -88,9 +90,12 @@ typedef struct rotmos_xml_route_config {
     rotmos_route_hooks hooks;
 } rotmos_xml_route_config;
 ROTMOS_API void rotmos_xml_route_config_init(rotmos_xml_route_config *);
-/* Request records survive response cleanup. Like Vectis XML handlers, the
- * handler receives mapped input and a general reply builder. Ordinary hooks
- * and empty-reply 204 behavior apply. */
+/* Live input uses the bounded upload-reader queue (buffer_bytes=0: 256 KiB).
+ * Native parsing retains no live request/Lua handle; the completed record and
+ * handler return to the owner loop. Records survive response cleanup. Ordinary
+ * hooks and empty-reply 204 behavior apply. No transport body is collected.
+ * Borrowed runtime allocators and mapped field callbacks used by parsing must
+ * support native threads, as with the underlying upload-reader contract. */
 ROTMOS_API rotmos_status
 rotmos_router_xml_route(rotmos_router *, const rotmos_xml_route_config *,
                         rotmos_route **, rotmos_error *);

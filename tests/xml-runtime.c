@@ -1,11 +1,15 @@
 #define _POSIX_C_SOURCE 200809L
 #include <rotmos/rotmos.h>
 #include <rotmos/lonejson.h>
+#include "vectis-forward.h"
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <poll.h>
+#include <pthread.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,10 +27,80 @@ struct input {
 static const lonejson_field input_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(struct input, message, "message")};
 LONEJSON_MAP_DEFINE(input_map, struct input, input_fields);
-static int called, replaced, stopped;
+static int called, replaced, stopped, live_called, empty_called;
+static struct {
+    pthread_t owner;
+    int ready, notified, pipe[2];
+} parsing;
+static void note_allocation(size_t size)
+{
+    int expected = 0;
+    if (size > 32768 && parsing.ready &&
+        !pthread_equal(parsing.owner, pthread_self()) &&
+        __atomic_compare_exchange_n(&parsing.notified, &expected, 1, 0,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        (void)write(parsing.pipe[1], "p", 1);
+}
+static void *allocate(void *context, size_t size)
+{
+    void *result = malloc(size);
+    (void)context;
+    if (result != NULL)
+        note_allocation(size);
+    return result;
+}
+static void *resize(void *context, void *pointer, size_t size)
+{
+    void *result = realloc(pointer, size);
+    (void)context;
+    if (result != NULL)
+        note_allocation(size);
+    return result;
+}
+static void deallocate(void *context, void *pointer)
+{
+    (void)context;
+    free(pointer);
+}
+static rotmos_status live_before(rotmos_request *request, rotmos_reply *reply,
+                                 int *finish, void *data, rotmos_error *error)
+{
+    (void)request;
+    (void)reply;
+    (void)finish;
+    (void)data;
+    (void)error;
+    __atomic_store_n(&parsing.notified, 0, __ATOMIC_RELEASE);
+    return ROTMOS_OK;
+}
+static rotmos_status worker_start(rotmos_server *server,
+                                  const rotmos_process_context *process,
+                                  void *data, rotmos_error *error)
+{
+    (void)server;
+    (void)process;
+    (void)data;
+    (void)error;
+    parsing.owner = pthread_self();
+    parsing.ready = 1;
+    return ROTMOS_OK;
+}
+static rotmos_status live_echo(void *app, rotmos_request *request, void *input,
+                               rotmos_reply *reply, void *data,
+                               rotmos_error *error)
+{
+    struct input *in = input;
+    rotmos_u64 now;
+    (void)data;
+    if (app != rotmos_request_server(request) || in == NULL ||
+        in->message == NULL || strlen(in->message) != 32768 ||
+        rotmos_loop_now(rotmos_request_loop(request), &now, error) != ROTMOS_OK)
+        return ROTMOS_STATE;
+    ++live_called;
+    return rotmos_reply_text(reply, 200, "text/plain", "parsed live", error);
+}
 struct fixture {
     pid_t child;
-    char directory[64];
 };
 static rotmos_status echo(rotmos_request *request,
                           const lonejson_record_view *input,
@@ -34,20 +108,16 @@ static rotmos_status echo(rotmos_request *request,
 {
     struct input *in;
     rotmos_xml_source_config output;
-    size_t count;
-    char first;
-    (void)error;
+    rotmos_bytes bytes;
+    rotmos_u64 now;
+    (void)data;
     if (input == NULL)
         return ROTMOS_STATE;
     in = input->record;
     ++called;
-    if (data != NULL &&
-        rotmos_body_kind(rotmos_request_body(request)) != ROTMOS_BODY_FILE)
-        return ROTMOS_STATE;
-    if (rotmos_body_read(rotmos_request_body(request), &first, 1, &count,
-                         error) != ROTMOS_OK ||
-        count != 1 || first != '<' ||
-        rotmos_body_rewind(rotmos_request_body(request), error) != ROTMOS_OK)
+    if (rotmos_body_bytes(rotmos_request_body(request), &bytes, NULL) ==
+            ROTMOS_OK ||
+        rotmos_loop_now(rotmos_request_loop(request), &now, error) != ROTMOS_OK)
         return ROTMOS_STATE;
     if (in->message == NULL)
         return ROTMOS_STATE;
@@ -83,11 +153,27 @@ static rotmos_status auth(rotmos_request *r, rotmos_reply *reply, int *finish,
     *finish = 1;
     return rotmos_reply_text(reply, 403, "text/plain", "denied", error);
 }
+static rotmos_status control(rotmos_request *request,
+                             const lonejson_record_view *input,
+                             rotmos_reply *reply, void *data,
+                             rotmos_error *error)
+{
+    rotmos_u64 now;
+    (void)reply;
+    if (input == NULL ||
+        rotmos_loop_now(rotmos_request_loop(request), &now, error) != ROTMOS_OK)
+        return ROTMOS_STATE;
+    if (data != NULL)
+        return ROTMOS_NOT_SUPPORTED;
+    ++empty_called;
+    return ROTMOS_OK;
+}
 static rotmos_status stop(rotmos_request *request, rotmos_reply *reply,
                           void *data, rotmos_error *error)
 {
     (void)data;
-    stopped = called == 3 && replaced == 1;
+    stopped =
+        called == 3 && replaced == 1 && live_called == 1 && empty_called == 1;
     if (!stopped)
         return ROTMOS_STATE;
     if (rotmos_server_request_stop(rotmos_request_server(request), error) !=
@@ -132,7 +218,7 @@ static int line(int fd, char *out, size_t bound)
 }
 static int exchange(unsigned short port, const char *path, const char *body,
                     int code, const char *expected, int before_header,
-                    int large)
+                    int withheld)
 {
     struct sockaddr_in address;
     struct timeval timeout;
@@ -155,12 +241,27 @@ static int exchange(unsigned short port, const char *path, const char *body,
     (void)snprintf(request, sizeof(request),
                    "%s %s HTTP/1.1\r\nHost: localhost\r\nConnection: "
                    "close\r\nContent-Length: %lu\r\n\r\n",
-                   strcmp(path, "/empty") == 0 || strcmp(path, "/stop") == 0
-                       ? "GET"
-                       : "POST",
-                   path, (unsigned long)strlen(body));
-    CHECK(write_all(fd, request, strlen(request)) == 0 &&
-          write_all(fd, body, strlen(body)) == 0);
+                   strcmp(path, "/stop") == 0 ? "GET" : "POST", path,
+                   (unsigned long)strlen(body));
+    CHECK(write_all(fd, request, strlen(request)) == 0);
+    if (strcmp(path, "/live") == 0) {
+        struct pollfd observed;
+        char acknowledged;
+        size_t prefix = strlen(body) - strlen("</ignored></doc>");
+        CHECK(write_all(fd, body, prefix) == 0);
+        observed.fd = parsing.pipe[0];
+        observed.events = POLLIN;
+        observed.revents = 0;
+        CHECK(poll(&observed, 1, 1500) == 1 &&
+              read(parsing.pipe[0], &acknowledged, 1) == 1 &&
+              acknowledged == 'p');
+        if (withheld < 0) {
+            close(fd);
+            return 0;
+        }
+        CHECK(write_all(fd, body + prefix, strlen(body) - prefix) == 0);
+    } else
+        CHECK(write_all(fd, body, strlen(body) - (withheld ? 1 : 0)) == 0);
     used = 0;
     metadata[0] = 0;
     do {
@@ -199,26 +300,42 @@ static int exchange(unsigned short port, const char *path, const char *body,
         total = count;
     }
     result[total] = 0;
-    (void)large;
     if (strcmp(result, expected) != 0)
         fprintf(stderr, "%s body: %s\n", path, result);
     CHECK(strcmp(result, expected) == 0);
     n = read(fd, ending, 1);
-    CHECK(n == 0);
+    /* Rejecting an unfinished upload may reset the unread TCP input. */
+    CHECK(n == 0 || (withheld > 0 && n == -1 && errno == ECONNRESET));
     free(result);
     (void)close(fd);
     return 0;
 }
 static int client(unsigned short port)
 {
+    char *live = calloc(50000, 1);
+    CHECK(live != NULL);
+    strcpy(live, "<doc><message>");
+    memset(live + strlen(live), 'x', 32768);
+    strcat(live, "</message><ignored>");
+    memset(live + strlen(live), ' ', 8192);
+    strcat(live, "</ignored></doc>");
+    CHECK(exchange(port, "/live", live, 0, "", 0, -1) == 0);
+    CHECK(exchange(port, "/live", live, 200, "parsed live", 0, 0) == 0);
+    /* A wrong root is rejected without receiving the declared final byte. */
+    memset(live, 0, 50000);
+    strcpy(live, "<wrong>");
+    memset(live + strlen(live), ' ', 8192);
+    strcat(live, "</wrong>");
+    CHECK(exchange(port, "/api/echo", live, 400, "", 1, 1) == 0);
+    free(live);
     CHECK(exchange(port, "/api/echo",
                    "<doc><message>hello &amp; XML</message></doc>", 200,
                    "<doc><message>hello &amp; XML</message></doc>", 1, 0) == 0);
     CHECK(exchange(port, "/api/echo",
                    "<doc><message>allocated</message><message/></doc>", 400, "",
                    0, 0) == 0);
-    CHECK(exchange(port, "/spilled", "<doc><message>file</message></doc>", 200,
-                   "<doc><message>file</message></doc>", 0, 0) == 0);
+    CHECK(exchange(port, "/small-queue", "<doc><message>file</message></doc>",
+                   200, "<doc><message>file</message></doc>", 0, 0) == 0);
     CHECK(exchange(port, "/replace", "<doc><message>hidden</message></doc>",
                    201, "replaced", 0, 0) == 0);
     CHECK(exchange(port, "/deny", "<", 403, "denied", 0, 0) == 0);
@@ -228,6 +345,10 @@ static int client(unsigned short port)
                    "<!DOCTYPE doc [<!ENTITY x "
                    "'entity'>]><doc><message>&x;</message></doc>",
                    400, "", 0, 0) == 0);
+    CHECK(exchange(port, "/empty", "<doc><message>x</message></doc>", 204, "",
+                   0, 0) == 0);
+    CHECK(exchange(port, "/unsupported", "<doc><message>x</message></doc>", 501,
+                   "", 0, 0) == 0);
     CHECK(exchange(port, "/stop", "", 200, "stopped", 0, 0) == 0);
     return 0;
 }
@@ -266,6 +387,12 @@ int main(void)
     rotmos_server_config config;
     rotmos_listener_config listener;
     rotmos_xml_route_config xml;
+    struct reference_xml_route forward;
+    lonejson_allocator allocator;
+    lonejson_config policy;
+    lonejson_error native;
+    lonejson *runtime;
+    lonejson_schema_view live_schema;
     rotmos_route_group_config group_config;
     rotmos_route_group *group;
     rotmos_route_config ordinary;
@@ -277,9 +404,16 @@ int main(void)
     int child_status;
     char path[16] = "/echo", root[16] = "doc";
     memset(&fixture, 0, sizeof(fixture));
+    CHECK(pipe(parsing.pipe) == 0);
+    allocator = lonejson_default_allocator();
+    allocator.malloc_fn = allocate;
+    allocator.realloc_fn = resize;
+    allocator.free_fn = deallocate;
+    policy = lonejson_default_config();
+    policy.allocator = &allocator;
+    runtime = lonejson_new(&policy, &native);
+    CHECK(runtime != NULL);
     fixture.child = -1;
-    strcpy(fixture.directory, "xml-spool-XXXXXX");
-    CHECK(mkdtemp(fixture.directory) != NULL);
     signal(SIGPIPE, SIG_IGN);
     rotmos_server_config_init(&config);
     rotmos_listener_config_init(&listener);
@@ -290,7 +424,7 @@ int main(void)
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
     config.io.output_queue_bytes = 4096;
     config.io.chunk_bytes = 128;
-    config.limits.body_spool_directory = fixture.directory;
+    config.callbacks.on_worker_start = worker_start;
     config.callbacks.on_parent_ready = ready;
     config.callbacks.on_worker_exit = worker_exit;
     config.callbacks.userdata = &fixture;
@@ -303,6 +437,21 @@ int main(void)
     CHECK(rotmos_router_group(rotmos_server_router(server), &group_config,
                               &group, &error) == ROTMOS_OK);
     rotmos_xml_route_config_init(&xml);
+    CHECK(xml.body.mode == ROTMOS_BODY_STREAMING_UPLOAD);
+    CHECK(rotmos_json_schema_from_map(runtime, &input_map, &live_schema,
+                                      &error) == ROTMOS_OK);
+    xml.method = ROTMOS_HTTP_POST;
+    xml.path = "/live";
+    xml.input = &live_schema;
+    xml.buffer_bytes = 2048;
+    xml.hooks.before = live_before;
+    xml.xml.root_element = "doc";
+    forward.app = server;
+    forward.handler = live_echo;
+    forward.userdata = NULL;
+    CHECK(reference_xml_register(rotmos_server_router(server), &xml, &forward,
+                                 &error) == ROTMOS_OK);
+    rotmos_xml_route_config_init(&xml);
     xml.method = ROTMOS_HTTP_POST;
     xml.path = path;
     xml.input = &input;
@@ -312,13 +461,25 @@ int main(void)
     strcpy(path, "/changed");
     strcpy(root, "changed");
     xml.xml.root_element = "doc";
-    xml.path = "/spilled";
-    xml.body.memory_buffer_limit_bytes = 8;
-    xml.userdata = "spilled";
+    xml.path = "/small-queue";
+    xml.buffer_bytes = 8;
+    CHECK(rotmos_router_xml_route(rotmos_server_router(server), &xml, NULL,
+                                  &error) == ROTMOS_OK);
+    xml.path = "/unsupported";
+    xml.body.max_bytes.low = 0;
+    xml.handler = control;
+    xml.userdata = "unsupported";
+    CHECK(rotmos_router_xml_route(rotmos_server_router(server), &xml, NULL,
+                                  &error) == ROTMOS_OK);
+    xml.path = "/empty";
+    xml.method = ROTMOS_HTTP_POST;
+    xml.userdata = NULL;
     CHECK(rotmos_router_xml_route(rotmos_server_router(server), &xml, NULL,
                                   &error) == ROTMOS_OK);
     xml.path = "/replace";
-    xml.body.memory_buffer_limit_bytes = 262144;
+    xml.method = ROTMOS_HTTP_POST;
+    xml.handler = echo;
+    xml.buffer_bytes = 262144;
     xml.userdata = NULL;
     xml.hooks.after = after;
     CHECK(rotmos_router_xml_route(rotmos_server_router(server), &xml, NULL,
@@ -330,7 +491,7 @@ int main(void)
                                   &error) == ROTMOS_OK);
     xml.path = "/limit";
     xml.hooks.auth = NULL;
-    xml.body.max_bytes.low = xml.body.memory_buffer_limit_bytes = 16;
+    xml.body.max_bytes.low = 16;
     CHECK(rotmos_router_xml_route(rotmos_server_router(server), &xml, NULL,
                                   &error) == ROTMOS_OK);
     rotmos_route_config_init(&ordinary);
@@ -347,14 +508,15 @@ int main(void)
             waitpid(fixture.child, NULL, 0);
         }
         rotmos_server_destroy(server, NULL);
-        rmdir(fixture.directory);
         return 1;
     }
     CHECK(result.recovered_failures.high == 0 &&
           result.recovered_failures.low == 0 && !result.escalated);
     CHECK(waitpid(fixture.child, &child_status, 0) == fixture.child &&
           WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
-    CHECK(rotmos_server_destroy(server, &error) == ROTMOS_OK &&
-          rmdir(fixture.directory) == 0);
+    CHECK(rotmos_server_destroy(server, &error) == ROTMOS_OK);
+    lonejson_free(runtime);
+    close(parsing.pipe[0]);
+    close(parsing.pipe[1]);
     return 0;
 }

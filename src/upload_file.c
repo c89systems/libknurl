@@ -95,7 +95,8 @@ static rotmos_status add(rotmos_router *router, rotmos_route_group *group,
     reader.buffer_bytes = config->body.memory_buffer_limit_bytes;
     reader.handler = write_file;
     reader.userdata = path;
-    status = rotmos_upload_reader_add(router, group, &reader, free, out, error);
+    status = rotmos_upload_reader_add(router, group, &reader, NULL, free, out,
+                                      error);
     if (status != ROTMOS_OK)
         free(path);
     return status;

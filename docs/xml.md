@@ -86,11 +86,31 @@ reply builder, matching Vectis's XML route boundary. It can borrow input into an
 XML source reply, synchronously materialize a stack output record, or choose any
 other reply kind/status. Records survive asynchronous response output and staged
 replacement. Before/auth/after hooks follow the ordinary staged route order; an
-unselected reply defaults to 204. The initial mapped request path uses completed
-BUFFERED/MATERIALIZED bodies; `rotmos_request_xml_into` rewinds before and after
-parsing. MATERIALIZED body policy requires an explicit transport spool directory
-when its declared maximum exceeds memory. Live native-reader execution remains
-part of the complete server contract.
+unselected reply defaults to 204. Routes use live STREAMING_UPLOAD/STREAM input.
+`buffer_bytes` bounds the existing upload-reader queue (zero selects 256 KiB);
+no full transport body or spool directory is needed. Parsing materializes the
+declared record, not an extra copy of the HTTP body. `rotmos_request_xml_into`
+remains a separate operation on explicitly completed bodies, with rewind.
+
+The parser runs natively; completion and the request/reply handler run on the
+owner loop after input EOF and native acknowledgement, before after-hooks.
+Vectis's baseline invokes its XML handler on the reader thread while its owner
+joins that thread at EOF (`vectis_upload_reader_thread_main` and
+`vectis_upload_reader_finish` in [vectis.c](../../vectis/src/vectis.c)). This
+extraction moves the rich request callback to its owning loop while retaining
+that dispatch phase, avoiding foreign-thread request/Lua operations and an
+owner-loop join. Explicit native-reader handlers keep their native contract.
+Mapped field callbacks/allocators used by the parser must support native work;
+LoneJSON permits shared runtimes with thread-safe allocator callbacks. Close
+revokes the request immediately; parser state remains retained until native ACK.
+
+The [XML reference adapter](../tests/vectis-forward.c) forwards the baseline
+app/request/raw-record/reply/userdata shape through public registrations. Its
+[wire fixture](../tests/xml-runtime.c) withholds the document end until a public
+LoneJSON allocator observes native field parsing. It also checks no transport
+body store, owner-loop callbacks, early malformed input, disconnect while
+parsing, a tiny queue, source replacement, auth/limits, empty 204 and handler 501.
+The Lua typed-route binding still needs to use this corrected C route.
 
 `rotmos_xml_generator_new/read/destroy` provide resumable output. Each read
 advances an iterative traversal using public libxml2 writer calls, then flushes

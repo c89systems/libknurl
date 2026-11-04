@@ -1,6 +1,7 @@
 #include "xml_mapping_internal.h"
 #include "router_internal.h"
 #include "request_internal.h"
+#include "upload_internal.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,6 +14,7 @@ struct xml_route {
 struct xml_records {
     lonejson_record_view input;
     int input_runtime;
+    struct xml_route *route;
 };
 static void release_records(void *data)
 {
@@ -49,30 +51,45 @@ static rotmos_status allocate_record(const lonejson_schema_view *schema,
     lonejson_init(view->schema.runtime, schema->map, view->record);
     return ROTMOS_OK;
 }
-static rotmos_status dispatch(rotmos_request *request, rotmos_reply *reply,
-                              void *data, rotmos_error *error)
+static rotmos_status open_records(rotmos_request *request, void *data,
+                                  void **out, rotmos_error *error)
 {
     struct xml_route *route;
     struct xml_records *records;
     rotmos_status status;
-    const lonejson_record_view *input;
+    (void)request;
     route = data;
     records = calloc(1, sizeof(*records));
     if (records == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "xml_route",
                            "cannot allocate route records");
-    request->codec_data = records;
-    request->codec_cleanup = release_records;
+    *out = records;
+    records->route = route;
     status = allocate_record(&route->input, &route->xml, &records->input,
                              &records->input_runtime, error);
-    if (status == ROTMOS_OK && records->input.record != NULL)
-        status =
-            rotmos_request_xml_into(request, &records->input.schema,
-                                    &route->xml, records->input.record, error);
-    if (status != ROTMOS_OK)
-        return status;
-    input = records->input.record != NULL ? &records->input : NULL;
-    return route->handler(request, input, reply, route->userdata, error);
+    return status;
+}
+static rotmos_status parse(const rotmos_upload_metadata *metadata,
+                           rotmos_source *reader, rotmos_reply *reply,
+                           void *data, rotmos_error *error)
+{
+    struct xml_records *records = data;
+    (void)metadata;
+    (void)reply;
+    return rotmos_xml_parse_source(reader, &records->input.schema,
+                                   &records->route->xml, records->input.record,
+                                   error);
+}
+static rotmos_status complete(rotmos_request *request, rotmos_reply *reply,
+                              void *data, rotmos_error *error)
+{
+    struct xml_records *records = data;
+    struct xml_route *route = records->route;
+    rotmos_status status =
+        route->handler(request, &records->input, reply, route->userdata, error);
+    if (status == ROTMOS_OK && !rotmos_reply_is_selected(reply))
+        status = rotmos_reply_status(reply, 204, error);
+    return status;
 }
 static void release_route(void *data)
 {
@@ -87,7 +104,7 @@ void rotmos_xml_route_config_init(rotmos_xml_route_config *config)
     if (config == NULL)
         return;
     memset(config, 0, sizeof(*config));
-    rotmos_body_policy_init_materialized(&config->body);
+    rotmos_body_policy_init_upload(&config->body);
     rotmos_xml_config_init(&config->xml);
 }
 static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
@@ -96,24 +113,22 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
 {
     struct xml_route *data;
     rotmos_xml_config xml;
-    rotmos_route_config route;
+    rotmos_upload_reader_config reader;
+    struct rotmos_upload_reader_codec codec;
     rotmos_route *registered;
     rotmos_status status;
     if (out != NULL)
         *out = NULL;
-    if (config == NULL || config->handler == NULL ||
+    if (config == NULL || config->handler == NULL || config->input == NULL ||
         (router == NULL && group == NULL))
         return rotmos_fail(error, ROTMOS_INVALID, "xml_route",
                            "provide router, declaration and handler");
-    if (config->input != NULL &&
-        rotmos_json_schema_check(config->input, error) != ROTMOS_OK)
+    if (rotmos_json_schema_check(config->input, error) != ROTMOS_OK)
         return ROTMOS_INVALID;
-    if (config->input != NULL &&
-        config->body.mode != ROTMOS_BODY_MATERIALIZED &&
-        config->body.mode != ROTMOS_BODY_BUFFERED)
-        return rotmos_fail(
-            error, ROTMOS_INVALID, "xml_route",
-            "mapped input needs BUFFERED or MATERIALIZED body policy");
+    if (config->body.mode != ROTMOS_BODY_STREAMING_UPLOAD &&
+        config->body.mode != ROTMOS_BODY_STREAM)
+        return rotmos_fail(error, ROTMOS_INVALID, "xml_route",
+                           "mapped input needs a live upload body policy");
     status = rotmos_xml_effective_config(&config->xml, &xml, error);
     if (status != ROTMOS_OK)
         return status;
@@ -121,8 +136,7 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
     if (data == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "xml_route",
                            "copying XML route");
-    if (config->input != NULL)
-        data->input = *config->input;
+    data->input = *config->input;
     data->handler = config->handler;
     data->userdata = config->userdata;
     data->xml = xml;
@@ -135,22 +149,24 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
         return rotmos_fail(error, ROTMOS_NOMEM, "xml_route",
                            "copying XML mapping options");
     }
-    rotmos_route_config_init(&route);
-    route.method = config->method;
-    route.methods = config->methods;
-    route.path = config->path;
-    route.path_kind = config->path_kind;
-    route.body = config->body;
-    route.handler = dispatch;
-    route.userdata = data;
-    route.hooks = config->hooks;
-    status = group != NULL
-                 ? rotmos_route_group_route(group, &route, &registered, error)
-                 : rotmos_router_route(router, &route, &registered, error);
+    rotmos_upload_reader_config_init(&reader);
+    reader.method = config->method;
+    reader.methods = config->methods;
+    reader.path = config->path;
+    reader.path_kind = config->path_kind;
+    reader.body = config->body;
+    reader.buffer_bytes = config->buffer_bytes;
+    reader.handler = parse;
+    reader.userdata = data;
+    reader.hooks = config->hooks;
+    codec.open = open_records;
+    codec.finish = complete;
+    codec.release = release_records;
+    status = rotmos_upload_reader_add(router, group, &reader, &codec,
+                                      release_route, &registered, error);
     if (status != ROTMOS_OK)
         release_route(data);
     else {
-        registered->release_userdata = release_route;
         if (out != NULL)
             *out = registered;
     }

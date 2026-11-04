@@ -34,5 +34,8 @@ and asserts completed JSON bytes in an after-hook. Ordinary C JSON route output
 now materializes before that hook; explicit live typed replies remain separate.
 Lua REST replies now forward one encoder output directly, preserving bytes and
 optional newline without a second parse/emission or default output-size cap.
+C XML routes now reuse live upload-reader parsing with owner-loop completion;
+the forwarding fixture checks progress before EOF and parser cancellation. See
+the XML implementation note for the baseline reader-thread/join transition.
 The adapter is partial: the remaining operation families and known gaps above
 still need their corresponding forwarding/parity cases.

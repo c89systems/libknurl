@@ -9,10 +9,13 @@
 #include <unistd.h>
 struct reader_route {
     rotmos_upload_reader_config config;
+    struct rotmos_upload_reader_codec codec;
     void (*release_userdata)(void *);
 };
 struct reader_upload {
     rotmos_upload_reader_config config;
+    struct rotmos_upload_reader_codec codec;
+    void *codec_state;
     /* Owner loop only; revoked before request close. */
     rotmos_request *request;
     rotmos_upload_metadata metadata;
@@ -25,7 +28,7 @@ struct reader_upload {
     rotmos_waker *waker;
     rotmos_timer *admission;
     size_t references, queued, capacity;
-    int pipe[2], started, body_end, done, failed;
+    int pipe[2], started, body_end, done, failed, published;
 };
 static void unref(void *data)
 {
@@ -39,6 +42,8 @@ static void unref(void *data)
     if (s->reader != NULL)
         rotmos_source_release(s->reader, ROTMOS_CANCELLED);
     rotmos_reply_destroy(s->result, NULL);
+    if (s->codec.release != NULL && s->codec_state != NULL)
+        s->codec.release(s->codec_state);
     free(s->text);
     free(s->pairs);
     free(s);
@@ -67,6 +72,20 @@ static void fail(struct reader_upload *s, rotmos_status status)
         return;
     s->failed = 1;
     s->request->outcome.cause = status;
+    if (s->codec.finish != NULL) {
+        /* Parsed-route errors retain ordinary facade status mapping, including
+         * early rejection before the sender has finished the upload. */
+        if (!s->body_end)
+            s->request->response->close_connection = 1;
+        if (rotmos_reply_status(s->request->reply,
+                                status == ROTMOS_INVALID         ? 400
+                                : status == ROTMOS_NOT_SUPPORTED ? 501
+                                                                 : 500,
+                                NULL) == ROTMOS_OK &&
+            rotmos_response_submit(s->request->response, s->request->reply,
+                                   NULL) == ROTMOS_OK)
+            return;
+    }
     rotmos_response_fail(s->request->response, status);
 }
 static rotmos_status submit_reply(rotmos_request *request, rotmos_error *error)
@@ -83,15 +102,24 @@ static void publish(struct reader_upload *s)
 {
     rotmos_reply *old;
     rotmos_status status;
-    if (!s->done || !s->body_end || s->failed || s->request == NULL)
+    rotmos_error error;
+    if (!s->done || !s->body_end || s->failed || s->published ||
+        s->request == NULL)
         return;
+    s->published = 1;
     old = s->request->reply;
     s->request->reply = s->result;
     s->result = NULL;
     s->request->reply->owner = s->request;
     old->owner = NULL;
     rotmos_reply_destroy(old, NULL);
-    status = rotmos_router_hooks_after(s->request, NULL);
+    rotmos_error_clear(&error);
+    status = s->codec.finish != NULL
+                 ? s->codec.finish(s->request, s->request->reply,
+                                   s->codec_state, &error)
+                 : ROTMOS_OK;
+    if (status == ROTMOS_OK)
+        status = rotmos_router_hooks_after(s->request, &error);
     if (status == ROTMOS_OK)
         status = submit_reply(s->request, NULL);
     if (status != ROTMOS_OK)
@@ -162,7 +190,9 @@ static rotmos_status work(rotmos_job *job, rotmos_bytes arguments, void *data,
     status = rotmos_source_cancelled(s->reader)
                  ? ROTMOS_CANCELLED
                  : s->config.handler(&s->metadata, s->reader, s->result,
-                                     s->config.userdata, error);
+                                     s->codec.open != NULL ? s->codec_state
+                                                           : s->config.userdata,
+                                     error);
     complete = s->reader->eof ||
                (s->metadata.has_content_length &&
                 s->reader->position.high == s->metadata.content_length.high &&
@@ -171,7 +201,8 @@ static rotmos_status work(rotmos_job *job, rotmos_bytes arguments, void *data,
                 s->reader->position.high == 0 && s->reader->position.low == 0);
     if (status == ROTMOS_OK && s->reader->failure != ROTMOS_OK)
         status = s->reader->failure;
-    if (status == ROTMOS_OK && (!complete || !s->result->selected))
+    if (status == ROTMOS_OK &&
+        (!complete || (s->codec.finish == NULL && !s->result->selected)))
         status = rotmos_fail(
             error, ROTMOS_STATE, "upload_reader",
             "handler must consume admitted input and select a reply");
@@ -240,6 +271,12 @@ static rotmos_status start(struct reader_upload *s, rotmos_error *error)
     if (s->started)
         return ROTMOS_OK;
     s->started = 1;
+    if (s->codec.open != NULL) {
+        status = s->codec.open(s->request, s->config.userdata, &s->codec_state,
+                               error);
+        if (status != ROTMOS_OK)
+            return status;
+    }
     status = rotmos_native_io_pool(rotmos_request_server(s->request), &s->pool,
                                    error);
     if (status != ROTMOS_OK)
@@ -382,6 +419,7 @@ static rotmos_status headers(rotmos_request *request, rotmos_request_plan *plan,
                            "allocating upload context");
     s->request = request;
     s->config = route->config;
+    s->codec = route->codec;
     s->references = 1;
     s->capacity = s->config.buffer_bytes != 0 ? s->config.buffer_bytes : 262144;
     s->pipe[0] = s->pipe[1] = -1;
@@ -412,6 +450,7 @@ static void release_route(void *data)
 rotmos_status
 rotmos_upload_reader_add(rotmos_router *router, rotmos_route_group *group,
                          const rotmos_upload_reader_config *config,
+                         const struct rotmos_upload_reader_codec *codec,
                          void (*release_userdata)(void *), rotmos_route **out,
                          rotmos_error *error)
 {
@@ -431,6 +470,9 @@ rotmos_upload_reader_add(rotmos_router *router, rotmos_route_group *group,
         return rotmos_fail(error, ROTMOS_NOMEM, "upload_reader",
                            "copying upload declaration");
     copy->config = *config;
+    memset(&copy->codec, 0, sizeof(copy->codec));
+    if (codec != NULL)
+        copy->codec = *codec;
     copy->release_userdata = release_userdata;
     rotmos_route_config_init(&route);
     route.method = config->method;
@@ -457,7 +499,8 @@ rotmos_router_upload_reader(rotmos_router *router,
                             const rotmos_upload_reader_config *config,
                             rotmos_route **out, rotmos_error *error)
 {
-    return rotmos_upload_reader_add(router, NULL, config, NULL, out, error);
+    return rotmos_upload_reader_add(router, NULL, config, NULL, NULL, out,
+                                    error);
 }
 rotmos_status
 rotmos_route_group_upload_reader(rotmos_route_group *group,
@@ -470,5 +513,6 @@ rotmos_route_group_upload_reader(rotmos_route_group *group,
         return rotmos_fail(error, ROTMOS_INVALID, "upload_reader",
                            "group is required");
     }
-    return rotmos_upload_reader_add(NULL, group, config, NULL, out, error);
+    return rotmos_upload_reader_add(NULL, group, config, NULL, NULL, out,
+                                    error);
 }
