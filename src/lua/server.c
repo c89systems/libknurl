@@ -11,6 +11,9 @@ static int l_close(lua_State *L)
     if (s == NULL)
         return rl_error(
             L, (rl_fail(&error, ROTMOS_INVALID, "server required"), &error));
+    if (s->root != LUA_NOREF)
+        return rl_error(
+            L, (rl_fail(&error, ROTMOS_STATE, "server is active"), &error));
     status = rotmos_server_destroy(s->native, &error);
     if (status != ROTMOS_OK)
         return rl_error(L, &error);
@@ -23,6 +26,8 @@ static int l_close(lua_State *L)
     lua_setiuservalue(L, 1, 3);
     lua_pushnil(L);
     lua_setiuservalue(L, 1, 4);
+    lua_pushnil(L);
+    lua_setiuservalue(L, 1, 5);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -162,7 +167,7 @@ static int l_new(lua_State *L)
         return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
                                     "server configuration table required"),
                             &error));
-    s = lua_newuserdatauv(L, sizeof(*s), 4);
+    s = lua_newuserdatauv(L, sizeof(*s), 5);
     index = lua_absindex(L, -1);
     memset(s, 0, sizeof(*s));
     s->L = L;
@@ -182,8 +187,10 @@ static int l_new(lua_State *L)
     lua_setiuservalue(L, -2, 3);
     lua_newtable(L);
     lua_setiuservalue(L, -2, 4);
+    lua_newtable(L);
+    lua_setiuservalue(L, -2, 5);
     rotmos_server_config_init(&config);
-    if (!rl_config_parse(L, 1, &config, &error)) {
+    if (!rl_config_parse(L, 1, index, &config, &error)) {
         return rl_error(L, &error);
     } /* No native object exists during Lua conversion. */
     config.callbacks.on_process_start = on_process_start;
@@ -216,8 +223,7 @@ static int l_run(lua_State *L)
             L, (rl_fail(&error, ROTMOS_STATE, "server is closed"), &error));
     if (s->root != LUA_NOREF)
         return rl_error(
-            L, (rl_fail(&error, ROTMOS_STATE, "server is already running"),
-                &error));
+            L, (rl_fail(&error, ROTMOS_STATE, "server is active"), &error));
     lua_pushvalue(L, 1);
     s->root = luaL_ref(L, LUA_REGISTRYINDEX);
     s->L = L;
@@ -267,9 +273,23 @@ static int l_validate(lua_State *L)
 {
     struct rl_server *s = rl_server(L, 1);
     rotmos_error e;
+    rotmos_status status;
     if (s == NULL || s->native == NULL)
         return rl_error(L, (rl_fail(&e, ROTMOS_STATE, "server is closed"), &e));
-    if (rotmos_server_validate(s->native, &e) != ROTMOS_OK)
+    if (s->root != LUA_NOREF)
+        return rl_error(L, (rl_fail(&e, ROTMOS_STATE, "server is active"), &e));
+    lua_pushvalue(L, 1);
+    s->root = luaL_ref(L, LUA_REGISTRYINDEX);
+    s->L = L;
+    rotmos_error_clear(&s->callback_error);
+    status = rotmos_server_validate(s->native, &e);
+    luaL_unref(L, LUA_REGISTRYINDEX, s->root);
+    s->root = LUA_NOREF;
+    if (status == ROTMOS_OK && s->callback_error.status != ROTMOS_OK) {
+        e = s->callback_error;
+        status = e.status;
+    }
+    if (status != ROTMOS_OK)
         return rl_error(L, &e);
     lua_pushboolean(L, 1);
     return 1;

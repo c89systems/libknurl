@@ -70,6 +70,8 @@ struct rl_source {
     lua_CFunction retire;
     size_t offset;
     rotmos_error error;
+    int active;
+    struct rl_server *material_server;
 };
 struct rl_call {
     struct rl_server *server;
@@ -99,7 +101,11 @@ int rl_field_size(lua_State *, int, const char *, size_t *);
 int rl_field_string(lua_State *, int, const char *, const char **);
 void rl_field(lua_State *, int, const char *);
 int rl_fields(lua_State *, int, const char *const *, size_t, rotmos_error *);
-int rl_config_parse(lua_State *, int, rotmos_server_config *, rotmos_error *);
+int rl_config_parse(lua_State *, int, int, rotmos_server_config *,
+                    rotmos_error *);
+int rl_material_config(lua_State *, int, int, rotmos_tls_material *,
+                       rotmos_error *);
+int rl_acme_config(lua_State *, int, int, rotmos_acme_config *, rotmos_error *);
 void rl_config_push(lua_State *, const rotmos_server_effective *);
 int rl_auth_prepare(lua_State *, int, rotmos_error *);
 rotmos_status rl_auth_decide(lua_State *, int, rotmos_request *, const char *,

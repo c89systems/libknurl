@@ -95,3 +95,48 @@ The separate [protocol fixture](acme-protocol.md) drives a local HTTPS CA throug
 account recovery, signed orders, CSR, TLS-ALPN-01, issuance and renewal selection
 after ACME-process restart. It also covers captured trust and transport bounds.
 Complete allocation/fatal unwinding and in-flight protocol fault coverage remain.
+
+## Lua callbacks
+
+Lua identities accept `mode='acme'` and callback materials. A material declaration
+is `{kind='callback', open=function() ... end}`, with kind optional when open is
+supplied. The opener returns an unowned `rotmos.source`, a legacy read/reset/close
+table, or nil/error. Callback declarations and their owners remain pinned through
+server close; changing the original open field does not change the declaration.
+A source already transferred, closed or currently executing cannot be transferred again.
+Legacy reset executes once before the first pull, and each accepted source closes
+once on success or failure. Consumption reuses the bounded synchronous C material
+reader; AGAIN fails with STATE. No TLS transport or PEM parser is implemented in
+the binding.
+
+Each explicit validate and run opens fresh material. The same server cannot be
+closed, run or recursively validated inside its material callbacks. The complete
+opener/read/reset/close boundary is protected, including result conversion and
+allocation failures. Cleanup errors do not replace a native operation failure;
+a close callback failure makes an otherwise successful validation/run fail. A stop requested
+while preparing material prevents subsequent worker forks. Lua callbacks own the
+lifetime of any Lua strings they retain; the C core cleanses its own copies.
+
+`tls.acme` accepts email, directory_url, runtime_directory, ca_file, ca_directory,
+persist_timeout_ms and `state(server, context)`. Context copies event
+(restore/persist/error), domain, runtime_directory and process. ERROR also copies
+the public cause as context.error. Nil/true succeeds, false rejects with STATE,
+and nil/error propagates the supplied status. Thrown errors and OOM are caught
+before returning through the C frame. ERROR return/failure follows the native
+notification contract and cannot replace the primary persistence/restore failure.
+
+RESTORE runs in the quiescent parent; PERSIST runs in the key manager after fork,
+before acknowledged publication. Clients with threads must be created in the
+owning process. The callback owns durable storage selection and hydration; it
+receives the candidate directory, with no Vectis/Lockd type or implicit XDG path.
+The configured deadline, restart policy, publication and rollback remain in the
+public C ACME engine. Construction and validate invoke no ACME state callback or
+CA traffic. A successful RESTORE callback which requests stop completes cleanup
+without starting children. Effective configuration copies ordinary ACME values.
+
+The [installed Lua fixture](../tests/lua/tls.lua) covers live mutual TLS with
+callback certificate/key/chain, copied declarations, source reset/close and
+busy/closed ownership, bounded input, callback/OOM failures and startup reentry.
+It also exercises actual parent RESTORE and key-manager PERSIST/ERROR delivery,
+failed persistence propagation and stop before fork. Full remote issuance and
+in-flight fault combinations remain part of the final integration review.

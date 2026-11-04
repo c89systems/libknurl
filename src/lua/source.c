@@ -129,8 +129,10 @@ static rotmos_status call_source(struct source_call *c)
     rotmos_status status;
     if (c->error == NULL)
         c->error = &local;
+    ++c->source->active;
     status = rl_protect_value(c->source->L, source_trampoline, c,
                               c->source->root == LUA_NOREF ? 1 : 0, c->error);
+    --c->source->active;
     if (status == ROTMOS_OK)
         status = c->status;
     if (status != ROTMOS_OK && status != ROTMOS_EOF && status != ROTMOS_AGAIN &&
@@ -198,6 +200,12 @@ static void close_source(void *data, rotmos_status cause)
             s->error = error;
     }
 unroot:
+    if (s->material_server != NULL && s->error.status != ROTMOS_OK) {
+        if (s->material_server->callback_error.status == ROTMOS_OK)
+            s->material_server->callback_error = s->error;
+        (void)rotmos_server_request_stop(s->material_server->native, NULL);
+    }
+    s->material_server = NULL;
     if (s->root != LUA_NOREF)
         luaL_unref(s->L, LUA_REGISTRYINDEX, s->root);
     s->root = LUA_NOREF;
@@ -366,16 +374,24 @@ static rotmos_status reader_read(void *buffer, size_t capacity,
 {
     struct rl_source *s = data;
     rotmos_status status = reader_ready(s, error);
-    return status == ROTMOS_OK ? rotmos_source_read(s->delegate, buffer,
-                                                    capacity, produced, error)
-                               : status;
+    if (status == ROTMOS_OK) {
+        ++s->active;
+        status =
+            rotmos_source_read(s->delegate, buffer, capacity, produced, error);
+        --s->active;
+    }
+    return status;
 }
 static rotmos_status reader_reset(void *data, rotmos_error *error)
 {
     struct rl_source *s = data;
     rotmos_status status = reader_ready(s, error);
-    return status == ROTMOS_OK ? rotmos_source_reset(s->delegate, error)
-                               : status;
+    if (status == ROTMOS_OK) {
+        ++s->active;
+        status = rotmos_source_reset(s->delegate, error);
+        --s->active;
+    }
+    return status;
 }
 struct rl_source *rl_source_native_new(lua_State *L, int owner,
                                        lua_CFunction retire,

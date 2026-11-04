@@ -479,6 +479,12 @@ function M.server(opts)
     end
   end
   opts.supervision=supervision_options(self,opts.supervision)
+  if type(opts.tls)=='table' and type(opts.tls.acme)=='table' then
+    opts.tls=copy(opts.tls)
+    opts.tls.acme=copy(opts.tls.acme)
+    local fn=opts.tls.acme.state
+    if type(fn)=='function' then opts.tls.acme.state=function(_,event) return fn(self,event) end end
+  end
   local handle,err=native.server(opts)
   if not handle then return nil,err end
   self._native=handle

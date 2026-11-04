@@ -661,6 +661,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             runtime->status = rotmos_tls_prepare(
                 &server->config.tls, KORE_DEFAULT_CIPHER_LIST, &runtime->tls,
                 &runtime->error);
+        runtime->cancelled = startup_cancel(runtime);
         if (runtime->status == ROTMOS_OK && !runtime->cancelled)
             runtime->status =
                 rotmos_kore_acme_prepare(runtime, &runtime->error);
@@ -671,6 +672,7 @@ rotmos_status rotmos_server_run(rotmos_server *server, rotmos_run_result *out,
             runtime->acme != NULL)
             runtime->status = rotmos_acme_store_restore(
                 runtime->acme, server, &server->process, &runtime->error);
+        runtime->cancelled = startup_cancel(runtime);
         if (runtime->status == ROTMOS_OK && !runtime->cancelled) {
             hooks.arg = runtime;
             hooks.fatal = fatal_error;

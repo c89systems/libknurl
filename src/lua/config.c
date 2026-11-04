@@ -232,10 +232,10 @@ static int strings(lua_State *L, int index, struct scratch *a,
     *count = n;
     return 1;
 }
-static int material(lua_State *L, int index, const char *name,
+static int material(lua_State *L, int owner, int index, const char *name,
                     rotmos_tls_material *out, rotmos_error *error)
 {
-    static const char *const allowed[] = {"kind", "path", "bytes"};
+    static const char *const allowed[] = {"kind", "path", "bytes", "open"};
     const char *kind = NULL;
     int value;
     size_t length;
@@ -266,6 +266,18 @@ static int material(lua_State *L, int index, const char *name,
         out->bytes.data = lua_tolstring(L, -1, &out->bytes.length);
     }
     lua_pop(L, 1);
+    rl_field(L, value, "open");
+    if ((kind != NULL && !strcmp(kind, "callback")) ||
+        (kind == NULL && !lua_isnil(L, -1))) {
+        lua_pop(L, 1);
+        if (!rl_material_config(L, owner, value, out, error))
+            return 0;
+        lua_pop(L, 1);
+        return 1;
+    }
+    if (!lua_isnil(L, -1))
+        return 0;
+    lua_pop(L, 1);
     if (kind == NULL)
         out->kind =
             out->path != NULL ? ROTMOS_MATERIAL_FILE : ROTMOS_MATERIAL_MEMORY;
@@ -275,17 +287,17 @@ static int material(lua_State *L, int index, const char *name,
         out->kind = ROTMOS_MATERIAL_MEMORY;
     else {
         rl_fail(error, ROTMOS_NOT_SUPPORTED,
-                "Lua material currently requires file or memory input");
+                "TLS material kind must be file, memory or callback");
         return 0;
     }
     lua_pop(L, 1);
     return 1;
 }
-static int tls(lua_State *L, int index, rotmos_tls_config *c, struct scratch *a,
-               rotmos_error *error)
+static int tls(lua_State *L, int owner, int index, rotmos_tls_config *c,
+               struct scratch *a, rotmos_error *error)
 {
-    static const char *const allowed[] = {"version", "cipher_list",
-                                          "max_material_bytes", "identities"};
+    static const char *const allowed[] = {
+        "version", "cipher_list", "max_material_bytes", "identities", "acme"};
     static const char *const identity_fields[] = {
         "mode",        "domains",
         "bundle",      "certificate",
@@ -314,6 +326,34 @@ static int tls(lua_State *L, int index, rotmos_tls_config *c, struct scratch *a,
         else
             return 0;
     }
+    rl_field(L, index, "acme");
+    if (!lua_isnil(L, -1)) {
+        static const struct setting acme_fields[] = {
+            F(rotmos_acme_config, email, TEXT),
+            F(rotmos_acme_config, directory_url, TEXT),
+            F(rotmos_acme_config, runtime_directory, TEXT),
+            F(rotmos_acme_config, ca_file, TEXT),
+            F(rotmos_acme_config, ca_directory, TEXT),
+            F(rotmos_acme_config, persist_timeout_ms, LONG)};
+        static const char *const fields[] = {
+            "email",   "directory_url", "runtime_directory",
+            "ca_file", "ca_directory",  "persist_timeout_ms",
+            "state"};
+        int snapshot;
+        if (!lua_istable(L, -1) || !rl_fields(L, -1, fields, N(fields), error))
+            return 0;
+        rl_table_copy(L, -1);
+        snapshot = lua_absindex(L, -1);
+        if (!rl_acme_config(L, owner, snapshot, &c->acme, error))
+            return 0;
+        lua_pushnil(L);
+        lua_setfield(L, snapshot, "state");
+        if (!settings(L, snapshot, &c->acme, acme_fields, N(acme_fields),
+                      error))
+            return 0;
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
     rl_field(L, index, "identities");
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
@@ -340,9 +380,11 @@ static int tls(lua_State *L, int index, rotmos_tls_config *c, struct scratch *a,
         if (mode != NULL && strcmp(mode, "manual")) {
             if (!strcmp(mode, "disabled"))
                 identities[i].mode = ROTMOS_TLS_DISABLED;
+            else if (!strcmp(mode, "acme"))
+                identities[i].mode = ROTMOS_TLS_ACME;
             else {
                 rl_fail(error, ROTMOS_NOT_SUPPORTED,
-                        "Lua ACME state callbacks are not connected yet");
+                        "TLS identity mode must be disabled, manual or acme");
                 return 0;
             }
         }
@@ -351,14 +393,16 @@ static int tls(lua_State *L, int index, rotmos_tls_config *c, struct scratch *a,
                      &identities[i].domain_count, error))
             return 0;
         lua_pop(L, 1);
-        if (!material(L, record, "bundle", &identities[i].bundle, error) ||
-            !material(L, record, "certificate", &identities[i].certificate,
+        if (!material(L, owner, record, "bundle", &identities[i].bundle,
                       error) ||
-            !material(L, record, "private_key", &identities[i].private_key,
-                      error) ||
-            !material(L, record, "extra_chain", &identities[i].extra_chain,
-                      error) ||
-            !material(L, record, "client_ca", &identities[i].client_ca, error))
+            !material(L, owner, record, "certificate",
+                      &identities[i].certificate, error) ||
+            !material(L, owner, record, "private_key",
+                      &identities[i].private_key, error) ||
+            !material(L, owner, record, "extra_chain",
+                      &identities[i].extra_chain, error) ||
+            !material(L, owner, record, "client_ca", &identities[i].client_ca,
+                      error))
             return 0;
         rl_field(L, record, "require_client_certificate");
         if (!lua_isnil(L, -1)) {
@@ -443,8 +487,8 @@ static int autoblock(lua_State *L, int index, rotmos_autoblock_config *c,
     lua_pop(L, 1);
     return 1;
 }
-int rl_config_parse(lua_State *L, int options, rotmos_server_config *c,
-                    rotmos_error *error)
+int rl_config_parse(lua_State *L, int options, int owner,
+                    rotmos_server_config *c, rotmos_error *error)
 {
     static const char *const allowed[] = {
         "name",      "profile",    "listeners",    "signals",
@@ -558,7 +602,7 @@ int rl_config_parse(lua_State *L, int options, rotmos_server_config *c,
         goto invalid;
     lua_pop(L, 1);
     rl_field(L, options, "tls");
-    if (!lua_isnil(L, -1) && !tls(L, -1, &c->tls, &a, error))
+    if (!lua_isnil(L, -1) && !tls(L, owner, -1, &c->tls, &a, error))
         goto invalid;
     lua_pop(L, 1);
     rl_field(L, options, "listeners");
@@ -758,6 +802,20 @@ void rl_config_push(lua_State *L, const rotmos_server_effective *e)
     lua_setfield(L, -2, "cipher_list");
     rl_push_size(L, c->tls.max_material_bytes);
     lua_setfield(L, -2, "max_material_bytes");
+    lua_newtable(L);
+    lua_pushstring(L, c->tls.acme.email);
+    lua_setfield(L, -2, "email");
+    lua_pushstring(L, c->tls.acme.directory_url);
+    lua_setfield(L, -2, "directory_url");
+    lua_pushstring(L, c->tls.acme.runtime_directory);
+    lua_setfield(L, -2, "runtime_directory");
+    lua_pushstring(L, c->tls.acme.ca_file);
+    lua_setfield(L, -2, "ca_file");
+    lua_pushstring(L, c->tls.acme.ca_directory);
+    lua_setfield(L, -2, "ca_directory");
+    lua_pushinteger(L, c->tls.acme.persist_timeout_ms);
+    lua_setfield(L, -2, "persist_timeout_ms");
+    lua_setfield(L, -2, "acme");
     lua_newtable(L);
     for (i = 0; i < c->tls.identity_count; ++i) {
         const rotmos_tls_identity *id = &c->tls.identities[i];

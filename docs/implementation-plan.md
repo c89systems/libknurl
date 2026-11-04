@@ -113,8 +113,7 @@ effective snapshots and the serving gate are connected. Callback auth lifts the
 existing decision/principal/challenge behavior through public staged route hooks;
 credentials and sessions remain host-owned. Its combined fixture covers the live
 wire behavior, copying, invalid decisions, protected getters and constructor
-allocation unwinding. Material openers/ACME persistence and the other Lua families
-remain part of the full goal.
+allocation unwinding. The other Lua families remain part of the full goal.
 
 Explicit [file-backed replies](responses.md) now lift Vectis's source and
 generated-JSON materializers through public `rotmos_reply_source_spooled` and
@@ -205,7 +204,7 @@ events, control descriptor transfer/interest and active TLS identity state. Earl
 callbacks and routes share scoped request tables, with body metadata filled when
 routing begins. Copied event/outcome fields retain exact counts. The short
 installed fixture covers real HTTP/TLS, failure cleanup and FD ownership without
-a parallel policy engine. TLS material openers/ACME persistence, selected-array
+a parallel policy engine. Selected-array
 input, custom providers, logging interop, remaining direct operations and final
 packaging/integration checks remain part of the full goal.
 
@@ -214,3 +213,13 @@ signal wakeup race. The backend adapter now preserves Kore's signal handling and
 notifies the existing runtime wake descriptor. Callback failure/reader retirement
 and orderly shutdown pass together under the scoped memory check, without adding
 polling, a backend hook or a host control protocol.
+
+Lua TLS material openers and ACME state callbacks now reuse the public source,
+TLS preparation and candidate-generation lifecycle. Callback owners are retained,
+source transfer/close is scoped, and callbacks cannot reenter server destruction
+or validation. ACME context copies preserve parent/key-manager roles and public
+error propagation. Startup now checks cancellation after material preparation and
+restore, before forking. The short installed fixture covers live mTLS, failure
+cleanup and real RESTORE/PERSIST/ERROR boundaries. Selected-array input, custom
+providers, logging interop, remaining direct operations, packaging and the final
+integration/artifact review remain required.

@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/time.h>
+#include <sys/stat.h>
 #include <arpa/inet.h>
 #include <signal.h>
 #include <poll.h>
@@ -507,6 +508,7 @@ static int spawn_observations(lua_State *L)
 static int spawn_single(lua_State *L)
 {
     unsigned short port = (unsigned short)luaL_checkinteger(L, 1);
+    int tls = lua_toboolean(L, 2);
     int failed;
     child = fork();
     if (child < 0)
@@ -514,6 +516,7 @@ static int spawn_single(lua_State *L)
     if (child == 0) {
         signal(SIGTERM, SIG_DFL);
         signal(SIGPIPE, SIG_IGN);
+        encrypted = tls;
         failed =
             rotmos_lua_test_exchange(port, "GET", "/", "", 0, 200, "ok", 2);
         if (failed)
@@ -572,6 +575,13 @@ static int fd_closed(lua_State *L)
     int fd = (int)luaL_checkinteger(L, 1);
     lua_pushboolean(L, fcntl(fd, F_GETFD) == -1 && errno == EBADF);
     return 1;
+}
+static int private_directory(lua_State *L)
+{
+    const char *path = luaL_checkstring(L, 1);
+    if ((mkdir(path, 0700) && errno != EEXIST) || chmod(path, 0700))
+        return luaL_error(L, "preparing private directory failed");
+    return 0;
 }
 static int join(lua_State *L)
 {
@@ -1435,8 +1445,12 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "fd_close");
     lua_pushcfunction(L, fd_closed);
     lua_setfield(L, -2, "fd_closed");
+    lua_pushcfunction(L, private_directory);
+    lua_setfield(L, -2, "private_directory");
     lua_pushstring(L, argv[2]);
     lua_setfield(L, -2, "root");
+    lua_pushstring(L, argv[1]);
+    lua_setfield(L, -2, "script");
     if (argc == 4) {
         lua_pushstring(L, argv[3]);
         lua_setfield(L, -2, "workspace");

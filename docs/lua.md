@@ -289,11 +289,20 @@ Listeners accept `kind="http"`, `"https"` or `"redirect"`, separate bind/present
 ports, `redirect_https_port` and a one-based `identity_index`. `tls.identities`
 contains explicit domains and manual bundle or certificate/private-key inputs,
 optional chain/client CA, and `require_client_certificate`. A material is a file
-path string or `{kind="file", path=...}` / `{kind="memory", bytes=...}`; omitted
-kind follows the supplied path/bytes field. Identity mode defaults to manual.
+path string, `{kind="file", path=...}`, `{kind="memory", bytes=...}` or
+`{kind="callback", open=function() ... end}`. Omitted kind follows the supplied
+path/bytes/open field. An opener returns an unowned `rotmos.source` or the existing
+legacy source table, or nil/error. Identity mode defaults to manual.
 TLS versions are `default`, `both`, `1.2` and `1.3`. Validation and run use the C
 TLS material path; declaration itself opens nothing. `start_paused=true`,
 `server:state()` and `server:set_serving(boolean)` expose the public serving gate.
+
+ACME identities use `mode="acme"` and an explicit `tls.acme` declaration with
+email, directory_url, runtime_directory, optional CA inputs/persistence deadline
+and `state(server, context)`. The copied context identifies restore/persist/error,
+parent/key-manager process and candidate directory. Durable storage stays with
+the host. The [TLS callback contract](tls.md) describes source ownership,
+reentry, failure handling and publication order.
 
 Callback auth retains Vectis's `{kind="callback", callback=function(request)...}`
 declaration, including optional nested `provider`, purpose/realm and
@@ -500,8 +509,7 @@ allocation failures.
 
 ## Remaining binding surfaces
 
-The binding is incomplete. TLS material openers/ACME persistence callbacks,
-selected-array input, custom asset/storage providers and packed mounts,
+The binding is incomplete. Selected-array input, custom asset/storage providers and packed mounts,
 pslog logger interop and remaining direct dispatch/response operations still need
 their public C bindings. Known unsupported options return an error. No transport
 or application mechanism belongs in a temporary Vectis adapter to fill those
