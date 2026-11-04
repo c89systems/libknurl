@@ -46,6 +46,7 @@ typedef void (*rotmos_websocket_close_fn)(rotmos_websocket *,
 
 typedef struct rotmos_websocket_config {
     size_t max_frame_bytes;
+    /* Zero retains Kore's send behavior (SIZE_MAX); positive sets a budget. */
     size_t output_queue_bytes;
     long close_timeout_ms;
     const char *protocol;
@@ -87,8 +88,10 @@ rotmos_websocket_accept(rotmos_request *, const rotmos_websocket_config *,
 ROTMOS_API rotmos_status
 rotmos_router_websocket(rotmos_router *, const rotmos_websocket_route_config *,
                         rotmos_route **, rotmos_error *);
-/* Complete, unfragmented frames only. No extensions are negotiated. Atomic
- * acceptance: AGAIN queues nothing and arms a capacity notification. */
+/* Copies one raw frame, retaining Kore's opcode/text-byte behavior. The frame
+ * uses FIN; continuation is accepted for sending. The receive payload limit is
+ * independent of output capacity. AGAIN queues nothing and arms notification.
+ * No extensions are negotiated. */
 ROTMOS_API rotmos_status rotmos_websocket_send(rotmos_websocket *,
                                                rotmos_websocket_opcode,
                                                const void *, size_t,

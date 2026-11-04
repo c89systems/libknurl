@@ -87,7 +87,13 @@ and transport fields, and shared Kore file metadata/conditional replies. It fixe
 default-directory spill execution and caller-buffer edge cases. Lua status/hook
 validation and REST body defaults now follow the baseline. New cases cover these
 operations together with registration order, masks and conflicts.
-Next batch: complete proxy, WebDAV/storage, upload/WebSocket/SSE and TLS host
-callback/provider forwarding against their existing engines. Then finish the
+The service adapter now forwards proxy callbacks/edits, WebDAV storage/auth,
+upload stream/reader/file, WebSocket and resolved TLS/redirect declarations.
+One combined runtime case checks proxy, DAV, uploads, WebSockets and SSE. Native
+reader ownership now preserves host request facades through cancellation/ACK;
+successful unselected uploads return the baseline 204. WebSocket send/input/close
+byte behavior follows Kore, including outgoing continuation and empty peer-close
+replies. Live TLS/mTLS/ACME provider forwarding and remaining service options
+still need baseline adapter evidence. Then finish the
 remaining surface audit and consolidated consumer/artifact gates. The complete
 Vectis adapter and final compatibility claim remain open.

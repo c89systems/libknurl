@@ -80,6 +80,7 @@ static int close_ws(lua_State *L)
     rotmos_error error;
     rotmos_bytes reason = {0};
     size_t code = 0;
+    rotmos_status status;
     if (view == NULL)
         goto invalid;
     if (view->native != NULL) {
@@ -90,8 +91,18 @@ static int close_ws(lua_State *L)
                 goto invalid;
             reason.data = lua_tolstring(L, 3, &reason.length);
         }
-        if (rotmos_websocket_close(view->native, (unsigned short)code, reason,
-                                   &error) != ROTMOS_OK)
+        status =
+            lua_isnoneornil(L, 2) && lua_isnoneornil(L, 3)
+                ? rotmos_websocket_send(view->native, ROTMOS_WEBSOCKET_CLOSE,
+                                        NULL, 0, &error)
+                : rotmos_websocket_close(view->native, (unsigned short)code,
+                                         reason, &error);
+        if (status == ROTMOS_AGAIN) {
+            lua_pushnil(L);
+            rl_sentinel(L, status);
+            return 2;
+        }
+        if (status != ROTMOS_OK)
             return rl_error(L, &error);
     }
     if (view->error.status != ROTMOS_OK)

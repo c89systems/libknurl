@@ -71,3 +71,18 @@ conflicts, file Last-Modified and exact conditional matching, empty files, HEAD
 representation lengths, duplicate cookies/headers and staged transport fields.
 Its source adapters only forward public read/reset/close; collection, files and
 HTTP execution stay in the library.
+
+[vectis-services.c](../tests/vectis-services.c) adds proxy preflight/rewrite/
+response/error and edit operations; upload stream, native reader and file
+helpers; WebSocket callbacks/send/close; WebDAV filesystem/provider and auth
+translation; and resolved TLS identity/redirect/ACME configuration. It retains
+callback owners and converts value/error/string shapes. Native-reader ownership
+uses the public acquire/release pair to preserve the host request facade after
+HTTP cancellation, without sharing live Core handles with native work.
+The [combined case](../tests/vectis-services-runtime.c) exercises real proxy
+requests, local/error replies, file output, implicit 204, reader progress before
+EOF, cancellation metadata, acquisition failures, DAV PUT/GET/PROPFIND/auth,
+WebSocket raw frames and SSE through the ordinary source adapter. TLS declarations
+are checked as values here. Live manual TLS/mTLS, ACME durable-provider forwarding
+and the remaining service options still need baseline adapter evidence; existing
+engine tests alone do not complete that obligation.

@@ -1,6 +1,8 @@
+#define _POSIX_C_SOURCE 200809L
 #include "vectis-route.h"
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 struct string_copy {
     struct string_copy *next;
     rotmos_bytes view;
@@ -11,6 +13,9 @@ struct reference_request {
     struct string_copy *strings;
     struct reference_source body_reader;
     rotmos_error reader_error;
+    const rotmos_upload_metadata *metadata;
+    size_t references;
+    int closed;
 };
 struct forwarding {
     struct forwarding *next;
@@ -74,8 +79,9 @@ reference_status reference_error_from_rotmos(rotmos_status status,
     }
     return status_from(status);
 }
-static rotmos_status error_to(reference_status status,
-                              const reference_error *in, rotmos_error *out)
+rotmos_status reference_error_to_rotmos(reference_status status,
+                                        const reference_error *in,
+                                        rotmos_error *out)
 {
     rotmos_status result = status_to(status);
     rotmos_error_clear(out);
@@ -101,8 +107,34 @@ static rotmos_status request_start(rotmos_server *server,
     if (request == NULL)
         return ROTMOS_NOMEM;
     request->request = native;
+    request->references = 1;
     rotmos_request_set_userdata(native, request);
     ++app->requests;
+    rotmos_error_clear(error);
+    return ROTMOS_OK;
+}
+void reference_request_release(void *data)
+{
+    struct reference_request *request = data;
+    struct string_copy *next, *s;
+    if (request == NULL || --request->references != 0)
+        return;
+    for (s = request->strings; s != NULL; s = next) {
+        next = s->next;
+        free(s);
+    }
+    free(request);
+}
+rotmos_status reference_request_acquire(rotmos_request *native,
+                                        const rotmos_upload_metadata *metadata,
+                                        void **out, rotmos_error *error)
+{
+    struct reference_request *request = rotmos_request_userdata(native);
+    if (request == NULL || metadata == NULL || out == NULL)
+        return ROTMOS_STATE;
+    request->metadata = metadata;
+    ++request->references;
+    *out = request;
     rotmos_error_clear(error);
     return ROTMOS_OK;
 }
@@ -111,18 +143,20 @@ static void request_close(rotmos_server *server, rotmos_request *native,
 {
     struct reference_app *app = data;
     struct reference_request *request = rotmos_request_userdata(native);
-    struct string_copy *next, *s;
     (void)server;
     (void)outcome;
     if (request == NULL)
         return;
-    for (s = request->strings; s != NULL; s = next) {
-        next = s->next;
-        free(s);
-    }
-    free(request);
+    __atomic_store_n(&request->closed, 1, __ATOMIC_RELEASE);
+    request->request = NULL;
+    reference_request_release(request);
     rotmos_request_set_userdata(native, NULL);
     ++app->closed;
+}
+int reference_request_is_closed(const struct reference_request *request)
+{
+    return request == NULL ||
+           __atomic_load_n(&request->closed, __ATOMIC_ACQUIRE);
 }
 void reference_route_callbacks(struct reference_app *app,
                                rotmos_server_callbacks *callbacks)
@@ -152,7 +186,7 @@ static rotmos_status forward(rotmos_request *request, rotmos_reply *reply,
     response.reply = reply;
     status = f->handler(f->app, rotmos_request_userdata(request), &response,
                         f->userdata, &translated);
-    return error_to(status, &translated, error);
+    return reference_error_to_rotmos(status, &translated, error);
 }
 reference_status
 reference_route_register(struct reference_app *app,
@@ -199,6 +233,8 @@ static const char *string_view(struct reference_request *request,
     struct string_copy *s;
     if (request == NULL || view.data == NULL)
         return NULL;
+    if (request->metadata != NULL)
+        return view.data;
     for (s = request->strings; s != NULL; s = s->next)
         if (s->view.data == view.data && s->view.length == view.length)
             return s->text;
@@ -216,39 +252,79 @@ static const char *string_view(struct reference_request *request,
 }
 int reference_request_method(struct reference_request *r)
 {
-    return r != NULL ? (int)rotmos_request_method(r->request) : 0;
+    return r == NULL             ? 0
+           : r->metadata != NULL ? (int)r->metadata->method
+                                 : (int)rotmos_request_method(r->request);
 }
 const char *reference_request_path(struct reference_request *r)
 {
-    return r != NULL ? string_view(r, rotmos_request_path(r->request)) : NULL;
+    return r == NULL ? NULL
+                     : string_view(r, r->metadata != NULL
+                                          ? r->metadata->path
+                                          : rotmos_request_path(r->request));
 }
 const char *reference_request_ip(struct reference_request *r)
 {
     return r != NULL
-               ? string_view(r, rotmos_request_effective_address(r->request))
+               ? string_view(r,
+                             r->metadata != NULL
+                                 ? r->metadata->effective_address
+                                 : rotmos_request_effective_address(r->request))
                : NULL;
 }
-#define LOOKUP(name, native)                                                   \
+static const char *metadata_lookup(struct reference_request *r, const char *key,
+                                   int kind)
+{
+    const rotmos_header *pairs = kind == 0   ? r->metadata->params
+                                 : kind == 1 ? r->metadata->queries
+                                             : r->metadata->headers;
+    size_t count = kind == 0   ? r->metadata->param_count
+                   : kind == 1 ? r->metadata->query_count
+                               : r->metadata->header_count;
+    size_t i;
+    if (key == NULL)
+        return NULL;
+    for (i = 0; i < count; ++i)
+        if (kind == 2 ? !strcasecmp(pairs[i].name.data, key)
+                      : !strcmp(pairs[i].name.data, key))
+            return pairs[i].value.data;
+    return NULL;
+}
+#define LOOKUP(name, native, kind)                                             \
     const char *reference_request_##name(struct reference_request *r,          \
                                          const char *key)                      \
     {                                                                          \
         rotmos_bytes value;                                                    \
+        if (r != NULL && r->metadata != NULL)                                  \
+            return metadata_lookup(r, key, kind);                              \
         return r != NULL && native(r->request, key, &value, NULL) == ROTMOS_OK \
                    ? string_view(r, value)                                     \
                    : NULL;                                                     \
     }
-LOOKUP(param, rotmos_request_path_param)
-LOOKUP(query, rotmos_request_query_first)
-LOOKUP(header, rotmos_request_header_first)
+LOOKUP(param, rotmos_request_path_param, 0)
+LOOKUP(query, rotmos_request_query_first, 1)
+LOOKUP(header, rotmos_request_header_first, 2)
 #undef LOOKUP
 size_t reference_request_query_count(struct reference_request *r)
 {
-    return r != NULL ? rotmos_request_query_count(r->request) : 0;
+    return r == NULL             ? 0
+           : r->metadata != NULL ? r->metadata->query_count
+                                 : rotmos_request_query_count(r->request);
 }
 int reference_request_query_at(struct reference_request *r, size_t index,
                                const char **name, const char **value)
 {
     rotmos_header pair;
+    if (r != NULL && r->metadata != NULL) {
+        if (index >= r->metadata->query_count)
+            return 0;
+        pair = r->metadata->queries[index];
+        if (name != NULL)
+            *name = pair.name.data;
+        if (value != NULL)
+            *value = pair.value.data;
+        return 1;
+    }
     if (r == NULL ||
         rotmos_request_query_at(r->request, index, &pair, NULL) != ROTMOS_OK)
         return 0;
@@ -263,8 +339,10 @@ reference_status reference_request_bytes(struct reference_request *r,
                                          reference_error *error)
 {
     rotmos_error e;
-    rotmos_status s =
-        rotmos_request_body_bytes(r != NULL ? r->request : NULL, out, &e);
+    rotmos_status s;
+    if (r != NULL && r->metadata != NULL)
+        return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
+    s = rotmos_request_body_bytes(r != NULL ? r->request : NULL, out, &e);
     return reference_error_from_rotmos(s, &e, error);
 }
 static size_t body_read(struct reference_source *source, void *buffer,
@@ -296,7 +374,8 @@ static int body_reset(struct reference_source *source,
 struct reference_source *
 reference_request_body_reader(struct reference_request *r)
 {
-    if (r == NULL || rotmos_request_body(r->request) == NULL)
+    if (r == NULL || r->metadata != NULL ||
+        rotmos_request_body(r->request) == NULL)
         return NULL;
     r->body_reader.read = body_read;
     r->body_reader.reset = body_reset;
@@ -307,15 +386,17 @@ const char *reference_request_body_path(struct reference_request *r)
 {
     const char *path;
     int fd;
-    return r != NULL && rotmos_body_file(rotmos_request_body(r->request), &fd,
-                                         &path, NULL) == ROTMOS_OK
+    return r != NULL && r->metadata == NULL &&
+                   rotmos_body_file(rotmos_request_body(r->request), &fd, &path,
+                                    NULL) == ROTMOS_OK
                ? path
                : NULL;
 }
 int reference_request_body_is_spooled(struct reference_request *r)
 {
-    return r != NULL && rotmos_body_kind(rotmos_request_body(r->request)) ==
-                            ROTMOS_BODY_FILE;
+    return r != NULL && r->metadata == NULL &&
+           rotmos_body_kind(rotmos_request_body(r->request)) ==
+               ROTMOS_BODY_FILE;
 }
 reference_status reference_response_status(struct reference_response *r,
                                            int code, reference_error *error)
@@ -455,6 +536,8 @@ reference_status reference_request_materialize(
     if (out == NULL)
         return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
     memset(out, 0, sizeof(*out));
+    if (r != NULL && r->metadata != NULL)
+        return reference_error_from_rotmos(ROTMOS_INVALID, NULL, error);
     rotmos_body_materialize_config_init(&config);
     if (in != NULL) {
         config.buffer = in->buffer;

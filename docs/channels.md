@@ -10,8 +10,9 @@ then call `rotmos_request_takeover`. On success choose
 userdata ownership and invokes neither channel callback. A second takeover or
 a takeover after headers dispatch returns STATE.
 
-Zero capacities inherit the server's finite receive/send bounds; overrides must
-fit those bounds. Initial coalesced input must fit the receive bound before
+Zero capacities inherit the server's finite receive/send bounds. Receive and
+tail overrides must fit the server input bound; an explicit send capacity is
+independent of the server default. Initial coalesced input must fit the receive bound before
 ownership transfers. Keep the channel's state on the owner loop. Other threads
 signal a loop waker. The accepted descriptor and TLS session have one owner;
 applications never install a second watcher or perform parallel socket/TLS I/O.

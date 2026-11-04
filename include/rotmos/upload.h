@@ -75,6 +75,16 @@ typedef rotmos_status (*rotmos_upload_reader_fn)(const rotmos_upload_metadata *,
                                                  rotmos_reply *result,
                                                  void *userdata,
                                                  rotmos_error *);
+/* Optional host request facade. Acquire runs on the owner loop after metadata
+ * is copied and before native work. Its state replaces handler userdata.
+ * Metadata and state remain valid through native ACK and request cleanup;
+ * release runs once on the owner loop after both. Failed acquire cleans its
+ * own partial state. Supply both callbacks or neither. Live core/backend/Lua
+ * handles must not be used by native handlers. */
+typedef rotmos_status (*rotmos_upload_reader_acquire_fn)(
+    rotmos_request *, const rotmos_upload_metadata *, void *userdata,
+    void **state, rotmos_error *);
+typedef void (*rotmos_upload_reader_release_fn)(void *state);
 typedef struct rotmos_upload_reader_config {
     rotmos_http_method method;
     rotmos_http_methods methods;
@@ -85,6 +95,8 @@ typedef struct rotmos_upload_reader_config {
     size_t buffer_bytes;
     rotmos_upload_reader_fn handler;
     void *userdata;
+    rotmos_upload_reader_acquire_fn acquire;
+    rotmos_upload_reader_release_fn release;
 } rotmos_upload_reader_config;
 typedef struct rotmos_upload_file_config {
     rotmos_http_method method;

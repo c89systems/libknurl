@@ -16,6 +16,8 @@ struct reader_upload {
     rotmos_upload_reader_config config;
     struct rotmos_upload_reader_codec codec;
     void *codec_state;
+    void *host_state;
+    int host_acquired;
     /* Owner loop only; revoked before request close. */
     rotmos_request *request;
     rotmos_upload_metadata metadata;
@@ -44,6 +46,8 @@ static void unref(void *data)
     rotmos_reply_destroy(s->result, NULL);
     if (s->codec.release != NULL && s->codec_state != NULL)
         s->codec.release(s->codec_state);
+    if (s->host_acquired)
+        s->config.release(s->host_state);
     free(s->text);
     free(s->pairs);
     free(s);
@@ -191,6 +195,7 @@ static rotmos_status work(rotmos_job *job, rotmos_bytes arguments, void *data,
                  ? ROTMOS_CANCELLED
                  : s->config.handler(&s->metadata, s->reader, s->result,
                                      s->codec.open != NULL ? s->codec_state
+                                     : s->host_acquired    ? s->host_state
                                                            : s->config.userdata,
                                      error);
     complete = s->reader->eof ||
@@ -201,11 +206,9 @@ static rotmos_status work(rotmos_job *job, rotmos_bytes arguments, void *data,
                 s->reader->position.high == 0 && s->reader->position.low == 0);
     if (status == ROTMOS_OK && s->reader->failure != ROTMOS_OK)
         status = s->reader->failure;
-    if (status == ROTMOS_OK &&
-        (!complete || (s->codec.finish == NULL && !s->result->selected)))
-        status = rotmos_fail(
-            error, ROTMOS_STATE, "upload_reader",
-            "handler must consume admitted input and select a reply");
+    if (status == ROTMOS_OK && !complete)
+        status = rotmos_fail(error, ROTMOS_STATE, "upload_reader",
+                             "handler must consume admitted input");
     s->reader->native_job = NULL;
     return status;
 }
@@ -295,6 +298,16 @@ static rotmos_status start(struct reader_upload *s, rotmos_error *error)
                                          &s->pairs, error);
     if (status != ROTMOS_OK)
         return status;
+    if (s->config.acquire != NULL) {
+        status = s->config.acquire(s->request, &s->metadata, s->config.userdata,
+                                   &s->host_state, error);
+        if (status == ROTMOS_AGAIN || status == ROTMOS_EOF)
+            return rotmos_fail(error, ROTMOS_INVALID, "upload_reader",
+                               "acquire must return OK or a terminal failure");
+        if (status != ROTMOS_OK)
+            return status;
+        s->host_acquired = 1;
+    }
     rotmos_source_config_init(&config);
     config.read = read_pipe;
     config.userdata = s;
@@ -460,6 +473,10 @@ rotmos_upload_reader_add(rotmos_router *router, rotmos_route_group *group,
     rotmos_status status;
     if (out != NULL)
         *out = NULL;
+    if (config != NULL &&
+        ((config->acquire == NULL) != (config->release == NULL)))
+        return rotmos_fail(error, ROTMOS_INVALID, "upload_reader",
+                           "provide both acquire and release callbacks");
     if (config == NULL || config->handler == NULL ||
         (config->body.mode != ROTMOS_BODY_STREAMING_UPLOAD &&
          config->body.mode != ROTMOS_BODY_STREAM))

@@ -73,7 +73,8 @@ static rotmos_status after(rotmos_request *request, rotmos_reply *reply,
 {
     struct fixture *f = data;
     (void)stop;
-    VERIFY(f, rotmos_reply_is_selected(reply));
+    VERIFY(f, !strcmp(name(request), "no-reply") ||
+                  rotmos_reply_is_selected(reply));
     ++f->after;
     if (!strcmp(name(request), "replace"))
         return rotmos_reply_text(reply, 202, "text/plain", "replaced", error);
@@ -168,8 +169,7 @@ static void close_upload(rotmos_request *request, rotmos_status outcome,
         ++f->aborted;
     } else if (!strcmp(name(request), "write-fail") ||
                !strcmp(name(request), "finish-fail") ||
-               !strcmp(name(request), "zero") ||
-               !strcmp(name(request), "no-reply"))
+               !strcmp(name(request), "zero"))
         VERIFY(f, outcome != ROTMOS_OK);
     else
         VERIFY(f, outcome == ROTMOS_OK);
@@ -416,7 +416,10 @@ static int exchange(unsigned short port, const char *path, int length,
         fprintf(stderr, "%s: %s\n", path, response);
     CHECK(strncmp(response, status, strlen(status)) == 0);
     payload = strstr(response, "\r\n\r\n");
-    CHECK(payload != NULL && strcmp(payload + 4, result) == 0);
+    CHECK(payload != NULL);
+    if (expected == 413 && result[0] == 0)
+        result = "request body exceeds route limit";
+    CHECK(strcmp(payload + 4, result) == 0);
     if (hook)
         CHECK(strstr(response, "X-Before: yes\r\n") != NULL ||
               strstr(response, "x-before: yes\r\n") != NULL);
@@ -487,7 +490,7 @@ static int native_cases(unsigned short port, const struct fixture *f)
                    "", 0) == 0);
     CHECK(exchange(port, "/api/reader/no-read", 19, "abcdefghijklmnopqrs", 500,
                    "", 0) == 0);
-    CHECK(exchange(port, "/api/reader/no-reply", 3, "abc", 500, "", 0) == 0);
+    CHECK(exchange(port, "/api/reader/no-reply", 3, "abc", 204, "", 1) == 0);
     for (i = 0; i < 36; ++i) {
         queued[i] =
             send_request(port, "/api/reader/slow", 19, "abcdefghijklmnopqrs");
@@ -555,7 +558,7 @@ static int client(unsigned short port, const struct fixture *f)
     CHECK(exchange(port, "/api/upload/open-fail", 3, "abc", 500, "", 0) == 0);
     CHECK(exchange(port, "/api/upload/write-fail", 3, "abc", 500, "", 0) == 0);
     CHECK(exchange(port, "/api/upload/finish-fail", 3, "abc", 500, "", 0) == 0);
-    CHECK(exchange(port, "/api/upload/no-reply", 3, "abc", 500, "", 0) == 0);
+    CHECK(exchange(port, "/api/upload/no-reply", 3, "abc", 204, "", 1) == 0);
     CHECK(exchange(port, "/api/upload/zero", 3, "abc", 500, "", 0) == 0);
     CHECK(exchange(port, "/stateless", 3, "abc", 200, "stateless", 0) == 0);
     fd = send_request(port, "/api/upload/abort", 19, "abc");
@@ -608,7 +611,7 @@ static int exited(rotmos_server *server, const rotmos_process_context *process,
     (void)process;
     if (f->failed || f->opened != 9 || f->closed != f->opened ||
         f->finished != 6 || f->resumed != 1 || f->aborted != 1 ||
-        f->after != 46 || f->source_closed != 1 ||
+        f->after != 48 || f->source_closed != 1 ||
         __atomic_load_n(&f->native_started, __ATOMIC_ACQUIRE) != 45 ||
         __atomic_load_n(&f->native_done, __ATOMIC_ACQUIRE) != 45 ||
         __atomic_load_n(&f->late_done, __ATOMIC_ACQUIRE) != 2) {

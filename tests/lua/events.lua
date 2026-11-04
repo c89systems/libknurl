@@ -24,6 +24,7 @@ local server=ok(rotmos.server{
   listeners={{port=0},{kind='https',port=0,identity_index=1}},
   tls={identities={{domains={'localhost'},certificate={kind='memory',bytes=material.certificate},private_key={kind='memory',bytes=material.private_key},client_ca={kind='memory',bytes=material.ca},require_client_certificate=true}}},
   workers={count=1,affinity_disabled=true},http={backend_quiet=true},
+  io={output_queue_bytes=127,chunk_bytes=64},
   on_parent_prepare=function(s) parent_token=ok(s:waker(function() error('parent waker delivered') end)) end,
   on_worker_start=function(s)
     state(parent_token:signal());ok(parent_token:close())
@@ -65,7 +66,7 @@ state(server:now());state(server:defer(function() end))
 ok(server:sse{path='/sse',status_code=0,status=200,headers={{name='X-SSE',value='copied'}},
   open=function(req) retained_request=req;return {n=0,request=req} end,
   read=function(s,capacity)
-    assert(capacity>100)
+    assert(capacity>0)
     s.n=s.n+1
     if s.n==1 then ok(server:defer(function() ok(s.request:producer_resume()) end));return nil,rotmos.AGAIN end
     if s.n==2 then return 'A\0B\nC' end
@@ -79,7 +80,11 @@ ok(group:sse{path='/sse',open=function() return {} end,read=function(s) if not s
 ok(server:sse{path='/sse-denied',auth={kind='callback',callback=function() return {action='deny',body='no'} end},
   open=function() error('denied SSE opened') end,read=function() error('denied SSE read') end})
 local spec={path='/ws',protocol='test',headers={['X-Handshake']='copied'},max_frame_bytes=256,
-  connect=function(ws) opens=opens+1;assert(ws:state()=='open');per_ws[ws]={};retained=ws;ok(ws:send_text('ready')) end,
+  connect=function(ws)
+    opens=opens+1;assert(ws:state()=='open');per_ws[ws]={};retained=ws
+    ok(ws:send_text('ready'));ok(ws:send(0));ok(ws:send_text('\xc0\xaf'));ok(ws:send_binary(string.rep('w',512)))
+    ok(ws:close());assert(ws:state()=='open');ok(ws:send_text('after-close'))
+  end,
   handler=function(ws,opcode,payload)
     local s=per_ws[ws];assert(s and ws==retained)
     if payload=='pause' and not s.paused then

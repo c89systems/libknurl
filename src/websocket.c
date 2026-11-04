@@ -154,47 +154,20 @@ rotmos_status rotmos_websocket_send(rotmos_websocket *ws,
 {
     rotmos_status status;
     size_t head;
-    unsigned short code;
-    const unsigned char *bytes;
     status = owner(ws, error);
     if (status != ROTMOS_OK)
         return status;
     if (ws->phase != ROTMOS_WEBSOCKET_OPEN || ws->channel == NULL)
         return rotmos_fail(error, ROTMOS_STATE, "websocket_send",
                            "send requires an open WebSocket");
-    if (opcode == ROTMOS_WEBSOCKET_CONTINUATION)
-        return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "websocket_send",
-                           "continuation frames are unsupported");
     if ((data == NULL && length != 0) ||
-        (opcode != ROTMOS_WEBSOCKET_TEXT && opcode != ROTMOS_WEBSOCKET_BINARY &&
+        (opcode != ROTMOS_WEBSOCKET_CONTINUATION &&
+         opcode != ROTMOS_WEBSOCKET_TEXT && opcode != ROTMOS_WEBSOCKET_BINARY &&
          opcode != ROTMOS_WEBSOCKET_PING && opcode != ROTMOS_WEBSOCKET_PONG &&
          opcode != ROTMOS_WEBSOCKET_CLOSE))
         return rotmos_fail(error, ROTMOS_INVALID, "websocket_send",
                            "invalid frame bytes or opcode");
-    if (length > ws->config.max_frame_bytes ||
-        (opcode >= ROTMOS_WEBSOCKET_CLOSE && length > 125))
-        return rotmos_fail(error, ROTMOS_LIMIT, "websocket_send",
-                           "frame exceeds its payload bound");
-    if (opcode == ROTMOS_WEBSOCKET_TEXT && !rotmos_websocket_utf8(data, length))
-        return rotmos_fail(error, ROTMOS_INVALID, "websocket_send",
-                           "text must be valid UTF-8");
-    code = 0;
-    if (opcode == ROTMOS_WEBSOCKET_CLOSE) {
-        if (length == 1)
-            return rotmos_fail(error, ROTMOS_INVALID, "websocket_send",
-                               "close requires an empty or valid code/reason");
-        bytes = data;
-        code = length == 0 ? 0 : (unsigned short)(bytes[0] * 256 + bytes[1]);
-        if ((length != 0 && !rotmos_websocket_code(code)) ||
-            (length > 2 && !rotmos_websocket_utf8(bytes + 2, length - 2)))
-            return rotmos_fail(error, ROTMOS_INVALID, "websocket_send",
-                               "invalid close code or UTF-8 reason");
-    }
     status = rotmos_websocket_queue(ws, opcode, data, length, error);
-    if (status == ROTMOS_OK && opcode == ROTMOS_WEBSOCKET_CLOSE) {
-        rotmos_websocket_stop(ws, ROTMOS_OK, code);
-        ws->close_queued = 1;
-    }
     if (status == ROTMOS_AGAIN) {
         head = length < 126 ? 2 : (length <= 65535 ? 4 : 10);
         ws->writable_need = length + head;

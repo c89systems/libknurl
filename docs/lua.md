@@ -181,7 +181,9 @@ defaults to literal. This raw headers route does not implicitly run ordinary
 auth/before/after middleware, matching the public C route contract.
 
 The connection exposes `send(opcode, payload)`, `send_text`, `send_binary`,
-`close(code, reason)`, `resume`, `state` and `queued_bytes`. Constants are under
+`close()`, explicit `close(code, reason)`, `resume`, `state` and `queued_bytes`.
+No-argument close queues the baseline empty frame; explicit code/reason selects
+the bounded close-handshake helper. Constants are under
 `rotmos.websocket`. Sends accept an entire frame or return `nil, rotmos.AGAIN`
 without queuing it. Optional `writable(ws)` retries after native capacity becomes
 available. `message(ws, opcode, payload)` consumes on nil/true, or holds the

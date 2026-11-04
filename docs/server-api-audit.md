@@ -122,6 +122,20 @@ ignored NULL-buffer capacity, empty fixed-buffer ownership and a lower explicit
 memory threshold being ignored. The JSON default-directory case now runs requests.
 Lua hooks reject strings/false, response tables accept 100..599, and REST no longer
 adds a fixed memory threshold that conflicts with a smaller input limit.
+The service reference now maps proxy callback/edit, upload, WebSocket and
+WebDAV auth/storage declarations to public engines, plus resolved TLS/redirect
+configuration. Its combined runtime checks real proxy traffic, DAV operations,
+source-based SSE, implicit upload 204, reader progress before EOF and retained
+host metadata after cancellation. Paired reader acquire/release runs only on
+the owner loop and retains copied metadata through native ACK and cleanup.
+WebSocket behavior no longer adds outgoing payload/UTF-8/continuation restrictions,
+rejects non-FIN data frames or nonminimal lengths, echoes peer close payloads,
+or invents protocol close codes. Explicit send budgets are independent of the
+server default; zero preserves Kore's send behavior in both C and Lua.
+Raw CLOSE and Lua no-argument close only queue a frame, preserving later sends
+and introducing no handshake deadline; the explicit close helper remains separate.
+Live TLS/mTLS and ACME durable-provider forwarding through the
+baseline adapter remain open alongside the remaining service-option parity.
 
 ## Evidence limits and work state
 

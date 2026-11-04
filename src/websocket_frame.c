@@ -16,8 +16,8 @@ void rotmos_websocket_reset_frame(rotmos_websocket *ws)
 static void protocol_error(rotmos_websocket *ws, rotmos_status cause,
                            unsigned short code)
 {
-    rotmos_websocket_stop(ws, cause, code);
-    ws->read_failed = 1;
+    (void)code;
+    rotmos_channel_finish(ws->channel, cause);
 }
 
 static rotmos_status receive(rotmos_websocket *ws, void *data, size_t need,
@@ -62,7 +62,7 @@ static int frame(rotmos_websocket *ws)
                 protocol_error(ws, ROTMOS_INVALID, 1002);
                 return 0;
             }
-            if (opcode == 0 || !(ws->header[0] & 128)) {
+            if (opcode == 0) {
                 protocol_error(ws, ROTMOS_NOT_SUPPORTED, 1003);
                 return 0;
             }
@@ -86,12 +86,6 @@ static int frame(rotmos_websocket *ws)
                         return 0;
                     }
                     length = length * 256 + ws->header[at];
-                }
-                if ((extra == 127 && (ws->header[2] & 128)) ||
-                    (extra == 126 && length < 126) ||
-                    (extra == 127 && length <= 65535)) {
-                    protocol_error(ws, ROTMOS_INVALID, 1002);
-                    return 0;
                 }
             }
             if (length > ws->config.max_frame_bytes) {
@@ -131,22 +125,9 @@ static int control(rotmos_websocket *ws)
             return 0;
         }
     } else if (ws->opcode == ROTMOS_WEBSOCKET_CLOSE) {
-        if (ws->payload_length == 1) {
-            protocol_error(ws, ROTMOS_INVALID, 1002);
-            return 0;
-        }
-        code = ws->payload_length == 0
+        code = ws->payload_length < 2
                    ? 1005
                    : (unsigned short)(ws->payload[0] * 256 + ws->payload[1]);
-        if (ws->payload_length != 0 && !rotmos_websocket_code(code)) {
-            protocol_error(ws, ROTMOS_INVALID, 1002);
-            return 0;
-        }
-        if (ws->payload_length > 2 &&
-            !rotmos_websocket_utf8(ws->payload + 2, ws->payload_length - 2)) {
-            protocol_error(ws, ROTMOS_INVALID, 1007);
-            return 0;
-        }
         memcpy(ws->peer_payload, ws->payload, ws->payload_length);
         ws->outcome.peer_code = code;
         ws->outcome.peer_reason.data = ws->peer_payload + 2;
@@ -154,11 +135,7 @@ static int control(rotmos_websocket *ws)
             ws->payload_length > 2 ? ws->payload_length - 2 : 0;
         ws->peer_closed = 1;
         if (!ws->close_started) {
-            size_t length;
-            length = ws->payload_length;
-            rotmos_websocket_stop(ws, ROTMOS_OK, code == 1005 ? 0 : code);
-            memcpy(ws->close_payload, ws->peer_payload, length);
-            ws->close_length = length;
+            rotmos_websocket_stop(ws, ROTMOS_OK, 0);
         }
     }
     rotmos_websocket_reset_frame(ws);
@@ -212,11 +189,6 @@ void rotmos_websocket_step(rotmos_websocket *ws)
             if (!control(ws))
                 break;
             continue;
-        }
-        if (ws->opcode == ROTMOS_WEBSOCKET_TEXT &&
-            !rotmos_websocket_utf8(ws->payload, ws->payload_length)) {
-            protocol_error(ws, ROTMOS_INVALID, 1007);
-            break;
         }
         if (ws->phase == ROTMOS_WEBSOCKET_OPEN && ws->config.on_frame != NULL) {
             bytes.data = ws->payload;

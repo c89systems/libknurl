@@ -222,7 +222,7 @@ int main(void)
     CHECK(rotmos_source_destroy(source, &error) == ROTMOS_OK &&
           lifetime.closed == 2 && lifetime.outcome == ROTMOS_CANCELLED);
     CHECK(rotmos_reply_new(&reply, &error) == ROTMOS_OK);
-    CHECK(rotmos_reply_json(reply, 101, &config, &error) == ROTMOS_INVALID &&
+    CHECK(rotmos_reply_json(reply, 99, &config, &error) == ROTMOS_INVALID &&
           lifetime.closed == 2);
     CHECK(rotmos_reply_json(reply, 200, &config, &error) == ROTMOS_OK);
     CHECK(rotmos_reply_status(reply, 204, &error) == ROTMOS_OK);

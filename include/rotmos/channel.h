@@ -42,7 +42,8 @@ typedef struct rotmos_channel_config {
 
 ROTMOS_API void rotmos_channel_config_init(rotmos_channel_config *config);
 /* Headers callback only. Success owns a borrowed channel until request close.
- * Zero capacities inherit the server's finite I/O bounds. */
+ * Zero capacities inherit server I/O bounds. Explicit send capacity is
+ * independent; receive/tail capacities must fit server input bounds. */
 ROTMOS_API rotmos_status rotmos_request_takeover(
     rotmos_request *request, const rotmos_channel_config *config,
     rotmos_channel **out, rotmos_error *error);

@@ -100,6 +100,9 @@ static rotmos_status frame(rotmos_websocket *ws, rotmos_websocket_opcode opcode,
     c = data;
     OBSERVE(c->request_closed && c->opens == 1 &&
             pthread_equal(c->owner, pthread_self()));
+    if (strcmp(c->path, "/protocol") == 0)
+        return rotmos_websocket_send(ws, opcode, bytes.data, bytes.length,
+                                     error);
     if (bytes.length == 256) {
         OBSERVE(opcode == ROTMOS_WEBSOCKET_BINARY && c->frames++ == 2);
         return rotmos_websocket_send_text(ws, "wide", 4, error);
@@ -145,10 +148,6 @@ static rotmos_status open_ws(rotmos_websocket *ws, void *data,
     OBSERVE(rotmos_websocket_userdata(ws) == c);
     OBSERVE(rotmos_websocket_set_userdata(ws, c, error) == ROTMOS_OK);
     if (strcmp(c->path, "/echo") == 0) {
-        OBSERVE(rotmos_websocket_send(ws, ROTMOS_WEBSOCKET_CONTINUATION, NULL,
-                                      0, error) == ROTMOS_NOT_SUPPORTED);
-        OBSERVE(rotmos_websocket_send_text(ws, "\xc0\xaf", 2, error) ==
-                ROTMOS_INVALID);
         OBSERVE(rotmos_websocket_send_text(ws, "x", 257, error) ==
                 ROTMOS_LIMIT);
         OBSERVE(rotmos_websocket_send_binary(ws, output, 126, error) ==
@@ -211,6 +210,8 @@ static void close_ws(rotmos_websocket *ws, const rotmos_websocket_outcome *out,
         OBSERVE(out->cause == ROTMOS_INVALID && out->local_code == 1011);
     else if (strcmp(c->path, "/stop-ws") == 0)
         OBSERVE(out->cause == ROTMOS_CANCELLED && out->local_code == 1001);
+    else if (strcmp(c->path, "/protocol") == 0)
+        OBSERVE(c->frames == 0);
     else
         OBSERVE(!out->clean && out->cause != ROTMOS_OK && c->frames == 0);
     if (c->timer != NULL)
@@ -487,7 +488,7 @@ static int client(unsigned short port, int tls)
     unsigned char close_data[4] = {3, 232, 'o', 'k'};
     unsigned char large[257];
     unsigned char invalid[2] = {0xc0, 0xaf};
-    const unsigned char noncanonical[8] = {129, 254, 0, 1, 0, 0, 0, 0};
+    const unsigned char noncanonical[9] = {129, 254, 0, 1, 0, 0, 0, 0, 'x'};
     const unsigned char high[14] = {130, 255, 128, 0, 0, 0, 0,
                                     0,   0,   0,   0, 0, 0, 0};
     int i;
@@ -510,7 +511,7 @@ static int client(unsigned short port, int tls)
     CHECK(send_frame(&c, 130, large, 256, 1) == 0 &&
           expect_frame(&c, 1, "wide", 4) == 0);
     CHECK(send_frame(&c, 136, close_data, sizeof(close_data), 1) == 0 &&
-          expect_frame(&c, 8, close_data, sizeof(close_data)) == 0);
+          expect_frame(&c, 8, "", 0) == 0);
     disconnect(&c);
     for (i = 0; i < 11; ++i) {
         CHECK(connect_to(&c, port, tls, "/protocol", 1) == 0);
@@ -540,10 +541,21 @@ static int client(unsigned short port, int tls)
             CHECK(send_frame(&c, 193, "x", 1, 1) == 0);
         if (i == 10)
             CHECK(send_frame(&c, 137, large, 126, 1) == 0);
-        CHECK(expect_close(
-                  &c, (i == 1 || i == 2)
-                          ? 1003
-                          : (i == 3 ? 1007 : (i == 6 ? 1009 : 1002))) == 0);
+        if (i == 2 || i == 3 || i == 7) {
+            CHECK(expect_frame(
+                      &c, 1, i == 3 ? (const void *)invalid : (const void *)"x",
+                      i == 3 ? 2 : 1) == 0);
+            CHECK(send_frame(&c, 136, "", 0, 1) == 0 &&
+                  expect_frame(&c, 8, "", 0) == 0);
+        } else if (i == 4 || i == 5)
+            CHECK(expect_frame(&c, 8, "", 0) == 0);
+        else {
+            unsigned char byte;
+            int count;
+            count = c.ssl != NULL ? SSL_read(c.ssl, &byte, 1)
+                                  : (int)read(c.fd, &byte, 1);
+            CHECK(count <= 0);
+        }
         disconnect(&c);
     }
     CHECK(connect_to(&c, port, tls, "/open-error", 1) == 0 &&

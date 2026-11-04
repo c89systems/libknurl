@@ -74,12 +74,12 @@ rotmos_status rotmos_channel_create(rotmos_request *request,
     if (resolved.shutdown_timeout_ms == 0)
         resolved.shutdown_timeout_ms = 5000;
     if (resolved.receive_bytes > request->server->config.io.input_queue_bytes ||
-        resolved.send_bytes > request->server->config.io.output_queue_bytes ||
         resolved.tail_bytes > request->server->config.io.input_queue_bytes ||
         resolved.shutdown_timeout_ms < 0)
         return rotmos_fail(
             error, ROTMOS_LIMIT, "request_takeover",
-            "channel capacities must fit the server's finite I/O bounds");
+            "receive/tail capacities must fit server input bounds; "
+            "shutdown timeout must be nonnegative");
     if (initial.length > resolved.receive_bytes ||
         backlog.length > resolved.receive_bytes - initial.length)
         return rotmos_fail(error, ROTMOS_LIMIT, "request_takeover",

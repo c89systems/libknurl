@@ -69,27 +69,37 @@ AGAIN again. The example uses that notification to resume its held input frame.
 
 Each accepted output frame is copied atomically into a finite queue, including
 its 2/4/10-byte wire header. LIMIT means the frame can never fit the selected
-payload or queue bound. A partial transport write retains its allocation across
+queue bound. The receive payload limit does not restrict outgoing frames.
+A partial transport write retains its allocation across
 plain/TLS retries. Its full allocation remains charged until released, even
 after a partial write; `queued_bytes` reports that retained wire storage.
-Zero config sizes inherit the server's frame and I/O limits;
-the output budget must hold at least a maximum control frame (127 bytes).
+Zero receive size inherits the server's frame limit. Zero output budget retains
+Kore's send behavior (SIZE_MAX); an explicit budget must hold at least a maximum
+control frame (127 bytes).
 Inbound storage holds one configured maximum frame, a small header and the
-bounded channel input queue. No message assembly or unbounded frame queue exists.
+bounded channel input queue. Output budgets are independent of the server's
+ordinary HTTP queue bound. No message assembly is introduced.
 
-The receiver checks masking, reserved bits/opcodes, canonical lengths, control
-frame rules, close codes and UTF-8 for text/reasons. Ping queues a bounded pong;
+The receiver retains Kore's masking, reserved bits/opcodes, receive payload
+limit and control-frame FIN/length checks. Extended nonminimal lengths are
+accepted. Text bytes and peer close payloads are not UTF-8/code validated.
+Ping queues a bounded pong;
 input pauses if control output cannot yet fit. Pong is consumed internally.
-Only complete unfragmented application frames are supported. Sending CONTINUATION
-returns NOT_SUPPORTED; receiving continuation or a fragmented data frame closes
-with 1003. Unsupported extensions/reserved bits are rejected. Transparent
+TEXT/BINARY callbacks receive each frame even without FIN; frames are not
+assembled. Sending CONTINUATION is accepted and sets FIN, as does Kore's sender.
+Receiving continuation, malformed frames or oversized input disconnects without
+inventing a protocol close reply. Unsupported extensions/reserved bits are rejected. Transparent
 [channel tunnels](channels.md) remain opaque to framing and fragmentation.
 
-`send(CLOSE)` follows atomic queue acceptance. `close(code, reason)` instead
+`send(CLOSE)` only queues a raw frame: it leaves the connection open, with no
+new deadline or send restrictions, matching Vectis. Lua's no-argument `close()`
+uses that operation. The explicit `close(code, reason)` helper instead
 initiates an idempotent bounded handshake, retaining at most 125 bytes of pending
 control data while accepted output drains. Code zero sends an empty close.
-The default deadline is 5000 ms, capped during worker shutdown. Peer close is
-validated and echoed; both frames must drain for `clean` to be true. Abrupt EOF,
+The explicit close helper validates its supplied code/reason; raw send retains
+Kore's byte behavior. The default deadline is 5000 ms, capped during worker
+shutdown. Peer close receives an empty close reply; both frames must drain for
+`clean` to be true. Abrupt EOF,
 protocol errors and deadline expiration remain distinguishable in the outcome.
 A missing peer close reports code 1006 locally; that code is never transmitted.
 Worker stopping sends 1001 and retains CANCELLED as the lifecycle cause.

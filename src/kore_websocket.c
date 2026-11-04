@@ -86,18 +86,15 @@ rotmos_status rotmos_websocket_accept(rotmos_request *request,
         resolved.max_frame_bytes =
             request->server->config.limits.websocket_max_frame_bytes;
     if (resolved.output_queue_bytes == 0)
-        resolved.output_queue_bytes =
-            request->server->config.io.output_queue_bytes;
+        resolved.output_queue_bytes = (size_t)-1;
     if (resolved.close_timeout_ms == 0)
         resolved.close_timeout_ms = 5000;
     if (resolved.max_frame_bytes >
             request->server->config.limits.websocket_max_frame_bytes ||
-        resolved.output_queue_bytes >
-            request->server->config.io.output_queue_bytes ||
         resolved.output_queue_bytes < 127 || resolved.close_timeout_ms < 0)
         return rotmos_fail(error, ROTMOS_LIMIT, "websocket_accept",
-                           "frame/output bounds must fit server limits; output "
-                           "needs 127 bytes");
+                           "receive frame must fit server limit; output needs "
+                           "127 bytes and close timeout must be nonnegative");
     if (!rotmos_websocket_accept_key(request, accept))
         return rotmos_fail(error, ROTMOS_INVALID, "websocket_accept",
                            "request is not a valid WebSocket handshake");

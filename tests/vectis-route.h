@@ -90,6 +90,14 @@ void reference_error_clear(reference_error *);
 reference_status reference_error_from_rotmos(rotmos_status,
                                              const rotmos_error *,
                                              reference_error *);
+rotmos_status reference_error_to_rotmos(reference_status,
+                                        const reference_error *,
+                                        rotmos_error *);
+rotmos_status reference_request_acquire(rotmos_request *,
+                                        const rotmos_upload_metadata *, void **,
+                                        rotmos_error *);
+void reference_request_release(void *);
+int reference_request_is_closed(const struct reference_request *);
 void reference_route_callbacks(struct reference_app *,
                                rotmos_server_callbacks *);
 void reference_route_cleanup(struct reference_app *);

@@ -118,7 +118,7 @@ static int send_frame(struct peer *peer, unsigned int opcode, const void *data,
 static int expect_frame(struct peer *peer, unsigned int opcode,
                         const void *data, size_t length)
 {
-    unsigned char head[2], bytes[256];
+    unsigned char head[2], bytes[512];
     size_t received;
     CHECK(read_all(peer, head, 2) == 0 &&
           head[0] == (unsigned char)(0x80U | opcode) && !(head[1] & 0x80U));
@@ -137,15 +137,22 @@ static int finish(struct peer *peer, unsigned short code)
     bytes[0] = (unsigned char)(code >> 8);
     bytes[1] = (unsigned char)code;
     CHECK(send_frame(peer, 8, bytes, 2) == 0 &&
-          expect_frame(peer, 8, bytes, 2) == 0);
+          expect_frame(peer, 8, "", 0) == 0);
     disconnect(peer);
     return 0;
 }
 static int echo(unsigned short port, SSL_CTX *context)
 {
     struct peer peer;
+    char large[512];
+    memset(large, 'w', sizeof(large));
     CHECK(connect_ws(&peer, port, context, "/ws") == 0 &&
           expect_frame(&peer, 1, "ready", 5) == 0);
+    CHECK(expect_frame(&peer, 0, "", 0) == 0 &&
+          expect_frame(&peer, 1, "\xc0\xaf", 2) == 0 &&
+          expect_frame(&peer, 2, large, sizeof(large)) == 0);
+    CHECK(expect_frame(&peer, 8, "", 0) == 0 &&
+          expect_frame(&peer, 1, "after-close", 11) == 0);
     CHECK(send_frame(&peer, 1, "pause", 5) == 0 &&
           expect_frame(&peer, 1, "pause", 5) == 0);
     CHECK(send_frame(&peer, 2, "A\0B", 3) == 0 &&

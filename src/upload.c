@@ -70,9 +70,6 @@ static rotmos_status finish(rotmos_request *request, void *userdata,
     if (status == ROTMOS_OK)
         status = s->config.finish(request, request->reply, s->state,
                                   s->config.userdata, error);
-    if (status == ROTMOS_OK && !request->reply->selected)
-        status = rotmos_fail(error, ROTMOS_STATE, "upload_finish",
-                             "finish must select a reply");
     if (status == ROTMOS_OK)
         status = rotmos_router_hooks_after(request, error);
     if (status == ROTMOS_OK)
