@@ -59,7 +59,8 @@ The server reference now maps all 34 baseline configuration fields, including
 explicit body-limit inheritance, copied rules/strings and application defaults.
 Its worker case covers foreground and host-controlled paused readiness, callback
 ordering, stop results and successful control-FD transfer. Baseline second-based
-timeouts round up and saturate; mapped JSON records have no invented size cap.
+timeouts round up and saturate. Generic schema views add no size cap; the Vectis
+adapter preserves its baseline 10 MiB declared-record limit and exact sizes.
 The remaining operation/error/type forwarding cases are still incomplete.
 Lua source delivery now has an explicit minimal input manifest, deterministic
 source archive, public-URL release rockspec and source rock. The source consumer
@@ -110,9 +111,22 @@ engines, with borrowed owner and metadata/default/HEAD/range/conditional cases.
 Materialized JSON/XML, REST and OpenAPI output no longer add a 10 MiB ceiling;
 positive caller bounds remain available. The C backend accessor is forwarded.
 
-The next consolidated audit must close concrete remaining boundaries: baseline
-typed JSON/XML declaration/map conversion (the current typed fixture mainly
-proves callback shape), host policy/observation forwarding, and the complete
-installed backend workflow. Core SDK archive/dependency-manifest packaging and
-final artifact verification are also unfinished; Lua source delivery is present.
-The complete Vectis adapter and final compatibility claim remain open.
+The typed reference now transcribes JSON, dynamic JSON and XML declarations,
+converts map/size/body/options into public registrations and forwards the actual
+app/request/response/error callback shapes. It preserves baseline record-size
+validation and delegates dynamic/materialized/generated JSON replies to Core.
+Live XML and ordinary JSON ownership/order fixtures now run through that mapping.
+Policy/observation and logging runtime cases use the baseline server translation,
+with host callbacks supplied through public policy/lifecycle configuration.
+The installed cases also exercise the explicit opaque Kore request accessor;
+no backend transport code or private headers enter the adapter.
+
+Core SDK binary rehearsals now stage CMake installs, record exact dependency SDK
+pins and backend patch hashes, and package deterministic target archives. Final
+extracted-byte verification checks inventory/digests, metadata, licenses, target
+architecture, ABI identities, paths, exports and relocated static/shared CMake
+and pkg-config examples. Lua source delivery remains a separate product using
+the host VM. These are development rehearsals, not a release or upload manifest.
+The next work is the consolidated operation-by-operation adapter/facade audit
+and remaining compatibility/fault gates. The complete Vectis compatibility claim
+and separately authorized consumer cutover remain open.

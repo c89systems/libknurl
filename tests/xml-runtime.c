@@ -121,21 +121,23 @@ static rotmos_status worker_start(rotmos_server *server,
     parsing.ready = 1;
     return ROTMOS_OK;
 }
-static rotmos_status live_echo(void *app, rotmos_request *request, void *input,
-                               rotmos_reply *reply, void *data,
-                               rotmos_error *error)
+static reference_status live_echo(struct reference_app *app,
+                                  struct reference_request *request,
+                                  void *input, struct reference_response *reply,
+                                  void *data, reference_error *error)
 {
     struct input *in = input;
-    rotmos_u64 now;
     (void)data;
-    if (app != rotmos_request_server(request) || in == NULL ||
+    if (app == NULL || reference_request_kore(request) == NULL || in == NULL ||
         in->message == NULL || strlen(in->message) != 32768 ||
-        rotmos_loop_now(rotmos_request_loop(request), &now, error) != ROTMOS_OK)
-        return ROTMOS_STATE;
+        !pthread_equal(parsing.owner, pthread_self()))
+        return REFERENCE_STATE;
     ++live_called;
-    return rotmos_reply_text(reply, 200, "text/plain", "parsed live", error);
+    return reference_response_text(reply, 200, "text/plain", "parsed live",
+                                   error);
 }
 struct fixture {
+    struct reference_app app;
     pid_t child;
 };
 static rotmos_status echo(rotmos_request *request,
@@ -429,12 +431,13 @@ int main(void)
     rotmos_listener_config listener;
     rotmos_xml_route_config xml;
     rotmos_record_provider provider;
-    struct reference_xml_route forward;
+    struct reference_typed_route forward;
+    struct reference_xml_config host_xml;
+    reference_error host_error;
     lonejson_allocator allocator;
     lonejson_config policy;
     lonejson_error native;
     lonejson *runtime;
-    lonejson_schema_view live_schema;
     rotmos_route_group_config group_config;
     rotmos_route_group *group;
     rotmos_route_config ordinary;
@@ -470,7 +473,9 @@ int main(void)
     config.callbacks.on_parent_ready = ready;
     config.callbacks.on_worker_exit = worker_exit;
     config.callbacks.userdata = &fixture;
+    reference_route_callbacks(&fixture.app, &config.callbacks);
     CHECK(rotmos_server_new(&config, &server, &error) == ROTMOS_OK);
+    fixture.app.server = server;
     CHECK(rotmos_json_schema_from_map(NULL, &input_map, &input, &error) ==
           ROTMOS_OK);
     rotmos_route_group_config_init(&group_config);
@@ -480,25 +485,29 @@ int main(void)
                               &group, &error) == ROTMOS_OK);
     rotmos_xml_route_config_init(&xml);
     CHECK(xml.body.mode == ROTMOS_BODY_STREAMING_UPLOAD);
-    CHECK(rotmos_json_schema_from_map(runtime, &input_map, &live_schema,
-                                      &error) == ROTMOS_OK);
-    xml.method = ROTMOS_HTTP_POST;
-    xml.path = "/live";
-    xml.input = &live_schema;
-    xml.buffer_bytes = 2048;
     provider.acquire = acquire_record;
     provider.release = release_record;
-    xml.records = &provider;
-    xml.hooks.before = live_before;
-    xml.xml.root_element = "doc";
-    forward.app = server;
-    forward.handler = live_echo;
-    forward.userdata = NULL;
-    CHECK(reference_xml_register(rotmos_server_router(server), &xml, &forward,
-                                 &error) == ROTMOS_OK);
-    xml.path = "/provider-fail";
-    CHECK(reference_xml_register(rotmos_server_router(server), &xml, &forward,
-                                 &error) == ROTMOS_OK);
+    memset(&forward, 0, sizeof(forward));
+    forward.app = &fixture.app;
+    forward.runtime = runtime;
+    forward.records = &provider;
+    forward.hooks.before = live_before;
+    memset(&host_xml, 0, sizeof(host_xml));
+    host_xml.method = ROTMOS_HTTP_POST;
+    host_xml.path = "/live";
+    host_xml.body.mode = ROTMOS_BODY_STREAMING_UPLOAD;
+    host_xml.body.memory_buffer_limit_bytes = 262144UL;
+    host_xml.buffer_bytes = 2048;
+    host_xml.input_map = &input_map;
+    host_xml.input_size = sizeof(struct input);
+    rotmos_xml_config_init(&host_xml.config);
+    host_xml.config.root_element = "doc";
+    host_xml.handler = live_echo;
+    CHECK(reference_xml_register(&forward, &host_xml, &host_error) ==
+          REFERENCE_OK);
+    host_xml.path = "/provider-fail";
+    CHECK(reference_xml_register(&forward, &host_xml, &host_error) ==
+          REFERENCE_OK);
     rotmos_xml_route_config_init(&xml);
     xml.method = ROTMOS_HTTP_POST;
     xml.path = path;

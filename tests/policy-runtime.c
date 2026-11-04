@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <rotmos/rotmos.h>
+#include "vectis-server.h"
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -610,6 +611,7 @@ static int exited(rotmos_server *server, const rotmos_process_context *process,
 static int run(int mode)
 {
     struct fixture f;
+    struct reference_server_config host;
     rotmos_server_config config;
     rotmos_listener_config listener;
     rotmos_upload_stream_config upload;
@@ -630,7 +632,15 @@ static int run(int mode)
     file = mkstemp(f.reject_file);
     CHECK(file >= 0 && write(file, "file", 4) == 4);
     CHECK(close(file) == 0);
-    rotmos_server_config_init(&config);
+    reference_server_config_init(&host);
+    host.worker_count = 1;
+    host.worker_set_affinity_disabled = host.kore_quiet = 1;
+    host.request_header_timeout_ms = 1000;
+    if (mode != 0) {
+        host.client_ip.trusted_proxies = trusted;
+        host.client_ip.trusted_proxy_count = 2;
+    }
+    CHECK(reference_server_translate(&host, &config, &error) == ROTMOS_OK);
     rotmos_listener_config_init(&listener);
     listener.bind = "127.0.0.1";
     config.listeners = &listener;
@@ -649,8 +659,6 @@ static int run(int mode)
     config.admission.on_request = admit_request;
     config.admission.userdata = &f;
     if (mode != 0) {
-        config.client_ip.trusted_proxies = trusted;
-        config.client_ip.trusted_proxy_count = 2;
         config.correlation_id.resolve = correlation;
     }
     if (mode == 2)

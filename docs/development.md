@@ -16,6 +16,8 @@ make build-all             # Compile the full seven-target matrix, serially.
 make lua                   # Build the separate Lua facade/binding against the installed shared core.
 make lua-all               # Compile both products for all seven targets, serially.
 make lua-package           # Stage Lua sources, rockspec, source rock and their checksums.
+make sdk-package           # Stage the selected Core SDK binary rehearsal under build/.
+make sdk-verify            # Inspect that archive and build its relocated consumers.
 make build-all CONFIG=release
 make test                  # Run checks for the selected toolchain target.
 make install               # Install to owned build/install/<target>/debug by default.
@@ -54,6 +56,11 @@ the selected-target SDK build and LuaRocks variables. CTest's
 with LuaRocks cache/temp/tree under its owned build directory. GNU/musl hosts
 execute the installed module using the matching target Lua runtime. Other
 targets supply compile/link and installed-path evidence.
+
+The [Core SDK archive](sdk.md) has its own selected-target binary rehearsal and
+final-byte/consumer verification. It ships public library payload and metadata;
+dependency SDKs stay external. Its `BINARY-CHECKSUMS` is explicitly scoped and
+does not replace the full release upload inventory.
 
 The full matrix is GNU/musl Linux for x86_64, aarch64 and armhf, plus arm64 Apple
 Darwin. `make build TARGET=<target> CONFIG=release` selects one concrete build;

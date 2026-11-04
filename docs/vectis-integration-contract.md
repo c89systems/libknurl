@@ -103,5 +103,23 @@ YAML generation to the router. The [OpenAPI case](../tests/openapi.c) checks tha
 adapter with baseline defaults, schema references, normalized paths, duplicate
 annotations and generation without handler execution. Default materialized codec,
 REST and OpenAPI output no longer acquire an unrequested 10 MiB ceiling; explicit
-limits retain their failure behavior. Remaining declaration/provider forwarding
-and final artifact gates still need the consolidated audit.
+limits retain their failure behavior.
+
+The typed adapter in [vectis-forward.c](../tests/vectis-forward.c) now accepts the
+baseline JSON/dynamic-JSON/XML declarations, including maps, explicit record
+sizes, selectors, body policy, XML options and reader capacity. It converts them
+to public schema views and registrations. Callbacks use the app/request/response/
+error associations above. Per-response JSON map/status and generated file-backed
+output delegate to public reply operations; no codec runs in the adapter.
+[Declaration checks](../tests/vectis-typed.c) preserve Vectis's required XML map,
+exact storage sizes and 10 MiB declared-record limit. Absent JSON maps ignore
+their size fields as in Vectis. This limit concerns storage, not encoded bytes.
+Live JSON/XML cases run through these declarations against installed SDKs.
+
+Policy/observation and logging runtime cases use the baseline server translation
+for trusted proxies, autoblock thresholds/rules and access logging, then attach
+host correlation/admission/observation callbacks through public configuration.
+The normal handler's explicit Kore accessor is exercised in installed static
+and shared consumers. Its opaque native pointer remains revision-specific; the
+adapter imports no private backend header or transport implementation.
+The consolidated operation/facade audit and consumer cutover remain open.

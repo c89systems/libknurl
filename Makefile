@@ -18,7 +18,7 @@ TOOLCHAIN := cmake/toolchains/selected.cmake
 PREFIX ?= $(CURDIR)/build/install/$(TARGET)/$(CONFIG)
 DEPENDENCY_CACHE := $(if $(CPKT_DEPENDENCY_CACHE),$(CPKT_DEPENDENCY_CACHE),$(CURDIR)/.cache/deps)
 
-.PHONY: help deps deps-all toolchain toolchains configure build build-all lua lua-all lua-package prepare-kore test install format format-check update-kore clean
+.PHONY: help deps deps-all toolchain toolchains configure build build-all lua lua-all lua-package sdk-package sdk-verify prepare-kore test install format format-check update-kore clean
 .NOTPARALLEL:
 
 help:
@@ -27,6 +27,8 @@ help:
 	  'make build-all             Compile all seven lifecycle/cpkt targets, serially.' \
 	  'make lua / lua-all         Build the Lua binding against the installed shared core SDK.' \
 	  'make lua-package           Stage the Lua source archive, rockspec and source rock.' \
+	  'make sdk-package           Stage the selected-target Core SDK binary rehearsal.' \
+	  'make sdk-verify            Verify that archive and its relocated example consumers.' \
 	  'make test                  Build, then run registered CTest checks.' \
 	  'make install               Install to PREFIX (default: owned build/install/...). ' \
 	  'make prepare-kore          Prepare patched sources without dependency SDKs.' \
@@ -79,6 +81,12 @@ lua-all:
 lua-package:
 	"$(CMAKE)" -P lua/cmake/Package.cmake
 
+sdk-package: build
+	"$(CMAKE)" '-DBUILD_DIR=$(CURDIR)/$(BUILD_DIR)' -P cmake/Package.cmake
+
+sdk-verify:
+	"$(CMAKE)" '-DBUILD_DIR=$(CURDIR)/$(BUILD_DIR)' -P cmake/VerifySDK.cmake
+
 prepare-kore:
 	"$(CMAKE)" -S cmake/source -B build/source -DROTMOS_ROOT='$(CURDIR)'
 	"$(CMAKE)" --build build/source --target kore-source --parallel '$(JOBS)'
@@ -91,10 +99,10 @@ install: build
 	"$(CMAKE)" --install '$(BUILD_DIR)' --prefix '$(PREFIX)'
 
 format:
-	clang-format -i include/rotmos/*.h src/*.c src/*.h src/lua/*.c src/lua/*.h lua/include/rotmos/*.h tests/*.c tests/*.h tests/*.cpp tests/lua/*.c tests/lua/*.h
+	clang-format -i include/rotmos/*.h src/*.c src/*.h src/lua/*.c src/lua/*.h lua/include/rotmos/*.h examples/*.c tests/*.c tests/*.h tests/*.cpp tests/lua/*.c tests/lua/*.h
 
 format-check:
-	clang-format --dry-run --Werror include/rotmos/*.h src/*.c src/*.h src/lua/*.c src/lua/*.h lua/include/rotmos/*.h tests/*.c tests/*.h tests/*.cpp tests/lua/*.c tests/lua/*.h
+	clang-format --dry-run --Werror include/rotmos/*.h src/*.c src/*.h src/lua/*.c src/lua/*.h lua/include/rotmos/*.h examples/*.c tests/*.c tests/*.h tests/*.cpp tests/lua/*.c tests/lua/*.h
 
 update-kore:
 	bash scripts/update-kore.sh '$(KORE_REVISION)'

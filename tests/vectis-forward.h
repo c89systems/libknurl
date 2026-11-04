@@ -1,5 +1,6 @@
 #ifndef ROTMOS_TEST_VECTIS_FORWARD_H
 #define ROTMOS_TEST_VECTIS_FORWARD_H
+#include "vectis-route.h"
 #include <rotmos/lonejson.h>
 #include <rotmos/xml.h>
 typedef rotmos_status (*reference_array_item)(void *, size_t, void *,
@@ -9,31 +10,82 @@ rotmos_status reference_request_array_each(rotmos_request *, const char *,
                                            reference_array_item, void *,
                                            rotmos_error *);
 
-/* Reference consumer, not a shipped API or a copy of Vectis's app. Matches
- * vectis_json_route_handler_fn's app/request/raw-record/userdata shape. The
- * caller retains this forwarding context through router destruction. */
-typedef rotmos_status (*reference_json_handler)(void *, rotmos_request *,
-                                                void *, void *, void *,
-                                                rotmos_error *);
-struct reference_json_route {
-    void *app;
+/* Baseline declaration shapes, including explicit map/storage sizes. These are
+ * test-only consumer declarations, never a second shipped server API. */
+typedef reference_status (*reference_json_handler)(struct reference_app *,
+                                                   struct reference_request *,
+                                                   void *, void *, void *,
+                                                   reference_error *);
+typedef reference_status (*reference_json_typed_handler)(
+    struct reference_app *, struct reference_request *, void *,
+    struct reference_response *, void *, reference_error *);
+typedef reference_json_typed_handler reference_xml_handler;
+struct reference_json_config {
+    int method;
+    unsigned int methods;
+    const char *path;
+    int path_kind;
+    struct reference_body_policy body;
+    const lonejson_map *input_map;
+    size_t input_size;
+    const lonejson_map *output_map;
+    size_t output_size;
     reference_json_handler handler;
     void *userdata;
 };
-rotmos_status reference_json_register(rotmos_router *,
-                                      const rotmos_json_route_config *,
-                                      struct reference_json_route *,
-                                      rotmos_error *);
-typedef rotmos_status (*reference_xml_handler)(void *, rotmos_request *, void *,
-                                               rotmos_reply *, void *,
-                                               rotmos_error *);
-struct reference_xml_route {
-    void *app;
+struct reference_json_typed_config {
+    int method;
+    unsigned int methods;
+    const char *path;
+    int path_kind;
+    struct reference_body_policy body;
+    const lonejson_map *input_map;
+    size_t input_size;
+    reference_json_typed_handler handler;
+    void *userdata;
+};
+struct reference_xml_config {
+    int method;
+    unsigned int methods;
+    const char *path;
+    int path_kind;
+    struct reference_body_policy body;
+    size_t buffer_bytes;
+    const lonejson_map *input_map;
+    size_t input_size;
+    rotmos_xml_config config;
     reference_xml_handler handler;
     void *userdata;
 };
-rotmos_status reference_xml_register(rotmos_router *,
-                                     const rotmos_xml_route_config *,
-                                     struct reference_xml_route *,
-                                     rotmos_error *);
+/* Retain one host association per distinct handler/userdata registration.
+ * Optional Core hooks/records/runtime are fixture
+ * instrumentation for ownership/order invariants, not Vectis config fields. */
+struct reference_typed_route {
+    struct reference_app *app;
+    reference_json_handler json;
+    reference_json_typed_handler typed;
+    void *userdata;
+    lonejson *runtime;
+    rotmos_route_hooks hooks;
+    const rotmos_record_provider *records;
+};
+reference_status reference_json_register(struct reference_typed_route *,
+                                         const struct reference_json_config *,
+                                         reference_error *);
+reference_status
+reference_json_typed_register(struct reference_typed_route *,
+                              const struct reference_json_typed_config *,
+                              reference_error *);
+reference_status reference_xml_register(struct reference_typed_route *,
+                                        const struct reference_xml_config *,
+                                        reference_error *);
+reference_status reference_json_reply(struct reference_response *, int,
+                                      const lonejson_map *, const void *,
+                                      reference_error *);
+reference_status reference_json_reply_status(struct reference_response *, int,
+                                             reference_error *);
+reference_status reference_response_json_generated(struct reference_response *,
+                                                   int, const lonejson_map *,
+                                                   const void *,
+                                                   reference_error *);
 #endif

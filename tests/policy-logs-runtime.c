@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <rotmos/rotmos.h>
 #include <rotmos/pslog.h>
+#include "vectis-server.h"
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -351,6 +352,7 @@ static int logs(struct fixture *f)
 static int run(int mode)
 {
     struct fixture f;
+    struct reference_server_config host;
     rotmos_server_config config;
     rotmos_listener_config listener;
     rotmos_route_config route;
@@ -382,7 +384,23 @@ static int run(int mode)
         override = logger(f.override);
         CHECK(override != NULL);
     }
-    rotmos_server_config_init(&config);
+    reference_server_config_init(&host);
+    host.worker_count = 1;
+    host.worker_set_affinity_disabled = host.kore_quiet = 1;
+    host.client_ip.trusted_proxies = trusted;
+    host.client_ip.trusted_proxy_count = 1;
+    host.access_log_path = f.access;
+    host.autoblock.enabled = 1;
+    host.autoblock.tcp_stall_threshold = 2;
+    memcpy(host.autoblock.status_rules, statuses, sizeof(statuses));
+    host.autoblock.status_rule_count = 3;
+    host.autoblock.event_rules[0] = event;
+    host.autoblock.event_rule_count = 1;
+    host.access_log.logger_disabled = mode == 1;
+    host.access_log.logger = override;
+    memcpy(host.access_log.status_level_rules, rules, sizeof(rules));
+    host.access_log.status_level_rule_count = 3;
+    CHECK(reference_server_translate(&host, &config, &error) == ROTMOS_OK);
     rotmos_listener_config_init(&listener);
     listener.bind = "127.0.0.1";
     config.listeners = &listener;
@@ -393,16 +411,7 @@ static int run(int mode)
     config.callbacks.on_request_close = request_closed;
     config.callbacks.on_worker_exit = worker_exit;
     config.callbacks.userdata = &f;
-    config.client_ip.trusted_proxies = trusted;
-    config.client_ip.trusted_proxy_count = 1;
     config.correlation_id.resolve = identifier;
-    config.http.access_log_path = f.access;
-    config.autoblock.enabled = 1;
-    config.autoblock.tcp_stall_threshold = 2;
-    config.autoblock.status_rules = statuses;
-    config.autoblock.status_rule_count = 3;
-    config.autoblock.event_rules = &event;
-    config.autoblock.event_rule_count = 1;
     if (mode == 0) {
         snprintf(missing, sizeof(missing), "%s/missing/access.log",
                  f.directory);
@@ -421,16 +430,17 @@ static int run(int mode)
     }
     CHECK(rotmos_server_new(&config, &server, &error) == ROTMOS_OK);
     rotmos_access_log_config_init(&access_config);
-    access_config.logger_disabled = mode == 1;
-    access_config.logger = override;
-    access_config.status_level_rules = rules;
-    access_config.status_level_rule_count = 3;
+    access_config.logger_disabled = host.access_log.logger_disabled;
+    access_config.logger = host.access_log.logger;
+    access_config.status_level_rules = host.access_log.status_level_rules;
+    access_config.status_level_rule_count =
+        host.access_log.status_level_rule_count;
     CHECK(rotmos_server_set_pslog(server, root, &access_config, &error) ==
           ROTMOS_OK);
-    rules[0].status = 202;
+    host.access_log.status_level_rules[0].status = 202;
     CHECK(rotmos_server_set_pslog(server, root, &access_config, &error) ==
           ROTMOS_CONFLICT);
-    rules[0].status = 999;
+    host.access_log.status_level_rules[0].status = 999;
     CHECK(rotmos_server_set_pslog(server, root, &access_config, &error) ==
           ROTMOS_INVALID);
     rotmos_route_config_init(&route);

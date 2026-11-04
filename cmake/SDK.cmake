@@ -1,0 +1,43 @@
+# Public SDK metadata. Dependency SDKs remain external and are not repackaged.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/vendor/kore.revision" sdk_kore_revision)
+string(STRIP "${sdk_kore_revision}" sdk_kore_revision)
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/patches/kore/series" sdk_series_sha)
+set(sdk_patches "")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/patches/kore/series" patch_inputs)
+foreach(patch IN LISTS patch_inputs)
+  if(patch STREQUAL "" OR patch MATCHES "^#")
+    continue()
+  endif()
+  file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/patches/kore/${patch}" digest)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/patches/kore/${patch}")
+  string(APPEND sdk_patches "${digest}  ${patch}\n")
+endforeach()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/patches/kore/series"
+  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/kore.revision"
+  "${ROTMOS_SDK_ROOT}/manifest.txt")
+set(sdk_dependencies "External SDK inputs (not bundled):\n${dependency_manifest}")
+string(APPEND sdk_dependencies "\nLinked cpkt components, from its selected package manifest:\n")
+file(READ "${ROTMOS_SDK_ROOT}/cpkt/share/cpkt/packages/core.json" cpkt_manifest)
+string(JSON component_count LENGTH "${cpkt_manifest}" components)
+math(EXPR last_component "${component_count} - 1")
+foreach(index RANGE ${last_component})
+  string(JSON name GET "${cpkt_manifest}" components ${index} name)
+  if(name MATCHES "^(curl|libxml2|libssh2|nghttp2|openssl|zlib)$")
+    string(JSON version GET "${cpkt_manifest}" components ${index} version)
+    string(APPEND sdk_dependencies "${name}=${version}\n")
+  endif()
+endforeach()
+string(APPEND sdk_dependencies "\nStatic consumers require provider archives and their link closure.\nShared consumers require the matching provider runtime libraries.\nLua 5.5.1 and Lua providers belong to the separate facade/binding product.\nOther components supplied in cpkt are not librotmos dependencies.\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/DEPENDENCIES" "${sdk_dependencies}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/BACKEND" "kore_revision=${sdk_kore_revision}\nseries_sha256=${sdk_series_sha}\n${sdk_patches}")
+get_target_property(sdk_abi rotmos_shared SOVERSION)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/SDK" "project=librotmos\nversion=${PROJECT_VERSION}\nabi=${sdk_abi}\ntarget=${ROTMOS_TARGET}\nconfiguration=${CMAKE_BUILD_TYPE}\n")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/SDK" "${CMAKE_CURRENT_BINARY_DIR}/DEPENDENCIES"
+  "${CMAKE_CURRENT_BINARY_DIR}/BACKEND" DESTINATION "${CMAKE_INSTALL_DATADIR}/rotmos")
+install(FILES examples/README.md DESTINATION "${CMAKE_INSTALL_DATADIR}/rotmos")
+install(FILES examples/server.c examples/CMakeLists.txt
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/rotmos/examples")
+# Internal build description used by the package/verifier, never shipped.
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SDKBuild.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/sdk-build.cmake" @ONLY)

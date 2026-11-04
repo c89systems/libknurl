@@ -154,6 +154,7 @@ static rotmos_status array_route(rotmos_request *request, rotmos_reply *reply,
     return rotmos_reply_text(reply, 200, "text/plain", "array", error);
 }
 struct fixture {
+    struct reference_app app;
     pid_t child;
     char directory[64];
 };
@@ -196,18 +197,38 @@ static rotmos_status unexpected(rotmos_request *request,
     (void)error;
     return ROTMOS_BACKEND;
 }
-static rotmos_status host_echo(void *app, rotmos_request *request, void *input,
-                               void *output, void *data, rotmos_error *error)
+static reference_status host_echo(struct reference_app *app,
+                                  struct reference_request *request,
+                                  void *input, void *output, void *data,
+                                  reference_error *error)
 {
     const struct input *in = input;
     struct output *out = output;
     (void)error;
-    if (app != rotmos_request_server(request) || in == NULL || out == NULL ||
-        data == NULL || strcmp(data, "forwarded") != 0)
-        return ROTMOS_STATE;
+    if (app == NULL || reference_request_kore(request) == NULL || in == NULL ||
+        out == NULL || data == NULL || strcmp(data, "forwarded") != 0)
+        return REFERENCE_STATE;
     ++called;
     (void)snprintf(out->result, sizeof(out->result), "%s", in->message);
-    return ROTMOS_OK;
+    return REFERENCE_OK;
+}
+static reference_status host_typed(struct reference_app *app,
+                                   struct reference_request *request,
+                                   void *input,
+                                   struct reference_response *reply, void *data,
+                                   reference_error *error)
+{
+    struct input *in = input;
+    struct problem problem;
+    if (app == NULL || reference_request_kore(request) == NULL || in == NULL)
+        return REFERENCE_STATE;
+    ++typed_called;
+    memset(&problem, 0, sizeof(problem));
+    (void)snprintf(problem.reason, sizeof(problem.reason), "%s", in->message);
+    if (data != NULL)
+        return reference_response_json_generated(reply, 422, &problem_map,
+                                                 &problem, error);
+    return reference_json_reply(reply, 422, &problem_map, &problem, error);
 }
 static rotmos_status typed(rotmos_request *request,
                            const lonejson_record_view *input,
@@ -268,7 +289,7 @@ static rotmos_status stop(rotmos_request *request, rotmos_reply *reply,
                           void *data, rotmos_error *error)
 {
     (void)data;
-    stopped = called == 3 && typed_called == 3 && replaced == 1 &&
+    stopped = called == 3 && typed_called == 4 && replaced == 1 &&
               array_called == 1 && record_acquired == 7 && record_released == 7;
     if (!stopped) {
         (void)fprintf(stderr, "JSON counts: echo=%d typed=%d replaced=%d\n",
@@ -428,6 +449,8 @@ static int client(unsigned short port)
     CHECK(exchange(port, "/deny", "{", 403, "denied", 0, 0) == 0);
     CHECK(exchange(port, "/typed", "{\"message\":\"problem\"}", 422,
                    "{\"reason\":\"problem\"}", 0, 0) == 0);
+    CHECK(exchange(port, "/generated", "{\"message\":\"generated\"}", 422,
+                   "{\"reason\":\"generated\"}", 0, 0) == 0);
     CHECK(exchange(port, "/empty", "", 204, "", 0, 0) == 0);
     CHECK(exchange(port, "/array",
                    "{\"items\":[{\"message\":\"one\"},{\"message\":\"two\"}]}",
@@ -485,7 +508,10 @@ int main(int argc, char **argv)
     rotmos_listener_config listener;
     rotmos_json_route_config json;
     rotmos_record_provider provider;
-    struct reference_json_route forwarded;
+    struct reference_typed_route forwarded, typed_forwarded, generated;
+    struct reference_json_config host_json;
+    struct reference_json_typed_config host_config;
+    reference_error host_error;
     rotmos_json_typed_route_config typed_config;
     rotmos_route_group_config group_config;
     rotmos_route_group *group;
@@ -517,7 +543,9 @@ int main(int argc, char **argv)
     config.callbacks.on_parent_ready = ready;
     config.callbacks.on_worker_exit = worker_exit;
     config.callbacks.userdata = &fixture;
+    reference_route_callbacks(&fixture.app, &config.callbacks);
     CHECK(rotmos_server_new(&config, &server, &error) == ROTMOS_OK);
+    fixture.app.server = server;
     CHECK(rotmos_json_schema_from_map(NULL, &problem_map, &problem_schema,
                                       &error) == ROTMOS_OK);
     rotmos_route_group_config_init(&group_config);
@@ -548,11 +576,23 @@ int main(int argc, char **argv)
     provider.acquire = acquire_record;
     provider.release = release_record;
     json.records = &provider;
-    forwarded.app = server;
-    forwarded.handler = host_echo;
-    forwarded.userdata = "forwarded";
-    CHECK(reference_json_register(rotmos_server_router(server), &json,
-                                  &forwarded, &error) == ROTMOS_OK);
+    memset(&forwarded, 0, sizeof(forwarded));
+    forwarded.app = &fixture.app;
+    forwarded.hooks.after = after;
+    forwarded.records = &provider;
+    memset(&host_json, 0, sizeof(host_json));
+    host_json.method = ROTMOS_HTTP_POST;
+    host_json.path = "/replace";
+    host_json.body.mode = ROTMOS_BODY_BUFFERED;
+    host_json.body.memory_buffer_limit_bytes = 262144UL;
+    host_json.input_map = &input_map;
+    host_json.input_size = sizeof(struct input);
+    host_json.output_map = &output_map;
+    host_json.output_size = sizeof(struct output);
+    host_json.handler = host_echo;
+    host_json.userdata = "forwarded";
+    CHECK(reference_json_register(&forwarded, &host_json, &host_error) ==
+          REFERENCE_OK);
     json.handler = unexpected;
     json.hooks.after = NULL;
     json.path = "/provider-fail";
@@ -592,9 +632,24 @@ int main(int argc, char **argv)
                                       &error) == ROTMOS_OK);
     typed_config.path = "/typed";
     typed_config.handler = typed;
-    CHECK(rotmos_router_json_typed_route(rotmos_server_router(server),
-                                         &typed_config, NULL,
-                                         &error) == ROTMOS_OK);
+    memset(&typed_forwarded, 0, sizeof(typed_forwarded));
+    typed_forwarded.app = &fixture.app;
+    memset(&host_config, 0, sizeof(host_config));
+    host_config.method = ROTMOS_HTTP_POST;
+    host_config.path = "/typed";
+    host_config.body.mode = ROTMOS_BODY_BUFFERED;
+    host_config.body.memory_buffer_limit_bytes = 262144UL;
+    host_config.input_map = &input_map;
+    host_config.input_size = sizeof(struct input);
+    host_config.handler = host_typed;
+    CHECK(reference_json_typed_register(&typed_forwarded, &host_config,
+                                        &host_error) == REFERENCE_OK);
+    memset(&generated, 0, sizeof(generated));
+    generated.app = &fixture.app;
+    host_config.path = "/generated";
+    host_config.userdata = "generated";
+    CHECK(reference_json_typed_register(&generated, &host_config,
+                                        &host_error) == REFERENCE_OK);
     typed_config.path = "/borrow";
     typed_config.userdata = "borrow";
     typed_config.body.memory_buffer_limit_bytes = 8;

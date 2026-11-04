@@ -74,8 +74,10 @@ The remaining surface review and full reference adapter are still open.
 The server-config reference now translates the 34 baseline fields and exercises
 foreground/host-controlled readiness and worker shutdown through installed public
 interfaces. It exposed two corrected restrictions: second-based deadlines now
-saturate at 65,535 seconds as in Vectis, and mapped JSON records no longer acquire
-a 10 MiB size ceiling absent from the baseline. Cross-target executable tests are
+saturate at 65,535 seconds as in Vectis, and generic schema views accept their
+map's declared storage size. Vectis itself does cap explicit route input/output
+storage at 10 MiB and requires exact map-size agreement; the reference adapter
+preserves that validation. This differs from encoded-output limits. Cross-target executable tests are
 disabled consistently when that target cannot run locally; host-tool SDK/export
 checks remain enabled.
 Host asset/storage providers now have public Lua interop values for static-assets
@@ -154,8 +156,12 @@ No runtime edits or test runs were made during the stop-and-audit. The repositor
 has selected toolchains and build state for all seven targets, public-header
 binding imports and installed consumers. Prior per-slice checks do not prove
 Vectis parity. The complete installed Vectis reference adapter is still partial;
-Lua source/rock packaging has landed, while final compatibility/artifact
-checks remain incomplete. The [implementation plan](implementation-plan.md)
+Lua source/rock packaging and Core SDK binary rehearsals have landed. The typed
+adapter now converts baseline declarations and validates their storage sizes;
+policy/logging cases also use baseline server translation. Selected-toolchain
+SDK packaging/relocation checks cover all seven targets, with GNU/musl runtime
+execution and compilation/linking on the remaining targets. Full release and
+Vectis compatibility/cutover checks remain incomplete. The [implementation plan](implementation-plan.md)
 orders correction work under the revised active implementation goal.
 
 Feature documents are implementation notes under correction, subordinate to the

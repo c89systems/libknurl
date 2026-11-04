@@ -64,16 +64,17 @@ typedef reference_status (*reference_route_handler)(struct reference_app *,
                                                     struct reference_request *,
                                                     struct reference_response *,
                                                     void *, reference_error *);
+struct reference_body_policy {
+    int mode;
+    size_t max_bytes, memory_buffer_limit_bytes;
+    int disk_spool_disabled;
+};
 struct reference_route_config {
     int method;
     unsigned int methods;
     const char *path;
     int path_kind;
-    struct {
-        int mode;
-        size_t max_bytes, memory_buffer_limit_bytes;
-        int disk_spool_disabled;
-    } body;
+    struct reference_body_policy body;
     reference_route_handler handler;
     void *userdata;
 };

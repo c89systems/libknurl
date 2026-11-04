@@ -13,7 +13,10 @@ view. A supplied runtime is borrowed; NULL selects an independently owned defaul
 runtime for the operation or request. Existing public schema views can be passed
 directly. Views must match the released LoneJSON ABI and their map's record size,
 which must match the map's nonzero struct size. No additional record-size cap is
-imposed. Map metadata and borrowed runtimes remain valid
+imposed by this generic schema API. The Vectis adapter separately preserves its
+baseline route declaration checks: nonzero, at most 10 MiB and exactly the map's
+struct size when a map is present. This does not cap encoded output.
+Map metadata and borrowed runtimes remain valid
 through route destruction or producer close. Registration copies view values,
 patterns, hooks and userdata pointers without parsing or executing callbacks.
 
