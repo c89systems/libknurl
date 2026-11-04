@@ -102,7 +102,12 @@ failure/recovery results. Native key-manager/ACME loops use the same loop and
 teardown hooks; their fixture proves auxiliary restart/terminate policy. A
 dedicated child-operation budget wakes the parent and remains enforced during
 shutdown. ACME persistence must connect that primitive before activation is
-enabled. The contract is in the
+enabled. The [ACME generation store](acme-state.md) stages complete bounded
+snapshots, runs restore/persist/error callbacks with real process context, and
+publishes acknowledged certificate/key pairs through one atomic selection.
+Its focused fork fixture covers interruption on both sides of acknowledgement
+and preservation of active state on failure. The issuance adapter and parent
+deadline binding remain implementation work. The contract is in the
 [server API specification](server-api-spec.md) and
 [Vectis integration contract](vectis-integration-contract.md).
 

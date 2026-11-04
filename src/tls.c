@@ -72,10 +72,10 @@ static int certificates(SSL_CTX *ctx, const unsigned char *pem, size_t length,
     return count != 0;
 }
 
-static rotmos_status identity_prepare(const rotmos_tls_config *config,
-                                      const rotmos_tls_identity *identity,
-                                      const char *ciphers, SSL_CTX **out,
-                                      rotmos_error *error)
+rotmos_status rotmos_tls_identity_prepare(const rotmos_tls_config *config,
+                                          const rotmos_tls_identity *identity,
+                                          const char *ciphers, SSL_CTX **out,
+                                          rotmos_error *error)
 {
     unsigned char *material[5];
     size_t lengths[5];
@@ -216,7 +216,7 @@ rotmos_status rotmos_tls_prepare(const rotmos_tls_config *config,
             return rotmos_fail(error, ROTMOS_NOT_SUPPORTED, "tls_prepare",
                                "ACME identity activation is not connected yet");
         }
-        status = identity_prepare(
+        status = rotmos_tls_identity_prepare(
             config, &config->identities[i],
             config->cipher_list != NULL ? config->cipher_list : default_ciphers,
             &out->contexts[i], error);

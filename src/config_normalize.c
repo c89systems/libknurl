@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "server_internal.h"
+#include "acme_internal.h"
 
 #include <arpa/inet.h>
 #include <limits.h>
@@ -93,8 +94,11 @@ static rotmos_status tls_validate(rotmos_tls_config *config,
         !optional_text(config->acme.ca_directory))
         return invalid(error, "TLS configuration text must be nonempty and "
                               "contain no control characters");
-    if (config->acme.persist_timeout_ms < 0)
-        return invalid(error, "ACME persistence timeout must be nonnegative");
+    if (config->acme.persist_timeout_ms < 0 ||
+        (unsigned long)config->acme.persist_timeout_ms > 0x7fffffffUL)
+        return invalid(
+            error,
+            "ACME persistence timeout must be 0 or 1..2147483647 milliseconds");
     if (config->acme.persist_timeout_ms == 0)
         config->acme.persist_timeout_ms = 30000;
     if (config->identity_count > (size_t)-1 / sizeof(*identity) ||
@@ -115,7 +119,7 @@ static rotmos_status tls_validate(rotmos_tls_config *config,
             if (!text(domain) || strlen(domain) > 253 ||
                 strpbrk(domain, "/\\\t ") != NULL ||
                 (identity->mode == ROTMOS_TLS_ACME &&
-                 strchr(domain, '*') != NULL))
+                 !rotmos_acme_domain_valid(domain)))
                 return invalid(error, "invalid TLS domain; ACME wildcard "
                                       "identities are unsupported");
             for (k = 0; k < j; ++k) {

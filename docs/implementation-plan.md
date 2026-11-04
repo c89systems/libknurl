@@ -21,3 +21,23 @@ The end state is a mechanical Vectis cutover through public C and Lua APIs.
 - Keep sibling repositories read-only. Commit coherent changes on the feature
   branch without pushing. No replacement-readiness claim until the full contract
   is implemented and verified.
+
+The ACME publication core is in `src/acme_store.c` and `src/acme_files.c`.
+The next adapter slice must connect it to the existing public server lifecycle:
+
+- Preflight checks the prepared root and explicit/environment CA inputs without
+  callbacks or traffic; snapshot trust before forks.
+- RESTORE runs in the quiescent parent against a fresh generation. Key-manager
+  recovery/work preparation runs after its IPC initialization, before loading
+  keys or distributing certificates.
+- Replace the backend's direct live-certificate write with private working-file
+  completion, snapshot validation, PERSIST, acknowledgement and publication.
+  Keep the dedicated child budget armed through that bounded operation.
+- Preserve manual in-memory identities when ACME enables the key manager.
+  Apply cached protocol/client-auth policy after native ACME context updates.
+- Report pending/usable identity state and preserve TLS-ALPN-01 challenge
+  handling while application serving is paused. Connect the callback error to
+  parent failure/recovery observations.
+- Prove actual certificate activation, failed persistence and restart behavior
+  through the public server before allowing ACME runs. The publication fixture
+  alone does not prove that integration.

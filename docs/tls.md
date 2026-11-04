@@ -51,7 +51,8 @@ bounded output and TLS close notifications. Prepared trust stores use OpenSSL's
 Forced WANT_READ/WANT_WRITE faults, slow/disconnected peers and complete failure
 unwinding remain integration coverage.
 
-ACME identity activation, candidate persistence/publication, identity observations
-and connecting the dedicated child-operation budget to persistence remain required under the
+The [ACME generation store](acme-state.md) supplies candidate publication and
+callback ordering. ACME identity activation, identity observations and connecting
+the dedicated child-operation budget to persistence remain required under the
 [server specification](server-api-spec.md). Preflight rejects ACME until that
 workflow is connected; a successful manual TLS check is not ACME evidence.

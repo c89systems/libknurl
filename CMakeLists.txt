@@ -53,7 +53,8 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/response.c src/kore_response.c src/body.c src/body_materialize.c
   src/file.c src/dispatch.c src/kore_body.c src/body_reader.c
   src/channel.c src/channel_upgrade.c src/kore_channel.c
-  src/tls.c src/tls_material.c src/kore_tls.c src/kore_process.c)
+  src/tls.c src/tls_material.c src/kore_tls.c src/kore_process.c
+  src/acme_store.c src/acme_files.c)
 target_include_directories(rotmos_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(rotmos_objects PRIVATE "${kore_source_dir}/include/kore")
 target_link_libraries(rotmos_objects PRIVATE OpenSSL::SSL CURL::libcurl lonejson::lonejson pslog::pslog_shared)
@@ -120,6 +121,15 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
+  add_executable(rotmos_acme_state tests/acme-state.c)
+  target_compile_definitions(rotmos_acme_state PRIVATE
+    $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  target_include_directories(rotmos_acme_state PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(rotmos_acme_state PRIVATE rotmos::static Threads::Threads OpenSSL::SSL)
+  rotmos_c89(rotmos_acme_state)
+  rotmos_local_runtime(rotmos_acme_state)
+  add_test(NAME rotmos.acme-state COMMAND rotmos_acme_state)
+  set_tests_properties(rotmos.acme-state PROPERTIES TIMEOUT 12)
   add_executable(rotmos_auxiliary_runtime tests/auxiliary-runtime.c)
   add_dependencies(rotmos_auxiliary_runtime kore-source)
   target_include_directories(rotmos_auxiliary_runtime PRIVATE "${kore_source_dir}/include/kore")
@@ -285,7 +295,7 @@ if(BUILD_TESTING)
   set_tests_properties(kore.patch-replay kore.preparation kore.build-invalidation
     kore.upgrade PROPERTIES TIMEOUT 60)
   if(NOT rotmos_can_run)
-    set_tests_properties(rotmos.auxiliary-runtime rotmos.auxiliary-restart rotmos.auxiliary-terminate rotmos.process-runtime rotmos.process-backend rotmos.tls-runtime rotmos.channel-runtime rotmos.channel-backend rotmos.body-runtime rotmos.response-runtime rotmos.loop-smoke rotmos.server-runtime rotmos.kore-runtime
+    set_tests_properties(rotmos.acme-state rotmos.auxiliary-runtime rotmos.auxiliary-restart rotmos.auxiliary-terminate rotmos.process-runtime rotmos.process-backend rotmos.tls-runtime rotmos.channel-runtime rotmos.channel-backend rotmos.body-runtime rotmos.response-runtime rotmos.loop-smoke rotmos.server-runtime rotmos.kore-runtime
       rotmos.declarations rotmos.reply rotmos.kore-port rotmos.foundation
       rotmos.headers.cpp PROPERTIES DISABLED TRUE)
   endif()

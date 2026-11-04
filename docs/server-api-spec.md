@@ -1127,7 +1127,8 @@ explicit wildcard behavior and presented_http_port metadata.
 ACME requires explicit domains, account email, directory URL and a prepared
 private runtime directory. Merely creating a server performs no ACME traffic.
 Its runtime directory is working state; Vectis's durable storage remains external.
-Support the existing account-key recovery and HTTP challenge/order/renewal path.
+Support the existing account-key recovery and HTTP account/order/renewal
+transport with Kore's TLS-ALPN-01 challenge path.
 ACME transport timeout/response bounds and CA trust affect backend workflows,
 not Vectis's application clients. The imported CA-environment patch uses
 `SSL_CERT_FILE` and `SSL_CERT_DIR`, not `CURL_CA_BUNDLE`. Resolve explicit backend
@@ -1139,7 +1140,8 @@ Define `rotmos_acme_state_fn(server, event, domain, runtime_dir, userdata,
 error)` with explicit events and process context:
 
 1. RESTORE runs in the thread-quiescent parent before backend forks. The host
-   hydrates its private runtime directory before workers read account/key state.
+   hydrates the supplied private candidate directory before workers read
+   account/key state; failure must leave the acknowledged generation intact.
 2. PERSIST runs in the key-manager process after candidate certificate files are
    closed and before distribution/activation. The host persists the complete
    state required by its current Vectis workflow, not just the named certificate.
@@ -1159,6 +1161,12 @@ or parent event loop. Supply a configured persistence deadline and failure tests
 Do not promise a storage transaction/rollback that the existing callback cannot
 provide. Storage ownership, encryption, multi-writer policy and durable format
 remain Vectis concerns.
+
+Use the callback's directory argument for RESTORE and PERSIST. It can be a
+private generation below the configured runtime root. Do not hard-code the
+configured root as the candidate directory. A complete snapshot preserves
+Kore's account/certificate attachment layout, so the Vectis adapter forwards
+that path into its existing state client without a new durable storage format.
 
 RESTORE must close/join any temporary thread-bearing storage resources before
 returning to the parent fork boundary. It cannot leave a supervisor client alive
