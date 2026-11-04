@@ -52,8 +52,11 @@ The [JSON facade](json.md) now connects public schema/record views, completed-bo
 parsing, generated/materialized replies, typed/group routes and incremental
 selected-array input. The [XML surface](xml.md) lifts Vectis's mapped parsing/routes, ownership,
 limits and context-local parser controls, with a bounded resumable libxml2 output
-generator, synchronous sink and explicitly materialized serializers. Next connect
-storage/assets/WebDAV and REST/OpenAPI.
+generator, synchronous sink and explicitly materialized serializers. The
+[read-only asset/static surface](assets.md) now connects filesystem roots,
+custom packed providers, incremental listing, validators/ranges and static route
+semantics. Next connect asynchronous storage operations/native jobs, WebDAV
+mutations and REST/OpenAPI.
 Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memory
 measurements for the combined proxy review. Retain the
 remaining ACME in-flight fault and final integration checks for the combined

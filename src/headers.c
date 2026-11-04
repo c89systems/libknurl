@@ -7,6 +7,8 @@ char *rotmos_copy_text(const char *text)
 {
     char *copy;
     size_t length;
+    if (text == NULL)
+        return NULL;
     length = strlen(text);
     if (length == (size_t)-1)
         return NULL;

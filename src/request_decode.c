@@ -73,6 +73,29 @@ rotmos_status rotmos_request_decode(rotmos_request *request,
     if (status == ROTMOS_OK)
         status = rotmos_route_path_validate(request->path.data,
                                             ROTMOS_PATH_LITERAL, error);
+    /* A single trailing slash is admitted only when the ordinary first match
+     * is a static directory/asset mount. Keep decoded traversal and ordinary
+     * route rejection ahead of the existing raw proxy fallback. */
+    if (status == ROTMOS_INVALID && request->server != NULL &&
+        request->path.data != NULL && request->path.length > 1) {
+        char *path = (char *)request->path.data;
+        size_t last = request->path.length - 1;
+        if (path[last] == '/' && path[last - 1] != '/') {
+            path[last] = 0;
+            status =
+                rotmos_route_path_validate(path, ROTMOS_PATH_LITERAL, error);
+            path[last] = '/';
+            if (status == ROTMOS_OK) {
+                status = rotmos_router_select(request->server->router, request,
+                                              error);
+                if (status == ROTMOS_EOF ||
+                    (status == ROTMOS_OK && !request->route->static_mount))
+                    status =
+                        rotmos_fail(error, ROTMOS_INVALID, "request_decode",
+                                    "trailing slash requires a static mount");
+            }
+        }
+    }
     if (status == ROTMOS_INVALID && request->server != NULL &&
         rotmos_proxy_validate_path(request->raw_path.data, NULL) == ROTMOS_OK) {
         free((void *)request->path.data);

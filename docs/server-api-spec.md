@@ -113,6 +113,8 @@ Use the `rotmos_` symbol prefix and these header families:
 | `<rotmos/websocket.h>` | Bounded application-frame connections |
 | `<rotmos/router.h>` | Route registration, captures, groups/prefixes and dispatch |
 | `<rotmos/proxy.h>` | Generic reverse-proxy configuration and public hook views |
+| `<rotmos/asset.h>` | Read-only opened asset providers, metadata, listing and bounded range sources |
+| `<rotmos/static.h>` | Static file/directory/provider registration and HTTP cache/range policy |
 | `<rotmos/webdav.h>` | WebDAV mounts, filesystem provider and storage/auth interfaces |
 | `<rotmos/xml.h>` | libxml2-backed mapped routes, DOM/SAX and response encoders |
 | `<rotmos/openapi.h>` | Metadata and JSON/YAML document generation over the public route registry |
@@ -1713,8 +1715,12 @@ static directories and read-only asset providers. `rotmos_static_config` covers
 root/prefix, index behavior, explicit content type/cache policy and public
 authorization hooks. Own path confinement, ETag/If-Match/If-None-Match and bounded
 range behavior in the generic helpers; do not make each consumer reconstruct
-those mechanisms. Packed asset lookup is a provider supplied by Vectis through
-public stat/list/open/read operations, not a Vectis structure inside rotmos.
+those mechanisms. The [read-only asset/static implementation](assets.md) supplies opened-object
+metadata, incremental listing, explicit-offset reads and range sources. Packed
+asset lookup is a provider supplied by Vectis through public stat/list/open/read
+operations, not a Vectis structure inside rotmos. Read-only asset metadata/open
+callbacks are prompt synchronous operations. Asynchronous DAV/storage operations
+retain the separate operation/completion/cancellation contract below.
 Path confinement includes decoded traversal, embedded NUL, repeated decoding
 and symlink escapes. The filesystem provider defaults to rejecting symlinks and
 resolves relative to pinned roots without an unchecked stat/open gap; lexical

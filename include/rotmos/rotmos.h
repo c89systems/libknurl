@@ -17,5 +17,7 @@
 #include <rotmos/framing.h>
 #include <rotmos/proxy.h>
 #include <rotmos/xml.h>
+#include <rotmos/asset.h>
+#include <rotmos/static.h>
 
 #endif

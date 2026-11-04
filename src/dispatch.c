@@ -82,6 +82,12 @@ rotmos_status rotmos_router_dispatch_headers(rotmos_router *router,
         return status;
     }
     plan->body = request->route->config.body;
+    if (request->route->preflight != NULL) {
+        status = request->route->preflight(
+            request, plan, request->route->config.userdata, error);
+        if (status != ROTMOS_OK || plan->disposition != ROTMOS_REQUEST_MANAGED)
+            return status;
+    }
     if (request->route->config.on_headers != NULL)
         return request->route->config.on_headers(
             request, plan, request->route->config.userdata, error);

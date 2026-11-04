@@ -89,6 +89,12 @@ incremental SAX parsing without libxml2 types in public headers. Their API and
 wire fixtures also run as relocated static/shared consumers. Mapped input
 currently uses completed body readers; native-reader execution remains pending.
 
+[Read-only assets and static routes](assets.md) connect pinned filesystem roots
+and public packed-provider adapters to opened-object metadata, bounded range
+sources, conditional requests, safe redirects and ordinary route hooks. Provider
+listing is incremental. WebDAV mutations and asynchronous storage jobs remain
+part of the full implementation goal.
+
 [Application WebSockets](websockets.md) expose transactional acceptance, a copied
 route facade, bounded complete frames and atomic output, pause/resume and
 capacity callbacks. They use the channel transport with an independent lifetime:

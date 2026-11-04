@@ -46,6 +46,7 @@ include(cmake/KoreBackend.cmake)
 
 add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/json.c src/json_array.c src/json_route.c src/xml.c src/xml_sax.c src/xml_mapping.c src/xml_generator.c src/xml_route.c
+  src/asset.c src/asset_filesystem.c src/static.c src/static_policy.c
   src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
   src/config_normalize.c src/server.c src/router.c src/route_path.c
   src/request.c src/request_decode.c src/router_dispatch.c
@@ -109,7 +110,8 @@ set(rotmos_core_headers include/rotmos/common.h include/rotmos/http.h include/ro
   include/rotmos/server.h include/rotmos/router.h include/rotmos/request.h include/rotmos/kore.h
   include/rotmos/loop.h include/rotmos/response.h include/rotmos/dispatch.h
   include/rotmos/body.h include/rotmos/channel.h include/rotmos/websocket.h include/rotmos/framing.h
-  include/rotmos/proxy.h include/rotmos/xml.h include/rotmos/lonejson.h)
+  include/rotmos/proxy.h include/rotmos/xml.h include/rotmos/lonejson.h
+  include/rotmos/asset.h include/rotmos/static.h)
 set_source_files_properties(${rotmos_core_headers} PROPERTIES LANGUAGE C HEADER_FILE_ONLY FALSE)
 add_library(rotmos_headers_c OBJECT ${rotmos_core_headers})
 target_include_directories(rotmos_headers_c PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -145,7 +147,7 @@ if(BUILD_TESTING)
   add_test(NAME rotmos.json-runtime COMMAND rotmos_json_runtime)
   add_test(NAME rotmos.json-spool-policy COMMAND rotmos_json_runtime no-spool)
   set_tests_properties(rotmos.json-runtime rotmos.json-spool-policy PROPERTIES TIMEOUT 10)
-  foreach(codec json xml xml-mapped xml-runtime)
+  foreach(codec json xml xml-mapped xml-runtime asset static-runtime)
     add_executable(rotmos_${codec} "tests/${codec}.c")
     target_link_libraries(rotmos_${codec} PRIVATE rotmos::shared Threads::Threads)
     target_compile_definitions(rotmos_${codec} PRIVATE
