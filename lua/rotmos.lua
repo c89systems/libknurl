@@ -159,6 +159,12 @@ function Server:set_serving(value) return self._native:set_serving(value) end
 function Server:state() return self._native:state() end
 function Server:listener(index) return self._native:listener(index) end
 function Server:route_count() return self._native:route_count() end
+function Server:proxy(opts)
+  if type(opts)~='table' then return invalid('proxy declaration table required') end
+  local handle,err=self._native:proxy(copy(opts))
+  if not handle then return nil,err end
+  return true
+end
 function M.server(opts)
   if opts~=nil and type(opts)~='table' then return invalid('server configuration table required') end
   opts=copy(opts)

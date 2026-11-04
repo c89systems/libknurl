@@ -10,7 +10,8 @@ The binding covers server declaration/run/stop/close, configuration and serving
 state, manual TLS/HTTPS/redirect listeners, lifecycle callbacks, route counts,
 ordinary routes, groups, callback auth, request lookups/events, buffered bodies,
 body readers/materialization, live and file uploads, static files/directories,
-filesystem WebDAV, staged bytes/files and live response sources. Its
+filesystem WebDAV, reverse-proxy configuration/callbacks, staged bytes/files and
+live response sources. Its
 behavior comes from Vectis's [callback routes](../../vectis/manual/lua-app.md)
 and [existing bridge](../../vectis/src/vectis_cli.c), rather than a new server
 framework. The [integration contract](vectis-integration-contract.md) remains
@@ -158,6 +159,45 @@ the binding adds no second mount auth gate. Request principal metadata refreshes
 after mount authorization and retains the WebDAV public 254-byte bound. Native
 storage work never accesses Lua. Route hooks may inspect/replace staged results.
 
+`server:proxy{path=..., target=...}` binds public `rotmos_router_proxy` and
+Vectis's [proxy callback contract](../../vectis/src/vectis_cli_proxy_lua.c).
+It accepts method(s), explicit `path_kind` (default literal), up to 15
+`alternate_targets`, `upstream_http_version="auto"/"http1"`, connect/idle/total
+timeouts and buffer limit. Target strings and TLS PEM inputs (`tls_ca_pem`,
+paired `tls_client_cert_pem` / `tls_client_key_pem`) are validated/copied by the
+public registration path. Declaration performs no connection. The binding adds
+no body reader or queue to the C proxy's HTTP/SSE/WebSocket transports.
+
+`preflight(inbound)` may return nil/true to continue, or a local response table
+with integer `status`, optional binary `body` and ordered `headers` pairs. The
+existing limits are 64 KiB of copied local body and 100 headers.
+`rewrite(inbound, outbound)` receives copied method/raw path/raw query/host,
+WebSocket flag and ordered headers. `inbound:param(name)` performs a scoped
+capture lookup. Outbound provides `select_target(index)` (one based),
+`set_method(name)`, `set_path(raw_path)`, `set_query(raw_query_or_nil)`,
+`set_host(host_or_nil)`, `add_header`, `set_header` and `remove_header`.
+Both dot and colon calls retain Vectis's behavior. Changing copied metadata has
+no native effect. Setter arguments are validated before use; a failed setter
+rejects the callback even if its nil/error result is ignored. No private proxy
+failure field is accessed.
+
+`modify_response(response)` receives a copied status and ordered headers, with
+`set_status`, `add_header`, `set_header` and `remove_header` methods. It has no
+body access. Rewrite and response callbacks return nil/true; other values fail.
+`on_error(cause)` receives a table with `status`, `code` and `message` containing
+the gateway default and copied cause,
+and can return the same local response declaration. The C engine retains its
+400/500 setup mappings, gateway-hook dispatch for 502/504, default gateway
+fallback and abort behavior after commitment.
+
+All proxy callbacks run synchronously on the owner loop and cannot yield.
+Helpers expire immediately when their callback returns, before local response
+getters run; saved helpers return STATE. A temporary registry root keeps the
+scope alive through exceptions/OOM so native cleanup can always invalidate it.
+The entire metadata construction, callback, getter and result conversion runs
+inside the existing protected boundary. Request/response body flow, TLS, SSE
+and WebSocket framing/relay remain in the public C proxy implementation.
+
 `rotmos.count(decimal_text)` or `rotmos.count(high, low)` represents unsigned
 64-bit quantities exactly. Values fitting Lua's integer range are integers;
 larger values are immutable userdata with high/low words, comparison and decimal
@@ -243,13 +283,18 @@ The [native-route fixture](../tests/lua/routes.lua) adds static range/conditiona
 responses and indexes, copied declarations, staged hook mutation/replacement and
 scope expiry, admitted file uploads, protected WebDAV reads/writes/listing/quotas,
 resource auth, principal refresh and protected callback/allocation failures.
+The [proxy fixture](../tests/lua/proxy.lua) adds all four callbacks, target/path/
+query/method/header edits, copied declarations, mutual TLS upstreams, SSE,
+WebSocket preflight rejection, binary local replies and metadata scope expiry.
+It withholds the rest of an upload until the origin receives the first chunk,
+and checks ignored setter failures, protected getters/OOM and gateway fallback.
 
 ## Remaining binding surfaces
 
 The binding is incomplete. TLS material openers/ACME state callbacks,
 remaining policy/admission/observation/control callbacks, schemas/JSON/XML,
 REST/OpenAPI, custom asset/storage providers and packed mounts,
-proxy/WebSocket/SSE and remaining direct loop/response operations still need
+standalone WebSocket/SSE and remaining direct loop/response operations still need
 their public C bindings. Known unsupported options return an error. No transport
 or application mechanism belongs in a temporary Vectis adapter to fill those
 gaps. Lua source archive, rockspec/source-rock packaging and final installed

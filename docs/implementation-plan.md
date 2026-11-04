@@ -142,5 +142,14 @@ reply views preserve native payloads through after hooks and expose only public
 builder/snapshot operations. WebDAV resource decisions remain in its C engine;
 Lua is never called from native file/storage work. The installed fixture covers
 wire behavior, scope/exception/OOM cleanup, principal refresh and registration
-allocation unwinding. Custom/packed asset/storage providers, proxy/WebSocket/SSE,
-typed routes and the other remaining binding/packaging surfaces are still required.
+allocation unwinding.
+
+Lua reverse-proxy configuration and all four callbacks now reuse the public C
+proxy API, retaining Vectis's metadata copies, target indexing, helpers and local
+response declarations. Scope retirement is protected through getters/OOM, and
+argument failures latch in the binding without private proxy access. HTTP/SSE/
+WebSocket forwarding and upstream TLS remain in the existing C engine. The short
+installed fixture covers callback workflows, actual upload flow before EOF,
+mutual TLS, metadata edits, scope expiry, local responses and failure mappings.
+Custom/packed asset/storage providers, standalone WebSocket/SSE, typed routes and
+the other remaining binding/packaging surfaces are still required.

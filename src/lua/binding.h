@@ -140,6 +140,7 @@ int rl_static_file(lua_State *);
 int rl_static_directory(lua_State *);
 int rl_upload_file(lua_State *);
 int rl_webdav(lua_State *);
+int rl_proxy(lua_State *);
 void rl_body_result_retire(struct rl_body_result *);
 int rl_request_body_reader(lua_State *);
 int rl_request_body_materialize(lua_State *);

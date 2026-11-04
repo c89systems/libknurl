@@ -687,6 +687,7 @@ void rl_servers_open(lua_State *L)
         {"static_file", rl_static_file},
         {"static_directory", rl_static_directory},
         {"webdav", rl_webdav},
+        {"proxy", rl_proxy},
         {"group", l_group},
         {"route_count", l_route_count},
         {NULL, NULL}};

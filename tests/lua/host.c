@@ -20,6 +20,8 @@
 #include <string.h>
 #include <unistd.h>
 static pid_t child;
+static pid_t proxy_origin;
+static int proxy_shutdown = -1;
 static int progress_read = -1, progress_write = -1;
 struct allocator {
     size_t after;
@@ -66,6 +68,8 @@ static int fail_call(lua_State *L)
     return lua_gettop(L) - top;
 }
 static int encrypted;
+static int omit_length;
+static const char *connection_value = "close";
 static const char *required_header;
 static const char *request_headers = "", *required_body;
 static const char *forwarded_address = "198.51.100.7";
@@ -78,8 +82,8 @@ static int exchange(unsigned short port, const char *method, const char *path,
     SSL *ssl = NULL;
     struct sockaddr_in address;
     struct timeval timeout;
-    char head[1024], prefix[32], *reply = NULL, *payload, *cursor, *end,
-                                 *decoded = NULL;
+    char head[1024], framing[64], prefix[32], *reply = NULL, *payload, *cursor,
+                                              *end, *decoded = NULL;
     size_t used = 0, n = 0, chunk;
     ssize_t count;
     fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -102,18 +106,23 @@ static int exchange(unsigned short port, const char *method, const char *path,
             !SSL_set1_host(ssl, "localhost") || SSL_connect(ssl) != 1)
             goto done;
     }
+    framing[0] = 0;
+    if (!omit_length)
+        snprintf(framing, sizeof(framing), "Content-Length: %lu\r\n",
+                 (unsigned long)length);
     snprintf(head, sizeof(head),
              "%s %s HTTP/1.1\r\nHost: localhost\r\nX-Test: value\r\n"
              "Authorization: Bearer fixture-token\r\nX-Forwarded-For: %s\r\n"
-             "%sContent-Length: %lu\r\nConnection: close\r\n\r\n",
-             method, path, forwarded_address, request_headers,
-             (unsigned long)length);
+             "%s%sConnection: %s\r\n\r\n",
+             method, path, forwarded_address, request_headers, framing,
+             connection_value);
     count = ssl ? SSL_write(ssl, head, (int)strlen(head))
                 : write(fd, head, strlen(head));
     if (count != (ssize_t)strlen(head))
         goto done;
     if (length) {
-        if (progress_read >= 0 && !strcmp(path, "/upload/live")) {
+        if (progress_read >= 0 &&
+            (!strcmp(path, "/upload/live") || !strcmp(path, "/proxy/echo"))) {
             struct pollfd ready;
             char byte;
             if (write(fd, body, 3) != 3)
@@ -415,6 +424,331 @@ static int spawn_routes(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+static int proxy_socket(int serving, unsigned short *port)
+{
+    struct sockaddr_in address;
+    socklen_t length = sizeof(address);
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+        return -1;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(fd, (struct sockaddr *)&address, sizeof(address)) ||
+        getsockname(fd, (struct sockaddr *)&address, &length) ||
+        (serving && listen(fd, 8))) {
+        close(fd);
+        return -1;
+    }
+    *port = ntohs(address.sin_port);
+    return fd;
+}
+static int origin_send(int fd, SSL *ssl, const void *bytes, size_t length)
+{
+    ssize_t count;
+    const char *cursor = bytes;
+    while (length) {
+        count = ssl ? SSL_write(ssl, cursor, (int)length)
+                    : write(fd, cursor, length);
+        if (count <= 0)
+            return 0;
+        cursor += count;
+        length -= (size_t)count;
+    }
+    return 1;
+}
+static int origin_request(int fd, SSL_CTX *context)
+{
+    SSL *ssl = NULL;
+    char *buffer = malloc(65536), head[256], *end, *body, *field;
+    size_t used = 0, size = 0, received;
+    const char *answer = "origin", *type = "text/plain";
+    ssize_t count;
+    int failed = 1, acknowledged = 0;
+    struct timeval timeout;
+    timeout.tv_sec = 3;
+    timeout.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    if (buffer == NULL)
+        goto done;
+    if (context != NULL) {
+        ssl = SSL_new(context);
+        if (ssl == NULL || !SSL_set_fd(ssl, fd))
+            goto done;
+        /* Deliberately untrusted/missing-client-certificate routes exercise
+         * gateway failure, so a rejected handshake is an expected connection.
+         */
+        if (SSL_accept(ssl) != 1) {
+            failed = 0;
+            goto done;
+        }
+    }
+    do {
+        count = ssl ? SSL_read(ssl, buffer + used, (int)(65535 - used))
+                    : read(fd, buffer + used, 65535 - used);
+        if (count <= 0)
+            goto done;
+        used += (size_t)count;
+        buffer[used] = 0;
+        end = strstr(buffer, "\r\n\r\n");
+    } while (end == NULL && used < 65535);
+    if (end == NULL)
+        goto done;
+    body = end + 4;
+    field = strstr(buffer, "Content-Length:");
+    if (field == NULL)
+        field = strstr(buffer, "content-length:");
+    if (field != NULL && field < end)
+        size = strtoul(field + 15, NULL, 10);
+    if (size > 32768)
+        goto done;
+    received = used - (size_t)(body - buffer);
+    while (received < size) {
+        if (strstr(buffer, " /base/echo ") && received >= 3 && !acknowledged) {
+            if (write(progress_write, "p", 1) != 1)
+                goto done;
+            acknowledged = 1;
+        }
+        count = ssl ? SSL_read(ssl, buffer + used, (int)(65535 - used))
+                    : read(fd, buffer + used, 65535 - used);
+        if (count <= 0)
+            goto done;
+        used += (size_t)count;
+        received += (size_t)count;
+        buffer[used] = 0;
+    }
+    if (strstr(buffer, " /base/echo ")) {
+        if (size != 6 || memcmp(body, "A\0BCDE", 6))
+            goto done;
+        answer = body;
+        size = 6;
+    } else if (strstr(buffer, " /alternate/check?q=changed ")) {
+        if (strncmp(buffer, "PATCH ", 6) ||
+            !strcasestr(buffer, "Host: changed.test:9\r\n") ||
+            !strcasestr(buffer, "X-Added: one\r\n") ||
+            !strcasestr(buffer, "X-Added: two\r\n") ||
+            strcasestr(buffer, "X-Test:"))
+            goto done;
+        answer = "rewritten";
+        size = 9;
+    } else if (strstr(buffer, " /base/proxy/sse ")) {
+        answer = "data: first\n\ndata: second\n\n";
+        size = 27;
+        type = "text/event-stream";
+    } else if (context != NULL) {
+        answer = "tls";
+        size = 3;
+    } else
+        size = strlen(answer);
+    snprintf(head, sizeof(head),
+             "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: "
+             "%lu\r\nX-Origin: selected\r\nX-Remove: yes\r\nConnection: "
+             "close\r\n\r\n",
+             type, (unsigned long)size);
+    if (!origin_send(fd, ssl, head, strlen(head)) ||
+        !origin_send(fd, ssl, answer, size))
+        goto done;
+    failed = 0;
+done:
+    if (ssl != NULL) {
+        (void)SSL_shutdown(ssl);
+        SSL_free(ssl);
+    }
+    close(fd);
+    free(buffer);
+    return failed;
+}
+struct origin_ports {
+    unsigned short http, tls, unavailable;
+};
+static int origin_publish(lua_State *L)
+{
+    struct origin_ports *ports = lua_touserdata(L, 1);
+    lua_newtable(L);
+    lua_pushfstring(L, "http://127.0.0.1:%d/base", ports->http);
+    lua_setfield(L, -2, "http");
+    lua_pushfstring(L, "https://localhost:%d/base", ports->tls);
+    lua_setfield(L, -2, "tls");
+    lua_pushfstring(L, "http://127.0.0.1:%d", ports->unavailable);
+    lua_setfield(L, -2, "unavailable");
+    return 1;
+}
+static int proxy_setup(lua_State *L)
+{
+    struct origin_ports ports;
+    struct pollfd ready[3];
+    SSL_CTX *context = NULL;
+    X509_STORE *store;
+    int sockets[3] = {-1, -1, -1}, quit[2] = {-1, -1}, i, fd, failed = 0,
+        published = LUA_OK;
+    if (client_context == NULL || progress_write < 0)
+        goto failed;
+    sockets[0] = proxy_socket(1, &ports.http);
+    sockets[1] = proxy_socket(1, &ports.tls);
+    sockets[2] = proxy_socket(0, &ports.unavailable);
+    if (sockets[0] < 0 || sockets[1] < 0 || sockets[2] < 0 || pipe(quit))
+        goto failed;
+    context = SSL_CTX_new(TLS_server_method());
+    store = SSL_CTX_get_cert_store(client_context);
+    if (context == NULL ||
+        !SSL_CTX_use_certificate(context,
+                                 SSL_CTX_get0_certificate(client_context)) ||
+        !SSL_CTX_use_PrivateKey(context,
+                                SSL_CTX_get0_privatekey(client_context)) ||
+        !X509_STORE_up_ref(store))
+        goto failed;
+    SSL_CTX_set_cert_store(context, store);
+    SSL_CTX_set_verify(context,
+                       SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+    lua_pushcfunction(L, origin_publish);
+    lua_pushlightuserdata(L, &ports);
+    published = lua_pcall(L, 1, 1, 0);
+    if (published != LUA_OK)
+        goto failed;
+    proxy_origin = fork();
+    if (proxy_origin < 0)
+        goto failed;
+    if (proxy_origin == 0) {
+        close(quit[1]);
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        ready[0].fd = sockets[0];
+        ready[1].fd = sockets[1];
+        ready[2].fd = quit[0];
+        for (i = 0; i < 3; ++i)
+            ready[i].events = POLLIN;
+        while (!failed && poll(ready, 3, -1) > 0) {
+            if (ready[2].revents)
+                break;
+            for (i = 0; i < 2; ++i)
+                if (ready[i].revents & POLLIN) {
+                    fd = accept(sockets[i], NULL, NULL);
+                    if (fd < 0 || origin_request(fd, i ? context : NULL))
+                        failed = 1;
+                }
+        }
+        for (i = 0; i < 3; ++i)
+            close(sockets[i]);
+        close(quit[0]);
+        SSL_CTX_free(context);
+        _exit(failed);
+    }
+    proxy_shutdown = quit[1];
+    quit[1] = -1;
+    for (i = 0; i < 3; ++i)
+        close(sockets[i]);
+    close(quit[0]);
+    SSL_CTX_free(context);
+    return 1;
+failed:
+    for (i = 0; i < 3; ++i)
+        if (sockets[i] >= 0)
+            close(sockets[i]);
+    if (quit[0] >= 0)
+        close(quit[0]);
+    if (quit[1] >= 0)
+        close(quit[1]);
+    SSL_CTX_free(context);
+    return published != LUA_OK
+               ? lua_error(L)
+               : luaL_error(L, "proxy origin preparation failed");
+}
+static int proxy_join(lua_State *L)
+{
+    int status;
+    if (proxy_origin <= 0 || proxy_shutdown < 0 ||
+        write(proxy_shutdown, "q", 1) != 1)
+        return luaL_error(L, "proxy origin shutdown failed");
+    close(proxy_shutdown);
+    proxy_shutdown = -1;
+    if (waitpid(proxy_origin, &status, 0) != proxy_origin ||
+        !WIFEXITED(status) || WEXITSTATUS(status))
+        return luaL_error(L, "proxy origin failed");
+    proxy_origin = 0;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int drive_proxy(unsigned short port)
+{
+    static const char *const local_failures[] = {
+        "preflight-error", "preflight-oom", "local-getter", "local-header",
+        "local-body"};
+    static const char *const invalid_rewrites[] = {"invalid", "nul", "method",
+                                                   "type"};
+    static const char *const gateway_failures[] = {
+        "rewrite-error", "response-error", "response-oom", "response-invalid",
+        "response-nul",  "response-type",  "gateway"};
+    char path[64];
+    size_t i;
+    int failed = 0;
+#define P(method, path, body, length, status, expected, size)                  \
+    if (!failed)                                                               \
+    failed = exchange(port, method, path, body, length, status, expected, size)
+    P("GET", "/proxy/plain?client=1", "", 0, 201, "origin", 6);
+    P("POST", "/proxy/echo", "A\0BCDE", 6, 201, "A\0BCDE", 6);
+    required_header = "X-Proxy: rotmos\r\n";
+    P("GET", "/param/id", "", 0, 201, "rewritten", 9);
+    required_header = "Content-Type: text/event-stream\r\n";
+    P("GET", "/proxy/sse", "", 0, 200, "data: first\n\ndata: second\n\n", 27);
+    required_header = NULL;
+    P("GET", "/secure", "", 0, 201, "tls", 3);
+    P("GET", "/local", "", 0, 403, "A\0B", 3);
+    omit_length = 1;
+    connection_value = "Upgrade";
+    request_headers = "Upgrade: websocket\r\nSec-WebSocket-Version: "
+                      "13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
+    P("GET", "/proxy/ws", "", 0, 403, "ws", 2);
+    omit_length = 0;
+    connection_value = "close";
+    request_headers = "";
+    for (i = 0;
+         !failed && i < sizeof(local_failures) / sizeof(local_failures[0]);
+         ++i) {
+        snprintf(path, sizeof(path), "/%s", local_failures[i]);
+        P("GET", path, "", 0, 500, NULL, 0);
+    }
+    for (i = 0;
+         !failed && i < sizeof(gateway_failures) / sizeof(gateway_failures[0]);
+         ++i) {
+        snprintf(path, sizeof(path), "/%s", gateway_failures[i]);
+        P("GET", path, "", 0, 503, "gateway", 7);
+    }
+    P("GET", "/rewrite-oom", "", 0, 500, "proxy setup or rewrite failed", 29);
+    for (i = 0;
+         !failed && i < sizeof(invalid_rewrites) / sizeof(invalid_rewrites[0]);
+         ++i) {
+        snprintf(path, sizeof(path), "/rewrite-%s", invalid_rewrites[i]);
+        P("GET", path, "", 0, 400, "proxy setup or rewrite failed", 29);
+    }
+    P("GET", "/gateway-error", "", 0, 502, "bad gateway", 11);
+    P("GET", "/gateway-getter", "", 0, 502, "bad gateway", 11);
+    P("GET", "/stop", "", 0, 200, "ok", 2);
+#undef P
+    return failed;
+}
+static int spawn_proxy(lua_State *L)
+{
+    int status;
+    unsigned short port = (unsigned short)lua_tointeger(L, 1);
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        close(progress_write);
+        progress_write = -1;
+        status = drive_proxy(port);
+        if (status)
+            kill(getppid(), SIGTERM);
+        _exit(status);
+    }
+    close(progress_read);
+    progress_read = -1;
+    lua_pushboolean(L, 1);
+    return 1;
+}
 static int drive_policy(unsigned short http, unsigned short tls,
                         unsigned short redirect)
 {
@@ -698,6 +1032,12 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "prepare_body");
     lua_pushcfunction(L, spawn_routes);
     lua_setfield(L, -2, "spawn_routes");
+    lua_pushcfunction(L, proxy_setup);
+    lua_setfield(L, -2, "proxy_setup");
+    lua_pushcfunction(L, proxy_join);
+    lua_setfield(L, -2, "proxy_join");
+    lua_pushcfunction(L, spawn_proxy);
+    lua_setfield(L, -2, "spawn_proxy");
     lua_pushstring(L, argv[2]);
     lua_setfield(L, -2, "root");
     if (argc == 4) {
