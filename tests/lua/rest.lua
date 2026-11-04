@@ -7,6 +7,17 @@ assert(ok(rest.json(nil)).body=='null\n')
 assert(ok(rest.json({a=1})).body=='{"a":1}\n')
 assert(ok(rest.json({1,2},{newline=false,status_code=201})).body=='[1,2]')
 assert(ok(rest.json({},{max_bytes=3})).body=='{}\n')
+-- A buffered REST reply forwards the encoder's bytes unchanged, plus newline.
+-- Revalidating/normalizing through a second JSON writer changes this result.
+local encode=lonejson.encode_json_to_sink
+local encoding_calls=0
+lonejson.encode_json_to_sink=function(value,sink)
+  assert(value.marker);encoding_calls=encoding_calls+1
+  sink('{ "n" : 1e+02, "s" : "\\u0061" }')
+end
+assert(ok(rest.json({marker=true})).body=='{ "n" : 1e+02, "s" : "\\u0061" }\n')
+assert(encoding_calls==1)
+lonejson.encode_json_to_sink=encode
 -- Explicit argument order keeps the helper's second return beside its value.
 local function json_failure(value,opts,status)
   local result,err=rest.json(value,opts);failed(result,err,status);assert(err.kind=='json_encode')

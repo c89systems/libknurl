@@ -115,8 +115,10 @@ typedef struct rotmos_json_typed_route_config {
 ROTMOS_API void rotmos_json_route_config_init(rotmos_json_route_config *config);
 ROTMOS_API void
 rotmos_json_typed_route_config_init(rotmos_json_typed_route_config *config);
-/* Copies declarations, borrows schemas/runtime/userdata. Records are private
- * per request and remain valid through response producer cleanup. Ordinary
+/* Copies declarations, borrows schemas/runtime/userdata. Ordinary route output
+ * is materialized before after-hooks, without a new output-size ceiling, and
+ * its records are then cleaned. Typed-reply records instead remain valid
+ * through producer cleanup when an explicit live reply borrows them. Ordinary
  * staged middleware order applies. No schema means a NULL callback view. */
 ROTMOS_API rotmos_status rotmos_router_json_route(
     rotmos_router *router, const rotmos_json_route_config *config,

@@ -21,7 +21,9 @@ typed handler, then register with `rotmos_router_json_route`. The handler receiv
 read-only view descriptors whose `record` pointers refer to mutable, initialized
 typed storage. NULL schemas produce NULL views. Fields follow LoneJSON's public
 assignment and cleanup rules. Successful handlers with output schemas select a
-generated 200 JSON reply; no output schema selects 204. Route-group variants use
+materialized 200 JSON reply before after-hooks, preserving Vectis's ordinary
+route serialization timing without a new output-size ceiling. Input/output
+records are then cleaned. No output schema selects 204. Route-group variants use
 the existing prefix and hook machinery.
 
 ```c
@@ -55,9 +57,10 @@ input shape/field-overflow failures become HTTP 400 in the typed facade.
 
 Auth/before hooks finish before typed decoding and handler execution. After hooks
 may inspect or replace the selected staged source before transport submission.
-Each request owns its input/output storage through producer and request cleanup,
-so an asynchronous reply can borrow an input record safely. There is no JSON text
-round trip or mandatory table conversion between parser, handler and generator.
+Ordinary route hooks see completed JSON bytes. Typed-reply routes retain their
+input storage through producer and request cleanup, so an explicitly selected
+asynchronous reply can borrow that record safely. There is no JSON text round
+trip or mandatory table conversion between parser and handler.
 
 `rotmos_router_json_typed_route` instead gives the handler a staged reply. It can
 choose a different output schema and status per response. An unselected successful

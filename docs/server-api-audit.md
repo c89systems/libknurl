@@ -10,7 +10,7 @@ Vectis's existing mechanisms through a new library boundary. Tests then checked
 parts of that new design rather than baseline compatibility. The owned public
 API and Kore backend architecture are correct; they do not require this redesign.
 
-## Confirmed failures requiring correction
+## Findings at the audit boundary
 
 | Finding | Evidence | Required outcome |
 | --- | --- | --- |
@@ -39,6 +39,16 @@ library/header/Lua lines and 25,548 test lines. Vendored C/headers were another
 40,284 lines. The proxy accounted for 7,769 owned lines versus 9,119 in Vectis's
 proxy-named files, including application adapters/telemetry there.
 
+## Correction progress
+
+The reference JSON forwarding case in [vectis-forward.c](../tests/vectis-forward.c)
+maps the baseline app/request/raw-record/userdata callback shape without codec or
+transport work. The runtime fixture verifies completed JSON bytes before an
+after-hook replaces the result. Ordinary C JSON routes now materialize before
+after-hooks; explicit live typed replies retain their own lifetime contract.
+Lua REST now forwards one encoder output directly, without the extra reader,
+JSON runtime, writer or output buffer. Remaining findings are still open.
+
 ## Evidence limits and work state
 
 No runtime edits or test runs were made during the stop-and-audit. The repository
@@ -47,7 +57,7 @@ binding imports and installed consumers. Prior per-slice checks do not prove
 Vectis parity. The concrete installed Vectis reference adapter is missing; Lua
 provider/logging operations, source/rock packaging and final compatibility/artifact
 checks remain incomplete. The [implementation plan](implementation-plan.md)
-orders correction work; it does not resume the paused implementation goal.
+orders correction work under the revised active implementation goal.
 
 Feature documents are implementation notes under correction, subordinate to the
 small contract. They must not be used to justify existing behavior that conflicts

@@ -61,7 +61,6 @@ static rotmos_status dispatch(rotmos_request *request, rotmos_reply *reply,
 {
     struct json_route *route;
     struct json_records *records;
-    rotmos_json_source_config source;
     rotmos_status status;
     const lonejson_record_view *input;
     route = data;
@@ -91,10 +90,18 @@ static rotmos_status dispatch(rotmos_request *request, rotmos_reply *reply,
     if (status != ROTMOS_OK)
         return status;
     if (records->output.record == NULL)
-        return rotmos_reply_status(reply, 204, error);
-    rotmos_json_source_config_init(&source);
-    source.record = records->output;
-    return rotmos_reply_json(reply, 200, &source, error);
+        status = rotmos_reply_status(reply, 204, error);
+    else
+        /* Vectis freezes the ordinary JSON result before after-hooks. Live
+         * generation is an explicit typed-reply choice. Do not add the
+         * materializer's standalone 10 MiB default to an existing route. */
+        status = rotmos_reply_json_materialized(
+            reply, 200, &records->output.schema, records->output.record,
+            (size_t)-1, error);
+    request->codec_data = NULL;
+    request->codec_cleanup = NULL;
+    release_records(records);
+    return status;
 }
 static void schema_init(lonejson_schema_view *schema)
 {

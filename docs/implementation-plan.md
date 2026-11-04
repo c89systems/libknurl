@@ -2,7 +2,7 @@
 
 The [extraction contract](server-api-spec.md) governs this work. Existing source
 and tests are candidates for reuse, not an approved design to preserve wholesale.
-The implementation goal remains paused; this document does not resume it.
+The revised implementation goal is active following the user's explicit restart.
 
 1. Map the baseline Vectis operations to an installed public reference adapter.
    Show exact config, callback, ownership, timing and error translation. Identify
@@ -27,7 +27,12 @@ Retain the explicit seven-target/toolchain/build-directory rules in the spec.
 No host compiler fallback, sibling build input, private binding include, hidden
 materialization, new general-purpose SDK or speculative dependency API.
 
-At the rewrite boundary, three unverified selected-array edits remain in
-include/rotmos/lonejson.h, src/json_array.c and tests/json.c. They are not an
-accepted repair. Resolve them deliberately when implementation resumes; this
-specification rewrite neither commits nor verifies them.
+The unverified selected-array ownership patch was discarded. It did not supply
+the baseline request/source iterator and must not determine that API's design.
+The first reference-adapter case forwards the baseline typed JSON callback shape
+and asserts completed JSON bytes in an after-hook. Ordinary C JSON route output
+now materializes before that hook; explicit live typed replies remain separate.
+Lua REST replies now forward one encoder output directly, preserving bytes and
+optional newline without a second parse/emission or default output-size cap.
+The adapter is partial: the remaining operation families and known gaps above
+still need their corresponding forwarding/parity cases.

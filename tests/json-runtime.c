@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <rotmos/rotmos.h>
 #include <rotmos/lonejson.h>
+#include "vectis-forward.h"
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -80,6 +81,19 @@ static rotmos_status unexpected(rotmos_request *request,
     (void)error;
     return ROTMOS_BACKEND;
 }
+static rotmos_status host_echo(void *app, rotmos_request *request, void *input,
+                               void *output, void *data, rotmos_error *error)
+{
+    const struct input *in = input;
+    struct output *out = output;
+    (void)error;
+    if (app != rotmos_request_server(request) || in == NULL || out == NULL ||
+        data == NULL || strcmp(data, "forwarded") != 0)
+        return ROTMOS_STATE;
+    ++called;
+    (void)snprintf(out->result, sizeof(out->result), "%s", in->message);
+    return ROTMOS_OK;
+}
 static rotmos_status typed(rotmos_request *request,
                            const lonejson_record_view *input,
                            rotmos_reply *reply, void *data, rotmos_error *error)
@@ -118,7 +132,11 @@ static rotmos_status after(rotmos_request *r, rotmos_reply *reply, int *finish,
     (void)r;
     (void)finish;
     (void)data;
-    if (rotmos_reply_payload_kind(reply) != ROTMOS_REPLY_SOURCE)
+    if (rotmos_reply_payload_kind(reply) != ROTMOS_REPLY_BYTES ||
+        rotmos_reply_body(reply).length !=
+            sizeof("{\"result\":\"hidden\"}") - 1 ||
+        memcmp(rotmos_reply_body(reply).data, "{\"result\":\"hidden\"}",
+               sizeof("{\"result\":\"hidden\"}") - 1) != 0)
         return ROTMOS_STATE;
     ++replaced;
     return rotmos_reply_text(reply, 201, "text/plain", "replaced", error);
@@ -334,6 +352,7 @@ int main(int argc, char **argv)
     rotmos_server_config config;
     rotmos_listener_config listener;
     rotmos_json_route_config json;
+    struct reference_json_route forwarded;
     rotmos_json_typed_route_config typed_config;
     rotmos_route_group_config group_config;
     rotmos_route_group *group;
@@ -392,8 +411,11 @@ int main(int argc, char **argv)
     json.hooks.after = after;
     json.userdata = NULL;
     json.body.memory_buffer_limit_bytes = 262144UL;
-    CHECK(rotmos_router_json_route(rotmos_server_router(server), &json, NULL,
-                                   &error) == ROTMOS_OK);
+    forwarded.app = server;
+    forwarded.handler = host_echo;
+    forwarded.userdata = "forwarded";
+    CHECK(reference_json_register(rotmos_server_router(server), &json,
+                                  &forwarded, &error) == ROTMOS_OK);
     json.path = "/deny";
     json.hooks.after = NULL;
     json.hooks.auth = auth;

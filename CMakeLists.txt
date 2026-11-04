@@ -139,7 +139,7 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
 endif()
 
 if(BUILD_TESTING)
-  add_executable(rotmos_json_runtime tests/json-runtime.c)
+  add_executable(rotmos_json_runtime tests/json-runtime.c tests/vectis-forward.c)
   target_link_libraries(rotmos_json_runtime PRIVATE rotmos::shared)
   target_compile_definitions(rotmos_json_runtime PRIVATE
     $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)

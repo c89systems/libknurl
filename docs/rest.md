@@ -84,9 +84,11 @@ Group defaults and per-route overrides retain Vectis's existing forms.
 
 `rest.json(value, options)` composes an ordinary buffered response. Options are
 status/status_code, content_type, headers, newline (default true) and max_bytes
-(zero/default 10 MiB, including newline). Generic traversal/validation uses the
-released LoneJSON Lua encoder with a bounded sink; final composition reuses
-public `rotmos_reply_rest_json`. Invalid keys/types, cycles, nonfinite numbers
+(zero/default adds no output-size ceiling; an explicit bound includes newline).
+Generic traversal/validation uses the released LoneJSON Lua encoder once. Its
+encoded bytes become the buffered response body directly, with an optional
+newline; no second JSON parser/writer or native reply buffer is involved.
+Invalid keys/types, cycles, nonfinite numbers
 and output limits return nil/error. This explicitly materialized path does not
 replace typed-record or live JSON APIs. `rest.error_response(error, options)`
 preserves custom error fields, decorates a copied value, maps the public statuses
