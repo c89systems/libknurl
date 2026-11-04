@@ -45,7 +45,7 @@ rotmos_add_kore_sources("${CMAKE_CURRENT_SOURCE_DIR}" "${kore_source_dir}")
 include(cmake/KoreBackend.cmake)
 
 add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
-  src/json.c src/json_array.c src/json_route.c src/xml.c src/xml_sax.c
+  src/json.c src/json_array.c src/json_route.c src/xml.c src/xml_sax.c src/xml_mapping.c src/xml_generator.c src/xml_route.c
   src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
   src/config_normalize.c src/server.c src/router.c src/route_path.c
   src/request.c src/request_decode.c src/router_dispatch.c
@@ -145,9 +145,11 @@ if(BUILD_TESTING)
   add_test(NAME rotmos.json-runtime COMMAND rotmos_json_runtime)
   add_test(NAME rotmos.json-spool-policy COMMAND rotmos_json_runtime no-spool)
   set_tests_properties(rotmos.json-runtime rotmos.json-spool-policy PROPERTIES TIMEOUT 10)
-  foreach(codec json xml)
+  foreach(codec json xml xml-mapped xml-runtime)
     add_executable(rotmos_${codec} "tests/${codec}.c")
     target_link_libraries(rotmos_${codec} PRIVATE rotmos::shared Threads::Threads)
+    target_compile_definitions(rotmos_${codec} PRIVATE
+      $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
     rotmos_c89(rotmos_${codec})
     rotmos_local_runtime(rotmos_${codec})
     add_test(NAME rotmos.${codec} COMMAND rotmos_${codec})

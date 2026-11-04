@@ -1,6 +1,8 @@
 #ifndef ROTMOS_XML_H
 #define ROTMOS_XML_H
 #include <rotmos/common.h>
+#include <rotmos/io.h>
+#include <rotmos/router.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -11,6 +13,90 @@ extern "C" {
 typedef struct rotmos_xml_document rotmos_xml_document;
 typedef struct rotmos_xml_node rotmos_xml_node;
 typedef struct rotmos_xml_sax rotmos_xml_sax;
+struct lonejson_schema_view;
+struct lonejson_record_view;
+typedef struct rotmos_xml_generator rotmos_xml_generator;
+typedef struct rotmos_xml_config {
+    const char *root_element, *text_key, *attribute_prefix;
+    int trim_text, skip_unknown_disabled;
+    size_t max_depth, max_text_bytes;
+} rotmos_xml_config;
+ROTMOS_API void rotmos_xml_config_init(rotmos_xml_config *);
+/* Synchronous mapped input. Borrows source; consumes to EOF, never closes it.
+ * AGAIN fails (use a completed source). Caller supplies initialized storage;
+ * reset before parse and on failure, preserving fixed array backing. Maps and
+ * optional runtime use the released public LoneJSON schema interface. */
+ROTMOS_API rotmos_status
+rotmos_xml_parse_source(rotmos_source *, const struct lonejson_schema_view *,
+                        const rotmos_xml_config *, void *, rotmos_error *);
+ROTMOS_API rotmos_status
+rotmos_request_xml_into(rotmos_request *, const struct lonejson_schema_view *,
+                        const rotmos_xml_config *, void *, rotmos_error *);
+typedef struct rotmos_xml_source_config {
+    const struct lonejson_record_view *record;
+    rotmos_xml_config xml;
+    rotmos_source_close_fn release;
+    void *userdata;
+} rotmos_xml_source_config;
+ROTMOS_API void rotmos_xml_source_config_init(rotmos_xml_source_config *);
+/* Resumable bounded output, no whole-output collection. XML names <=4096 bytes;
+ * text units <=2048 bytes, independent of mapped text limits. Success copies
+ * view and config declarations and borrows their storage unchanged until
+ * release. Spooled text uses its public sequential cursor: exclusive read
+ * access until close. Failed construction takes nothing. Handles are
+ * process/thread-confined.
+ */
+ROTMOS_API rotmos_status rotmos_xml_generator_new(
+    const rotmos_xml_source_config *, rotmos_xml_generator **, rotmos_error *);
+ROTMOS_API rotmos_status rotmos_xml_generator_read(rotmos_xml_generator *,
+                                                   void *, size_t, size_t *,
+                                                   rotmos_error *);
+ROTMOS_API rotmos_status rotmos_xml_generator_destroy(rotmos_xml_generator *,
+                                                      rotmos_error *);
+ROTMOS_API rotmos_status rotmos_source_xml(const rotmos_xml_source_config *,
+                                           rotmos_source **, rotmos_error *);
+ROTMOS_API rotmos_status rotmos_reply_xml(rotmos_reply *, int,
+                                          const rotmos_xml_source_config *,
+                                          rotmos_error *);
+typedef rotmos_status (*rotmos_xml_sink_fn)(const void *, size_t, void *,
+                                            rotmos_error *);
+/* Sink must accept the complete offered chunk with OK or fail terminally. */
+ROTMOS_API rotmos_status rotmos_xml_write_sink(
+    const struct lonejson_record_view *, const rotmos_xml_config *,
+    rotmos_xml_sink_fn, void *, rotmos_error *);
+/* Explicit output collection; max_bytes=0 selects 10 MiB. Empty out required.
+ */
+ROTMOS_API rotmos_status rotmos_xml_serialize_materialized(
+    const struct lonejson_record_view *, const rotmos_xml_config *, size_t,
+    rotmos_owned_bytes *, rotmos_error *);
+ROTMOS_API rotmos_status rotmos_reply_xml_materialized(
+    rotmos_reply *, int, const struct lonejson_record_view *,
+    const rotmos_xml_config *, size_t, rotmos_error *);
+typedef rotmos_status (*rotmos_xml_route_fn)(
+    rotmos_request *, const struct lonejson_record_view *, rotmos_reply *,
+    void *, rotmos_error *);
+typedef struct rotmos_xml_route_config {
+    rotmos_http_method method;
+    rotmos_http_methods methods;
+    const char *path;
+    rotmos_route_path_kind path_kind;
+    rotmos_body_policy body;
+    const struct lonejson_schema_view *input;
+    rotmos_xml_config xml;
+    rotmos_xml_route_fn handler;
+    void *userdata;
+    rotmos_route_hooks hooks;
+} rotmos_xml_route_config;
+ROTMOS_API void rotmos_xml_route_config_init(rotmos_xml_route_config *);
+/* Request records survive response cleanup. Like Vectis XML handlers, the
+ * handler receives mapped input and a general reply builder. Ordinary hooks
+ * and empty-reply 204 behavior apply. */
+ROTMOS_API rotmos_status
+rotmos_router_xml_route(rotmos_router *, const rotmos_xml_route_config *,
+                        rotmos_route **, rotmos_error *);
+ROTMOS_API rotmos_status rotmos_route_group_xml_route(
+    rotmos_route_group *, const rotmos_xml_route_config *, rotmos_route **,
+    rotmos_error *);
 typedef struct rotmos_xml_document_config {
     size_t max_bytes, max_xpath_nodes;
 } rotmos_xml_document_config;

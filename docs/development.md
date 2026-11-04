@@ -83,10 +83,11 @@ coverage.
 [LoneJSON codecs and typed routes](json.md) parse completed memory/file bodies
 directly into public record storage and produce bounded JSON through the public
 pull generator. Per-request record owners survive output and staged replacement.
-Selected-array input uses incremental item callbacks. [XML DOM/SAX](xml.md) expose
-owned, confined document/views and incremental context-local parsing without
-libxml2 types in public headers. Their API and wire fixtures also run as relocated
-static/shared consumers. Mapped XML and resumable output remain the next surface.
+Selected-array input uses incremental item callbacks. [XML codecs](xml.md) expose
+mapped records/routes, resumable libxml2 output, owned confined DOM/views and
+incremental SAX parsing without libxml2 types in public headers. Their API and
+wire fixtures also run as relocated static/shared consumers. Mapped input
+currently uses completed body readers; native-reader execution remains pending.
 
 [Application WebSockets](websockets.md) expose transactional acceptance, a copied
 route facade, bounded complete frames and atomic output, pause/resume and

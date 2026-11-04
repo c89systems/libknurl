@@ -1,4 +1,4 @@
-# XML DOM, XPath and SAX
+# XML mapping, routes, DOM and SAX
 
 Include [`<rotmos/xml.h>`](../include/rotmos/xml.h), or the ordinary umbrella.
 Opaque document, node and SAX handles keep libxml2 layouts private. The selected
@@ -54,9 +54,77 @@ input exceeding 16 MiB without a DOM, and process/thread confinement. DOM/SAX wo
 also runs on a newly created default-stack thread, including on musl. The same
 fixture runs against relocated static/shared installed SDKs.
 
-Mapped LoneJSON parsing, mapped routes, synchronous sink output and the resumable
-`rotmos_xml_generator_new/read/destroy` remain the next XML surface under the
-[complete specification](server-api-spec.md#fast-typed-json-and-xmllibxml2-routes).
-Their separate mapped limits remain nesting 64 and text 64 MiB. The DOM's 16 MiB
-limit does not replace them. A synchronous writer or complete DOM serialization
-cannot substitute for the required resumable output generator.
+Mapped codecs use released public LoneJSON schemas and record views from
+`<rotmos/lonejson.h>`. `rotmos_xml_parse_source` consumes a synchronous source to
+EOF without closing it. The caller supplies initialized mapped storage; parsing
+resets it before use and on failure, preserving fixed array backing. Dynamic
+strings and arrays are assigned through public LoneJSON APIs. No allocator
+headers or language-binding layouts are copied. A supplied schema runtime owns
+its allocation/spool policy; a NULL runtime creates an operation-owned runtime
+with mapped text bounds. Returned records remain caller-owned and require
+`lonejson_cleanup`.
+
+`rotmos_xml_config_init` selects nesting 64 and text 67108864 bytes. Zero limits
+select these defaults. The mapped text bound is separate from the DOM's 16 MiB
+bound and from HTTP body policy. Root matching uses local names, including
+namespaced elements. `attribute_prefix` selects attribute fields, with plain-name
+fallback on input; `text_key` selects mixed text. Contiguous repeated elements
+populate arrays. Preserve trimming, `xml:space`, CDATA, deferred formatting
+whitespace, required fields and duplicate/noncontiguous-array rejection.
+`skip_unknown_disabled` rejects unknown fields when true. Spooled text requires
+`trim_text=0` and no presence flag. DTD/entity declarations and external resources
+are rejected per reader. Errors preserve dependency codes/locations and failed
+parses retire partial allocations.
+
+`rotmos_router_xml_route` and its route-group counterpart copy declarations and
+mapping option strings, borrowing maps/runtime/userdata through route destruction.
+The handler receives a request-owned public input record view and a general
+reply builder, matching Vectis's XML route boundary. It can borrow input into an
+XML source reply, synchronously materialize a stack output record, or choose any
+other reply kind/status. Records survive asynchronous response output and staged
+replacement. Before/auth/after hooks follow the ordinary staged route order; an
+unselected reply defaults to 204. The initial mapped request path uses completed
+BUFFERED/MATERIALIZED bodies; `rotmos_request_xml_into` rewinds before and after
+parsing. MATERIALIZED body policy requires an explicit transport spool directory
+when its declared maximum exceeds memory. Live native-reader execution remains
+part of the complete server contract.
+
+`rotmos_xml_generator_new/read/destroy` provide resumable output. Each read
+advances an iterative traversal using public libxml2 writer calls, then flushes
+a bounded unit before proceeding. It retains nesting frames, libxml2's writer
+state and a 32 KiB output unit; it never collects a document or uses an output
+staging file. Text units contain at most 2048 input bytes, retaining split UTF-8
+characters between reads. XML names are application metadata bounded to 4096
+bytes each. Text escaping and element/attribute state belong to libxml2. UTF-8,
+XML character, nesting and text bounds are checked as traversal advances; an
+invalid later field can therefore fail after earlier bytes have been delivered.
+Errors latch. Positive reads return OK; completed output returns EOF with zero
+bytes, including on repeated reads.
+
+The generator copies public record/config descriptors and borrows their referenced
+storage through destroy. Callers keep logical record values/schema/options
+unchanged. Spooled text uses its public sequential cursor and requires exclusive
+read access until close; its cursor is not restored. Handles, and source/reply
+wrappers around them, must be created, consumed and closed on their owning process
+and thread. A release callback runs exactly once after successful construction,
+with OK after EOF, CANCELLED before completion, or the terminal failure. Failed
+construction takes no ownership. Release callbacks cannot longjmp or recursively
+operate on the closing generator.
+
+`rotmos_source_xml` and `rotmos_reply_xml` connect the same generator to the
+ordinary source/HTTP response path. Failed source/reply registration takes no
+release notification. `rotmos_xml_write_sink` synchronously drains that generator;
+the sink must accept a complete chunk or fail. `rotmos_xml_serialize_materialized`
+and `rotmos_reply_xml_materialized` explicitly collect bounded output, defaulting
+to 10 MiB. Stack records are safe with these synchronous calls. Returned byte
+spans require their lengths and `rotmos_owned_bytes_cleanup`.
+
+The [mapped fixture](../tests/xml-mapped.c) covers Vectis mapping behavior,
+namespace/local-name matching, attributes, mixed text, repeated object/scalar
+arrays, integer edges, fixed-array overflow and cleanup, input errors at EOF,
+DTD rejection, mapped text beyond 10 MiB, split UTF-8, one-byte output reads,
+spilled text, cancellation, failed ownership transfer and deferred output errors.
+It runs on a default-stack pthread. The [wire fixture](../tests/xml-runtime.c)
+covers grouped registration, copied options, memory/file bodies, rewind, output,
+malformed input, auth short circuit, body limits and staged replacement. Both
+fixtures run against relocated static/shared installed SDKs.

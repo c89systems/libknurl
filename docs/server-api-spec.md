@@ -1773,7 +1773,8 @@ The current [JSON facade](json.md) uses public `lonejson_schema_view` values in
 its input/output declarations; `rotmos_json_schema_from_map` prepares C-owned map
 registration through the same boundary used by public language interop. Typed
 handlers borrow read-only view descriptors with mutable record storage. The
-[XML DOM/SAX implementation](xml.md) documents its separate limits and ownership.
+[XML implementation](xml.md) documents mapped routes/codecs, DOM/SAX, separate
+limits and ownership.
 
 The JSON fast path decodes through LoneJSON directly into typed record storage,
 invokes the C handler or Lua callback with the corresponding public record view,
@@ -1847,7 +1848,11 @@ an output-node count. Parser/record budget failures retire partial owners once.
 
 Provide public `rotmos_xml_generator_new/read/destroy` for HTTP output. Its state
 is resumable between bounded reads; each step drives public libxml2 output APIs
-for bounded units and yields when response capacity is exhausted. The existing
+for bounded units and yields when response capacity is exhausted. Bound output
+name metadata to 4096 bytes each and text input units to 2048 bytes; those bounds
+do not lower mapped record text limits. Spooled output uses the public sequential
+cursor with exclusive read access through close, without restoring the cursor.
+The existing
 synchronous sink writer cannot be converted into that contract by collecting its
 whole output or hiding a staging file. Keep a separate synchronous XML write-to-
 sink operation and a separately named materialized serializer. If a necessary

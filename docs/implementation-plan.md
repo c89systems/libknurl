@@ -50,9 +50,10 @@ the same worker. Its plain/TLS fixture exercises copied in-memory trust and clie
 identity, early frames, fragmentation, shared admission and failure after commitment.
 The [JSON facade](json.md) now connects public schema/record views, completed-body
 parsing, generated/materialized replies, typed/group routes and incremental
-selected-array input. The [XML DOM/SAX surface](xml.md) lifts Vectis's ownership,
-limits and context-local parser controls. Next connect mapped XML parsing/routes
-and true resumable libxml2 output, then storage/assets/WebDAV and REST/OpenAPI.
+selected-array input. The [XML surface](xml.md) lifts Vectis's mapped parsing/routes, ownership,
+limits and context-local parser controls, with a bounded resumable libxml2 output
+generator, synchronous sink and explicitly materialized serializers. Next connect
+storage/assets/WebDAV and REST/OpenAPI.
 Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memory
 measurements for the combined proxy review. Retain the
 remaining ACME in-flight fault and final integration checks for the combined
