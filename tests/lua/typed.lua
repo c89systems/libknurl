@@ -64,7 +64,7 @@ for n=0,40,4 do
 end
 local big_runtime=require('lonejson').new{spool_default={memory_limit=8,max_bytes=1048576,temp_dir=fixture.workspace}}
 local big=big_runtime.schema('large',{big_runtime.field('text',big_runtime.spooled_text())})
-local server,retained,request
+local server,retained,request,retained_output,retained_xml
 local calls,before,after=0,0,0
 server=ok(rotmos.server{port=0,workers={count=1,affinity_disabled=true},http={backend_quiet=true},
   limits={body_spool_directory=fixture.workspace},io={chunk_bytes=31},
@@ -88,7 +88,12 @@ end
 local declaration={path='/fixed',input_schema=text,output_schema=text,handler=function(_,input,output)
   calls=calls+1;assert(type(input)=='userdata' and type(output)=='userdata')
   text:assign(output,{text=input.text})
-end,after=function(_,reply) after=after+1;assert(reply.json_materialized.record.text=='one');reply.status=202 end}
+  retained_output=output
+end,after=function(_,reply)
+  after=after+1
+  local snapshot=ok(reply:snapshot());assert(snapshot.kind=='bytes' and snapshot.body=='{"text":"one"}')
+  ok(reply:replace{status=202,body=snapshot.body,content_type=snapshot.content_type})
+end}
 ok(server:json_route(declaration));declaration.input_schema=nil;declaration.output_schema=nil;declaration.handler=function() error('declaration mutated') end
 local group=ok(server:group('/group',{before=function() before=before+1 end,after=function() after=after+1 end}))
 ok(group:json_typed_route{path='/typed',input_schema=text,handler=function(_,input)
@@ -110,16 +115,20 @@ ok(server:post('/array',function(req)
   return 'array'
 end,{body={mode='materialized',memory_buffer_limit_bytes=8}}))
 ok(server:get('/retained',function()
-  collectgarbage('collect');assert(retained.text=='direct')
+  collectgarbage('collect');assert(retained.text=='direct' and retained_output.text=='one')
   local value,err=request.json_record(text);assert(value==nil and err.status==rotmos.status.STATE)
   value,err=request.xml_record{schema=xml};assert(value==nil and err.status==rotmos.status.STATE)
   return 'ok'
 end))
 local xml_options={root_element='doc',attribute_prefix='@'}
-ok(server:xml_route{path='/xml',input_schema=xml,xml=xml_options,handler=function(_,input)
-  assert(input['@id']=='7');return {xml_materialized={schema=xml,record=input,attribute_prefix='@'}}
+ok(server:xml_route{path='/xml',input_schema=xml,xml=xml_options,buffer_bytes=8,handler=function(req,input)
+  assert(input['@id']=='7');ok(server:now())
+  local bytes,err=req.body_bytes();assert(bytes==nil and err.status==rotmos.status.STATE)
+  retained_xml=input
+  return {xml_materialized={schema=xml,record=input,attribute_prefix='@'}}
 end});xml_options.attribute_prefix='wrong'
 ok(server:xml_route{path='/xml-live',input_schema=xml,xml={attribute_prefix='@'},handler=function(_,input)
+  collectgarbage('collect');assert(retained_xml.text=='xml' and retained_xml['@id']=='7')
   return {xml={schema=xml,value={text=input.text,['@id']=input['@id']},attribute_prefix='@'}}
 end})
 ok(server:json_typed_route{path='/malformed',input_schema=text,handler=function() error('malformed handler called') end})

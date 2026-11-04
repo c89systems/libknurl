@@ -620,45 +620,257 @@ int rl_request_xml_record(lua_State *L)
     lua_getiuservalue(L, owner, 2);
     return 1;
 }
-int rl_codec_route_check(lua_State *L, int options, int xml,
-                         rotmos_error *error)
+struct record_owner {
+    lua_State *L;
+    int root;
+};
+struct record_call {
+    struct rl_rule *rule;
+    struct rl_request *request;
+    rotmos_record_storage *storage;
+    struct record_owner *owner;
+    int output;
+    rotmos_status status;
+    rotmos_error *error;
+};
+static int record_acquire_call(lua_State *L)
 {
-    static const char *const names[] = {"input_schema", "output_schema"};
+    struct record_call *call = lua_touserdata(L, 1);
+    lonejson_error cause;
+    lonejson_status status;
+    int record;
+    rl_rule_options(L, call->rule);
+    rl_field(L, -1, call->output ? "output_schema" : "input_schema");
+    record_init(&call->storage->view);
+    status =
+        lonejson_lua_new_record(L, -1, &record, &call->storage->view, &cause);
+    if (status != LONEJSON_STATUS_OK) {
+        call->status = json_error(call->error, &cause);
+        return 0;
+    }
+    lua_pushvalue(L, record);
+    call->owner->root = luaL_ref(L, LUA_REGISTRYINDEX);
+    call->request->typed_records[call->output] = call->owner->root;
+    return 0;
+}
+static rotmos_status record_acquire(rotmos_request *request, int output,
+                                    const lonejson_schema_view *schema,
+                                    rotmos_record_storage *storage, void *data,
+                                    rotmos_error *error)
+{
+    struct record_call call;
+    rotmos_status status;
+    (void)schema;
+    memset(&call, 0, sizeof(call));
+    call.rule = data;
+    call.request = rotmos_request_userdata(request);
+    call.output = output;
+    call.storage = storage;
+    call.error = error;
+    if (call.request == NULL)
+        return rl_fail(error, ROTMOS_STATE, "Lua request association missing");
+    call.owner = calloc(1, sizeof(*call.owner));
+    if (call.owner == NULL)
+        return rl_fail(error, ROTMOS_NOMEM, "allocating Lua record owner");
+    call.owner->L = call.rule->server->L;
+    call.owner->root = LUA_NOREF;
+    storage->owner = call.owner;
+    status = rl_protect(call.owner->L, record_acquire_call, &call, error);
+    return status == ROTMOS_OK ? call.status : status;
+}
+static void record_release(rotmos_record_storage *storage, void *data)
+{
+    struct record_owner *owner = storage->owner;
+    (void)data;
+    if (owner != NULL) {
+        if (owner->root != LUA_NOREF)
+            luaL_unref(owner->L, LUA_REGISTRYINDEX, owner->root);
+        free(owner);
+    }
+}
+struct typed_call {
+    struct rl_rule *rule;
+    rotmos_request *request;
+    rotmos_reply *reply;
+    const lonejson_record_view *input, *output;
+    rotmos_status status;
+    rotmos_error *error;
+};
+static int typed_handler_call(lua_State *L)
+{
+    struct typed_call *call = lua_touserdata(L, 1);
+    struct rl_request *request = rotmos_request_userdata(call->request);
+    rl_rule_options(L, call->rule);
+    rl_field(L, -1, "handler");
+    rl_request_push(L, request);
+    if (call->input != NULL)
+        lua_rawgeti(L, LUA_REGISTRYINDEX, request->typed_records[0]);
+    else
+        lua_pushnil(L);
+    if (call->rule->codec_kind == 3) {
+        if (call->output != NULL)
+            lua_rawgeti(L, LUA_REGISTRYINDEX, request->typed_records[1]);
+        else
+            lua_pushnil(L);
+    }
+    lua_call(L, call->rule->codec_kind == 3 ? 3 : 2, 2);
+    if (!lua_isnil(L, -1))
+        call->status = rl_callback_error(L, -1, call->error,
+                                         "typed route callback failed");
+    else if (call->rule->codec_kind != 3)
+        call->status = rl_reply(L, -2, call->reply, call->request, call->error);
+    request->native_reply = 1;
+    return 0;
+}
+static rotmos_status typed_handler(rotmos_request *request,
+                                   const lonejson_record_view *input,
+                                   const lonejson_record_view *output,
+                                   rotmos_reply *reply, void *data,
+                                   rotmos_error *error)
+{
+    struct typed_call call;
+    rotmos_status status;
+    memset(&call, 0, sizeof(call));
+    call.rule = data;
+    call.request = request;
+    call.reply = reply;
+    call.input = input;
+    call.output = output;
+    call.error = error;
+    status = rl_protect(call.rule->server->L, typed_handler_call, &call, error);
+    return status == ROTMOS_OK ? call.status : status;
+}
+static rotmos_status json_handler(rotmos_request *request,
+                                  const lonejson_record_view *input,
+                                  const lonejson_record_view *output,
+                                  void *data, rotmos_error *error)
+{
+    return typed_handler(request, input, output, NULL, data, error);
+}
+static rotmos_status general_handler(rotmos_request *request,
+                                     const lonejson_record_view *input,
+                                     rotmos_reply *reply, void *data,
+                                     rotmos_error *error)
+{
+    return typed_handler(request, input, NULL, reply, data, error);
+}
+static int route_schema(lua_State *L, const char *name,
+                        lonejson_schema_view *view, rotmos_error *error)
+{
+    lonejson_error cause;
+    int valid = 1;
+    memset(view, 0, sizeof(*view));
+    view->size = sizeof(*view);
+    view->abi_version = LONEJSON_VIEW_ABI_VERSION;
+    rl_field(L, 2, name);
+    if (!lua_isnil(L, -1) &&
+        lonejson_lua_check_schema(L, -1, view, &cause) != LONEJSON_STATUS_OK) {
+        json_error(error, &cause);
+        valid = 0;
+    }
+    lua_pop(L, 1);
+    return valid;
+}
+rotmos_status rl_codec_route_register(lua_State *L, struct rl_rule *rule,
+                                      struct rl_rule *parent,
+                                      const rotmos_route_config *config,
+                                      int kind, rotmos_error *error)
+{
+    static const rotmos_record_provider provider = {record_acquire,
+                                                    record_release};
+    lonejson_schema_view input, output;
+    rotmos_json_route_config json;
+    rotmos_json_typed_route_config typed;
+    rotmos_xml_route_config xml;
+    size_t bound = 0, buffer_bytes = 0;
     static const char *const fields[] = {
         "root_element", "text_key",       "attribute_prefix", "trim_text",
         "skip_unknown", "strict_unknown", "max_depth",        "max_text_bytes"};
-    lonejson_schema_view schema;
-    lonejson_error cause;
-    rotmos_xml_config config;
+    static const char *const specialized[] = {
+        "output_schema", "max_output_bytes", "xml", "buffer_bytes"};
     size_t i;
-    rotmos_error_clear(error);
-    for (i = 0; i < 2; ++i) {
-        memset(&schema, 0, sizeof(schema));
-        schema.size = sizeof(schema);
-        schema.abi_version = LONEJSON_VIEW_ABI_VERSION;
-        rl_field(L, options, names[i]);
-        if (!lua_isnil(L, -1) &&
-            lonejson_lua_check_schema(L, -1, &schema, &cause) !=
-                LONEJSON_STATUS_OK) {
-            json_error(error, &cause);
-            return 0;
-        }
+    int valid;
+    for (i = 0; i < sizeof(specialized) / sizeof(specialized[0]); ++i) {
+        rl_field(L, 2, specialized[i]);
+        valid = lua_isnil(L, -1) || (i < 2 ? kind == 3 : kind == 5);
         lua_pop(L, 1);
+        if (!valid)
+            return rl_fail(error, ROTMOS_INVALID,
+                           "option does not apply to this typed route");
     }
-    if (!xml)
-        return 1;
-    rotmos_xml_config_init(&config);
-    rl_field(L, options, "xml");
-    if (!lua_isnil(L, -1) &&
-        (!lua_istable(L, -1) ||
-         !rl_fields(L, -1, fields, sizeof(fields) / sizeof(fields[0]), error) ||
-         !xml_options(L, lua_absindex(L, -1), &config))) {
-        if (error->status == ROTMOS_OK)
-            rl_fail(error, ROTMOS_INVALID, "invalid XML route options");
-        return 0;
+    if (!route_schema(L, "input_schema", &input, error) ||
+        !route_schema(L, "output_schema", &output, error))
+        return error->status;
+    if (!rl_field_size(L, 2, "max_output_bytes", &bound) ||
+        !rl_field_size(L, 2, "buffer_bytes", &buffer_bytes) ||
+        (kind != 5 && buffer_bytes != 0))
+        return rl_fail(error, ROTMOS_INVALID, "invalid typed route bound");
+    rule->native_reply = 1;
+    rule->codec_kind = kind;
+    if (kind == 5) {
+        rotmos_xml_route_config_init(&xml);
+        xml.method = config->method;
+        xml.methods = config->methods;
+        xml.path = config->path;
+        xml.path_kind = config->path_kind;
+        xml.body = config->body;
+        xml.hooks = config->hooks;
+        xml.userdata = rule;
+        xml.records = &provider;
+        xml.input = &input;
+        xml.buffer_bytes = buffer_bytes;
+        xml.handler = general_handler;
+        rl_field(L, 2, "xml");
+        valid = lua_isnil(L, -1) ||
+                (lua_istable(L, -1) &&
+                 rl_fields(L, -1, fields, sizeof(fields) / sizeof(fields[0]),
+                           error) &&
+                 xml_options(L, lua_absindex(L, -1), &xml.xml));
+        lua_pop(L, 1);
+        if (!valid)
+            return rl_fail(error, ROTMOS_INVALID, "invalid XML route options");
+        return parent != NULL ? rotmos_route_group_xml_route(parent->group,
+                                                             &xml, NULL, error)
+                              : rotmos_router_xml_route(
+                                    rotmos_server_router(rule->server->native),
+                                    &xml, NULL, error);
     }
-    lua_pop(L, 1);
-    return 1;
+    if (kind == 4) {
+        rotmos_json_typed_route_config_init(&typed);
+        typed.method = config->method;
+        typed.methods = config->methods;
+        typed.path = config->path;
+        typed.path_kind = config->path_kind;
+        typed.body = config->body;
+        typed.hooks = config->hooks;
+        typed.userdata = rule;
+        typed.records = &provider;
+        typed.input = input;
+        typed.handler = general_handler;
+        return parent != NULL ? rotmos_route_group_json_typed_route(
+                                    parent->group, &typed, NULL, error)
+                              : rotmos_router_json_typed_route(
+                                    rotmos_server_router(rule->server->native),
+                                    &typed, NULL, error);
+    }
+    rotmos_json_route_config_init(&json);
+    json.method = config->method;
+    json.methods = config->methods;
+    json.path = config->path;
+    json.path_kind = config->path_kind;
+    json.body = config->body;
+    json.hooks = config->hooks;
+    json.userdata = rule;
+    json.records = &provider;
+    json.input = input;
+    json.output = output;
+    json.max_output_bytes = bound;
+    json.handler = json_handler;
+    return parent != NULL ? rotmos_route_group_json_route(parent->group, &json,
+                                                          NULL, error)
+                          : rotmos_router_json_route(
+                                rotmos_server_router(rule->server->native),
+                                &json, NULL, error);
 }
 struct array_call {
     lua_State *L;

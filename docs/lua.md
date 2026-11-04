@@ -417,19 +417,29 @@ Lua-owned record storage through the public request codec.
 
 Servers and groups expose `json_route`, `json_typed_route` and `xml_route`.
 Declarations use ordinary path/method/body/hooks, optional `input_schema`, and
-`handler(request, input_record, ...)`. Their default method is POST and body mode
-MATERIALIZED; the normal explicit body/spool validation applies. Schema arguments
-are checked during registration. Auth and before hooks finish before decoding;
-ordinary after hooks see the response declaration before final conversion.
+`handler(request, input_record, ...)`. Their default method is POST. JSON uses
+MATERIALIZED input with the normal explicit body/spool validation; XML requires
+an input schema and live STREAMING_UPLOAD/STREAM input. XML `buffer_bytes` bounds
+the reader queue (zero selects 256 KiB), without collecting a transport body.
+Schema arguments are checked during registration. Auth and before hooks finish
+before decoding. These bind the public C typed registrations: their after hooks
+receive a scoped native reply view (`snapshot`, `replace`, header edits), after
+the handler's selected response has been prepared. Ordinary JSON bytes are
+already serialized then. Ordinary non-typed routes retain declaration hooks.
 
 `json_route` additionally accepts `output_schema` and `max_output_bytes`. Its
 handler receives `handler(request, input_record, output_record)` and populates
 the output with LoneJSON's public operations. A successful handler selects a 200
 materialized JSON reply, or 204 without an output schema. Zero/omitted output
-bound selects 10 MiB. The input/output records can use different schemas. The
+bound adds no limit. The input/output records can use different schemas. The
 explicit materialized reply finishes serialization before asynchronous delivery,
 so retaining or later mutating a Lua record cannot change the selected bytes.
-No record-to-table conversion is required by the binding.
+The public typed-record provider supplies Lua-owned records through released
+LoneJSON interop. Its owner-loop acquire/release callbacks pin records until C
+finishes using them, including XML native acknowledgement after cancellation.
+Release drops the binding's reference; records retained by user code remain
+valid. C performs parsing, handler dispatch, ordinary output serialization and
+hook ordering. The Lua facade only adapts the request argument.
 
 `json_typed_route` and `xml_route` return ordinary response declarations, choosing
 schemas per response. XML declarations accept an `xml` mapping-options table.
@@ -439,8 +449,10 @@ input. Explicit `{json_materialized={schema=...,record=...}}` and
 `{xml_materialized={schema=...,record=...}}` accept mutable records or value tables,
 plus `max_bytes`; they serialize synchronously with the same finite default bound.
 Status, content type and headers remain ordinary response fields. Nil from a
-general typed handler selects 204. Codec conversion waits for the final selected
-reply, so after-hook replacement does not prepare an unused producer.
+general typed handler selects 204. Typed handlers prepare their selected reply
+before after-hooks, matching the C operations. After-hook replacement retires
+that reply normally. Standalone ordinary Lua routes still delay declaration
+conversion until their after-hooks finish.
 
 ```lua
 server:json_route{
@@ -512,7 +524,7 @@ allocation failures.
 
 ## Remaining binding surfaces
 
-The binding is incomplete. Selected-array input, custom asset/storage providers and packed mounts,
+The binding is incomplete. Custom asset/storage providers and packed mounts,
 pslog logger interop and remaining direct dispatch/response operations still need
 their public C bindings. Known unsupported options return an error. No transport
 or application mechanism belongs in a temporary Vectis adapter to fill those

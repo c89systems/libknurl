@@ -39,6 +39,66 @@ LONEJSON_MAP_DEFINE(problem_map, struct problem, problem_fields);
 static lonejson_schema_view problem_schema;
 static int called, typed_called, replaced, stopped, no_spool;
 static int array_called;
+static int record_acquired, record_released;
+struct external_record {
+    lonejson *runtime;
+    const lonejson_map *map;
+    void *record;
+};
+static rotmos_status acquire_record(rotmos_request *request, int output,
+                                    const lonejson_schema_view *schema,
+                                    rotmos_record_storage *storage, void *data,
+                                    rotmos_error *error)
+{
+    struct external_record *owner = calloc(1, sizeof(*owner));
+    lonejson_error native;
+    rotmos_u64 now;
+    rotmos_bytes path = rotmos_request_path(request);
+    (void)data;
+    ++record_acquired;
+    storage->owner = owner;
+    if (owner == NULL)
+        return ROTMOS_NOMEM;
+    if (rotmos_loop_now(rotmos_request_loop(request), &now, error) != ROTMOS_OK)
+        return ROTMOS_STATE;
+    if (path.length == sizeof("/provider-fail") - 1 &&
+        memcmp(path.data, "/provider-fail", path.length) == 0)
+        return ROTMOS_IO;
+    owner->runtime = lonejson_new(NULL, &native);
+    if (output && path.length == sizeof("/provider-output-fail") - 1 &&
+        memcmp(path.data, "/provider-output-fail", path.length) == 0)
+        return ROTMOS_IO;
+    owner->map = schema->map;
+    owner->record = calloc(1, schema->record_size);
+    if (owner->runtime == NULL || owner->record == NULL)
+        return ROTMOS_NOMEM;
+    lonejson_init(owner->runtime, owner->map, owner->record);
+    storage->view.size = sizeof(storage->view);
+    storage->view.abi_version = LONEJSON_VIEW_ABI_VERSION;
+    storage->view.schema = *schema;
+    storage->view.schema.runtime = owner->runtime;
+    storage->view.record = owner->record;
+    if (path.length == sizeof("/provider-wrong") - 1 &&
+        memcmp(path.data, "/provider-wrong", path.length) == 0)
+        storage->view.size = 0;
+    if ((output && schema->map != &output_map) ||
+        (!output && schema->map != &input_map))
+        return ROTMOS_INVALID;
+    return ROTMOS_OK;
+}
+static void release_record(rotmos_record_storage *storage, void *data)
+{
+    struct external_record *owner = storage->owner;
+    (void)data;
+    ++record_released;
+    if (owner != NULL) {
+        if (owner->record != NULL && owner->runtime != NULL)
+            lonejson_cleanup(owner->map, owner->record);
+        free(owner->record);
+        lonejson_free(owner->runtime);
+        free(owner);
+    }
+}
 struct array_fixture {
     struct input *storage;
     size_t count;
@@ -208,8 +268,8 @@ static rotmos_status stop(rotmos_request *request, rotmos_reply *reply,
                           void *data, rotmos_error *error)
 {
     (void)data;
-    stopped =
-        called == 3 && typed_called == 3 && replaced == 1 && array_called == 1;
+    stopped = called == 3 && typed_called == 3 && replaced == 1 &&
+              array_called == 1 && record_acquired == 7 && record_released == 7;
     if (!stopped) {
         (void)fprintf(stderr, "JSON counts: echo=%d typed=%d replaced=%d\n",
                       called, typed_called, replaced);
@@ -352,6 +412,14 @@ static int client(unsigned short port)
                    "{\"result\":\"file\"}", 0, 0) == 0);
     CHECK(exchange(port, "/replace", "{\"message\":\"hidden\"}", 201,
                    "replaced", 0, 0) == 0);
+    CHECK(exchange(port, "/provider-fail", "{\"message\":\"hidden\"}", 500, "",
+                   0, 0) == 0);
+    CHECK(exchange(port, "/provider-wrong", "{\"message\":\"hidden\"}", 400, "",
+                   0, 0) == 0);
+    CHECK(exchange(port, "/provider-malformed", "{\"message\":[]}", 400, "", 0,
+                   0) == 0);
+    CHECK(exchange(port, "/provider-output-fail", "{\"message\":\"hidden\"}",
+                   500, "", 0, 0) == 0);
     CHECK(exchange(port, "/deny", "{", 403, "denied", 0, 0) == 0);
     CHECK(exchange(port, "/typed", "{\"message\":\"problem\"}", 422,
                    "{\"reason\":\"problem\"}", 0, 0) == 0);
@@ -411,6 +479,7 @@ int main(int argc, char **argv)
     rotmos_server_config config;
     rotmos_listener_config listener;
     rotmos_json_route_config json;
+    rotmos_record_provider provider;
     struct reference_json_route forwarded;
     rotmos_json_typed_route_config typed_config;
     rotmos_route_group_config group_config;
@@ -470,11 +539,29 @@ int main(int argc, char **argv)
     json.hooks.after = after;
     json.userdata = NULL;
     json.body.memory_buffer_limit_bytes = 262144UL;
+    provider.acquire = acquire_record;
+    provider.release = release_record;
+    json.records = &provider;
     forwarded.app = server;
     forwarded.handler = host_echo;
     forwarded.userdata = "forwarded";
     CHECK(reference_json_register(rotmos_server_router(server), &json,
                                   &forwarded, &error) == ROTMOS_OK);
+    json.handler = unexpected;
+    json.hooks.after = NULL;
+    json.path = "/provider-fail";
+    CHECK(rotmos_router_json_route(rotmos_server_router(server), &json, NULL,
+                                   &error) == ROTMOS_OK);
+    json.path = "/provider-wrong";
+    CHECK(rotmos_router_json_route(rotmos_server_router(server), &json, NULL,
+                                   &error) == ROTMOS_OK);
+    json.path = "/provider-malformed";
+    CHECK(rotmos_router_json_route(rotmos_server_router(server), &json, NULL,
+                                   &error) == ROTMOS_OK);
+    json.path = "/provider-output-fail";
+    CHECK(rotmos_router_json_route(rotmos_server_router(server), &json, NULL,
+                                   &error) == ROTMOS_OK);
+    json.records = NULL;
     json.path = "/deny";
     json.hooks.after = NULL;
     json.hooks.auth = auth;

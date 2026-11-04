@@ -110,7 +110,11 @@ app/request/raw-record/reply/userdata shape through public registrations. Its
 LoneJSON allocator observes native field parsing. It also checks no transport
 body store, owner-loop callbacks, early malformed input, disconnect while
 parsing, a tiny queue, source replacement, auth/limits, empty 204 and handler 501.
-The Lua typed-route binding still needs to use this corrected C route.
+The Lua typed-route binding uses this same C registration, supplying a pinned
+Lua-owned record through the optional public record provider. Its native parser
+receives only public record/schema pointers; the Lua handler runs on the owner
+loop and retained Lua records survive completion. Providers receive a release
+for each acquire attempt, including partial failure and disconnect during parsing.
 
 `rotmos_xml_generator_new/read/destroy` provide resumable output. Each read
 advances an iterative traversal using public libxml2 writer calls, then flushes

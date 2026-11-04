@@ -55,8 +55,13 @@ baseline pull loop, caller-owned record storage, zero-based indices and borrowed
 sources. Request iteration rewinds on success/failure; its reference adapter only
 forwards record/index/userdata. Lua binds these public operations with its own
 record and the existing public record-to-table conversion. The unused push-parser
-surface is removed. Lua typed-route sharing and the remaining surface review are
-still open.
+surface is removed. Lua typed routes now bind the C typed registrations using a
+public record-owner adapter. C performs input parsing, dispatch, ordinary output
+serialization and hook ordering; the facade only adapts request arguments. The
+record adapter uses released LoneJSON constructors/views and retains owners
+through response cleanup or native acknowledgement. Tests cover partial acquire
+failure, invalid views, parse failure, owner-loop release and Lua record retention.
+The remaining surface review and full reference adapter are still open.
 
 ## Evidence limits and work state
 

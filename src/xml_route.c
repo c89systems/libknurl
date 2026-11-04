@@ -10,17 +10,22 @@ struct xml_route {
     rotmos_xml_route_fn handler;
     rotmos_xml_config xml;
     void *userdata;
+    rotmos_record_provider provider;
 };
 struct xml_records {
     lonejson_record_view input;
     int input_runtime;
     struct xml_route *route;
+    rotmos_record_storage storage;
+    int acquired;
 };
 static void release_records(void *data)
 {
     struct xml_records *r;
     r = data;
-    if (r->input.record != NULL) {
+    if (r->acquired)
+        r->route->provider.release(&r->storage, r->route->userdata);
+    else if (r->input.record != NULL) {
         lonejson_cleanup(r->input.schema.map, r->input.record);
         free(r->input.record);
     }
@@ -57,7 +62,6 @@ static rotmos_status open_records(rotmos_request *request, void *data,
     struct xml_route *route;
     struct xml_records *records;
     rotmos_status status;
-    (void)request;
     route = data;
     records = calloc(1, sizeof(*records));
     if (records == NULL)
@@ -65,8 +69,18 @@ static rotmos_status open_records(rotmos_request *request, void *data,
                            "cannot allocate route records");
     *out = records;
     records->route = route;
-    status = allocate_record(&route->input, &route->xml, &records->input,
-                             &records->input_runtime, error);
+    if (route->provider.acquire != NULL) {
+        records->acquired = 1;
+        status =
+            route->provider.acquire(request, 0, &route->input,
+                                    &records->storage, route->userdata, error);
+        records->input = records->storage.view;
+        if (status == ROTMOS_OK)
+            status =
+                rotmos_json_record_check(&route->input, &records->input, error);
+    } else
+        status = allocate_record(&route->input, &route->xml, &records->input,
+                                 &records->input_runtime, error);
     return status;
 }
 static rotmos_status parse(const rotmos_upload_metadata *metadata,
@@ -125,6 +139,10 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
                            "provide router, declaration and handler");
     if (rotmos_json_schema_check(config->input, error) != ROTMOS_OK)
         return ROTMOS_INVALID;
+    if (config->records != NULL &&
+        (config->records->acquire == NULL || config->records->release == NULL))
+        return rotmos_fail(error, ROTMOS_INVALID, "xml_route",
+                           "record provider needs acquire and release");
     if (config->body.mode != ROTMOS_BODY_STREAMING_UPLOAD &&
         config->body.mode != ROTMOS_BODY_STREAM)
         return rotmos_fail(error, ROTMOS_INVALID, "xml_route",
@@ -139,6 +157,8 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
     data->input = *config->input;
     data->handler = config->handler;
     data->userdata = config->userdata;
+    if (config->records != NULL)
+        data->provider = *config->records;
     data->xml = xml;
     data->xml.root_element = rotmos_copy_text(xml.root_element);
     data->xml.text_key = rotmos_copy_text(xml.text_key);

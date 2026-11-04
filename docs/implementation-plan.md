@@ -39,5 +39,9 @@ optional newline without a second parse/emission or default output-size cap.
 C XML routes now reuse live upload-reader parsing with owner-loop completion;
 the forwarding fixture checks progress before EOF and parser cancellation. See
 the XML implementation note for the baseline reader-thread/join transition.
+Lua typed routes now use the public C registrations with an optional record-owner
+adapter. The facade only adapts request arguments; parsing, dispatch, ordinary
+serialization and hook ordering share the C path. Acquire/release retain Lua
+records through response cleanup or native acknowledgement on cancellation.
 The adapter is partial: the remaining operation families and known gaps above
 still need their corresponding forwarding/parity cases.

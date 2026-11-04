@@ -588,25 +588,16 @@ static int rule(lua_State *L, int kind_id)
     rotmos_route_group_config gc;
     rotmos_upload_stream_config uc;
     int root, index;
-    size_t output_limit = 0;
     static const char *const route_fields[] = {
         "path",    "path_kind", "method", "methods", "body",
         "handler", "before",    "after",  "auth"};
     static const char *const group_fields[] = {"prefix", "before", "after",
                                                "auth"};
-    static const char *const codec_fields[] = {"path",
-                                               "path_kind",
-                                               "method",
-                                               "methods",
-                                               "body",
-                                               "handler",
-                                               "before",
-                                               "after",
-                                               "auth",
-                                               "input_schema",
-                                               "output_schema",
-                                               "xml",
-                                               "max_output_bytes"};
+    static const char *const codec_fields[] = {
+        "path",         "path_kind",       "method",        "methods",
+        "body",         "handler",         "before",        "after",
+        "auth",         "input_schema",    "output_schema", "xml",
+        "buffer_bytes", "max_output_bytes"};
     static const char *const upload_fields[] = {
         "path",        "path_kind", "method",       "methods",       "body",
         "before",      "after",     "auth",         "open",          "on_chunk",
@@ -648,24 +639,6 @@ static int rule(lua_State *L, int kind_id)
     lua_getiuservalue(L, index, 2);
     lua_getiuservalue(L, -1, 2);
     root = lua_absindex(L, -1);
-    if (codec) {
-        if (!rl_codec_route_check(L, 2, kind_id == 5, &e))
-            goto failed;
-        if (!rl_field_size(L, 2, "max_output_bytes", &output_limit))
-            goto invalid;
-        rl_field(L, 2, "max_output_bytes");
-        if (kind_id != 3 && !lua_isnil(L, -1))
-            goto invalid;
-        lua_pop(L, 1);
-        rl_field(L, 2, "output_schema");
-        if (kind_id != 3 && !lua_isnil(L, -1))
-            goto invalid;
-        lua_pop(L, 1);
-        rl_field(L, 2, "xml");
-        if (kind_id != 5 && !lua_isnil(L, -1))
-            goto invalid;
-        lua_pop(L, 1);
-    }
     if (group) {
         rotmos_route_group_config_init(&gc);
         if (!rl_field_string(L, 2, "prefix", &gc.prefix))
@@ -680,7 +653,9 @@ static int rule(lua_State *L, int kind_id)
                                      &r->group, &e);
     } else {
         rotmos_route_config_init(&config);
-        if (codec)
+        if (kind_id == 5)
+            rotmos_body_policy_init_upload(&config.body);
+        else if (codec)
             rotmos_body_policy_init_materialized(&config.body);
         if (!rl_route_path(L, 2, &config) ||
             !rl_methods(L, 2,
@@ -717,12 +692,13 @@ static int rule(lua_State *L, int kind_id)
         }
         rl_field(L, 2, "body");
         if (!lua_isnil(L, -1) &&
-            !rl_body_policy(L, -1, &config.body, upload, &e))
+            !rl_body_policy(L, -1, &config.body, upload || kind_id == 5, &e))
             goto failed;
         lua_pop(L, 1);
         if (codec) {
             rl_field(L, 2, "input_schema");
-            if (!lua_isnil(L, -1) && config.body.mode != ROTMOS_BODY_BUFFERED &&
+            if (kind_id != 5 && !lua_isnil(L, -1) &&
+                config.body.mode != ROTMOS_BODY_BUFFERED &&
                 config.body.mode != ROTMOS_BODY_MATERIALIZED)
                 goto invalid;
             lua_pop(L, 1);
@@ -736,7 +712,10 @@ static int rule(lua_State *L, int kind_id)
                                                             NULL, &e)
                          : rotmos_router_upload_stream(
                                rotmos_server_router(s->native), &uc, NULL, &e);
-        } else
+        } else if (codec)
+            status =
+                rl_codec_route_register(L, r, parent, &config, kind_id, &e);
+        else
             status =
                 parent != NULL
                     ? rotmos_route_group_route(parent->group, &config, NULL, &e)

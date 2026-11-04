@@ -15,6 +15,7 @@ typedef struct rotmos_xml_node rotmos_xml_node;
 typedef struct rotmos_xml_sax rotmos_xml_sax;
 struct lonejson_schema_view;
 struct lonejson_record_view;
+struct rotmos_record_provider;
 typedef struct rotmos_xml_generator rotmos_xml_generator;
 typedef struct rotmos_xml_config {
     const char *root_element, *text_key, *attribute_prefix;
@@ -88,6 +89,7 @@ typedef struct rotmos_xml_route_config {
     rotmos_xml_route_fn handler;
     void *userdata;
     rotmos_route_hooks hooks;
+    const struct rotmos_record_provider *records;
 } rotmos_xml_route_config;
 ROTMOS_API void rotmos_xml_route_config_init(rotmos_xml_route_config *);
 /* Live input uses the bounded upload-reader queue (buffer_bytes=0: 256 KiB).

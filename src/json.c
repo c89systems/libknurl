@@ -76,6 +76,21 @@ rotmos_status rotmos_json_schema_from_map(lonejson *runtime,
     out->record_size = map != NULL ? map->struct_size : 0;
     return rotmos_json_schema_check(out, error);
 }
+rotmos_status rotmos_json_record_check(const lonejson_schema_view *schema,
+                                       const lonejson_record_view *view,
+                                       rotmos_error *error)
+{
+    if (view->size != sizeof(*view) ||
+        view->abi_version != LONEJSON_VIEW_ABI_VERSION ||
+        view->record == NULL ||
+        rotmos_json_schema_check(&view->schema, error) != ROTMOS_OK ||
+        view->schema.map != schema->map || view->schema.runtime == NULL ||
+        (schema->runtime != NULL && view->schema.runtime != schema->runtime))
+        return rotmos_fail(
+            error, ROTMOS_INVALID, "typed_record",
+            "provider must supply initialized storage matching its schema");
+    return ROTMOS_OK;
+}
 rotmos_status rotmos_json_runtime(const lonejson_schema_view *schema,
                                   lonejson **out, int *owned,
                                   rotmos_error *error)

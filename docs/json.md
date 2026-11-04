@@ -128,8 +128,11 @@ Source/callback output through these public operations and released LoneJSON
 interop. Their private table preparation, mutation/GC/reentry, spooled input and
 buffered external-record cases preserve Vectis's writer policy. Lua mapped input
 uses the provider's public owned-record parser over rotmos body/file readers.
-Fixed-schema and general typed Lua routes compose the public router/codecs, with
-materialized record replies and live output from private table preparation.
+Fixed-schema and general typed Lua routes bind the public C typed registrations,
+using their optional record provider to supply pinned Lua-owned storage. C owns
+input parsing, dispatch, serialization and hook ordering. The binding releases
+its record reference on completion/failure; a record retained by Lua remains
+owned by Lua. No second route preparation path or record conversion is needed.
 Their [installed fixture](../tests/lua/typed.lua) covers captured JSON, file/spooled
 input, record lifetime, multiple output schemas and the shared hook chain.
 

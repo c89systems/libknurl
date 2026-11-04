@@ -115,28 +115,10 @@ local function typed_route(self,kind,declaration)
     return invalid(kind..' declaration and handler required')
   end
   local opts=copy(declaration)
-  local handler,input_schema,output_schema=opts.handler,opts.input_schema,opts.output_schema
-  local output_limit=opts.max_output_bytes
-  local xml=type(opts.xml)=='table' and copy(opts.xml) or opts.xml
-  opts.xml=xml
-  opts=options(opts,function(req)
-    local input,err
-    if input_schema~=nil then
-      if kind=='xml_route' then
-        local config=copy(xml);config.schema=input_schema
-        input,err=req.xml_record(config)
-      else input,err=req.json_record(input_schema) end
-      if not input then return nil,err end
-    end
-    if kind=='json_route' then
-      local output=output_schema and output_schema:new_record() or nil
-      local _,failure=handler(req,input,output)
-      if failure~=nil then return nil,failure end
-      if output then return {json_materialized={schema=output_schema,record=output,max_bytes=output_limit}} end
-      return nil
-    end
-    return handler(req,input)
-  end,native.BODY_MATERIALIZED)
+  local handler=opts.handler
+  if type(opts.xml)=='table' then opts.xml=copy(opts.xml) end
+  opts=options(opts,nil,kind=='xml_route' and native.BODY_STREAMING_UPLOAD or native.BODY_MATERIALIZED)
+  opts.handler=function(req,input,output) return handler(request(req),input,output) end
   return register(self,kind,opts,'POST')
 end
 for _,name in ipairs{'json_route','json_typed_route','xml_route'} do

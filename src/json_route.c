@@ -10,10 +10,16 @@ struct json_route {
     rotmos_json_route_fn handler;
     rotmos_json_typed_route_fn typed;
     void *userdata;
+    rotmos_record_provider provider;
+    size_t max_output_bytes;
 };
 struct json_records {
     lonejson_record_view input;
     lonejson_record_view output;
+    rotmos_record_storage input_storage, output_storage;
+    rotmos_record_provider provider;
+    void *userdata;
+    int input_acquired, output_acquired;
     int input_runtime;
     int output_runtime;
 };
@@ -21,11 +27,15 @@ static void release_records(void *data)
 {
     struct json_records *r;
     r = data;
-    if (r->output.record != NULL) {
+    if (r->output_acquired)
+        r->provider.release(&r->output_storage, r->userdata);
+    else if (r->output.record != NULL) {
         lonejson_cleanup(r->output.schema.map, r->output.record);
         free(r->output.record);
     }
-    if (r->input.record != NULL) {
+    if (r->input_acquired)
+        r->provider.release(&r->input_storage, r->userdata);
+    else if (r->input.record != NULL) {
         lonejson_cleanup(r->input.schema.map, r->input.record);
         free(r->input.record);
     }
@@ -70,14 +80,37 @@ static rotmos_status dispatch(rotmos_request *request, rotmos_reply *reply,
                            "cannot allocate route records");
     request->codec_data = records;
     request->codec_cleanup = release_records;
-    status = allocate_record(&route->input, &records->input,
-                             &records->input_runtime, error);
+    records->provider = route->provider;
+    records->userdata = route->userdata;
+    if (route->input.map != NULL && route->provider.acquire != NULL) {
+        records->input_acquired = 1;
+        status = route->provider.acquire(request, 0, &route->input,
+                                         &records->input_storage,
+                                         route->userdata, error);
+        records->input = records->input_storage.view;
+        if (status == ROTMOS_OK)
+            status =
+                rotmos_json_record_check(&route->input, &records->input, error);
+    } else
+        status = allocate_record(&route->input, &records->input,
+                                 &records->input_runtime, error);
     if (status == ROTMOS_OK && records->input.record != NULL)
         status = rotmos_request_json_into(request, &records->input.schema,
                                           records->input.record, error);
-    if (status == ROTMOS_OK)
-        status = allocate_record(&route->output, &records->output,
-                                 &records->output_runtime, error);
+    if (status == ROTMOS_OK) {
+        if (route->output.map != NULL && route->provider.acquire != NULL) {
+            records->output_acquired = 1;
+            status = route->provider.acquire(request, 1, &route->output,
+                                             &records->output_storage,
+                                             route->userdata, error);
+            records->output = records->output_storage.view;
+            if (status == ROTMOS_OK)
+                status = rotmos_json_record_check(&route->output,
+                                                  &records->output, error);
+        } else
+            status = allocate_record(&route->output, &records->output,
+                                     &records->output_runtime, error);
+    }
     if (status != ROTMOS_OK)
         return status;
     input = records->input.record != NULL ? &records->input : NULL;
@@ -97,7 +130,8 @@ static rotmos_status dispatch(rotmos_request *request, rotmos_reply *reply,
          * materializer's standalone 10 MiB default to an existing route. */
         status = rotmos_reply_json_materialized(
             reply, 200, &records->output.schema, records->output.record,
-            (size_t)-1, error);
+            route->max_output_bytes != 0 ? route->max_output_bytes : (size_t)-1,
+            error);
     request->codec_data = NULL;
     request->codec_cleanup = NULL;
     release_records(records);
@@ -141,6 +175,10 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
         (router == NULL && group == NULL))
         return rotmos_fail(error, ROTMOS_INVALID, "json_route",
                            "provide router, declaration and handler");
+    if (config->records != NULL &&
+        (config->records->acquire == NULL || config->records->release == NULL))
+        return rotmos_fail(error, ROTMOS_INVALID, "json_route",
+                           "record provider needs acquire and release");
     if (config->input.map != NULL &&
         rotmos_json_schema_check(&config->input, error) != ROTMOS_OK)
         return ROTMOS_INVALID;
@@ -162,6 +200,9 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
     data->handler = config->handler;
     data->typed = typed;
     data->userdata = config->userdata;
+    data->max_output_bytes = config->max_output_bytes;
+    if (config->records != NULL)
+        data->provider = *config->records;
     rotmos_route_config_init(&route);
     route.method = config->method;
     route.methods = config->methods;
@@ -218,6 +259,7 @@ static rotmos_status typed_route(rotmos_router *router,
     declaration.input = config->input;
     declaration.userdata = config->userdata;
     declaration.hooks = config->hooks;
+    declaration.records = config->records;
     return add_route(router, group, &declaration, config->handler, out, error);
 }
 rotmos_status

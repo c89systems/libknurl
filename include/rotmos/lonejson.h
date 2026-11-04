@@ -81,6 +81,27 @@ typedef rotmos_status (*rotmos_json_typed_route_fn)(
     rotmos_request *request, const lonejson_record_view *input,
     rotmos_reply *reply, void *userdata, rotmos_error *error);
 
+/* Optional owner adapter for typed-route storage (for example Lua records).
+ * Both callbacks are required. Acquire supplies initialized mutable storage
+ * matching the declared schema; output is 0 for input and 1 for output. Owner
+ * is an opaque adapter token. Release runs once for every acquire attempt,
+ * including partial failure, and releases the adapter's reference. The owner
+ * controls final record cleanup; rotmos never frees supplied storage. Parsing
+ * can reset fields under the ordinary mapped-parser contract.
+ * Callbacks run on the owner loop. XML input stays pinned through native parser
+ * acknowledgement; its allocator/field callbacks must support native parsing.
+ * The declaration is copied; callbacks use the route's handler userdata. */
+typedef struct rotmos_record_storage {
+    lonejson_record_view view;
+    void *owner;
+} rotmos_record_storage;
+typedef struct rotmos_record_provider {
+    rotmos_status (*acquire)(rotmos_request *, int output,
+                             const lonejson_schema_view *,
+                             rotmos_record_storage *, void *, rotmos_error *);
+    void (*release)(rotmos_record_storage *, void *);
+} rotmos_record_provider;
+
 typedef struct rotmos_json_route_config {
     rotmos_http_method method;
     rotmos_http_methods methods;
@@ -92,6 +113,8 @@ typedef struct rotmos_json_route_config {
     rotmos_json_route_fn handler;
     void *userdata;
     rotmos_route_hooks hooks;
+    const rotmos_record_provider *records;
+    size_t max_output_bytes;
 } rotmos_json_route_config;
 typedef struct rotmos_json_typed_route_config {
     rotmos_http_method method;
@@ -103,6 +126,7 @@ typedef struct rotmos_json_typed_route_config {
     rotmos_json_typed_route_fn handler;
     void *userdata;
     rotmos_route_hooks hooks;
+    const rotmos_record_provider *records;
 } rotmos_json_typed_route_config;
 
 ROTMOS_API void rotmos_json_route_config_init(rotmos_json_route_config *config);
@@ -112,7 +136,8 @@ rotmos_json_typed_route_config_init(rotmos_json_typed_route_config *config);
  * is materialized before after-hooks, without a new output-size ceiling, and
  * its records are then cleaned. Typed-reply records instead remain valid
  * through producer cleanup when an explicit live reply borrows them. Ordinary
- * staged middleware order applies. No schema means a NULL callback view. */
+ * staged middleware order applies. No schema means a NULL callback view.
+ * Optional max_output_bytes bounds ordinary output; zero adds no limit. */
 ROTMOS_API rotmos_status rotmos_router_json_route(
     rotmos_router *router, const rotmos_json_route_config *config,
     rotmos_route **out, rotmos_error *error);

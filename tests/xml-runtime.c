@@ -32,6 +32,42 @@ static struct {
     pthread_t owner;
     int ready, notified, pipe[2];
 } parsing;
+static int record_acquired, record_released, record_wrong_thread;
+static rotmos_status acquire_record(rotmos_request *request, int output,
+                                    const lonejson_schema_view *schema,
+                                    rotmos_record_storage *storage, void *data,
+                                    rotmos_error *error)
+{
+    rotmos_bytes path = rotmos_request_path(request);
+    (void)data;
+    (void)error;
+    ++record_acquired;
+    if (!pthread_equal(parsing.owner, pthread_self()) || output)
+        return ROTMOS_STATE;
+    storage->view.size = sizeof(storage->view);
+    storage->view.abi_version = LONEJSON_VIEW_ABI_VERSION;
+    storage->view.schema = *schema;
+    storage->view.record = calloc(1, schema->record_size);
+    storage->owner = storage->view.record;
+    if (storage->owner == NULL)
+        return ROTMOS_NOMEM;
+    lonejson_init(schema->runtime, schema->map, storage->owner);
+    return path.length == sizeof("/provider-fail") - 1 &&
+                   memcmp(path.data, "/provider-fail", path.length) == 0
+               ? ROTMOS_IO
+               : ROTMOS_OK;
+}
+static void release_record(rotmos_record_storage *storage, void *data)
+{
+    (void)data;
+    ++record_released;
+    if (!pthread_equal(parsing.owner, pthread_self()))
+        ++record_wrong_thread;
+    if (storage->owner != NULL) {
+        lonejson_cleanup(storage->view.schema.map, storage->owner);
+        free(storage->owner);
+    }
+}
 static void note_allocation(size_t size)
 {
     int expected = 0;
@@ -321,6 +357,8 @@ static int client(unsigned short port)
     strcat(live, "</ignored></doc>");
     CHECK(exchange(port, "/live", live, 0, "", 0, -1) == 0);
     CHECK(exchange(port, "/live", live, 200, "parsed live", 0, 0) == 0);
+    CHECK(exchange(port, "/provider-fail",
+                   "<doc><message>unused</message></doc>", 500, "", 0, 0) == 0);
     /* A wrong root is rejected without receiving the declared final byte. */
     memset(live, 0, 50000);
     strcpy(live, "<wrong>");
@@ -379,7 +417,10 @@ static int worker_exit(rotmos_server *server, const rotmos_process_context *p,
     (void)server;
     (void)p;
     (void)data;
-    return stopped ? 0 : 1;
+    return stopped && record_acquired == 3 && record_released == 3 &&
+                   record_wrong_thread == 0
+               ? 0
+               : 1;
 }
 int main(void)
 {
@@ -387,6 +428,7 @@ int main(void)
     rotmos_server_config config;
     rotmos_listener_config listener;
     rotmos_xml_route_config xml;
+    rotmos_record_provider provider;
     struct reference_xml_route forward;
     lonejson_allocator allocator;
     lonejson_config policy;
@@ -444,11 +486,17 @@ int main(void)
     xml.path = "/live";
     xml.input = &live_schema;
     xml.buffer_bytes = 2048;
+    provider.acquire = acquire_record;
+    provider.release = release_record;
+    xml.records = &provider;
     xml.hooks.before = live_before;
     xml.xml.root_element = "doc";
     forward.app = server;
     forward.handler = live_echo;
     forward.userdata = NULL;
+    CHECK(reference_xml_register(rotmos_server_router(server), &xml, &forward,
+                                 &error) == ROTMOS_OK);
+    xml.path = "/provider-fail";
     CHECK(reference_xml_register(rotmos_server_router(server), &xml, &forward,
                                  &error) == ROTMOS_OK);
     rotmos_xml_route_config_init(&xml);

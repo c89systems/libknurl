@@ -50,6 +50,7 @@ struct rl_rule {
     int is_upload;
     int native_reply;
     size_t buffer_bytes;
+    int codec_kind;
 };
 struct rl_request {
     rotmos_request *native;
@@ -57,6 +58,7 @@ struct rl_request {
     int streaming_upload, upload_opened, upload_closed, upload_finishing;
     struct rl_rule *upload;
     int native_reply;
+    int typed_records[2];
 };
 struct rl_source {
     rotmos_source *native;
@@ -160,7 +162,10 @@ int rl_openapi(lua_State *);
 int rl_request_json_record(lua_State *);
 int rl_request_json_array_each(lua_State *);
 int rl_request_xml_record(lua_State *);
-int rl_codec_route_check(lua_State *, int, int, rotmos_error *);
+rotmos_status rl_codec_route_register(lua_State *, struct rl_rule *,
+                                      struct rl_rule *,
+                                      const rotmos_route_config *, int,
+                                      rotmos_error *);
 rotmos_status rl_codec_reply(lua_State *, int, int, int, rotmos_reply *, int,
                              const char *, rotmos_error *);
 struct rl_source *rl_source_native_new(lua_State *, int, lua_CFunction,
