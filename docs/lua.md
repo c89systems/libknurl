@@ -448,10 +448,55 @@ shared provider instance. No dependency Lua source or interop header is added to
 the C-only rotmos SDK. Standalone hosts add the provider's installed facade and
 module search paths; preloading rotmos does not change host package paths.
 
+`rotmos.xml.document(bytes, options)` lifts Vectis's owned document facade.
+Options are `max_bytes` (16 MiB) and `max_xpath_nodes` (4096), with explicit
+positive limits no greater than 2147483647. Documents expose `root()`,
+`xpath(expression, namespaces)`, `serialize_materialized(formatted)` and `close()`.
+XPath namespaces are prefix/URI maps of at most 256 entries; results are scalar
+numbers/booleans/strings or arrays of element views. Expressions are bounded to
+1 MiB. Non-element node sets are rejected by the C API.
+
+Element views expose `name()` (local name, URI, prefix), `text()`,
+`attribute(name, namespace_uri)`, `set_text(bytes)`,
+`set_attribute(name, bytes, {namespace=...,prefix=...})`,
+`append_child(name, {namespace=...,prefix=...,text=...})`, `remove()` and `close()`.
+Every mutation invalidates prior views, including its receiver; newly appended
+children are fresh views. Views retain their document until close/collection;
+explicit document close invalidates them. Absent attributes return nil, while
+empty attributes return an empty string. Owned byte/XPath results are retired
+on scope exit, including Lua allocation failure. Document closure is guarded
+through result conversion; independent unused views can still be collected.
+
+`rotmos.xml.sax(callbacks, options)` exposes `feed(bytes)`, `finish()` and `close()`.
+Callbacks are copied: `start_element(name, attributes, namespace)`,
+`end_element(name, namespace)` and `text(bytes)`. Attributes contain
+`name/value/namespace/prefix`; namespace records contain `uri/prefix`, plus a
+`declarations` array for starts. Metadata is copied before calling Lua. Events
+arrive synchronously before input completion. Feed/text chunks are at most
+65536 bytes, with no cumulative input-size bound or hidden DOM. The public
+parser's token/depth limits still apply. Start events allow at most 256 combined
+attributes/declarations and `max_metadata_bytes` defaults to 16 MiB.
+
+SAX exceptions and `nil, error` stop the parser and retain the same error object
+for subsequent operations. Other returns, including false, are ignored.
+Callback construction and execution are protected; Lua errors cannot cross
+libxml2. Reentry/close fails the active parse even when the callback catches the
+failure. Independent nested parsers are supported. Finish is idempotent after
+success. Close calls no callback and releases retained callback owners.
+
+These objects preserve Vectis's Lua argument-error contract for malformed
+arguments and explicitly closed receivers. Native failures and invalidated views
+use the public rotmos error format. Process/thread confinement, mutation,
+DTD/external-resource rejection and parsing belong to the public C API.
+Documents, views and SAX receivers also support Lua 5.5 `<close>` scopes.
+The [ported XML fixture](../tests/lua/xml.lua) covers those workflows, bounded
+delivery beyond 16 MiB, callbacks/reentry, both collectors, owner release and
+allocation failures.
+
 ## Remaining binding surfaces
 
 The binding is incomplete. TLS material openers/ACME state callbacks,
-remaining policy/admission/observation/control callbacks, selected-array input, XML DOM/SAX,
+remaining policy/admission/observation/control callbacks, selected-array input,
 REST/OpenAPI, custom asset/storage providers and packed mounts,
 remaining direct dispatch/response operations still need
 their public C bindings. Known unsupported options return an error. No transport

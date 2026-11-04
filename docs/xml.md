@@ -134,4 +134,8 @@ output, request-owned parsing and `server/group:xml_route` through the public C
 codecs and LoneJSON interop. Data/path inputs, root/text/attribute options,
 trimming, unknown-field precedence and separate mapped limits follow Vectis.
 The [installed typed fixture](../tests/lua/typed.lua) covers these paths and copied
-route options. Lua DOM/SAX binding remains required by the full specification.
+route options. Owned Lua document/XPath/element and incremental SAX bindings lift
+Vectis's object facade through these public operations. Their
+[ported fixture](../tests/lua/xml.lua) covers mutation, retained owners, result
+cleanup, callback identity/reentry and Lua allocation failure. Node finalizers
+retire independent views during other queries without closing the active DOM.

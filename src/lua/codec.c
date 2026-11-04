@@ -691,5 +691,6 @@ void rl_codecs_open(lua_State *L)
     luaL_newlib(L, json);
     lua_setfield(L, -2, "json");
     luaL_newlib(L, xml);
+    rl_xml_objects_open(L);
     lua_setfield(L, -2, "xml");
 }

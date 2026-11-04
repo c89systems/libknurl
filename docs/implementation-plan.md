@@ -168,7 +168,7 @@ callback/source output retains them through native cleanup. Buffered serializers
 also accept external mutable records, preserving Vectis's established distinction.
 The short installed fixture ports mutation, collection, reentry and private
 spooled-input cases and adds bounded pulls, cancellation, wire output, sink errors
-and allocation unwinding. Selected-array input, XML DOM/SAX and the
+and allocation unwinding. Selected-array input and the
 other remaining binding/packaging surfaces remain part of the full goal.
 
 Lua mapped parsing and typed JSON/XML route conveniences now compose the public
@@ -179,5 +179,14 @@ materialized record output or privately prepared live table output. Ordinary
 middleware and staged replacement remain shared with existing routes. The
 installed fixture covers captured JSON, spooled/file input, retained records,
 multiple output schemas, XML options, owner scope and allocation failure.
-Selected-array input, XML DOM/SAX, the other Lua families, packaging and final
+Selected-array input, the other Lua families, packaging and final
 integration/artifact verification remain required by the full goal.
+
+The Lua document/XPath/element and SAX facade now lifts Vectis's self-contained
+binding through public rotmos XML operations. Scope-owned results, mutation
+invalidation, copied callbacks and sticky callback-error identity are preserved.
+The ported fixture adds allocation unwinding, coroutine/invalid-argument reentry,
+both collectors and prompt owner release. A focused collection regression also
+verifies node-view finalization while the same document serves another query.
+Selected-array input and the other remaining Lua families, packaging and final
+integration/artifact verification remain part of the full goal.
