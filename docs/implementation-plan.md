@@ -190,3 +190,11 @@ both collectors and prompt owner release. A focused collection regression also
 verifies node-view finalization while the same document serves another query.
 Selected-array input and the other remaining Lua families, packaging and final
 integration/artifact verification remain part of the full goal.
+
+The Lua buffered REST server helpers now lift Vectis's decode/validate/handler
+and error-response behavior over the public router and bounded JSON reply API.
+OpenAPI annotations and JSON/YAML generation use public schema views and native
+router metadata, with schema owners retained through server close. The installed
+fixture covers REST wire workflows, error identity, body/output bounds, metadata
+copies, schema lifetime and allocation unwinding. Remaining Lua families,
+packaging and final integration/artifact verification are still required.

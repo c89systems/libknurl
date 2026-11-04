@@ -1787,12 +1787,15 @@ from typed-record fast routes and live response producers.
 The [buffered REST C implementation](rest.md) supplies public decode, validation,
 handler/error and release callbacks through `<rotmos/lonejson.h>`, with owner-loop
 execution, retained decoded values through source cleanup and bounded materialized
-JSON replies. Its default decoder supplies a public LoneJSON JSON value; the Lua
-binding may provide its own public callback adapters. The [OpenAPI implementation](openapi.md)
+JSON replies. Its default decoder supplies a public LoneJSON JSON value. The Lua
+facade lifts Vectis's existing buffered workflow through public routing and
+bounded JSON reply composition. The [OpenAPI implementation](openapi.md)
 attaches copied metadata to the router, borrows immutable maps through router
 destruction and emits bounded owned JSON/YAML. Recursive schema collection is
 iterative. Overlapping path/method annotations, duplicate response statuses and
-conflicting schema names fail explicitly. Lua policy/facade integration and final
+conflicting schema names fail explicitly. Lua metadata bindings retain schema
+owners through server close and use the same registry for generation. Remaining
+Lua policy/provider integration and final
 combined transport/fault coverage remain part of the full implementation goal.
 
 ### Server-sent events

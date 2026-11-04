@@ -48,3 +48,28 @@ Its 512-node recursive graph runs on a default-stack thread, including musl.
 The [REST wire fixture](../tests/rest-runtime.c) serves a document during a run
 and verifies that annotation mutation is rejected there. Both are relocated
 static/shared SDK consumers.
+
+Lua `server:openapi_doc{path, method/methods, ...}` accepts Vectis's summary,
+operation_id/operationId, tags, request and responses declarations. A schema is
+`{name/schema_name=..., schema=lonejson_schema}`; names must be nonempty.
+Responses accept status/status_code, description/desc and an optional named
+schema. A provided responses array must be nonempty. The binding extracts only
+released public schema views, pins their owners until server close, and copies
+metadata through the public router API. Mutation of the original declaration
+does not change the annotation. Failed attachments release their temporary
+owners, including allocation failures.
+
+`server:openapi{title, version, format, max_bytes}` returns buffered JSON by
+default; yaml/yml select YAML. It retains C defaults and output bounds and may
+run inside a handler. Attachment during a run returns STATE. Scope guards free
+builder/output allocations if a Lua allocation fails while returning results.
+
+Ordinary, typed, upload, static, WebDAV and SSE route declarations accept an
+optional `openapi` table (nil/false skips it). Groups preserve the composed path
+and methods. As in Vectis, this convenience registers the route before attaching
+its annotation: an annotation failure leaves that route registered. Treat such
+declaration failures as setup failures before run. Individual native route and
+annotation operations each retain their own failure guarantees. Explicit
+`openapi_doc` remains available independently of route registration.
+The [installed Lua fixture](../tests/lua/rest.lua) covers schema retention and
+release, aliases, copied metadata, generation, conflicts and allocation failure.

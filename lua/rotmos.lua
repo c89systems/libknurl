@@ -69,13 +69,32 @@ local function options(opts,handler,body_mode)
   end
   return opts
 end
+local function register(self,name,opts,default_method)
+  local doc=opts.openapi
+  if doc~=nil and doc~=false and type(doc)~='table' then return invalid('route openapi must be a table') end
+  if type(doc)=='table' then
+    doc=copy(doc)
+    doc.path=opts.path or opts.path_prefix
+    doc.method,doc.methods=opts.method or default_method,opts.methods
+    if self._prefix and self._prefix~='' and self._prefix~='/' and type(doc.path)=='string' then
+      local prefix=self._prefix
+      if opts.path_kind=='regex' or doc.path:sub(1,1)=='^' then
+        prefix=prefix:gsub('([%.%+%*%?%^%$%(%)%[%]{}|\\])','\\%1')
+        doc.path='^'..prefix..(doc.path:sub(1,1)=='^' and doc.path:sub(2) or doc.path)
+      else doc.path=prefix..doc.path end
+    end
+  end
+  opts.openapi=nil
+  local handle,err=self._native[name](self._native,opts)
+  if not handle then return nil,err end
+  if type(doc)=='table' then return (self._server or self):openapi_doc(doc) end
+  return true
+end
 local function route(self,path,handler,opts)
   if type(path)=='table' then opts=path;handler=opts.handler;path=opts.path end
   if opts~=nil and type(opts)~='table' then return invalid('route options table required') end
   opts=options(opts,handler);opts.path=path
-  local handle,err=self._native:route(opts)
-  if not handle then return nil,err end
-  return true
+  return register(self,'route',opts,'GET')
 end
 Server.route,Group.route=route,route
 local function typed_route(self,kind,declaration)
@@ -105,9 +124,7 @@ local function typed_route(self,kind,declaration)
     end
     return handler(req,input)
   end,native.BODY_MATERIALIZED)
-  local handle,err=self._native[kind](self._native,opts)
-  if not handle then return nil,err end
-  return true
+  return register(self,kind,opts,'POST')
 end
 for _,name in ipairs{'json_route','json_typed_route','xml_route'} do
   Server[name]=function(self,opts) return typed_route(self,name,opts) end
@@ -128,9 +145,7 @@ local function upload(self,opts)
     if type(fn)=='function' then opts[name]=function(req,...) return fn(request(req),...) end
     else opts[name]=fn end
   end
-  local handle,err=self._native:upload(opts)
-  if not handle then return nil,err end
-  return true
+  return register(self,'upload',opts,'POST')
 end
 Server.upload,Group.upload=upload,upload
 local function convenience(self,name,opts)
@@ -149,9 +164,7 @@ local function convenience(self,name,opts)
     opts.file=nil
   end
   opts=options(opts,nil,name=='upload_file' and native.BODY_STREAMING_UPLOAD or nil)
-  local handle,err=self._native[name](self._native,opts)
-  if not handle then return nil,err end
-  return true
+  return register(self,name,opts,name=='upload_file' and 'POST' or name=='webdav' and 'ANY' or {'GET','HEAD'})
 end
 for _,name in ipairs{'static_file','static_directory','upload_file','webdav'} do
   Server[name]=function(self,opts) return convenience(self,name,opts) end
@@ -186,7 +199,9 @@ function Server:group(prefix,opts)
   opts=options(opts);opts.prefix=prefix
   local handle,err=self._native:group(opts)
   if not handle then return nil,err end
-  return setmetatable({_native=handle,_server=self},Group)
+  local normalized=prefix
+  if type(normalized)=='string' and normalized:sub(-1)=='/' then normalized=normalized:sub(1,-2) end
+  return setmetatable({_native=handle,_server=self,_prefix=normalized},Group)
 end
 function Server:run() return self._native:run() end
 function Server:stop() return self._native:stop() end
@@ -197,6 +212,8 @@ function Server:set_serving(value) return self._native:set_serving(value) end
 function Server:state() return self._native:state() end
 function Server:listener(index) return self._native:listener(index) end
 function Server:route_count() return self._native:route_count() end
+function Server:openapi_doc(opts) return self._native:openapi_doc(opts) end
+function Server:openapi(opts) return self._native:openapi(opts) end
 function Server:proxy(opts)
   if type(opts)~='table' then return invalid('proxy declaration table required') end
   local handle,err=self._native:proxy(copy(opts))
@@ -222,7 +239,7 @@ local function sse(self,opts)
   if type(opts)~='table' or type(opts.read)~='function' then return invalid('SSE declaration and read callback required') end
   opts=copy(opts)
   local allowed={path=true,path_kind=true,method=true,methods=true,body=true,auth=true,before=true,after=true,
-    open=true,read=true,close=true,headers=true,status=true,status_code=true,content_type=true}
+    open=true,read=true,close=true,headers=true,status=true,status_code=true,content_type=true,openapi=true}
   for key in pairs(opts) do if not allowed[key] then return invalid('unknown SSE field: '..tostring(key)) end end
   for _,name in ipairs{'open','close'} do
     if opts[name]~=nil and type(opts[name])~='function' then return invalid('SSE '..name..' must be a function') end
@@ -240,7 +257,7 @@ local function sse(self,opts)
     end
   end
   local route_opts={}
-  for _,name in ipairs{'path','path_kind','method','methods','auth','before','after'} do route_opts[name]=opts[name] end
+  for _,name in ipairs{'path','path_kind','method','methods','auth','before','after','openapi'} do route_opts[name]=opts[name] end
   route_opts.body='none'
   route_opts.handler=function(req)
     local state
@@ -261,6 +278,143 @@ local function sse(self,opts)
   return self:route(route_opts)
 end
 Server.sse,Group.sse=sse,sse
+-- Lifted from vectis.rest's server helpers. Outbound clients stay in Vectis.
+local rest={JSON_CONTENT_TYPE='application/json; charset=utf-8'}
+M.rest=rest
+function rest.json(value,opts)
+  local response,err=native.rest.json(value,opts)
+  if err then err.kind='json_encode' end
+  return response,err
+end
+local rest_fallback='{"ok":false,"error":{"kind":"json_encode","message":"REST error response JSON encode failed",'..
+  '"status":'..tostring(native.status.INVALID)..',"source_code":'..tostring(native.rest.ERROR_SOURCE_LONEJSON)..'}}\n'
+local function error_value(value,opts)
+  local err=type(value)=='table' and copy(value) or {message=tostring(value)}
+  err.status=err.status or opts.error_status or native.status.STATE
+  err.source_code=err.source_code or err.source or opts.source_code or 1
+  err.message=err.message or 'request failed'
+  err.kind=err.kind or 'error'
+  if opts.status or opts.status_code then err.http_status=opts.status or opts.status_code end
+  return err
+end
+local function error_http_status(err)
+  if type(err.http_status)=='number' then return err.http_status end
+  local status=native.status
+  return err.status==status.INVALID and 400 or err.status==status.CONFLICT and 409 or
+    err.status==status.NOT_SUPPORTED and 501 or err.status==status.TIMEOUT and 504 or 500
+end
+function rest.error_response(value,opts)
+  opts=opts or {}
+  local err=error_value(value,opts)
+  local response,failure=rest.json({ok=false,error=err},{status=error_http_status(err),headers=opts.headers})
+  if response then return response end
+  response=rest.json({ok=false,error={kind='json_encode',
+    message='REST error response JSON encode failed: '..tostring(failure and failure.message or failure),
+    status=native.status.INVALID,source_code=native.rest.ERROR_SOURCE_LONEJSON}},
+    {status=opts.fallback_status or 500,headers=opts.headers})
+  return response or {status=opts.fallback_status or 500,content_type=rest.JSON_CONTENT_TYPE,
+    body=rest_fallback}
+end
+local function route_response(value)
+  if type(value)~='table' then return false end
+  for _,key in ipairs{'body','file_path','file','content_type','headers','stream_source','spooled_source',
+    'json','xml','json_materialized','xml_materialized'} do
+    if value[key]~=nil then return true end
+  end
+  return type(value.status)=='number' or type(value.status_code)=='number'
+end
+local function rest_response(value,opts)
+  if value==nil and opts==nil then return nil end
+  if route_response(value) then return value end
+  local response,err=rest.json(value,opts)
+  return response or rest.error_response(err,{status=500})
+end
+local rest_keys={decode_json=true,error_handler=true,max_body_bytes=true,response=true,routes=true,validate=true,
+  prefix=true,path_prefix=true}
+local function rest_route_options(opts)
+  if type(opts)~='table' or type(opts.handler)~='function' then
+    return invalid('rotmos.rest.route requires options and handler')
+  end
+  opts=copy(opts)
+  if opts.response~=nil then
+    if type(opts.response)~='table' then return invalid('REST response options must be a table') end
+    opts.response=copy(opts.response)
+  end
+  for _,name in ipairs{'validate','error_handler'} do
+    if opts[name]~=nil and type(opts[name])~='function' then return invalid('REST '..name..' must be a function') end
+  end
+  if opts.decode_json~=nil and type(opts.decode_json)~='boolean' then return invalid('REST decode_json must be boolean') end
+  local route={}
+  for key,value in pairs(opts) do if not rest_keys[key] then route[key]=value end end
+  local body=route.body
+  if type(body)=='string' then body={mode=body}
+  elseif body==true then body={mode='buffered'}
+  elseif body==false then body={mode='none'}
+  elseif type(body)=='table' then body=copy(body)
+  elseif body~=nil then return invalid('REST body must be buffered or none') end
+  if body==nil and opts.decode_json~=false then body={mode='buffered',max_bytes=opts.max_body_bytes or 1048576} end
+  if body then
+    local mode=body.mode or 'buffered'
+    if mode~='buffered' and mode~=native.BODY_BUFFERED and mode~='none' and mode~=native.BODY_NONE then
+      return invalid('REST body must be buffered or none')
+    end
+    body.mode=mode
+    if mode=='buffered' or mode==native.BODY_BUFFERED then
+      body.max_bytes=body.max_bytes or opts.max_body_bytes or 1048576
+      body.memory_buffer_limit_bytes=body.memory_buffer_limit_bytes or 1048576
+    end
+    route.body=body
+  end
+  route.handler=function(req)
+    if opts.decode_json~=false and req.body~=nil and req.body~='' then
+      local decoded,value=pcall(require('lonejson').decode_json,req.body)
+      if not decoded then return rest.error_response({kind='json_parse',message=tostring(value),
+        status=native.status.INVALID,source_code=native.rest.ERROR_SOURCE_LONEJSON},{status=400}) end
+      req.json=value
+    end
+    if opts.validate then
+      local valid,value,detail=pcall(opts.validate,req.json,req)
+      if not valid then return rest.error_response({kind='validation',message=tostring(value),
+        status=native.status.INVALID},{status=400}) end
+      if value~=nil and value~=true then
+        if route_response(value) then return value end
+        return rest.error_response(detail or value or {kind='validation',message='request validation failed',
+          status=native.status.INVALID},{status=400})
+      end
+    end
+    local handled,value,response_opts=pcall(opts.handler,req)
+    if not handled then
+      if opts.error_handler then
+        local recovered=opts.error_handler(value,req)
+        if recovered~=nil then return recovered end
+      end
+      return rest.error_response({kind='handler',message=tostring(value),status=native.status.STATE},{status=500})
+    end
+    return rest_response(value,response_opts or opts.response)
+  end
+  return route
+end
+function rest.route(server,opts)
+  if type(server)~='table' or type(server.route)~='function' then return invalid('REST server or group required') end
+  local route,err=rest_route_options(opts)
+  if not route then return nil,err end
+  return server:route(route)
+end
+function rest.group(server,opts)
+  if type(server)~='table' or type(server.group)~='function' or type(opts)~='table' or type(opts.routes)~='table' then
+    return invalid('REST server, group options and routes required')
+  end
+  local group={prefix=opts.prefix or opts.path_prefix,routes={}}
+  for index,item in ipairs(opts.routes) do
+    if type(item)~='table' then return invalid('REST group route must be a table') end
+    local merged=copy(opts)
+    for key,value in pairs(item) do merged[key]=value end
+    local route,err=rest_route_options(merged)
+    if not route then return nil,err end
+    group.routes[index]=route
+  end
+  return server:group(group)
+end
 function M.server(opts)
   if opts~=nil and type(opts)~='table' then return invalid('server configuration table required') end
   opts=copy(opts)

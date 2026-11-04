@@ -17,6 +17,11 @@ and [existing bridge](../../vectis/src/vectis_cli.c), rather than a new server
 framework. The [integration contract](vectis-integration-contract.md) remains
 the complete replacement requirement.
 
+The [buffered REST facade](rest.md) also lifts Vectis's server-side
+`rotmos.rest.route/group/json/error_response` workflow. [OpenAPI](openapi.md)
+binds `server:openapi_doc/openapi` and route annotations to the same public C
+router, with retained public LoneJSON schema owners and bounded JSON/YAML output.
+
 ```lua
 local rotmos = require("rotmos")
 local server = assert(rotmos.server {

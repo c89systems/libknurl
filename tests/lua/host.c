@@ -371,6 +371,52 @@ static int spawn_typed(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+static int spawn_rest(lua_State *L)
+{
+    static const struct {
+        const char *method, *path, *input;
+        int status;
+        const char *output;
+    } cases[] = {{"POST", "/echo", "{\"n\":2}", 202, "{\"n\":2}\n"},
+                 {"POST", "/echo", "{", 400, NULL},
+                 {"POST", "/validate", "{}", 400, NULL},
+                 {"POST", "/validate-reply", "{}", 422, "validation"},
+                 {"POST", "/validate-throw", "{}", 400, NULL},
+                 {"GET", "/throw", "", 500, NULL},
+                 {"GET", "/recover", "", 418, "recovered"},
+                 {"POST", "/raw", "not JSON", 201, "not JSON"},
+                 {"GET", "/empty", "", 204, ""},
+                 {"POST", "/null", "null", 200, "true\n"},
+                 {"GET", "/source", "", 200, "live"},
+                 {"POST", "/api/one", "{\"n\":1}", 201, "{\"n\":1}"},
+                 {"POST", "/native/r", "{}", 200, "{}\n"},
+                 {"GET", "/bounded", "", 500, NULL},
+                 {"POST", "/blocked", "{", 401, "blocked"},
+                 {"POST", "/denied", "{", 403, NULL},
+                 {"POST", "/limited", "{\"n\":123456}", 413, NULL},
+                 {"GET", "/docs", "", 200, NULL},
+                 {"GET", "/stop", "", 200, "ok"}};
+    unsigned short port = (unsigned short)luaL_checkinteger(L, 1);
+    size_t i;
+    int failed = 0;
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        for (i = 0; !failed && i < sizeof(cases) / sizeof(cases[0]); ++i)
+            failed = rotmos_lua_test_exchange(
+                port, cases[i].method, cases[i].path, cases[i].input,
+                strlen(cases[i].input), cases[i].status, cases[i].output,
+                cases[i].output != NULL ? strlen(cases[i].output) : 0);
+        if (failed)
+            kill(getppid(), SIGTERM);
+        _exit(failed);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
 static int join(lua_State *L)
 {
     int status;
@@ -1217,6 +1263,8 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "spawn_codecs");
     lua_pushcfunction(L, spawn_typed);
     lua_setfield(L, -2, "spawn_typed");
+    lua_pushcfunction(L, spawn_rest);
+    lua_setfield(L, -2, "spawn_rest");
     lua_pushstring(L, argv[2]);
     lua_setfield(L, -2, "root");
     if (argc == 4) {

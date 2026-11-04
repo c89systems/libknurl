@@ -21,6 +21,8 @@ static int l_close(lua_State *L)
     lua_setiuservalue(L, 1, 2);
     lua_pushnil(L);
     lua_setiuservalue(L, 1, 3);
+    lua_pushnil(L);
+    lua_setiuservalue(L, 1, 4);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -160,7 +162,7 @@ static int l_new(lua_State *L)
         return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
                                     "server configuration table required"),
                             &error));
-    s = lua_newuserdatauv(L, sizeof(*s), 3);
+    s = lua_newuserdatauv(L, sizeof(*s), 4);
     index = lua_absindex(L, -1);
     memset(s, 0, sizeof(*s));
     s->L = L;
@@ -178,6 +180,8 @@ static int l_new(lua_State *L)
     lua_setiuservalue(L, -2, 2);
     lua_newtable(L);
     lua_setiuservalue(L, -2, 3);
+    lua_newtable(L);
+    lua_setiuservalue(L, -2, 4);
     rotmos_server_config_init(&config);
     if (!rl_config_parse(L, 1, &config, &error)) {
         return rl_error(L, &error);
@@ -755,6 +759,8 @@ void rl_servers_open(lua_State *L)
         {"now", rl_now},
         {"group", l_group},
         {"route_count", l_route_count},
+        {"openapi_doc", rl_openapi_doc},
+        {"openapi", rl_openapi},
         {NULL, NULL}};
     luaL_newmetatable(L, RL_SERVER);
     lua_pushcfunction(L, l_gc);
