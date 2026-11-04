@@ -18,6 +18,7 @@ static int l_close(lua_State *L)
     if (status != ROTMOS_OK)
         return rl_error(L, &error);
     s->native = NULL;
+    rl_logging_cleanup(s);
     lua_pushnil(L);
     lua_setiuservalue(L, 1, 1);
     lua_pushnil(L);
@@ -35,9 +36,11 @@ static int l_gc(lua_State *L)
 {
     struct rl_server *s = rl_server(L, 1);
     if (s != NULL) {
-        if (s->native != NULL &&
-            rotmos_server_destroy(s->native, NULL) == ROTMOS_OK)
+        if (s->native == NULL ||
+            rotmos_server_destroy(s->native, NULL) == ROTMOS_OK) {
             s->native = NULL;
+            rl_logging_cleanup(s);
+        }
     }
     return 0;
 }
@@ -172,6 +175,7 @@ static int l_new(lua_State *L)
     memset(s, 0, sizeof(*s));
     s->L = L;
     s->root = LUA_NOREF;
+    rl_logging_init(s);
     luaL_setmetatable(L, RL_SERVER);
     rl_table_copy(L, 1);
     rl_field(L, -1, "callbacks");
@@ -209,6 +213,14 @@ static int l_new(lua_State *L)
     status = rotmos_server_new(&config, &s->native, &error);
     if (status != ROTMOS_OK)
         return rl_error(L, &error);
+    if (!rl_logging_config(L, 1, s, &error))
+        return rl_error(L, &error);
+    lua_getiuservalue(L, index, 1);
+    lua_pushnil(L);
+    lua_setfield(L, -2, "logger");
+    lua_pushnil(L);
+    lua_setfield(L, -2, "access_log");
+    lua_pop(L, 1);
     lua_pushvalue(L, index);
     return 1;
 }
@@ -773,6 +785,7 @@ void rl_servers_open(lua_State *L)
         {"control_interest", rl_control_interest},
         {"supervision_take", rl_supervision_take},
         {"tls_identity_state", rl_tls_identity_state},
+        {"set_pslog", rl_set_pslog},
         {NULL, NULL}};
     luaL_newmetatable(L, RL_SERVER);
     lua_pushcfunction(L, l_gc);

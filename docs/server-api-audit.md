@@ -64,6 +64,11 @@ serialization and hook ordering; the facade only adapts request arguments. The
 record adapter uses released LoneJSON constructors/views and retains owners
 through response cleanup or native acknowledgement. Tests cover partial acquire
 failure, invalid views, parse failure, owner-loop release and Lua record retention.
+Lua logging now uses released pslog check/ref/unref operations and the public C
+logging registration, preserving native-sink validation, severity policy,
+derived sub=http and independent file access logs. Preload/dynamic checks cover
+owner retention/release and coroutine collection. All seven target bindings use
+the pinned shared Lua providers and C SDKs; no core-private headers are imported.
 The remaining surface review and full reference adapter are still open.
 
 ## Evidence limits and work state
@@ -72,7 +77,7 @@ No runtime edits or test runs were made during the stop-and-audit. The repositor
 has selected toolchains and build state for all seven targets, public-header
 binding imports and installed consumers. Prior per-slice checks do not prove
 Vectis parity. The concrete installed Vectis reference adapter is missing; Lua
-provider/logging operations, source/rock packaging and final compatibility/artifact
+provider operations, source/rock packaging and final compatibility/artifact
 checks remain incomplete. The [implementation plan](implementation-plan.md)
 orders correction work under the revised active implementation goal.
 

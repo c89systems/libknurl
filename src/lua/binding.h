@@ -4,6 +4,7 @@
 #include <rotmos/lua.h>
 #include <lua.h>
 #include <lauxlib.h>
+#include <pslog_lua.h>
 #include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -41,6 +42,7 @@ struct rl_server {
     rotmos_error callback_error;
     long process_id;
     unsigned long run_epoch;
+    pslog_lua_logger_ref logger, access_logger;
 };
 struct rl_rule {
     struct rl_server *server;
@@ -139,6 +141,11 @@ rotmos_status rl_after(rotmos_request *, rotmos_reply *, int *, void *,
                        rotmos_error *);
 void rl_values_open(lua_State *);
 void rl_servers_open(lua_State *);
+void rl_logging_init(struct rl_server *);
+void rl_logging_cleanup(struct rl_server *);
+void rl_logging_open(lua_State *);
+int rl_logging_config(lua_State *, int, struct rl_server *, rotmos_error *);
+int rl_set_pslog(lua_State *);
 void rl_requests_open(lua_State *);
 void rl_sources_open(lua_State *);
 void rl_codecs_open(lua_State *);

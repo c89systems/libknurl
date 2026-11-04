@@ -491,11 +491,11 @@ int rl_config_parse(lua_State *L, int options, int owner,
                     rotmos_server_config *c, rotmos_error *error)
 {
     static const char *const allowed[] = {
-        "name",      "profile",    "listeners",    "signals",
-        "workers",   "io",         "limits",       "http",
-        "callbacks", "tls",        "timeouts",     "proxy",
-        "client_ip", "autoblock",  "start_paused", "correlation_id",
-        "admission", "supervision"};
+        "name",      "profile",     "listeners",    "signals",
+        "workers",   "io",          "limits",       "http",
+        "callbacks", "tls",         "timeouts",     "proxy",
+        "client_ip", "autoblock",   "start_paused", "correlation_id",
+        "admission", "supervision", "logger",       "access_log"};
     static const char *const callbacks[] = {
         "on_process_start",   "on_parent_prepare", "on_parent_ready",
         "on_parent_stopping", "on_parent_stopped", "on_worker_start",

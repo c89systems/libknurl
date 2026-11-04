@@ -28,6 +28,7 @@ int luaopen_rotmos_native(lua_State *L)
     lua_pop(L, 1);
     lua_newtable(L);
     rl_values_open(L);
+    rl_logging_open(L);
     rl_servers_open(L);
     rl_requests_open(L);
     rl_sources_open(L);

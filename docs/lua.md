@@ -477,6 +477,32 @@ shared provider instance. No dependency Lua source or interop header is added to
 the C-only rotmos SDK. Standalone hosts add the provider's installed facade and
 module search paths; preloading rotmos does not change host package paths.
 
+The pslog Lua provider is built similarly into `.cache/sdk/<target>/pslog-lua`,
+using its checksum-pinned source product and the installed public C SDK. Its
+single C99 `static inline` hint is removed by a dependency-only C89 preprocessor
+definition; the source archive is unchanged. `pslog.core` and rotmos's interop
+link resolve to the same shared provider.
+
+`rotmos.server{logger=log,access_log=policy}` and the inactive-server method
+`server:set_pslog(log,policy)` bind `rotmos_server_set_pslog`. The root and optional
+`policy.logger` must be live pslog loggers with native sinks. Public pslog
+check/ref/unref operations retain them through server teardown or replacement,
+including coroutine collection; no userdata layout is imported. Failure keeps
+the prior configuration. Lua output callbacks are rejected before retention.
+Keep borrowed output files open through server use. Explicit logger close keeps
+the retained native allocation safe but can stop output, under pslog's contract.
+
+Access policy accepts Vectis's boolean opt-out or a table with `enabled`,
+`success_level`, `client_error_level`, `server_error_level` and `status_levels`.
+Levels and exact HTTP status overrides keep the baseline trace/warn/error
+defaults and 32-rule bound. With no access logger override, the C runtime derives
+`sub=http` from the root. `access_log=false` or `{enabled=false}` disables
+structured access logs independently of `http.access_log_path`. Application
+seed selection, service fields and category enablement remain host policy.
+The [logging fixture](../tests/lua/logging.lua) covers retention, replacement,
+failed conversion, GC/coroutines, native-sink validation, severity overrides,
+derived and explicit loggers, and independent legacy file output.
+
 `rotmos.xml.document(bytes, options)` lifts Vectis's owned document facade.
 Options are `max_bytes` (16 MiB) and `max_xpath_nodes` (4096), with explicit
 positive limits no greater than 2147483647. Documents expose `root()`,
@@ -524,8 +550,8 @@ allocation failures.
 
 ## Remaining binding surfaces
 
-The binding is incomplete. Custom asset/storage providers and packed mounts,
-pslog logger interop and remaining direct dispatch/response operations still need
+The binding is incomplete. Custom asset/storage providers, packed mounts and
+remaining direct dispatch/response operations still need
 their public C bindings. Known unsupported options return an error. No transport
 or application mechanism belongs in a temporary Vectis adapter to fill those
 gaps. Lua source archive, rockspec/source-rock packaging and final installed

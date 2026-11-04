@@ -48,3 +48,6 @@ still need their corresponding forwarding/parity cases.
 The unused standalone framer has been removed. Native executor/job declarations
 are private, with export/installed-header checks; the proxy framer and native
 I/O/filesystem mechanisms retain their internal callers and invariant coverage.
+Lua server logging now forwards public pslog owner references and access policy
+through the C logging registration. The released pslog Lua provider shares the
+host VM/C SDK; application seed/category policy stays outside librotmos.

@@ -275,6 +275,31 @@ static int spawn(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+static int spawn_logging(lua_State *L)
+{
+    unsigned short port = (unsigned short)lua_tointeger(L, 1);
+    int failed;
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        failed =
+            rotmos_lua_test_exchange(port, "GET", "/ok", "", 0, 202, "ok", 2) ||
+            rotmos_lua_test_exchange(port, "GET", "/bad", "", 0, 404, "missing",
+                                     7) ||
+            rotmos_lua_test_exchange(port, "GET", "/fault", "", 0, 500,
+                                     "failed", 6) ||
+            rotmos_lua_test_exchange(port, "GET", "/stop", "", 0, 200,
+                                     "stopped", 7);
+        if (failed)
+            kill(getppid(), SIGTERM);
+        _exit(failed);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
 static int spawn_codecs(lua_State *L)
 {
     int failed;
@@ -1385,16 +1410,22 @@ int main(int argc, char **argv)
         return 5;
 #endif
     lua_getglobal(L, "package");
-    lua_pushfstring(L, "%s/share/lua/5.5/?.lua;%s/share/lua/5.5/?/init.lua",
-                    argv[2], ROTMOS_LONEJSON_LUA_PREFIX);
+    lua_pushfstring(L,
+                    "%s/share/lua/5.5/?.lua;%s/share/lua/5.5/?/init.lua;%s/"
+                    "share/lua/5.5/?/init.lua",
+                    argv[2], ROTMOS_LONEJSON_LUA_PREFIX,
+                    ROTMOS_PSLOG_LUA_PREFIX);
     lua_setfield(L, -2, "path");
-    lua_pushfstring(L, "%s/lib/lua/5.5/?.so;%s/lib/lua/5.5/?.so", argv[2],
-                    ROTMOS_LONEJSON_LUA_PREFIX);
+    lua_pushfstring(
+        L, "%s/lib/lua/5.5/?.so;%s/lib/lua/5.5/?.so;%s/lib/lua/5.5/?.so",
+        argv[2], ROTMOS_LONEJSON_LUA_PREFIX, ROTMOS_PSLOG_LUA_PREFIX);
     lua_setfield(L, -2, "cpath");
     lua_pop(L, 1);
     lua_newtable(L);
     lua_pushcfunction(L, spawn);
     lua_setfield(L, -2, "spawn");
+    lua_pushcfunction(L, spawn_logging);
+    lua_setfield(L, -2, "spawn_logging");
     lua_pushcfunction(L, join);
     lua_setfield(L, -2, "join");
     lua_pushcfunction(L, fail_next);

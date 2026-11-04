@@ -203,6 +203,7 @@ function Server:stop() return self._native:stop() end
 function Server:close() return self._native:close() end
 function Server:validate() return self._native:validate() end
 function Server:effective_config() return self._native:effective_config() end
+function Server:set_pslog(logger,access_log) return self._native:set_pslog(logger,access_log) end
 function Server:set_serving(value) return self._native:set_serving(value) end
 function Server:state() return self._native:state() end
 function Server:listener(index) return self._native:listener(index) end
