@@ -82,9 +82,9 @@ Linux/Darwin worker-death lock recovery, enabling the production profile.
 native formatter reuse and independent file draining, including restart and
 bounded malformed-worker-log coverage.
 Retain upstream HTTP2 live coverage, forced transport faults and slow-peer memory
-measurements for the combined proxy review. Retain the
-automatic 100 Continue wire-accounting check in that review: the inherited
-native send path still needs alignment with the managed interim counters.
+measurements for the combined proxy review. Automatic HTTP/1.1 100 Continue now
+uses managed interim output; its public fixture verifies the final wire/body
+counters and rejects unsupported HTTP/1.0 expectations before body delivery.
 The storage deadline path now checks absolute expiry at acknowledgement, covering
 completion delivered before its queued timer under scheduler delay. Its focused
 public fixture proves committed/empty late acknowledgement and disabled bounds.

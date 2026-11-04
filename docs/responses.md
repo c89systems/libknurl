@@ -76,7 +76,10 @@ transport-owned headers fail without publishing a partial block.
 
 Interim bytes preserve output ordering and count in both `wire_bytes` and
 `interim_wire_bytes`. Sending an interim or retaining its TLS retry leaves the
-final response replaceable. Replacement preserves queued interim blocks and any
+final response replaceable. Automatic HTTP/1.1 `100 Continue` uses that same
+managed queue, bound and counters after admission. Unsupported HTTP/1.0
+expectations return 417 before body delivery. The
+replacement operation preserves queued interim blocks and any
 native buffer referencing them while removing untouched final output. The
 interim budget remains cumulative after replacement. Pending interim output uses
 the ordinary response write-idle deadline.

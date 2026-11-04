@@ -292,7 +292,8 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
     }
     if (expect) {
         (void)rotmos_request_header_first(request, "expect", &value, NULL);
-        if (expect > 1 || !rotmos_text_equal_case(value.data, "100-continue"))
+        if (expect > 1 || !rotmos_text_equal_case(value.data, "100-continue") ||
+            memcmp(request->version.data, "HTTP/1.1", 8) != 0)
             return reject(native, 417);
     }
     status = rotmos_kore_response_create(runtime, request, &error);
@@ -344,8 +345,14 @@ int rotmos_kore_prebody(struct http_request *native, const void *data,
     if (expect && plan.disposition == ROTMOS_REQUEST_MANAGED &&
         request->has_length &&
         (request->content_length.high || request->content_length.low) &&
-        request->response->phase == ROTMOS_RESPONSE_BUILDING)
-        http_response(native, 100, NULL, 0);
+        request->response->phase == ROTMOS_RESPONSE_BUILDING) {
+        status =
+            rotmos_response_interim(request->response, 100, NULL, 0, &error);
+        if (status != ROTMOS_OK)
+            rotmos_kore_request_fail(request, status, 500);
+        else
+            rotmos_kore_http_status(runtime, native, 100);
+    }
     request->response->schedule(request->response);
     return KORE_RESULT_RETRY;
 }

@@ -21,8 +21,30 @@
 struct fixture {
     pid_t child;
     int mode;
+    int failed;
     char directory[64], access[96], root[96], override[96];
 };
+static void request_closed(rotmos_server *server, rotmos_request *request,
+                           const rotmos_request_outcome *outcome, void *data)
+{
+    struct fixture *f = data;
+    rotmos_bytes path = rotmos_request_path(request);
+    (void)server;
+    if (path.length == 9 && !memcmp(path.data, "/continue", 9) &&
+        (outcome->response.interim_wire_bytes.low != 25 ||
+         outcome->response.interim_wire_bytes.high != 0 ||
+         outcome->response.body_bytes.low != 3 ||
+         outcome->response.wire_bytes.low <= 28))
+        f->failed = 1;
+}
+static int worker_exit(rotmos_server *server,
+                       const rotmos_process_context *process, void *data)
+{
+    struct fixture *f = data;
+    (void)server;
+    (void)process;
+    return f->failed;
+}
 static rotmos_status identifier(rotmos_request *request, char *buffer,
                                 size_t capacity, size_t *length, void *data,
                                 rotmos_error *error)
@@ -142,6 +164,10 @@ static int request(unsigned short port, const char *path, const char *ip,
                  "X-Forwarded-For: %s\r\nContent-Length: 3\r\n"
                  "Expect: 100-continue\r\nConnection: close\r\n\r\nabc",
                  ip);
+    if (!strcmp(path, "/old-continue"))
+        snprintf(input, sizeof(input),
+                 "POST /old-continue HTTP/1.0\r\nHost: localhost\r\n"
+                 "Content-Length: 3\r\nExpect: 100-continue\r\n\r\nabc");
     n = write(fd, input, strlen(input));
     CHECK(n == (ssize_t)strlen(input) || expected == 0);
     if (!strcmp(path, "/abandon")) {
@@ -163,7 +189,9 @@ static int request(unsigned short port, const char *path, const char *ip,
         CHECK(used == 0);
         return 0;
     }
-    snprintf(prefix, sizeof(prefix), "HTTP/1.1 %d ", expected);
+    snprintf(prefix, sizeof(prefix), "%s %d ",
+             !strcmp(path, "/old-continue") ? "HTTP/1.0" : "HTTP/1.1",
+             expected);
     start = output;
     if (!strncmp(start, "HTTP/1.1 100 ", 13)) {
         start = strstr(start, "\r\n\r\n");
@@ -196,6 +224,7 @@ static int client(unsigned short port, int mode)
     CHECK(request(port, "/continue", "198.51.100.30", 201) == 0);
     CHECK(request(port, "/continue", "198.51.100.30", 201) == 0);
     CHECK(request(port, "/ok", "198.51.100.30", 403) == 0);
+    CHECK(request(port, "/old-continue", "198.51.100.30", 417) == 0);
     CHECK(request(port, "/abandon", "198.51.100.40", 200) == 0);
     for (i = 0; i < 2; ++i) {
         fd = connect_to(port);
@@ -361,6 +390,8 @@ static int run(int mode)
     config.workers.affinity_disabled = config.http.backend_quiet = 1;
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
     config.callbacks.on_parent_ready = ready;
+    config.callbacks.on_request_close = request_closed;
+    config.callbacks.on_worker_exit = worker_exit;
     config.callbacks.userdata = &f;
     config.client_ip.trusted_proxies = trusted;
     config.client_ip.trusted_proxy_count = 1;
