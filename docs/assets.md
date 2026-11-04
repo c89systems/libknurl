@@ -1,5 +1,8 @@
 # Read-only assets and static serving
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 [`<rotmos/asset.h>`](../include/rotmos/asset.h) supplies read-only opened assets,
 providers and bounded source adapters. [`<rotmos/static.h>`](../include/rotmos/static.h)
 registers files, directory roots and custom providers through the ordinary router.

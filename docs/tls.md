@@ -1,5 +1,8 @@
 # TLS listeners
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 Declare a `ROTMOS_LISTENER_HTTPS` listener and set `identity_index` to an entry in
 `config.tls.identities`. A manual identity has explicit domains and either a
 certificate/key PEM bundle or separate certificate and private-key material.

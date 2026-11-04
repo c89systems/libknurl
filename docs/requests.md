@@ -1,5 +1,8 @@
 # Request plans and bodies
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 Include `<rotmos/dispatch.h>` and `<rotmos/body.h>`, or `<rotmos/rotmos.h>`.
 The ordinary route facade still accepts staged handlers and middleware. The
 router submits that handler's final reply after its selected body has completed.

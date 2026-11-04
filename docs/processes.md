@@ -1,5 +1,8 @@
 # Process lifecycle and observations
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 `rotmos_server_run` keeps the runtime parent on its caller thread and forks the
 backend's declared children. The parent must remain thread-quiescent while
 replacement forks are possible. Initialize process-local bindings in

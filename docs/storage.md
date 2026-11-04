@@ -1,5 +1,8 @@
 # Storage operations and native jobs
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 [`<rotmos/storage.h>`](../include/rotmos/storage.h) defines provider operations,
 resource handles and acknowledged cancellation without Vectis, Lua, filesystem or
 backend layouts. [`<rotmos/executor.h>`](../include/rotmos/executor.h) runs bounded

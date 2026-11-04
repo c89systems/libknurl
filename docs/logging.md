@@ -1,5 +1,8 @@
 # Structured and file access logging
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 Include the optional `<rotmos/pslog.h>`. It uses the installed public libpslog
 types; the core umbrella does not import them. Consumers of this header link
 the matching pslog target explicitly, for example `rotmos::shared` with

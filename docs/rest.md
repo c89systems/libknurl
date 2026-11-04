@@ -1,5 +1,8 @@
 # Buffered REST routes
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 Include `<rotmos/lonejson.h>`. The REST facade lifts Vectis's buffered JSON
 workflow onto the ordinary route/reply chain: decode, optional validation,
 handler, error policy and reply composition. Application schemas, business

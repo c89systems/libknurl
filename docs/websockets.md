@@ -1,5 +1,8 @@
 # Application WebSockets
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 The [public API](../include/rotmos/websocket.h) accepts application WebSockets
 from a headers callback or registers them through `rotmos_router_websocket`.
 The handle, frames and terminal outcome are borrowed. Send, close, resume and

@@ -1,5 +1,8 @@
 # Response delivery
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 Include `<rotmos/response.h>`, or the umbrella `<rotmos/rotmos.h>`.
 `rotmos_request_response(request)` borrows the request's response on its owning
 loop. Ordinary routes normally use the staged reply argument: middleware can

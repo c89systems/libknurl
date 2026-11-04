@@ -1,5 +1,8 @@
 # ACME state publication
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 The backend-internal generation store implements the ACME publication contract.
 It is not an installed application API. The [Kore adapter](../src/kore_acme.c)
 connects it to public server startup, key-manager recovery, certificate

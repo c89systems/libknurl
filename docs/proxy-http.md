@@ -1,5 +1,8 @@
 # HTTP and SSE reverse proxy routes
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 Include [`<rotmos/proxy.h>`](../include/rotmos/proxy.h), or the umbrella
 `<rotmos/rotmos.h>`. Initialize `rotmos_proxy_config`, set a route pattern and
 HTTP/HTTPS base target, then call `rotmos_router_proxy`. Registration copies
@@ -101,4 +104,4 @@ with validated opening responses, opaque duplex bytes and streamed non-101
 rejections. Their admission and deadlines use this worker policy. Upstream
 HTTP2 live exchanges, forced transport faults and slow-peer memory measurements
 remain required combined proxy verification under
-the [complete specification](server-api-spec.md#reverse-proxy).
+the [complete specification](server-api-spec.md#executable-surface).

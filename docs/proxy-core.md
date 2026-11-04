@@ -1,5 +1,8 @@
 # HTTP framing and proxy core
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 The [public framer](../include/rotmos/framing.h) incrementally decodes fixed-length
 or chunked HTTP request bodies. It reuses the proxy framing implementation from
 Vectis commit `6b1e263e0436687f68a7768ca55f4361a6e59e19`, whose MIT notice is the
@@ -78,4 +81,4 @@ admission. Configuration and opaque hook views are installed in
 admission, the lifted handshake/wire validators and the public raw channel.
 Non-101 replies share the HTTP response writer. Vectis cutover still requires the
 complete
-[proxy specification](server-api-spec.md#reverse-proxy).
+[proxy specification](server-api-spec.md#executable-surface).

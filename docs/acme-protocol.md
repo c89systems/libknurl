@@ -1,5 +1,8 @@
 # ACME account, order and recovery flow
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 ACME runs in its auxiliary process through the selected SDK's libcurl. The
 key manager owns account/domain private keys, CSR signing, persisted candidates
 and certificate distribution. HTTP workers own installed TLS contexts. The

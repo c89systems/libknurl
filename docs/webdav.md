@@ -1,5 +1,8 @@
 # WebDAV mounts
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 [`<rotmos/webdav.h>`](../include/rotmos/webdav.h) registers filesystem, read-only
 and custom storage mounts through `rotmos_router_webdav` and
 `rotmos_route_group_webdav`. The same [storage operation contract](storage.md)

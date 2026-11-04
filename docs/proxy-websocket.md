@@ -1,5 +1,8 @@
 # WebSocket and WSS reverse proxy relays
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 [`rotmos_router_proxy`](../include/rotmos/proxy.h) uses the same copied route
 configuration for ordinary HTTP/SSE and WebSocket opening requests. A configured
 HTTP target supplies a plain upstream socket; an HTTPS target supplies TLS.
@@ -70,4 +73,4 @@ variants also run against relocated static and shared installed SDKs.
 
 Upstream HTTP2 live coverage, forced TLS retry-direction faults, allocation/close
 fault matrices and slow-peer memory measurements remain combined proxy
-verification under the [complete specification](server-api-spec.md#reverse-proxy).
+verification under the [complete specification](server-api-spec.md#executable-surface).

@@ -1,5 +1,8 @@
 # Lua server facade
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 `require("rotmos")` uses the host's Lua 5.5.1 state. The host creates, configures
 and closes that state. The separately built C binding links the installed public
 shared librotmos API and the same shared Lua runtime as the host. It includes no

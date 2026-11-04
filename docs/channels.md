@@ -1,5 +1,8 @@
 # Connection channels
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 Include `<rotmos/channel.h>`, or `<rotmos/rotmos.h>`. In a headers callback,
 initialize `rotmos_channel_config`, set the event/close callbacks and userdata,
 then call `rotmos_request_takeover`. On success choose

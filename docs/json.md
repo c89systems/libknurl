@@ -1,5 +1,8 @@
 # LoneJSON codecs and typed routes
 
+> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+
+
 Include [`<rotmos/lonejson.h>`](../include/rotmos/lonejson.h) explicitly. The core
 umbrella remains independent of LoneJSON declarations. CMake consumers link
 `rotmos::shared` or `rotmos::static`; both expose the matching public LoneJSON
