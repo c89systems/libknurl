@@ -534,6 +534,10 @@ static int route_trampoline(lua_State *L)
         lua_setiuservalue(L, view, 2);
         c->request->native_reply = 0;
     }
+    if (c->hook == 4) {
+        c->finish = invoke;
+        return 0;
+    }
     if (c->hook == 0)
         return 0;
     if (!c->request->native_reply &&
@@ -596,6 +600,13 @@ rotmos_status rl_after(rotmos_request *n, rotmos_reply *r, int *f, void *d,
                        rotmos_error *e)
 {
     return route_call(n, r, f, d, e, 2, "after");
+}
+rotmos_status rl_rest_validate(rotmos_request *n, const void *decoded,
+                               rotmos_reply *r, int *f, void *d,
+                               rotmos_error *e)
+{
+    (void)decoded;
+    return route_call(n, r, f, d, e, 4, "validate");
 }
 void rl_requests_open(lua_State *L)
 {

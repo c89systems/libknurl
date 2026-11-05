@@ -763,6 +763,7 @@ void rl_servers_open(lua_State *L)
         {"state", l_state},
         {"listener", l_listener},
         {"route", l_route},
+        {"rest_route", rl_rest_route},
         {"json_route", l_json_route},
         {"json_typed_route", l_json_typed_route},
         {"xml_route", l_xml_route},
@@ -800,6 +801,8 @@ void rl_servers_open(lua_State *L)
     lua_setfield(L, -2, "__index");
     lua_pushcfunction(L, l_route);
     lua_setfield(L, -2, "route");
+    lua_pushcfunction(L, rl_rest_route);
+    lua_setfield(L, -2, "rest_route");
     lua_pushcfunction(L, l_json_route);
     lua_setfield(L, -2, "json_route");
     lua_pushcfunction(L, l_json_typed_route);

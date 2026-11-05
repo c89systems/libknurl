@@ -13,6 +13,26 @@ struct reference_sink {
     void (*close)(struct reference_sink *);
     void *impl;
 };
+/* Same value layout as vectis_xml_config; codecs remain in Core. */
+typedef rotmos_xml_config reference_xml_options;
+#define reference_xml_options_init rotmos_xml_config_init
+reference_status
+reference_xml_parse_source(const struct reference_input_source *,
+                           const lonejson_map *, const reference_xml_options *,
+                           void *, reference_error *);
+reference_status reference_xml_parse(struct reference_source *,
+                                     const lonejson_map *,
+                                     const reference_xml_options *, void *,
+                                     reference_error *);
+reference_status reference_xml_write(struct reference_sink *,
+                                     const lonejson_map *,
+                                     const reference_xml_options *,
+                                     const void *, reference_error *);
+reference_status reference_xml_bytes(const lonejson_map *,
+                                     const reference_xml_options *,
+                                     const void *,
+                                     struct reference_mutable_bytes *,
+                                     reference_error *);
 reference_status
 reference_array_rewrite_source(const struct reference_input_source *,
                                const char *, struct reference_sink *,

@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "vectis-forward.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static reference_status invalid(reference_error *error, const char *message)
@@ -12,6 +13,119 @@ static reference_status invalid(reference_error *error, const char *message)
         (void)snprintf(error->message, sizeof(error->message), "%s", message);
     }
     return REFERENCE_INVALID;
+}
+static rotmos_status xml_sink(const void *bytes, size_t length, void *data,
+                              rotmos_error *error)
+{
+    struct reference_sink *sink = data;
+    struct reference_source_error cause = {0, NULL};
+    if (sink->write(sink, bytes, length, &cause))
+        return ROTMOS_OK;
+    rotmos_error_clear(error);
+    error->status = ROTMOS_IO;
+    error->source = ROTMOS_ERROR_SYSTEM;
+    error->native_code = cause.code;
+    (void)snprintf(error->message, sizeof(error->message), "%s",
+                   cause.message != NULL ? cause.message
+                                         : "failed to write XML output");
+    return ROTMOS_IO;
+}
+reference_status reference_xml_parse_source(
+    const struct reference_input_source *in, const lonejson_map *map,
+    const reference_xml_options *options, void *record, reference_error *error)
+{
+    lonejson_schema_view schema;
+    rotmos_source *source = NULL;
+    rotmos_error native;
+    rotmos_status status;
+    if (record == NULL || map == NULL)
+        return invalid(error, "XML map and output struct are required");
+    status = rotmos_json_schema_from_map(NULL, map, &schema, &native);
+    if (status == ROTMOS_OK)
+        status = reference_input_open(in, &source, &native);
+    if (status == ROTMOS_OK) {
+        /* Baseline parse accepts fresh, uninitialized mapped storage. */
+        lonejson_init(NULL, map, record);
+        status =
+            rotmos_xml_parse_source(source, &schema, options, record, &native);
+    }
+    rotmos_source_destroy(source, NULL);
+    return reference_error_from_rotmos(status, &native, error);
+}
+reference_status reference_xml_parse(struct reference_source *source,
+                                     const lonejson_map *map,
+                                     const reference_xml_options *options,
+                                     void *record, reference_error *error)
+{
+    struct reference_input_source in;
+    memset(&in, 0, sizeof(in));
+    in.source = source;
+    return reference_xml_parse_source(&in, map, options, record, error);
+}
+static rotmos_status xml_view(const lonejson_map *map, const void *record,
+                              lonejson_record_view *view, rotmos_error *error)
+{
+    memset(view, 0, sizeof(*view));
+    view->size = sizeof(*view);
+    view->abi_version = LONEJSON_VIEW_ABI_VERSION;
+    view->record = (void *)record;
+    return rotmos_json_schema_from_map(NULL, map, &view->schema, error);
+}
+reference_status reference_xml_write(struct reference_sink *sink,
+                                     const lonejson_map *map,
+                                     const reference_xml_options *options,
+                                     const void *record, reference_error *error)
+{
+    lonejson_record_view view;
+    rotmos_error native;
+    rotmos_status status;
+    if (sink == NULL || sink->write == NULL || record == NULL)
+        return invalid(error, "XML sink and value are required");
+    status = xml_view(map, record, &view, &native);
+    if (status == ROTMOS_OK)
+        status = rotmos_xml_write_sink(&view, options, xml_sink, sink, &native);
+    return reference_error_from_rotmos(status, &native, error);
+}
+reference_status reference_xml_bytes(const lonejson_map *map,
+                                     const reference_xml_options *options,
+                                     const void *record,
+                                     struct reference_mutable_bytes *out,
+                                     reference_error *error)
+{
+    lonejson_record_view view;
+    rotmos_owned_bytes bytes = {NULL, 0};
+    rotmos_error native;
+    rotmos_status status;
+    void *terminated;
+    if (out == NULL || record == NULL)
+        return invalid(error, "XML value and byte output are required");
+    out->data = NULL;
+    out->size = 0;
+    status = xml_view(map, record, &view, &native);
+    if (status == ROTMOS_OK)
+        status = rotmos_xml_serialize_materialized(&view, options, 0, &bytes,
+                                                   &native);
+    if (status != ROTMOS_OK)
+        return reference_error_from_rotmos(status, &native, error);
+    /* Vectis's byte value adds a terminator outside its public size. */
+    terminated = bytes.length < (size_t)-1
+                     ? realloc(bytes.data, bytes.length + 1)
+                     : NULL;
+    if (terminated == NULL) {
+        rotmos_owned_bytes_cleanup(&bytes);
+        reference_error_clear(error);
+        if (error != NULL) {
+            error->code = REFERENCE_NOMEM;
+            error->source = 1;
+            strcpy(error->message, "failed to allocate XML bytes");
+        }
+        return REFERENCE_NOMEM;
+    }
+    ((char *)terminated)[bytes.length] = 0;
+    out->data = terminated;
+    out->size = bytes.length;
+    reference_error_clear(error);
+    return REFERENCE_OK;
 }
 static rotmos_status rewrite_sink(const void *bytes, size_t length, void *data,
                                   rotmos_error *error)

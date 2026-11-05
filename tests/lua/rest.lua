@@ -78,21 +78,55 @@ for n=0,48,4 do
   ok(s:close());sample=nil;collectgarbage('collect');assert(retained[1]==nil)
 end
 local server,calls,closed,before,after,errors
+local validation_closed,policy_after,parse_errors=0,0,0
+local decoded,parse_error=pcall(lonejson.decode_json,'{')
+assert(not decoded)
 calls,closed,before,after,errors=0,0,0,0,0
 local marker={private='original Lua error'}
 server=ok(rotmos.server{port=0,workers=1,on_parent_ready=function(s)
   ok(fixture.spawn_rest(ok(s:listener(1)).port))
-end,on_worker_exit=function() assert(calls==1 and closed==1 and before==1 and after==1 and errors==1) end})
+end,on_worker_exit=function()
+  assert(calls==1 and closed==1 and before==1 and after==1 and errors==1)
+  assert(validation_closed==1 and policy_after==0 and parse_errors==1)
+end})
 for _,body in ipairs{'stream','materialized','streaming_upload'} do
   value,problem=rest.route(server,{path='/bad',body=body,handler=function() end})
   failed(value,problem,rotmos.status.INVALID)
 end
+for _,name in ipairs{'decode','decode_disabled','on_error'} do
+  local count=server:route_count()
+  local result,why=rest.route(server,{path='/reserved',handler=function() end,[name]=false})
+  failed(result,why,rotmos.status.INVALID);assert(server:route_count()==count)
+end
 ok(rest.route(server,{path='/echo',method='POST',openapi={summary='echo'},handler=function(req)
   calls=calls+1;return {n=req.json.n},{status=202}
+end,after=function(req,reply)
+  if req.body=='{' then
+    local cause=lonejson.decode_json(reply.body).error
+    assert(cause.kind=='json_parse' and cause.status==rotmos.status.INVALID and
+      cause.source_code==require('rotmos.native').rest.ERROR_SOURCE_LONEJSON and cause.message==tostring(parse_error),reply.body)
+    parse_errors=parse_errors+1
+  end
 end}))
 ok(rest.route(server,{path='/validate',method='POST',validate=function() return false end,handler=function() error('validation bypassed') end}))
 ok(rest.route(server,{path='/validate-reply',method='POST',validate=function() return {status=422,body='validation'} end,handler=function() error('validation bypassed') end}))
 ok(rest.route(server,{path='/validate-throw',method='POST',validate=function() error('validation') end,handler=function() error('validation bypassed') end}))
+ok(rest.route(server,{path='/validate-live',validate=function()
+  local read=false
+  return {status=203,stream_source={read=function() if not read then read=true;return 'validated live' end end,
+    close=function() validation_closed=validation_closed+1 end}}
+end,handler=function() error('validation bypassed') end,after=function(_,reply)
+  assert(type(reply)=='table' and reply.stream_source)
+end}))
+for _,case in ipairs{{path='/rewritten',value='{"edited":true}'},{path='/injected',value='{"edited":true}'}} do
+  ok(rest.route(server,{path=case.path,method='POST',before=function(req) req.body=case.value end,
+    validate=function(value) assert(value.edited==true) end,handler=function(req) return req.json end}))
+end
+ok(rest.route(server,{path='/removed',method='POST',before=function(req) req.body=nil end,
+  handler=function(req) assert(req.json==nil);return {body='skipped'} end}))
+ok(rest.route(server,{path='/policy-fail',handler=function() error(marker) end,
+  error_handler=function(err) assert(err==marker);error('error policy failed') end,
+  after=function() policy_after=policy_after+1 end}))
 ok(rest.route(server,{path='/throw',handler=function() error('handler') end}))
 ok(rest.route(server,{path='/recover',handler=function() error(marker) end,error_handler=function(err,req)
   assert(err==marker and req.path=='/recover');errors=errors+1;return {status=418,body='recovered'}
@@ -113,6 +147,21 @@ local regex_group=ok(server:group('/v1.0'))
 ok(regex_group:route{path='^/items/[0-9]+$',openapi={summary='regex'},handler=function() end})
 ok(server:json_typed_route{path='/typed-doc',body=false,openapi={summary='typed'},handler=function() end})
 ok(server:get('/undocumented',function() end,{openapi=false}))
+local fixed={path='/fixed-text',body='fixed\0discarded',status_code='0',status='201',cache_control='no-store',openapi={summary='fixed'}}
+ok(server:text(fixed));fixed.body='mutated';fixed.cache_control='private'
+ok(server:text{path='/fixed-default'})
+ok(server:json{path='/fixed-json'})
+ok(server:json{path='/fixed-json-raw',body=' not JSON ',content_type='application/vnd.fixture+json'})
+ok(server:redirect{path='/fixed-redirect',location='/fixed-text',status=303})
+ok(server:auth_json{path='/fixed-auth',auth={kind='callback',callback=function() return {action='deny'} end}})
+local fixed_group=ok(server:group('/fixed'))
+ok(fixed_group:text{path='/group',body='group'})
+for _,case in ipairs{{'text',{path='/bad-text',status=99}}, {'redirect',{path='/bad-redirect',location='/x',status=200}},
+  {'redirect',{path='/bad-redirect'}}, {'auth_json',{path='/bad-auth'}}} do
+  local count=server:route_count()
+  local value,why=server[case[1]](server,case[2]);failed(value,why,rotmos.status.INVALID)
+  assert(server:route_count()==count)
+end
 local count=server:route_count()
 value,problem=server:route{path='/invalid-doc',openapi=true,handler=function() end}
 failed(value,problem,rotmos.status.INVALID);assert(server:route_count()==count)

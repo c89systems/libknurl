@@ -1,169 +1,58 @@
-# Extraction audit and correction status
+# Extraction audit and remaining work
 
-The [extraction contract](server-api-spec.md) replaces the previous specification
-and its audits. This report records findings, not additional product scope.
-Reviewed baseline: Vectis 6b1e263e0436687f68a7768ca55f4361a6e59e19;
-librotmos committed implementation 3f0e75c plus three unverified array edits.
+The [145-line contract](server-api-spec.md) governs scope. The behavioral baseline
+is Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19`. This is an implementation
+inventory, not a compatibility certificate. Sibling repositories remain read-only.
 
-The initial error was specifying a general server runtime instead of preserving
-Vectis's existing mechanisms through a new library boundary. Tests then checked
-parts of that new design rather than baseline compatibility. The owned public
-API and Kore backend architecture are correct; they do not require this redesign.
+| Contract family | Implementation and forwarding evidence |
+| --- | --- |
+| Server | `tests/vectis-server.c` translates all 34 baseline fields; `vectis-config.c` covers effective values, host readiness, stop and shutdown. |
+| Routes | `tests/vectis-route.c` translates baseline declarations/callbacks/errors; `vectis-route-runtime.c` covers order, masks, conflicts and hooks. Lua verb/group and fixed text/JSON/redirect/authenticated-JSON helpers use that same ordinary route engine. |
+| Requests/bodies | `vectis-route.c`, `vectis-body-file.c` and `vectis-request-reply.c` cover strings/lookups, borrowed readers, materialization, independent copies, spill and cleanup. |
+| Replies/sources | The same adapter covers staged replies and borrowed/taken sources. `vectis-response-head.c` covers shared Kore header generation, manual commitment/backpressure and bodyless replies; file opening occurs after hooks. |
+| Uploads | `vectis-services.c` forwards chunk/file/native-reader callbacks. `vectis-services-runtime.c` checks progress before EOF, default 204 and cancellation ownership through native acknowledgement. |
+| JSON | `vectis-forward.c` translates typed declarations/raw records, materialized/generated replies and array rewriting; `vectis-route.c` forwards request parsing/selected-array iteration. `vectis-typed.c` and `json-runtime.c` exercise ownership, limits, callback errors and completed ordinary output before after hooks. |
+| XML | `vectis-forward.c` translates typed routes and standalone source/reader parse, sink write and owned-byte output. `vectis-typed.c` covers options, source precedence/current position, borrowed ownership, partial failure, sink errors and the baseline trailing NUL. `xml-runtime.c` observes live parsing before EOF. DOM/XPath/SAX implementations and Lua bindings exist; their full baseline C wrapper translation remains to be demonstrated. |
+| REST/OpenAPI | Lua REST binds public C REST registrations for decode/validate/handler sequencing. Lua owns application error policy and the existing LoneJSON Lua value conversion. Replies encode once. `rest-runtime.c`, `tests/lua/rest.lua` and `openapi.c` cover errors, validation, groups, annotations and generation. |
+| Static/assets | `vectis-services.c` forwards file/directory/packed-provider mounts; `openapi.c` and the Lua asset fixture cover indexes, MIME, HEAD/ranges/conditions and borrowed provider ownership. |
+| WebDAV/storage | The service adapter forwards mount/auth/storage declarations. `vectis-services-runtime.c`, `webdav-runtime.c` and filesystem fixtures exercise the existing engines; packed/durable clients stay in the host. |
+| Reverse proxy | The service adapter forwards declarations, admission and edit/response/error callbacks. Proxy runtime/WebSocket/WSS and framing fixtures exercise native relay execution. No proxy state machine belongs to the adapter. |
+| Application WebSocket/SSE | The service adapter forwards WebSocket callbacks/send/close and source-based SSE. Wire cases preserve Kore frame/close behavior and incremental source ownership. Lua delegates transport to Core. |
+| TLS/ACME | The service adapter translates resolved file/memory/borrowed-source material and ACME host callbacks. TLS and local-CA issuance/renewal fixtures cover serving, persistence failure and error preservation, including the host Lua VM. Kore retains its runtime files; the invented generation store is removed. |
+| Policy/logging | Baseline server translation drives policy/observation/log fixtures. Lua borrows released public pslog references; derived HTTP logging and independent access files use Core. |
+| Host/backend | Public process/control/readiness/loop callbacks and the opaque Kore request accessor are implemented and tested. The config fixture forwards a subset of host lifecycle use; complete baseline host callback/control translation is still open. |
 
-## Findings at the audit boundary
+The original audit found duplicate Lua typed execution, a second REST JSON
+parse/emission, delayed ordinary JSON serialization, collected XML transport
+input and incorrect selected-array ownership. Those paths are corrected. Lua
+request/source JSON parsing and synchronous JSON/XML sink output now use public
+Core operations. Array callbacks reuse caller-owned storage and released
+LoneJSON interop; no upstream extension is required. The standalone public
+framer is removed and the native executor is private.
 
-| Finding | Evidence | Required outcome |
-| --- | --- | --- |
-| Lua REST encodes to a complete buffer, wraps it as a JSON reader and reparses/emits through another writer/buffer. | [binding](../src/lua/rest.c), [second output pass](../src/rest_reply.c), [baseline](../../vectis/lua/vectis/rest.lua) | Preserve one-pass reply encoding. No DOM is involved; the extra parse/emission and buffers are still unnecessary. |
-| Lua typed routes prepare records and register ordinary routes instead of binding the C typed registrations. | [facade](../lua/rotmos.lua), [binding](../src/lua/server.c), [C routes](../src/json_route.c) | Share feature execution through public C, retaining public dependency interop and Lua owner protection. Direct LoneJSON input parsing already exists and must be retained. |
-| XML routes require a completed buffered/spooled body. | [rotmos](../src/xml_route.c), vectis_xml_route_dispatch/register_xml_route in [baseline](../../vectis/src/vectis.c) | Preserve live upload-reader parsing; materializing the typed record does not justify collecting the transport body. |
-| Ordinary C typed JSON routes automatically select a live generator. | [rotmos](../src/json_route.c), vectis_json_route_dispatch/response_json in [baseline](../../vectis/src/vectis.c) | Preserve synchronous reply serialization before after-hooks and its failure timing; retain explicit live output separately. |
-| Selected-array storage ownership created an apparent need for new LoneJSON interop, while request/source iteration is missing. | [array wrapper](../src/json_array.c), [public header](../include/rotmos/lonejson.h), baseline request_json_array_each/json_array_each_source and public Lua record interop | Use existing caller-owned record/storage behavior. The earlier upstream conversion request is withdrawn. The latest local ownership rewrite is not verified or accepted. |
+The latest route batch also preserves before-hook body edits (including injected
+empty-body JSON), deferred validation replies, error-policy failure diagnostics
+and skipped after hooks. The fixed helpers copy their declarations, forward
+preencoded JSON unchanged, preserve C-string boundaries and attach OpenAPI data.
+Standalone XML forwarding only adapts public values, callbacks and ownership;
+its NUL terminator adapts Vectis's owned-byte result and adds no XML codec.
 
-## Surface and architecture review
+Remaining work is concrete:
 
-The standalone public framer had test callers but no production caller here;
-its wrapper, public header and wrapper-only tests have been removed. The lifted
-private proxy framer and its invariant checks remain. The executor/job interface
-now lives in a private header and has no shared-library exports. Its native I/O
-and filesystem consumers stay internal; job/storage ownership tests link the
-internal static library instead of posing as installed SDK consumers. Installed
-storage/filesystem/WebDAV tests continue using public APIs.
+- Map the standalone `vectis_json_validate_cstr` utility and complete the C
+  DOM/XPath/SAX wrapper and host lifecycle/control forwarding evidence. Existing
+  direct Core tests alone do not establish that those baseline calls are mechanical.
+- Finish the accumulated compatibility/failure gate against the baseline inputs,
+  particularly combined lifecycle/restart, proxy pressure and DAV failure cases.
+  Reuse matching passed evidence; do not rerun every suite per edit.
+- Complete the final clean release-configuration/artifact gate when preparing a
+  release. Seven-target debug SDK packaging/relocation and Lua source/rock
+  rehearsals exist; development builds do not establish release readiness.
+- Actual Vectis normal/packed cutover regressions require separately authorized
+  Vectis edits. No consumer cutover, publication or push is included here.
 
-Review response/channel/loop machinery, asynchronous storage operations and ACME
-generation publication against baseline adapter needs. Existing functionality
-and necessary streaming/thread-affinity fixes stay; incidental new products,
-formats, limits and behavior do not become requirements by being implemented.
-Proxy, WebDAV/filesystem, DOM/SAX and server helpers have concrete Vectis origins;
-line count alone does not establish that they should be removed.
-
-At audit time, owned C/header/Lua source counted 77,350 physical lines: 51,802
-library/header/Lua lines and 25,548 test lines. Vendored C/headers were another
-40,284 lines. The proxy accounted for 7,769 owned lines versus 9,119 in Vectis's
-proxy-named files, including application adapters/telemetry there.
-
-## Correction progress
-
-The reference JSON forwarding case in [vectis-forward.c](../tests/vectis-forward.c)
-maps the baseline app/request/raw-record/userdata callback shape without codec or
-transport work. The runtime fixture verifies completed JSON bytes before an
-after-hook replaces the result. Ordinary C JSON routes now materialize before
-after-hooks; explicit live typed replies retain their own lifetime contract.
-Lua REST now forwards one encoder output directly, without the extra reader,
-JSON runtime, writer or output buffer. C XML routes now parse live upload input
-through the existing reader engine and return the record/handler to the owner
-loop after native ACK. Their reference forwarding case observes mapped parsing
-before EOF without transport spooling. Selected-array operations now use the
-baseline pull loop, caller-owned record storage, zero-based indices and borrowed
-sources. Request iteration rewinds on success/failure; its reference adapter only
-forwards record/index/userdata. Lua binds these public operations with its own
-record and the existing public record-to-table conversion. The unused push-parser
-surface is removed. Lua typed routes now bind the C typed registrations using a
-public record-owner adapter. C performs input parsing, dispatch, ordinary output
-serialization and hook ordering; the facade only adapts request arguments. The
-record adapter uses released LoneJSON constructors/views and retains owners
-through response cleanup or native acknowledgement. Tests cover partial acquire
-failure, invalid views, parse failure, owner-loop release and Lua record retention.
-Lua logging now uses released pslog check/ref/unref operations and the public C
-logging registration, preserving native-sink validation, severity policy,
-derived sub=http and independent file access logs. Preload/dynamic checks cover
-owner retention/release and coroutine collection. All seven target bindings use
-the pinned shared Lua providers and C SDKs; no core-private headers are imported.
-The remaining surface review and full reference adapter are still open.
-
-The server-config reference now translates the 34 baseline fields and exercises
-foreground/host-controlled readiness and worker shutdown through installed public
-interfaces. It exposed two corrected restrictions: second-based deadlines now
-saturate at 65,535 seconds as in Vectis, and generic schema views accept their
-map's declared storage size. Vectis itself does cap explicit route input/output
-storage at 10 MiB and requires exact map-size agreement; the reference adapter
-preserves that validation. This differs from encoded-output limits. Cross-target executable tests are
-disabled consistently when that target cannot run locally; host-tool SDK/export
-checks remain enabled.
-Host asset/storage providers now have public Lua interop values for static-assets
-and WebDAV mounts. They retain an optional owner without taking or closing the
-provider. The isolated C host module compiles against installed public C/Lua
-headers on all seven targets. GNU/musl preload/dynamic runs cover ownership,
-range/conditional handling, binary data, bounded reads, listing and read-only
-mutation rejection. Packed lookup stays in the host; no second HTTP/DAV engine
-or application filesystem type enters the binding.
-
-The ordinary-route reference now exercises baseline callback/error shapes,
-request strings and borrowed/taken host sources. It exposed corrected failures:
-staged 1xx rejection, shortened diagnostics, dropped HTTP error messages,
-non-baseline reason phrases and a Lua-only delayed reset. The public C source
-configuration now carries that explicit reset option. A failed staged source
-also outlived request-close notification; terminal cleanup now closes it while
-the host request association is still valid.
-
-JSON/BUFFERED body policies now use the baseline memory threshold and spill
-behavior, with borrowed reader/path forwarding in the adapter. Disabled spilling
-accepts fitting input and rejects threshold crossings at reception; missing
-spool directories preserve the baseline 413 diagnostic. Ordinary legacy upload
-policies retain their separate default/validation. Route registration checks
-intrinsic memory limits and the associated server's hard body ceiling.
-File replies now copy the path in the builder and open it after hooks. The
-reference checks atomic path replacement, creation/removal, reply replacement,
-missing-path 404, HEAD length and bodyless suppression. Explicit pinned Sources
-and completed generated/spooled file replies retain their own semantics.
-
-The response head gap is corrected: managed and normal Kore replies share a
-private backend codec, extracted by an external patch. Configured Server/HSTS,
-keep-alive metadata/budgets, native cookies/headers and optional error pages now
-reach the wire. The public reference case covers a 70 KB header in a 128-byte
-queue, manual backpressure/replacement, HEAD/304 and configured errors; TLS and
-native backend cases check HSTS and cookie/header merging. Default response-head
-size is unrestricted as in Vectis; a nonzero caller ceiling remains available.
-Ordinary file replies now share Kore's Last-Modified/exact conditional matcher.
-Staged headers retain Connection/Keep-Alive/Trailer/Upgrade and raw HEAD/304
-representation lengths; duplicate fields follow the baseline replacement/cookie
-rules, including native field spelling/position. Independent body results/readers,
-read-all, fixed buffers and spill cleanup are forwarded through public operations.
-The combined reference case exposed and corrected default-directory spilling,
-ignored NULL-buffer capacity, empty fixed-buffer ownership and a lower explicit
-memory threshold being ignored. The JSON default-directory case now runs requests.
-Lua hooks reject strings/false, response tables accept 100..599, and REST no longer
-adds a fixed memory threshold that conflicts with a smaller input limit.
-The service reference now maps proxy callback/edit, upload, WebSocket and
-WebDAV auth/storage declarations to public engines, plus resolved TLS/redirect
-configuration. Its combined runtime checks real proxy traffic, DAV operations,
-source-based SSE, implicit upload 204, reader progress before EOF and retained
-host metadata after cancellation. Paired reader acquire/release runs only on
-the owner loop and retains copied metadata through native ACK and cleanup.
-WebSocket behavior no longer adds outgoing payload/UTF-8/continuation restrictions,
-rejects non-FIN data frames or nonminimal lengths, echoes peer close payloads,
-or invents protocol close codes. Explicit send budgets are independent of the
-server default; zero preserves Kore's send behavior in both C and Lua.
-Raw CLOSE and Lua no-argument close only queue a frame, preserving later sends
-and introducing no handshake deadline; the explicit close helper remains separate.
-Live TLS/mTLS now uses the baseline adapter's file/memory/borrowed-source
-translation. Host hydration/persistence also forwards through actual ACME
-issuance/renewal. The unrequested generation store and initial-key PERSIST are
-removed. Kore keeps its own runtime file/restart behavior, with no new layout
-or rollback. The adapter's no-added-material-cap setting now works; the
-intrinsic PEM input range is checked during consumption. Lua PERSIST now runs
-through real local-CA issuance in the existing host VM; returned/thrown/OOM
-failure and error-observer preservation are covered. Static file/directory/packed
-and OpenAPI facade forwarding also use the installed public engines. Their cases
-check default indexes, custom MIME, HEAD/ranges/conditions, provider ownership,
-schema/path/default metadata and generation without route execution. The invented
-10 MiB output defaults are removed from materialized JSON/XML, REST and OpenAPI;
-explicit bounds still fail without replacing an existing reply/output owner.
-
-## Evidence limits and work state
-
-No runtime edits or test runs were made during the stop-and-audit. The repository
-has selected toolchains and build state for all seven targets, public-header
-binding imports and installed consumers. Prior per-slice checks do not prove
-Vectis parity. The complete installed Vectis reference adapter is still partial;
-Lua source/rock packaging and Core SDK binary rehearsals have landed. The typed
-adapter now converts baseline declarations and validates their storage sizes;
-policy/logging cases also use baseline server translation. Selected-toolchain
-SDK packaging/relocation checks cover all seven targets, with GNU/musl runtime
-execution and compilation/linking on the remaining targets. Full release and
-Vectis compatibility/cutover checks remain incomplete. The [implementation plan](implementation-plan.md)
-orders correction work under the revised active implementation goal.
-
-Feature documents are implementation notes under correction, subordinate to the
-small contract. They must not be used to justify existing behavior that conflicts
-with the baseline. This documentation rewrite does not certify or repair code.
+Target evidence distinguishes executable GNU/musl checks from compile/link and
+artifact inspection on the other five toolchains. Installed static/shared
+consumers, the installed shared Lua binding and source-rock reconstruction use
+pinned independent SDKs, never sibling build state. The active goal remains open
+until its implementation and required verification obligations are satisfied.

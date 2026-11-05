@@ -28,7 +28,8 @@
 struct fixture {
     pid_t child;
     pthread_t owner;
-    int failed, handled, errors, released, source_closed, after, auth;
+    int failed, handled, errors, released, source_closed, after, auth,
+        decoded_empty;
 };
 struct decoded {
     struct fixture *f;
@@ -163,6 +164,10 @@ static rotmos_status custom_decode(rotmos_request *request, rotmos_bytes body,
     (void)error;
     *out = NULL;
     VERIFY(f, pthread_equal(f->owner, pthread_self()));
+    if (body.length == 0) {
+        ++f->decoded_empty;
+        return ROTMOS_OK;
+    }
     if (body.length == 3 && !memcmp(body.data, "oom", 3))
         return ROTMOS_NOMEM;
     if (body.length >= 16)
@@ -314,7 +319,7 @@ static int client(unsigned short port)
                    1) == 0);
     CHECK(exchange(port, "/api/custom-error", "{}", 418, "custom", 0) == 0);
     CHECK(exchange(port, "/api/fallback-error", "{}", 500,
-                   "\"kind\":\"handler\"", 1) == 0);
+                   "REST error handler failed", 0) == 0);
     CHECK(exchange(port, "/api/bounded", "{}", 500, "\"kind\":\"handler\"",
                    1) == 0);
     CHECK(exchange(port, "/api/docs", "", 200, "\"/api/{id}\"", 1) == 0);
@@ -323,6 +328,7 @@ static int client(unsigned short port)
                    1) == 0);
     CHECK(exchange(port, "/raw", "not json", 200, "not json", 0) == 0);
     CHECK(exchange(port, "/none", "", 200, "", 0) == 0);
+    CHECK(exchange(port, "/custom-empty", "", 200, "", 0) == 0);
     CHECK(exchange(port, "/stop", "", 200, "stopped", 0) == 0);
     return 0;
 }
@@ -366,7 +372,8 @@ static int exited(rotmos_server *server, const rotmos_process_context *process,
     (void)server;
     (void)process;
     return f->failed || f->source_closed != 1 || f->released != 1 ||
-           f->auth != 1 || f->errors != 9 || f->handled != 11 || f->after != 14;
+           f->auth != 1 || f->errors != 9 || f->handled != 11 ||
+           f->after != 13 || f->decoded_empty != 1;
 }
 static int replies(void)
 {
@@ -476,6 +483,10 @@ int main(void)
     rest.release = release_decoded;
     rest.validate = NULL;
     rest.handler = custom_handler;
+    CHECK(rotmos_router_rest_route(rotmos_server_router(server), &rest, NULL,
+                                   &error) == ROTMOS_OK);
+    rest.handler = raw_handler;
+    rest.path = "/custom-empty";
     CHECK(rotmos_router_rest_route(rotmos_server_router(server), &rest, NULL,
                                    &error) == ROTMOS_OK);
     rest.path = "/raw";

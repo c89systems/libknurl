@@ -51,6 +51,16 @@ expressions retain Vectis's inference. Verb helpers forward to the same registry
 The separate `server:group(prefix, hooks)` form returns a public C group wrapper.
 Registration returns true, or `nil, error`; it does not start the server.
 
+`server:text{...}`, `:json{...}`, `:redirect{...}` and `:auth_json{...}`
+(also on groups) register ordinary routes with copied fixed response values.
+Text defaults to `ok\n`, JSON to `{"ok":true}\n`, and redirects to an empty
+302 with required `location`. Fields are `path`, `method`/`methods`,
+`status_code`/`status`, `body`, `content_type`, `cache_control` and `openapi`;
+authenticated JSON requires `auth` and ignores `cache_control`, as in Vectis.
+These fixed helpers preserve the baseline C-string boundary at the first NUL.
+JSON bodies are already encoded bytes and are forwarded unchanged. Use typed
+routes or `rotmos.rest.json` for JSON encoding.
+
 Before hooks may short-circuit. Before/after hooks return nil/true to continue
 or a response table to select/replace; false and strings are invalid, as in
 Vectis. After hooks receive the original handler value

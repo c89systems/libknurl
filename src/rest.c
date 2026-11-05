@@ -42,6 +42,16 @@ static rotmos_status recover(rotmos_request *request, struct rest_context *s,
         rotmos_error_clear(&handler_error);
         status = s->config.on_error(request, phase, &cause, request->reply,
                                     s->config.userdata, &handler_error);
+        if (status != ROTMOS_OK) {
+            if (error != NULL) {
+                if (handler_error.status == status)
+                    *error = handler_error;
+                else
+                    rotmos_fail(error, status, "rest_error",
+                                "REST error handler failed");
+            }
+            return status;
+        }
         if (status == ROTMOS_OK && rotmos_reply_is_selected(request->reply)) {
             rotmos_error_clear(error);
             return ROTMOS_OK;
@@ -86,7 +96,7 @@ static rotmos_status dispatch(rotmos_request *request, rotmos_reply *reply,
         status = rotmos_request_body_bytes(request, &body, error);
         if (status != ROTMOS_OK)
             return recover(request, s, ROTMOS_REST_DECODE, status, error);
-        if (body.length != 0) {
+        if (config->decode != NULL || body.length != 0) {
             if (config->decode != NULL) {
                 status = config->decode(request, body, &s->decoded,
                                         config->userdata, error);
@@ -117,11 +127,7 @@ static rotmos_status dispatch(rotmos_request *request, rotmos_reply *reply,
         if (status != ROTMOS_OK)
             return recover(request, s, ROTMOS_REST_VALIDATE, status, error);
         if (finished)
-            return rotmos_reply_is_selected(reply)
-                       ? ROTMOS_OK
-                       : rotmos_fail(
-                             error, ROTMOS_STATE, "rest_validate",
-                             "validation short circuit requires a reply");
+            return ROTMOS_OK;
     }
     status =
         config->handler(request, s->decoded, reply, config->userdata, error);

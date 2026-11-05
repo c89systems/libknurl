@@ -177,8 +177,11 @@ ROTMOS_API rotmos_status rotmos_route_group_json_typed_route(
 /* Buffered REST conveniences. Decoded values are borrowed through response
  * completion. Default decoding owns a LoneJSON JSON value (cast decoded to
  * const lonejson_json_value *); empty input and decode_disabled produce NULL.
- * A custom decoder instead owns its successful result until release; failure
- * cleans its own partial result. All callbacks execute on the owner loop. */
+ * A custom decoder runs even on empty input (unless decode_disabled) and owns
+ * its successful result until release; failure cleans its own partial result.
+ * Validation finish skips the handler; after-hooks may still compose a reply.
+ * An on_error failure propagates as an ordinary route failure, skipping after.
+ * All callbacks execute on the owner loop. */
 typedef enum rotmos_rest_phase {
     ROTMOS_REST_DECODE = 0,
     ROTMOS_REST_VALIDATE,

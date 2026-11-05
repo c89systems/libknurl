@@ -11,9 +11,10 @@ logic, custom envelopes and outbound HTTP/REST clients remain application-owned.
 Initialize `rotmos_rest_route_config`, set the route and handler, and register
 with `rotmos_router_rest_route` or `rotmos_route_group_rest_route`. Registration
 copies the declaration and path and invokes no callback. Its default body is
-BUFFERED with a 1 MiB bound and memory budget. An explicit BUFFERED limit must
-fit its memory budget. NONE supports bodyless routes. These operations use the
-existing managed Content-Length admission and never spool or stream the body.
+BUFFERED with a 1 MiB bound and memory budget. Explicit policies preserve the
+ordinary buffered route's memory/spill settings. NONE supports bodyless routes.
+These operations use the existing admission and completed-body access; REST
+decoding itself is buffered, including a completed spill when selected.
 
 Auth and before hooks run before REST decoding. With nonempty input, the default
 decoder uses LoneJSON to validate and compact one retained JSON value. The
@@ -23,7 +24,7 @@ produces an actual value handle. `decode_disabled` passes NULL and leaves raw
 request body access available through the ordinary public helpers.
 
 A custom `decode(request, body, &decoded, userdata, error)` can prepare an
-application value, including a Lua facade's retained registry value. Success
+application value. It runs even on empty input unless decoding is disabled. Success
 transfers one configured `release(decoded, userdata)` notification when decoded
 is non-NULL. Without a release callback the caller manages that custom value's
 lifetime. Failure cleans its own partial result. The value stays alive through response
@@ -32,15 +33,19 @@ release notifications execute on the owning loop. No runtime/private layouts
 cross this API boundary.
 
 Validation receives the decoded value and staged reply. It returns OK to
-continue, or selects a reply and sets finish to short-circuit the handler, or
+continue, or sets finish to short-circuit the handler, or
 returns an error. Successful handlers use the ordinary reply helpers; an
 unselected result retains the ordinary 204 behavior. After hooks may inspect or
 replace the result before submission, including selected validation/error replies.
+Setting finish does not require immediate reply selection: after hooks can
+compose deferred replies, and an unselected result uses the ordinary 204.
 An auth/before short circuit retains the ordinary middleware ordering.
 
 The optional `on_error` receives the decode/validate/handler phase, full public
 error, request and staged reply. Return OK with a selected reply to handle it;
-an unselected result or callback failure takes the default error path. The core
+an unselected result takes the default JSON error path. Callback failure instead
+propagates as an ordinary route failure, preserving its diagnostic and skipping
+after hooks. The core
 removes partial handler payloads and keeps accumulated headers before invoking
 this callback. The default envelope is `{"ok":false,"error":{...}}`, with kind,
 message, status and source_code. Input/validation INVALID/LIMIT/OVERFLOW errors
@@ -65,7 +70,7 @@ bodyless/raw routes, JSON newline behavior and OpenAPI generation during a run.
 It also runs against relocated static and shared SDKs.
 
 `rotmos.rest` lifts the server half of Vectis's Lua REST facade. `route(server,
-options)` and `group(server, options)` use the ordinary public router and its
+options)` and `group(server, options)` bind the public C REST registrations and their
 auth/before/after chain. Nonempty buffered input becomes `request.json` through
 the released LoneJSON Lua decoder; empty input leaves it nil and JSON null uses
 LoneJSON's null sentinel. `decode_json=false` leaves explicit buffered input raw.

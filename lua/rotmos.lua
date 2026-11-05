@@ -121,6 +121,43 @@ local function typed_route(self,kind,declaration)
   opts.handler=function(req,input,output) return handler(request(req),input,output) end
   return register(self,kind,opts,'POST')
 end
+local function fixed_string(value,fallback)
+  if value==nil then return fallback end
+  if type(value)=='number' then value=tostring(value) end
+  if type(value)~='string' then return nil end
+  -- Vectis's fixed helpers take C strings, including the first-NUL boundary.
+  return value:match('^[^%z]*')
+end
+local function fixed_route(self,kind,opts)
+  if type(opts)~='table' then return invalid(kind..' route declaration required') end
+  local json=kind=='json' or kind=='auth_json'
+  local path=fixed_string(opts.path)
+  local body=fixed_string(opts.body,json and '{"ok":true}\n' or kind=='redirect' and '' or 'ok\n')
+  local content_type=fixed_string(opts.content_type,json and 'application/json' or 'text/plain; charset=utf-8')
+  local location=kind=='redirect' and fixed_string(opts.location) or nil
+  local cache=kind~='auth_json' and fixed_string(opts.cache_control) or nil
+  local code=opts.status_code==nil and 0 or math.tointeger(tonumber(opts.status_code))
+  if code==0 then
+    code=opts.status==nil and (kind=='redirect' and 302 or 200) or math.tointeger(tonumber(opts.status))
+  end
+  if not path or path=='' or body==nil or not content_type or
+    (opts.cache_control~=nil and kind~='auth_json' and cache==nil) or
+    (kind=='redirect' and (not location or location=='')) or
+    not code or code<(kind=='redirect' and 300 or 100) or code>(kind=='redirect' and 399 or 599) then
+    return invalid('invalid '..kind..' route fields')
+  end
+  if kind=='auth_json' and type(opts.auth)~='table' then return invalid('auth JSON route auth is required') end
+  local headers={}
+  if cache and cache~='' then headers['cache-control']=cache end
+  if location then headers.location=location end
+  return route(self,path,function()
+    return {status=code,body=body,content_type=content_type,headers=copy(headers)}
+  end,{method=opts.method,methods=opts.methods,auth=kind=='auth_json' and opts.auth or nil,openapi=opts.openapi})
+end
+for _,name in ipairs{'text','json','redirect','auth_json'} do
+  Server[name]=function(self,opts) return fixed_route(self,name,opts) end
+  Group[name]=Server[name]
+end
 for _,name in ipairs{'json_route','json_typed_route','xml_route'} do
   Server[name]=function(self,opts) return typed_route(self,name,opts) end
   Group[name]=Server[name]
@@ -354,6 +391,9 @@ local function rest_route_options(opts)
     if opts[name]~=nil and type(opts[name])~='function' then return invalid('REST '..name..' must be a function') end
   end
   if opts.decode_json~=nil and type(opts.decode_json)~='boolean' then return invalid('REST decode_json must be boolean') end
+  for _,name in ipairs{'decode','decode_disabled','on_error'} do
+    if opts[name]~=nil then return invalid('unknown REST route field: '..name) end
+  end
   local route={}
   for key,value in pairs(opts) do if not rest_keys[key] then route[key]=value end end
   local body=route.body
@@ -374,13 +414,17 @@ local function rest_route_options(opts)
     end
     route.body=body
   end
-  route.handler=function(req)
-    if opts.decode_json~=false and req.body~=nil and req.body~='' then
+  route.decode_disabled=opts.decode_json==false
+  route.decode=function(req)
+    if req.body~=nil and req.body~='' then
       local decoded,value=pcall(require('lonejson').decode_json,req.body)
-      if not decoded then return rest.error_response({kind='json_parse',message=tostring(value),
-        status=native.status.INVALID,source_code=native.rest.ERROR_SOURCE_LONEJSON},{status=400}) end
+      if not decoded then return nil,{status=native.status.INVALID,source=native.rest.ERROR_SOURCE_LONEJSON,
+        message=tostring(value)} end
       req.json=value
     end
+    return true
+  end
+  route.validate=function(req)
     if opts.validate then
       local valid,value,detail=pcall(opts.validate,req.json,req)
       if not valid then return rest.error_response({kind='validation',message=tostring(value),
@@ -391,6 +435,12 @@ local function rest_route_options(opts)
           status=native.status.INVALID},{status=400})
       end
     end
+  end
+  route.on_error=function(_,cause)
+    return rest.error_response({kind='json_parse',message=cause.message,status=native.status.INVALID,
+      source_code=native.rest.ERROR_SOURCE_LONEJSON},{status=400})
+  end
+  route.handler=function(req)
     local handled,value,response_opts=pcall(opts.handler,req)
     if not handled then
       if opts.error_handler then
@@ -403,11 +453,19 @@ local function rest_route_options(opts)
   end
   return route
 end
+local function register_rest(server,declaration)
+  local route=options(declaration)
+  for _,name in ipairs{'decode','validate','on_error'} do
+    local callback=route[name]
+    route[name]=function(handle,...) return callback(request(handle),...) end
+  end
+  return register(server,'rest_route',route,'GET')
+end
 function rest.route(server,opts)
   if type(server)~='table' or type(server.route)~='function' then return invalid('REST server or group required') end
   local route,err=rest_route_options(opts)
   if not route then return nil,err end
-  return server:route(route)
+  return register_rest(server,route)
 end
 function rest.group(server,opts)
   if type(server)~='table' or type(server.group)~='function' or type(opts)~='table' or type(opts.routes)~='table' then
@@ -422,7 +480,17 @@ function rest.group(server,opts)
     if not route then return nil,err end
     group.routes[index]=route
   end
-  return server:group(group)
+  local prefix=group.prefix or ''
+  if type(prefix)~='string' or #group.routes==0 then return invalid('REST group requires prefix and routes') end
+  for _,route in ipairs(group.routes) do
+    if type(route.path)~='string' then return invalid('REST group route path required') end
+    local left=prefix:sub(-1)=='/' and prefix:sub(1,-2) or prefix
+    local right=route.path:sub(1,1)=='/' and route.path or '/'..route.path
+    route.path=left..right
+    local value,err=register_rest(server,route)
+    if not value then return nil,err end
+  end
+  return true
 end
 function M.server(opts)
   if opts~=nil and type(opts)~='table' then return invalid('server configuration table required') end

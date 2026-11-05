@@ -493,6 +493,11 @@ static int spawn_rest(lua_State *L)
                  {"POST", "/validate", "{}", 400, NULL},
                  {"POST", "/validate-reply", "{}", 422, "validation"},
                  {"POST", "/validate-throw", "{}", 400, NULL},
+                 {"GET", "/validate-live", "", 203, "validated live"},
+                 {"POST", "/rewritten", "not JSON", 200, "{\"edited\":true}\n"},
+                 {"POST", "/injected", "", 200, "{\"edited\":true}\n"},
+                 {"POST", "/removed", "{", 200, "skipped"},
+                 {"GET", "/policy-fail", "", 500, NULL},
                  {"GET", "/throw", "", 500, NULL},
                  {"GET", "/recover", "", 418, "recovered"},
                  {"POST", "/raw", "not JSON", 201, "not JSON"},
@@ -505,6 +510,13 @@ static int spawn_rest(lua_State *L)
                  {"POST", "/blocked", "{", 401, "blocked"},
                  {"POST", "/denied", "{", 403, NULL},
                  {"POST", "/limited", "{\"n\":123456}", 413, NULL},
+                 {"GET", "/fixed-text", "", 201, "fixed"},
+                 {"GET", "/fixed-default", "", 200, "ok\n"},
+                 {"GET", "/fixed-json", "", 200, "{\"ok\":true}\n"},
+                 {"GET", "/fixed-json-raw", "", 200, " not JSON "},
+                 {"GET", "/fixed-redirect", "", 303, ""},
+                 {"GET", "/fixed-auth", "", 403, NULL},
+                 {"GET", "/fixed/group", "", 200, "group"},
                  {"GET", "/docs", "", 200, NULL},
                  {"GET", "/stop", "", 200, "ok"}};
     unsigned short port = (unsigned short)luaL_checkinteger(L, 1);
@@ -516,11 +528,20 @@ static int spawn_rest(lua_State *L)
     if (child == 0) {
         signal(SIGTERM, SIG_DFL);
         signal(SIGPIPE, SIG_IGN);
-        for (i = 0; !failed && i < sizeof(cases) / sizeof(cases[0]); ++i)
+        for (i = 0; !failed && i < sizeof(cases) / sizeof(cases[0]); ++i) {
+            required_body = !strcmp(cases[i].path, "/policy-fail")
+                                ? "error policy failed"
+                                : NULL;
+            required_header = !strcmp(cases[i].path, "/fixed-text")
+                                  ? "cache-control: no-store"
+                              : !strcmp(cases[i].path, "/fixed-redirect")
+                                  ? "location: /fixed-text"
+                                  : NULL;
             failed = rotmos_lua_test_exchange(
                 port, cases[i].method, cases[i].path, cases[i].input,
                 strlen(cases[i].input), cases[i].status, cases[i].output,
                 cases[i].output != NULL ? strlen(cases[i].output) : 0);
+        }
         if (failed)
             kill(getppid(), SIGTERM);
         _exit(failed);

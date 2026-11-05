@@ -238,6 +238,110 @@ static int rewriting(void)
     }
     return 0;
 }
+struct xml_output {
+    struct reference_sink sink;
+    char bytes[128];
+    size_t length;
+    int fail, closed;
+};
+static int xml_write(struct reference_sink *sink, const void *bytes,
+                     size_t length, struct reference_source_error *error)
+{
+    struct xml_output *out = sink->impl;
+    if (out->fail) {
+        error->code = 3;
+        error->message = "XML sink failed";
+        return 0;
+    }
+    if (length >= sizeof(out->bytes) - out->length)
+        return 0;
+    memcpy(out->bytes + out->length, bytes, length);
+    out->length += length;
+    out->bytes[out->length] = 0;
+    return 1;
+}
+static void xml_close(struct reference_sink *sink)
+{
+    struct xml_output *out = sink->impl;
+    ++out->closed;
+}
+static int xml_helpers(void)
+{
+    struct array_source input;
+    struct reference_input_source source;
+    struct xml_output output;
+    struct reference_mutable_bytes bytes;
+    reference_xml_options options;
+    struct record record;
+    reference_error error;
+    memset(&input, 0, sizeof(input));
+    memset(&source, 0, sizeof(source));
+    memset(&output, 0, sizeof(output));
+    reference_xml_options_init(&options);
+    options.root_element = "item";
+    options.trim_text = 1;
+    input.text = "skip<item><value> one </value><unknown>x</unknown></item>";
+    input.position = 4;
+    input.source.read = read_array;
+    input.source.reset = reset_array;
+    input.source.close = close_array;
+    input.source.impl = &input;
+    source.source = &input.source;
+    source.path = "must-not-open";
+    source.memory = "not selected";
+    source.memory_size = 12;
+    memset(&record, 0xa5, sizeof(record));
+    CHECK(reference_xml_parse_source(&source, &map, &options, &record,
+                                     &error) == REFERENCE_OK &&
+          !strcmp(record.value, "one"));
+    CHECK(input.closed == 0 && input.resets == 0);
+    output.sink.write = xml_write;
+    output.sink.close = xml_close;
+    output.sink.impl = &output;
+    CHECK(reference_xml_write(&output.sink, &map, &options, &record, &error) ==
+          REFERENCE_OK);
+    CHECK(!strcmp(output.bytes, "<item><value>one</value></item>") &&
+          output.closed == 0);
+    memset(&bytes, 0, sizeof(bytes));
+    CHECK(reference_xml_bytes(&map, &options, &record, &bytes, &error) ==
+          REFERENCE_OK);
+    CHECK(bytes.size == output.length &&
+          !memcmp(bytes.data, output.bytes, bytes.size + 1));
+    reference_mutable_bytes_cleanup(&bytes);
+    lonejson_cleanup(&map, &record);
+    input.position = 4;
+    options.skip_unknown_disabled = 1;
+    CHECK(reference_xml_parse(&input.source, &map, &options, &record, &error) ==
+              REFERENCE_INVALID &&
+          error.source == 1);
+    lonejson_cleanup(&map, &record);
+    input.text = "<item><value>one</value></item>";
+    input.position = 0;
+    input.fail = 2;
+    CHECK(reference_xml_parse(&input.source, &map, &options, &record, &error) ==
+              REFERENCE_STATE &&
+          strstr(error.message, "input failed"));
+    CHECK(input.closed == 0 && input.resets == 0);
+    lonejson_cleanup(&map, &record);
+    source.source = NULL;
+    source.path = NULL;
+    source.memory = input.text;
+    source.memory_size = strlen(input.text);
+    CHECK(reference_xml_parse_source(&source, &map, &options, &record,
+                                     &error) == REFERENCE_OK);
+    output.fail = 1;
+    CHECK(reference_xml_write(&output.sink, &map, &options, &record, &error) ==
+              REFERENCE_STATE &&
+          error.source == 1 && !strcmp(error.message, "XML sink failed") &&
+          output.closed == 0);
+    CHECK(reference_xml_write(NULL, &map, &options, &record, &error) ==
+          REFERENCE_INVALID);
+    CHECK(reference_xml_bytes(NULL, &options, &record, &bytes, &error) ==
+              REFERENCE_INVALID &&
+          bytes.data == NULL && bytes.size == 0);
+    lonejson_cleanup(&map, &record);
+    return 0;
+}
 int main(void)
 {
     struct reference_app app;
@@ -251,6 +355,7 @@ int main(void)
     lonejson_map large = map;
     CHECK(array_sources() == 0);
     CHECK(rewriting() == 0);
+    CHECK(xml_helpers() == 0);
     memset(&app, 0, sizeof(app));
     memset(&host, 0, sizeof(host));
     host.app = &app;

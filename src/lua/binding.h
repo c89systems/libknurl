@@ -150,6 +150,9 @@ void rl_sources_open(lua_State *);
 void rl_codecs_open(lua_State *);
 void rl_xml_objects_open(lua_State *);
 void rl_rest_open(lua_State *);
+int rl_rest_route(lua_State *);
+rotmos_status rl_rest_validate(rotmos_request *, const void *, rotmos_reply *,
+                               int *, void *, rotmos_error *);
 int rl_policy_config(lua_State *, int, rotmos_server_config *,
                      struct rl_server *, rotmos_error *);
 rotmos_status rl_policy_start(struct rl_server *, rotmos_request *,

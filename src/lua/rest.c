@@ -137,6 +137,166 @@ static int rest_json(lua_State *L)
     lua_setfield(L, -2, "headers");
     return 1;
 }
+struct rest_call {
+    struct rl_rule *rule;
+    rotmos_request *request;
+    rotmos_reply *reply;
+    const rotmos_error *cause;
+    rotmos_error *error;
+    rotmos_status status;
+};
+static int decode_call(lua_State *L)
+{
+    struct rest_call *call = lua_touserdata(L, 1);
+    struct rl_request *request = rotmos_request_userdata(call->request);
+    rl_rule_options(L, call->rule);
+    rl_field(L, -1, "decode");
+    rl_request_push(L, request);
+    lua_call(L, 1, 2);
+    if (!lua_toboolean(L, -2))
+        call->status =
+            rl_callback_error(L, -1, call->error, "REST JSON decoding failed");
+    return 0;
+}
+static rotmos_status rest_decode(rotmos_request *request, rotmos_bytes body,
+                                 void **decoded, void *data,
+                                 rotmos_error *error)
+{
+    struct rest_call call;
+    rotmos_status status;
+    memset(&call, 0, sizeof(call));
+    call.rule = data;
+    call.request = request;
+    call.error = error;
+    (void)body;
+    *decoded = NULL;
+    /* The facade stores the decoded value on its existing request table. Core
+     * owns phase sequencing; this callback transfers no Lua handle to Core. */
+    status = rl_protect(call.rule->server->L, decode_call, &call, error);
+    return status == ROTMOS_OK ? call.status : status;
+}
+static int error_call(lua_State *L)
+{
+    struct rest_call *call = lua_touserdata(L, 1);
+    struct rl_request *request = rotmos_request_userdata(call->request);
+    int value, view;
+    rl_request_push(L, request);
+    view = lua_absindex(L, -1);
+    rl_rule_options(L, call->rule);
+    rl_field(L, -1, "on_error");
+    lua_pushvalue(L, view);
+    rl_push_error(L, call->cause);
+    lua_call(L, 2, 1);
+    value = lua_absindex(L, -1);
+    lua_pushvalue(L, value);
+    lua_setiuservalue(L, view, 2);
+    request->native_reply = 0;
+    call->status = rl_reply(L, value, call->reply, call->request, call->error);
+    return 0;
+}
+static rotmos_status rest_error(rotmos_request *request,
+                                rotmos_rest_phase phase,
+                                const rotmos_error *cause, rotmos_reply *reply,
+                                void *data, rotmos_error *error)
+{
+    struct rest_call call;
+    rotmos_status status;
+    if (phase != ROTMOS_REST_DECODE) {
+        if (error != NULL)
+            *error = *cause;
+        return cause->status;
+    }
+    memset(&call, 0, sizeof(call));
+    call.rule = data;
+    call.request = request;
+    call.reply = reply;
+    call.cause = cause;
+    call.error = error;
+    status = rl_protect(call.rule->server->L, error_call, &call, error);
+    return status == ROTMOS_OK ? call.status : status;
+}
+static rotmos_status rest_handler(rotmos_request *request, const void *decoded,
+                                  rotmos_reply *reply, void *data,
+                                  rotmos_error *error)
+{
+    (void)decoded;
+    return rl_handler(request, reply, data, error);
+}
+int rl_rest_route(lua_State *L)
+{
+    static const char *const fields[] = {"path",
+                                         "path_kind",
+                                         "method",
+                                         "methods",
+                                         "body",
+                                         "handler",
+                                         "auth",
+                                         "before",
+                                         "after",
+                                         "decode",
+                                         "decode_disabled",
+                                         "validate",
+                                         "on_error"};
+    static const char *const callbacks[] = {"handler", "decode", "validate",
+                                            "on_error"};
+    struct rl_rule *rule;
+    rotmos_route_config route;
+    rotmos_rest_route_config config;
+    rotmos_error error;
+    rotmos_status status;
+    int index, root;
+    size_t i;
+    if (!lua_istable(L, 2) ||
+        !rl_fields(L, 2, fields, sizeof(fields) / sizeof(fields[0]), &error))
+        return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
+                                    "REST route declaration required"),
+                            &error));
+    for (i = 0; i < sizeof(callbacks) / sizeof(callbacks[0]); ++i) {
+        rl_field(L, 2, callbacks[i]);
+        if (!lua_isfunction(L, -1))
+            return rl_error(L,
+                            (rl_fail(&error, ROTMOS_INVALID,
+                                     "REST route callbacks must be functions"),
+                             &error));
+        lua_pop(L, 1);
+    }
+    rule = rl_rule_new(L, &error);
+    if (rule == NULL)
+        return rl_error(L, &error);
+    index = lua_absindex(L, -1);
+    rotmos_route_config_init(&route);
+    rotmos_rest_route_config_init(&config);
+    if (!rl_route_path(L, 2, &route) ||
+        !rl_methods(L, 2, ROTMOS_HTTP_METHODS_GET, &config.methods) ||
+        !rl_field_bool(L, 2, "decode_disabled", &config.decode_disabled))
+        goto invalid;
+    config.path = route.path;
+    config.path_kind = route.path_kind;
+    /* Facade body declarations preserve ordinary route inheritance. */
+    config.body = route.body;
+    rl_field(L, 2, "body");
+    if (!lua_isnil(L, -1) && !rl_body_policy(L, -1, &config.body, 0, &error))
+        return rl_error(L, &error);
+    lua_pop(L, 1);
+    config.decode = rest_decode;
+    config.validate = rl_rest_validate;
+    config.handler = rest_handler;
+    config.on_error = rest_error;
+    config.userdata = rule;
+    rl_rule_hooks(&config.hooks, rule);
+    root = rl_rule_root(L, index, rule);
+    status =
+        rule->group != NULL
+            ? rotmos_route_group_rest_route(rule->group, &config, NULL, &error)
+            : rotmos_router_rest_route(
+                  rotmos_server_router(rule->server->native), &config, NULL,
+                  &error);
+    return rl_rule_finish(L, index, root, rule, status, &error);
+invalid:
+    return rl_error(
+        L,
+        (rl_fail(&error, ROTMOS_INVALID, "invalid REST route values"), &error));
+}
 void rl_rest_open(lua_State *L)
 {
     luaL_newmetatable(L, RL_REST);
