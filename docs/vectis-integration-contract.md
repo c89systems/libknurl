@@ -43,6 +43,13 @@ lifecycle. A supervised host attaches its control FD and signal policy after
 translation. Successful construction transfers that FD; shutdown closes it.
 This is configuration/lifecycle evidence, not a completed application adapter.
 
+The public proxy fixture [proxy-h2.c](../tests/proxy-h2.c) preserves the baseline
+HTTP/2 duplex case's rewritten target/authority and `pingrest`/`pongdone` bytes.
+It requires real TLS ALPN negotiation and receives the first response bytes
+before sending the second upload piece. Codec-only H2 fixtures do not establish
+that transport behavior. The live case passes on GNU/musl and compiles/links
+on the other five toolchains.
+
 [vectis-route.c](../tests/vectis-route.c) adds the ordinary app/request/response
 callback shape, status/error translation, NUL-terminated request strings and
 host-source vtable forwarding. Request associations and route callback owners are

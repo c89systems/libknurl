@@ -56,6 +56,13 @@ accepted/first rejected field count. Both cleartext and TLS run those inputs.
 These guardrail, live proxy pressure/recovery and DAV overwrite/recovery checks
 pass on GNU and musl; the same fixtures compile/link on the other five targets.
 This closes those isolated coverage gaps without changing the server contract.
+`proxy-h2.c` also ports Vectis's live HTTP/2 duplex input/result through the
+public proxy registration. The TLS origin requires ALPN `h2`, validates the
+rewritten raw path/query and authority, receives `pingrest` with its exact
+content length and no Transfer-Encoding field, and returns `pong` before the
+client sends `rest`, followed by `done`. This is live transport evidence,
+separate from H2 header-codec unit checks. It passes on GNU/musl and builds on
+the other five targets.
 
 Remaining work is concrete:
 
