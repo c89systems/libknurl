@@ -323,6 +323,20 @@ static int drive_providers(unsigned short port)
 {
     char *large;
     int failed;
+    required_header = "location: /pack/?x=1";
+    if (rotmos_lua_test_exchange(port, "GET", "/pack?x=1", "", 0, 308, "", 0))
+        return 1;
+    required_header = NULL;
+    if (rotmos_lua_test_exchange(port, "GET", "/pack/", "", 0, 200, "packed",
+                                 6) ||
+        rotmos_lua_test_exchange(port, "GET", "/group/pack/", "", 0, 200,
+                                 "packed", 6) ||
+        rotmos_lua_test_exchange(port, "HEAD", "/pack/", "", 0, 200, "", 0) ||
+        rotmos_lua_test_exchange(port, "GET", "/no-index/", "", 0, 404,
+                                 "not found\n", 10) ||
+        rotmos_lua_test_exchange(port, "GET", "/disabled/pack/", "", 0, 404,
+                                 "not found\n", 10))
+        return 1;
     if (rotmos_lua_test_exchange(port, "GET", "/pack/asset", "", 0, 200,
                                  "packed", 6))
         return 1;
@@ -830,6 +844,7 @@ static int drive_routes(unsigned short port)
     R("GET", "/files", "", 0, 308, "", 0);
     required_header = NULL;
     R("GET", "/files/", "", 0, 200, "index\n", 6);
+    R("GET", "/no-directory-index/", "", 0, 404, "", 0);
     R("GET", "/files/missing", "", 0, 404, "", 0);
     R("GET", "/group/file", "", 0, 200, "A\0B", 3);
     R("GET", "/replace", "", 0, 202, "replaced", 8);

@@ -92,11 +92,11 @@ static rotmos_status open_asset(const char *path, rotmos_asset **out,
     struct opened *opened;
     rotmos_asset_config config;
     rotmos_status status;
-    int kind = !strcmp(path, "/")         ? 0
-               : !strcmp(path, "/asset")  ? 1
-               : !strcmp(path, "/large")  ? 2
-               : !strcmp(path, "/binary") ? 3
-                                          : -1;
+    int kind = !strcmp(path, "/")                                        ? 0
+               : !strcmp(path, "/asset") || !strcmp(path, "/index.html") ? 1
+               : !strcmp(path, "/large")                                 ? 2
+               : !strcmp(path, "/binary")                                ? 3
+                                                                         : -1;
     (void)data;
     if (kind < 0)
         return ROTMOS_EOF;

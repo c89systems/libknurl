@@ -68,6 +68,28 @@ before-fix failures. Earlier unaffected checks and the unchanged Lua source
 product reuse their recorded gates. This is a focused compatibility sweep,
 not an actual Vectis cutover or an exhaustive syscall fault-injection claim.
 
+## Configuration and C/Lua sweep
+
+The sweep after `41c707c` traced configuration defaults, callback/source ownership,
+error handling and C/Lua forwarding against Vectis. It found the Lua provider
+static-mount index default missing from the binding; the C reference adapter
+already enables it. I13 in [KORE.md](../KORE.md) records the failing preload and
+dynamic regressions and the correction through the existing public C setting.
+
+GNU passed six affected Lua checks: server/group provider mounts, filesystem
+routes in both loading modes, source-package verification and source-rock
+reconstruction. Musl passed the same four runtime cases and source reconstruction
+(five checks); the target-independent package check reuses GNU. The wire cases
+cover default indexes, query-preserving redirects, HEAD, explicit disable aliases,
+filesystem-directory defaults and provider ownership/cleanup. All seven selected
+toolchains built the updated binding and fixture hosts against installed public
+SDKs with strict C89. Formatting and diff checks passed.
+
+Core production code, public APIs, ABI layouts, dependencies and Kore patches did
+not change. Their prior Core runtime, header and seven-target SDK artifact gates
+remain applicable. Selected Lua builds retain `sweep2-*.log` evidence. No further
+mismatch was found in the reviewed paths; actual Vectis cutover remains unverified.
+
 ## Initial development snapshot
 
 | Gate | Observed result |

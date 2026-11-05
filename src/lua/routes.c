@@ -18,6 +18,7 @@ static int static_route(lua_State *L, int kind)
                                     "invalid static declaration fields"),
                             &error));
     rotmos_static_config_init(&config);
+    config.index_enabled = kind == 2;
     rl_field(L, 2, "provider");
     config.provider = rl_asset_provider(L, -1);
     if ((kind == 2 && config.provider == NULL) ||

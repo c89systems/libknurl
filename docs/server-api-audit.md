@@ -33,6 +33,12 @@ and content-directory/provider configuration. The corrections reuse existing
 operations and reduce filesystem work; no public API or contract family was
 added. I09–I12 in [KORE.md](../KORE.md) record the causes and failing regressions.
 
+The next sweep checked configuration defaults, callback/source ownership,
+error paths and C/Lua forwarding. It found the Lua provider-mount index default
+missing from the C binding, although the C reference adapter already translates
+it. I13 records that correction and its preload/dynamic wire regression. It adds
+no Core API or server mechanism.
+
 | Contract family | Implementation and forwarding evidence |
 | --- | --- |
 | Server | `tests/vectis-server.c` translates all 34 baseline fields; `vectis-config.c` covers effective values, host readiness, stop and shutdown. |

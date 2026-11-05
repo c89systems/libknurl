@@ -21,6 +21,8 @@ invalid(server:static_directory{path='/wrong-dir',provider=assets})
 local declaration={prefix='/pack',provider=assets}
 ok(server:static_assets(declaration));declaration.provider=nil
 ok(ok(server:group('/group')):static_assets{path='/pack',provider=assets})
+ok(server:static_assets{path='/no-index',provider=assets,index=false})
+ok(ok(server:group('/disabled')):static_assets{path='/pack',provider=assets,index_enabled=false})
 ok(server:webdav{prefix='/dav',provider=storage,auth_required=false})
 assets,storage,owner=nil,nil,nil
 collectgarbage('collect');assert(retained[1] and providers.stats().owners_closed==baseline)

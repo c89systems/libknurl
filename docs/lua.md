@@ -578,7 +578,10 @@ it. Keep it usable through every borrowing server's destruction. Host teardown
 closes providers after servers; owner finalizers can handle the final release.
 
 `server:static_assets{path='/assets',provider=assets,...}` and its group helper
-bind the public static-asset registration. `server:webdav{provider=storage,...}`
+bind the public static-asset registration. Indexes default enabled for these
+provider mounts, matching Vectis's packed mounts; `index=false` or
+`index_enabled=false` disables them. Filesystem directory indexes retain their
+disabled default. `server:webdav{provider=storage,...}`
 selects the host storage provider instead of constructing a filesystem provider.
 The route declaration pins the opaque value and owner until server close. Path,
 method, index, type/cache, auth and hook options retain the ordinary C behavior.

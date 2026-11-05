@@ -32,6 +32,7 @@ local spec={path='/file',file=root..'/static/asset',cache_control='public,max-ag
   end}
 ok(server:static_file(spec));spec.file='/absent'
 ok(server:static_directory{prefix='/files',dir=root..'/static',index=true})
+ok(server:static_directory{prefix='/no-directory-index',dir=root..'/static'})
 local group=ok(server:group('/group',{after=function(_,reply)
   group_checks=group_checks+1;state(group_reply:snapshot());assert(ok(reply:snapshot()).status_code==200);return true
 end}))
