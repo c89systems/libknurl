@@ -7,4 +7,4 @@ Description: C89 HTTP server library
 Version: @PROJECT_VERSION@
 Libs: -L${libdir} -lrotmos
 Cflags: -I${includedir}
-Requires: pslog = 0.13.0 lonejson = 0.45.0 libcurl openssl libxml-2.0 libssh2 libnghttp2 zlib
+Requires: pslog = 0.13.0 lonejson = 0.46.0 libcurl openssl libxml-2.0 libssh2 libnghttp2 zlib

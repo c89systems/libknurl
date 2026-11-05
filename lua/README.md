@@ -9,7 +9,7 @@ Required installed SDKs, for one concrete target:
 
 - librotmos, matching this package's `VERSION`, shared component;
 - cpkt 0.6.1, including Lua 5.5.1 and its shared link closure;
-- LoneJSON 0.45.0 C SDK and its public shared Lua provider;
+- LoneJSON 0.46.0 C SDK and its public shared Lua provider;
 - pslog 0.13.0 C SDK and its public shared Lua provider.
 
 `ROTMOS_CORE_PREFIX` names the installed librotmos prefix. `ROTMOS_SDK_ROOT`

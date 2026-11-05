@@ -69,7 +69,9 @@ while IFS=$'\t' read -r kind name version pin_target digest url; do
       case "$entry" in /*|../*|*/../*|*/..) printf 'Unsafe SDK archive path: %s\n' "$entry" >&2; exit 1;; esac
     done <"$staging/.entries"
     rm -f -- "$staging/.entries"
-    tar -xzf "$archive" -C "$staging" --strip-components=1
+    # Reproducible archives carry old mtimes. New SDK bytes must invalidate
+    # existing CMake/Ninja header and linker dependencies after an upgrade.
+    tar -xmzf "$archive" -C "$staging" --strip-components=1
     rm -rf -- "$prefix"
     mv -- "$staging" "$prefix"
     staging=

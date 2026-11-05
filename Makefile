@@ -66,7 +66,7 @@ build: configure
 lua: build
 	"$(CMAKE)" --install '$(BUILD_DIR)' --prefix '$(CURDIR)/$(BUILD_DIR)/lua-core-sdk'
 	bash scripts/deps.sh '$(TARGET)' lua
-	"$(CMAKE)" -S lua/dependencies/lonejson -B '$(BUILD_DIR)/lua-deps/lonejson' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DROTMOS_TARGET='$(TARGET)' -DROTMOS_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)' -DLONEJSON_LUA_SOURCE='$(DEPENDENCY_CACHE)/sources/lonejson-lua-0.45.0' -DCMAKE_INSTALL_PREFIX='$(CURDIR)/.cache/sdk/$(TARGET)/lonejson-lua'
+	"$(CMAKE)" -S lua/dependencies/lonejson -B '$(BUILD_DIR)/lua-deps/lonejson' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DROTMOS_TARGET='$(TARGET)' -DROTMOS_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)' -DLONEJSON_LUA_SOURCE='$(DEPENDENCY_CACHE)/sources/lonejson-lua-0.46.0' -DCMAKE_INSTALL_PREFIX='$(CURDIR)/.cache/sdk/$(TARGET)/lonejson-lua'
 	"$(CMAKE)" --build '$(BUILD_DIR)/lua-deps/lonejson' --parallel '$(JOBS)'
 	"$(CMAKE)" --install '$(BUILD_DIR)/lua-deps/lonejson'
 	"$(CMAKE)" -S lua/dependencies/pslog -B '$(BUILD_DIR)/lua-deps/pslog' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DROTMOS_TARGET='$(TARGET)' -DROTMOS_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)' -DPSLOG_LUA_SOURCE='$(DEPENDENCY_CACHE)/sources/pslog-lua-0.13.0' -DCMAKE_INSTALL_PREFIX='$(CURDIR)/.cache/sdk/$(TARGET)/pslog-lua'

@@ -21,7 +21,7 @@ foreach(prefix "${ROTMOS_CORE_PREFIX}" "${ROTMOS_SDK_ROOT}/cpkt" "${ROTMOS_SDK_R
 endforeach()
 find_package(rotmos ${PROJECT_VERSION} EXACT CONFIG REQUIRED COMPONENTS shared)
 find_package(Lua 5.5.1 EXACT CONFIG REQUIRED)
-find_package(lonejson_lua 0.45.0 EXACT CONFIG REQUIRED)
+find_package(lonejson_lua 0.46.0 EXACT CONFIG REQUIRED)
 find_package(pslog_lua 0.13.0 EXACT CONFIG REQUIRED)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/facade.inc"
