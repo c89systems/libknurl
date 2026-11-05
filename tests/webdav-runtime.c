@@ -384,6 +384,22 @@ static int streaming(unsigned short port, const char *root)
     CHECK(partial_file(root, 0));
     CHECK(exchange(port, "GET", "/dav/aborted", NULL, "", 404, "", NULL,
                    NULL) == 0);
+    /* Interrupted replacement must preserve the previously committed value,
+     * release the mutation lock and permit a later writer to finish. */
+    start = "PUT /dav/upload HTTP/1.1\r\nHost: localhost\r\nConnection: "
+            "close\r\nContent-Length: 6\r\n\r\nxyz";
+    fd = connect_to(port);
+    CHECK(fd >= 0 && write_all(fd, start, strlen(start)) == 0 &&
+          partial_file(root, 1));
+    CHECK(exchange(port, "GET", "/dav/upload", NULL, "", 200, "abcdef", NULL,
+                   NULL) == 0);
+    CHECK(close(fd) == 0 && partial_file(root, 0));
+    CHECK(exchange(port, "GET", "/dav/upload", NULL, "", 200, "abcdef", NULL,
+                   NULL) == 0);
+    CHECK(exchange(port, "PUT", "/dav/upload", NULL, "replacement", 204, "",
+                   NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/dav/upload", NULL, "", 200, "replacement",
+                   NULL, NULL) == 0);
     return 0;
 }
 static int valid_xml(void)

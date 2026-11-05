@@ -4,6 +4,9 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -159,6 +162,65 @@ static int read_chunk(int fd, char *body, size_t capacity, size_t *length,
     return 0;
 }
 
+/* The baseline h2-memory/duplex fixtures stop downstream reads while the
+ * producer is live. Exercise that invariant with a bounded HTTP/1 transfer:
+ * kernel windows plus the relay queues must fill before the entire body. */
+#define PRESSURE_BYTES (8u * 1024u * 1024u)
+static int pressure_origin(int fd, int control, int cancel)
+{
+    const char *metadata = "HTTP/1.1 200 OK\r\nContent-Length: 8388608\r\n"
+                           "Connection: close\r\n\r\n";
+    struct pollfd watch;
+    char bytes[1024], command;
+    size_t sent = 0;
+    ssize_t n;
+    int flags, limit = 65536;
+    CHECK(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &limit, sizeof(limit)) == 0);
+    CHECK(write_all(fd, metadata, strlen(metadata)) == 0);
+    flags = fcntl(fd, F_GETFL);
+    CHECK(flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
+    memset(bytes, 'p', sizeof(bytes));
+    watch.fd = fd;
+    watch.events = POLLOUT;
+    while (sent < PRESSURE_BYTES) {
+        size_t size = PRESSURE_BYTES - sent;
+        if (size > sizeof(bytes))
+            size = sizeof(bytes);
+        n = write(fd, bytes, size);
+        if (n > 0) {
+            sent += (size_t)n;
+            continue;
+        }
+        CHECK(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+        n = poll(&watch, 1, 100);
+        CHECK(n >= 0);
+        if (!n)
+            break;
+    }
+    CHECK(sent > 0 && sent < PRESSURE_BYTES);
+    CHECK(write_all(control, "p", 1) == 0 &&
+          read_exact(control, &command, 1) == 0 && command == 'r');
+    CHECK(fcntl(fd, F_SETFL, flags) == 0);
+    if (cancel) {
+        watch.events = POLLIN;
+        CHECK(poll(&watch, 1, 1000) == 1);
+        n = read(fd, bytes, 1);
+        /* Closing a pressured socket can deliver FIN or reset, depending on
+         * unread kernel data. Both prove the upstream exchange was retired. */
+        CHECK(n == 0 || (n < 0 && errno == ECONNRESET));
+        CHECK(write_all(control, "c", 1) == 0);
+    } else {
+        while (sent < PRESSURE_BYTES) {
+            size_t size = PRESSURE_BYTES - sent;
+            if (size > sizeof(bytes))
+                size = sizeof(bytes);
+            CHECK(write_all(fd, bytes, size) == 0);
+            sent += size;
+        }
+    }
+    return 0;
+}
+
 static int origin(int listener, int control)
 {
     char metadata[4096];
@@ -174,6 +236,12 @@ static int origin(int listener, int control)
         fd = accept(listener, NULL, NULL);
         CHECK(fd >= 0);
         CHECK(head(fd, metadata, sizeof(metadata)) == 0);
+        if (strstr(metadata, " /base/pressure") != NULL) {
+            CHECK(pressure_origin(fd, control,
+                                  strstr(metadata, "cancel") != NULL) == 0);
+            (void)close(fd);
+            continue;
+        }
         finish = strstr(metadata, " /base/finish ") != NULL;
         if (strstr(metadata, " /base/drop ") != NULL) {
             (void)close(fd);
@@ -499,13 +567,45 @@ static int client(unsigned short port, int control)
     size_t received;
     int done;
     int fd;
-    int other;
+    int other, cancel;
     CHECK(exchange(port, "/p/ok", 200, "pong") == 0);
     CHECK(exchange(port, "/raw/a%2Fb?q=%2B", 200, "pong") == 0);
     CHECK(exchange(port, "/deny", 403, "n") == 0);
     CHECK(exchange(port, "/drop", 503, "gateway") == 0);
     CHECK(exchange(port, "/badedit", 503, "gateway") == 0);
     CHECK(exchange(port, "/interim", 502, "replaced") == 0);
+    for (cancel = 0; cancel < 2; ++cancel) {
+        size_t i;
+        fd = connect_to(port);
+        other = 65536;
+        CHECK(fd >= 0 && setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &other,
+                                    sizeof(other)) == 0);
+        message = cancel
+                      ? "GET /pressure/cancel HTTP/1.1\r\nHost: "
+                        "client.test\r\n\r\n"
+                      : "GET /pressure HTTP/1.1\r\nHost: client.test\r\n\r\n";
+        CHECK(write_all(fd, message, strlen(message)) == 0 &&
+              read_exact(control, &command, 1) == 0 && command == 'p');
+        CHECK(exchange(port, "/ping", 200, "pong") == 0);
+        if (cancel)
+            CHECK(close(fd) == 0);
+        CHECK(write_all(control, "r", 1) == 0);
+        if (cancel) {
+            CHECK(read_exact(control, &command, 1) == 0 && command == 'c');
+        } else {
+            CHECK(head(fd, metadata, sizeof(metadata)) == 0 &&
+                  strstr(metadata, " 200 ") != NULL);
+            received = 0;
+            do {
+                CHECK(read_chunk(fd, data, sizeof(data), &length, &done) == 0);
+                for (i = 0; i < length; ++i)
+                    CHECK(data[i] == 'p');
+                received += length;
+            } while (!done);
+            CHECK(received == PRESSURE_BYTES && close(fd) == 0);
+        }
+        CHECK(exchange(port, "/raw/recovered", 200, "pong") == 0);
+    }
     fd = connect_to(port);
     CHECK(fd >= 0);
     message = "POST /upload HTTP/1.1\r\nHost: client.test\r\nContent-Length: "
@@ -720,10 +820,10 @@ int main(void)
     char target[128];
     char alternate[128];
     const char *alternates[1];
-    const char *paths[] = {"/p/:item", "^/raw/.*$",  "/deny",    "/drop",
-                           "/badedit", "/upload",    "/chunked", "/events",
-                           "/idle",    "/truncated", "/finish",  "/local-large",
-                           "/total"};
+    const char *paths[] = {
+        "/p/:item", "^/raw/.*$",    "/deny",   "/drop",     "/badedit",
+        "/upload",  "/chunked",     "/events", "/idle",     "/truncated",
+        "/finish",  "/local-large", "/total",  "/pressure", "/pressure/cancel"};
     rotmos_server_config config;
     rotmos_server_effective effective;
     rotmos_listener_config listener;

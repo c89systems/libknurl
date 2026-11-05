@@ -453,16 +453,14 @@ static SSL *connection(struct fixture *fixture, int index, const char *sni,
     return ssl;
 }
 
-static int exchange(struct fixture *fixture, int index, const char *sni,
-                    int client_cert, int version, const char *host,
-                    const char *target, const char *expected)
+static int exchange_wire(struct fixture *fixture, int index, const char *sni,
+                         int client_cert, int version, const void *request,
+                         size_t length, const char *expected)
 {
     SSL_CTX *ctx;
     SSL *ssl;
-    char request[512];
     char reply[2048];
     int fd;
-    int length;
     int count;
     size_t used;
     ssl = NULL;
@@ -486,14 +484,10 @@ static int exchange(struct fixture *fixture, int index, const char *sni,
         fd = connect_to(fixture->ports[index]);
         CHECK(fd >= 0);
     }
-    length =
-        snprintf(request, sizeof(request),
-                 "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
-                 target, host);
-    count = ssl != NULL ? SSL_write(ssl, request, length)
-                        : (int)write(fd, request, (size_t)length);
+    count = ssl != NULL ? SSL_write(ssl, request, (int)length)
+                        : (int)write(fd, request, length);
     if (expected != NULL)
-        CHECK(count == length);
+        CHECK(count > 0 && (size_t)count == length);
     used = 0;
     while (used < sizeof(reply) - 1) {
         count =
@@ -520,6 +514,66 @@ static int exchange(struct fixture *fixture, int index, const char *sni,
     SSL_free(ssl);
     SSL_CTX_free(ctx);
     CHECK(close(fd) == 0);
+    return 0;
+}
+
+static int exchange(struct fixture *fixture, int index, const char *sni,
+                    int client_cert, int version, const char *host,
+                    const char *target, const char *expected)
+{
+    char request[512];
+    int length;
+    length =
+        snprintf(request, sizeof(request),
+                 "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                 target, host);
+    CHECK(length > 0 && (size_t)length < sizeof(request));
+    return exchange_wire(fixture, index, sni, client_cert, version, request,
+                         (size_t)length, expected);
+}
+
+/* Vectis test_kore_prebody_handoff.c's header guardrail inputs. Keep these
+ * length-delimited: strlen would erase the embedded-NUL reproducer. */
+static int header_guardrails(struct fixture *fixture, int tls)
+{
+    static const char hostile[] =
+        "GET / HTTP/1.1\r\nHostile: attacker.invalid\r\n"
+        "Host: localhost\r\nConnection: close\r\n\r\n";
+    static const char nul[] = "GET /framing-header-nul HTTP/1.1\r\n"
+                              "Host: localhost\r\nX-Pad: x\0\r\n"
+                              "Transfer-Encoding: chunked\r\n\r\n";
+    static const char cr[] = "GET /framing-bare-cr HTTP/1.1\r\n"
+                             "Host: localhost\r\nX-Pad: x\r"
+                             "Transfer-Encoding: chunked\r\n\r\n";
+    char wire[512];
+    size_t used;
+    int n, i;
+    CHECK(exchange_wire(fixture, tls, "localhost", 0, fixture->version, hostile,
+                        sizeof(hostile) - 1,
+                        tls ? "\r\n\r\nsecure" : "\r\n\r\nclear") == 0);
+    CHECK(exchange_wire(fixture, tls, "localhost", 0, fixture->version, nul,
+                        sizeof(nul) - 1, " 400 ") == 0);
+    CHECK(exchange_wire(fixture, tls, "localhost", 0, fixture->version, cr,
+                        sizeof(cr) - 1, " 400 ") == 0);
+    /* Pinned Kore allows 24 nonempty lines, including the request line.
+     * Connection: close substitutes for one of Vectis's padding fields. */
+    strcpy(wire, "GET /framing-header-limit HTTP/1.1\r\nHost: localhost\r\n"
+                 "Connection: close\r\n");
+    used = strlen(wire);
+    for (i = 0; i < 21; ++i) {
+        n = snprintf(wire + used, sizeof(wire) - used, "X-Pad: a\r\n");
+        CHECK(n > 0 && (size_t)n < sizeof(wire) - used);
+        used += (size_t)n;
+    }
+    memcpy(wire + used, "\r\n", 2);
+    CHECK(exchange_wire(fixture, tls, "localhost", 0, fixture->version, wire,
+                        used + 2,
+                        tls ? "\r\n\r\nsecure" : "\r\n\r\nclear") == 0);
+    n = snprintf(wire + used, sizeof(wire) - used,
+                 "Transfer-Encoding: chunked\r\n\r\n");
+    CHECK(n > 0 && (size_t)n < sizeof(wire) - used);
+    CHECK(exchange_wire(fixture, tls, "localhost", 0, fixture->version, wire,
+                        used + (size_t)n, " 400 ") == 0);
     return 0;
 }
 
@@ -584,6 +638,8 @@ static int tunnel_client(struct fixture *fixture)
 
 static int client(struct fixture *fixture)
 {
+    CHECK(header_guardrails(fixture, 0) == 0);
+    CHECK(header_guardrails(fixture, 1) == 0);
     CHECK(exchange(fixture, 1, "localhost", 0, fixture->version, "localhost",
                    "/", "\r\n\r\nsecure") == 0);
     CHECK(exchange(fixture, 1, "alias.local", 0, fixture->version,

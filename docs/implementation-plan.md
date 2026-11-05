@@ -27,8 +27,10 @@ layout or second codec enters the adapter.
 Continue in coherent implementation batches:
 
 1. Finish the accumulated baseline compatibility and streaming/failure gate.
-   Cover combined restart/cancellation, proxy pressure and DAV recovery with
-   existing fixtures and short targeted additions. Resolve discrepancies against
+   Cover combined restart/cancellation and outstanding historical fault cases
+   with existing fixtures and short targeted additions. Live proxy pressure,
+   cancellation/reuse, DAV replacement recovery and raw cleartext/TLS header
+   guardrails now pass. Resolve discrepancies against
    Vectis, rather than accepting the current implementation as its own oracle.
 2. Complete installed C/Lua workflows and remaining lifecycle final-artifact
    evidence. Reuse current seven-target SDK and Lua source/rock reconstruction

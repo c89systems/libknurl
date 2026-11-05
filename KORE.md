@@ -49,8 +49,8 @@ of the enclosing implementation batch. The final matrix results are recorded bel
 
 | ID | Symptom and cause | Fix in this stack | Coverage or limitation |
 | --- | --- | --- | --- |
-| K02 | `Host...` header names could match the first four bytes of `Host` and be treated as the authority header. | [0032](patches/kore/0032-kore-match-host-header-name-exactly.patch) requires the exact `host:` prefix. | The baseline [prebody fixture](../vectis/tests/unit/test_kore_prebody_handoff.c) sends `Hostile:`. That isolated case still needs porting into librotmos's accumulated compatibility gate. |
-| K03 | Embedded NUL, malformed CR boundaries and excess header fields could be hidden by C-string/split-array parsing. | [0033](patches/kore/0033-kore-validate-request-header-block.patch) validates the complete header block before splitting. | Baseline `check_embedded_header_nul`, `check_bare_header_cr` and `check_header_count_boundary` in the [prebody fixture](../vectis/tests/unit/test_kore_prebody_handoff.c); isolated librotmos parity cases remain to be ported. |
+| K02 | `Host...` header names could match the first four bytes of `Host` and be treated as the authority header. | [0032](patches/kore/0032-kore-match-host-header-name-exactly.patch) requires the exact `host:` prefix. | [tls-runtime.c](tests/tls-runtime.c) sends the baseline prebody fixture's `Hostile: attacker.invalid` before `Host: localhost` and verifies successful dispatch on cleartext and TLS. |
+| K03 | Embedded NUL, malformed CR boundaries and excess header fields could be hidden by C-string/split-array parsing. | [0033](patches/kore/0033-kore-validate-request-header-block.patch) validates the complete header block before splitting. | [tls-runtime.c](tests/tls-runtime.c) ports the baseline prebody fixture's embedded NUL, bare CR and field-count boundary inputs. Cleartext and TLS accept the last allowed field count, then reject an extra hidden Transfer-Encoding field with 400. NUL input remains length-delimited. |
 | K04 | Read-half-close was treated as immediate failure despite readable bytes, dropping the final input chunk. | [0031](patches/kore/0031-kore-drain-readable-bytes-before-read-half-close.patch) drains readable Linux/BSD events first. | Body and proxy wire cases; BSD execution still requires a runnable BSD/Darwin host. |
 | K05 | A pooled connection could inherit event flags from its previous use, causing false readiness/error/closure. | [0056](patches/kore/0056-reset-connection-event-flags.patch) clears flags when allocating the connection. | [proxy-runtime.c](tests/proxy-runtime.c), [proxy-websocket.c](tests/proxy-websocket.c); the patch's initialization is also checked during source replay. |
 | K06 | TLS setup retained references returned by `X509_get_pubkey()` and its private-key wrapper. Repeated setup leaked them. | [0034](patches/kore/0034-kore-release-tls-domain-key-references.patch) keeps separate references and releases each after transfer to `SSL_CTX`. | [tls-runtime.c](tests/tls-runtime.c); no isolated allocation-count regression is claimed. |
@@ -120,6 +120,13 @@ targets have compile/link evidence, not runtime execution. Historical fixtures
 listed above are evidence locations, not substitutes for those checks.
 Cases marked without an isolated regression
 remain coverage limitations; the final compatibility/failure audit tracks them.
+
+The accumulated wire gate now covers K02/K03 on cleartext and TLS, together with
+proxy producer backpressure/resume/cancel/recovery and interrupted WebDAV
+replacement/recovery. Those three fixtures pass on GNU and musl and compile/link
+on all seven toolchains. The pressured upstream may observe FIN or reset after
+downstream cancellation; the fixture accepts both terminal socket outcomes.
+No new backend defect was found by these cases.
 
 No remote upstream fix, report, release or CVE status has been inferred. When
 upgrading Kore, compare each recorded cause against the new pristine source,
