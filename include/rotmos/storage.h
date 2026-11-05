@@ -49,8 +49,6 @@ typedef enum rotmos_storage_resource_kind {
 #define ROTMOS_STORAGE_CAN_SCOPE_CHECK 64u
 #define ROTMOS_STORAGE_CHUNK_MAX 65536u
 #define ROTMOS_STORAGE_CONDITION_MAX 65536u
-#define ROTMOS_STORAGE_MAX_OPERATIONS 256u
-#define ROTMOS_STORAGE_MAX_RESOURCES 256u
 typedef struct rotmos_storage_arguments {
     rotmos_storage_action action;
     const char *path, *destination, *if_match, *if_none_match;
@@ -222,14 +220,70 @@ ROTMOS_API rotmos_status rotmos_storage_filesystem_content_directory(
  * bounded executor in that HTTP worker, created on its first operation.
  * Absolute cache/root paths; NULL root
  * selects cache_dir/webdav/site_id/content and the existing tombstone tree.
- * Zero quotas select 16 MiB/file, 128 MiB total and 4096 resources. At most 16
- * uncommitted PUT transactions per provider; each is capped by max_file_bytes.
+ * Zero quotas select 16 MiB/file, 128 MiB total and 4096 resources.
+ * PUT transactions are capped by max_file_bytes and admitted by server limits;
+ * native execution uses the worker's bounded queue with backpressure.
  * Conditions are rechecked with quota accounting under the mutation lock at
  * finish. No filesystem I/O or threads are started by construction. Server
  * outlives the provider; bound providers are not reusable across runs. */
 ROTMOS_API rotmos_status rotmos_storage_filesystem_new(
     rotmos_server *, const rotmos_storage_filesystem_config *,
     rotmos_storage_provider **, rotmos_error *);
+/* Synchronous filesystem calls lifted from Vectis's standalone WebDAV API.
+ * No server, loop or executor is required. Configurations/conditions are
+ * borrowed for the call. Reads return malloc-owned bytes (NULL for empty
+ * files); callers free them. Listing stops successfully when callback returns
+ * zero. Entry ETags are unquoted SHA-256 hex, populated by read; lookup leaves
+ * them empty. COPY depth is 0 or -1; MOVE always moves the whole resource.
+ * Conditions, quotas, tombstones and mutations share the HTTP engine's lock.
+ * Failed direct MOVE can preserve a committed destination/recovery backup,
+ * as documented for the asynchronous filesystem provider. */
+#define ROTMOS_FILESYSTEM_PATH_MAX 1024u
+#define ROTMOS_FILESYSTEM_STORAGE_PATH_MAX 4096u
+typedef enum rotmos_filesystem_entry_kind {
+    ROTMOS_FILESYSTEM_ENTRY_NONE = 0,
+    ROTMOS_FILESYSTEM_ENTRY_FILE,
+    ROTMOS_FILESYSTEM_ENTRY_TOMBSTONE,
+    ROTMOS_FILESYSTEM_ENTRY_COLLECTION
+} rotmos_filesystem_entry_kind;
+typedef struct rotmos_filesystem_entry {
+    rotmos_filesystem_entry_kind kind;
+    size_t size;
+    char storage_path[ROTMOS_FILESYSTEM_STORAGE_PATH_MAX];
+    char etag[65];
+} rotmos_filesystem_entry;
+typedef int (*rotmos_filesystem_list_fn)(const char *,
+                                         rotmos_filesystem_entry_kind, size_t,
+                                         void *);
+ROTMOS_API int rotmos_storage_filesystem_path_normalize(
+    const char *path, char out[ROTMOS_FILESYSTEM_PATH_MAX + 1]);
+ROTMOS_API rotmos_storage_code rotmos_storage_filesystem_lookup(
+    const rotmos_storage_filesystem_config *config, const char *path,
+    rotmos_filesystem_entry *entry);
+ROTMOS_API rotmos_storage_code rotmos_storage_filesystem_read(
+    const rotmos_storage_filesystem_config *config, const char *path,
+    unsigned char **body, size_t *size, rotmos_filesystem_entry *entry);
+ROTMOS_API rotmos_storage_code
+rotmos_storage_filesystem_put(const rotmos_storage_filesystem_config *config,
+                              const char *path, const void *body, size_t size,
+                              const char *if_match, const char *if_none_match);
+ROTMOS_API rotmos_storage_code rotmos_storage_filesystem_delete(
+    const rotmos_storage_filesystem_config *config, const char *path,
+    const char *if_match, const char *if_none_match);
+ROTMOS_API rotmos_storage_code rotmos_storage_filesystem_mkcol(
+    const rotmos_storage_filesystem_config *config, const char *path,
+    const char *if_match, const char *if_none_match);
+ROTMOS_API rotmos_storage_code rotmos_storage_filesystem_copy(
+    const rotmos_storage_filesystem_config *config, const char *source,
+    const char *destination, int overwrite, int depth, const char *if_match,
+    const char *if_none_match);
+ROTMOS_API rotmos_storage_code rotmos_storage_filesystem_move(
+    const rotmos_storage_filesystem_config *config, const char *source,
+    const char *destination, int overwrite, const char *if_match,
+    const char *if_none_match);
+ROTMOS_API rotmos_storage_code rotmos_storage_filesystem_list(
+    const rotmos_storage_filesystem_config *config, const char *path,
+    rotmos_filesystem_list_fn callback, void *userdata);
 #ifdef __cplusplus
 }
 #endif

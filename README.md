@@ -19,9 +19,11 @@ providers. librotmos owns HTTP transport and the reusable server mechanisms.
 - Typed JSON routes through LoneJSON, libxml2 XML codecs and routes, buffered
   REST helpers, and OpenAPI JSON/YAML generation over the route registry.
 - Static files and directories, asset-provider mounts, conditional requests
-  and ranges, and WebDAV with filesystem or custom storage providers.
+  and ranges, and WebDAV with filesystem or custom storage providers, plus
+  standalone filesystem operations without a server.
 - Reverse proxying for HTTP, SSE and WebSocket traffic, including HTTP/2
-  upstream connections, alongside application WebSocket callbacks.
+  upstream connections and terminal exchange accounting, alongside application
+  WebSocket callbacks.
 - TLS termination, mutual TLS, ACME certificate management and HTTPS redirects.
 - Trusted-proxy address resolution, admission and autoblock rules, structured
   access logging, and transport/lifecycle observations.

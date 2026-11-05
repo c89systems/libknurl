@@ -98,6 +98,23 @@ findings rather than attributing every subcase to untouched upstream code.
 | P10 | The terminal worker callback could not reclaim its host/server because Core still marked it running and accessed host state afterward; derived loggers also had to retire before host logger destruction. | [src/kore_runtime.c](src/kore_runtime.c) detaches the exiting fork's server after native/logger teardown and snapshots callback context. | [vectis-host-runtime.c](tests/vectis-host-runtime.c) destroys app/server inside the callback and returns both success and failure afterward. |
 | P11 | An intermediate teardown change acknowledged a child as clean before its terminal callback returned, concealing abandonment if that callback hung. | The completion marker remains after callback return and touches only retained backend child state. Fixed before landing this implementation batch. | The host fixture blocks after app reclamation and verifies deadline escalation reports abandonment. |
 
+## Vectis integration assessment corrections
+
+These are extraction omissions or defects in librotmos's server integration,
+not defects attributed to pristine Kore. They were identified by Vectis's
+2026-11-05 assessment of `f6bc8cb` and the resulting baseline fault regressions.
+
+| ID | Cause and correction | Evidence |
+| --- | --- | --- |
+| I01 | Standalone filesystem calls were stranded behind worker/loop-only storage operations. Public synchronous filesystem calls now share the disk implementation, cursor and mutation paths, require no server, and preserve read locking, configuration, conditions, quotas, ETags, tombstones and recovery. | `vectis-filesystem.c` ports Vectis standalone condition/copy/move assertions through the installed public API on a default-stack thread, before any server run. |
+| I02 | C/Lua WebDAV declarations lost the file-quota-to-body-limit translation. A mount limit above the server hard ceiling also produced a plan error/500 for an otherwise admissible small body. Translation now forwards the quota; WebDAV admits against the lower hard ceiling. Zero inheritance and explicit Lua body overrides are retained. | Isolated default=2/mount=4/hard=8 or 3 cases in `vectis-services-runtime.c`; Lua route cases cover inheritance, override and hard ceilings. |
+| I03 | Compatibility wrappers inherited new 30-second storage and deferred-response deadlines absent in Vectis. C translation and Lua defaults disable them; explicit library deadlines remain available. | Effective C/Lua settings; `storage-deadline.c` deterministically expires the actual operation timer before acknowledgement and checks disabled completion, commit and retirement. Existing cancellation/abandonment checks retain shutdown coverage. |
+| I04 | Fixed 16-PUT and 256-operation/resource ceilings could reject valid uploads independently of configured server/storage capacity. Those guards are removed; native execution retains its bounded executor/queue and admission backpressure. | `webdav-runtime.c` holds 257 incremental PUTs at observable staging barriers, completes/cancels them and verifies content, cleanup and reuse under explicit server capacity. |
+| I05 | Proxy cleanup discarded accounting needed for `vectis.proxy.exchange`; generic wire counters could not replace it. Terminal C/Lua snapshots now retain selected target, kind, accepted relay/body bytes, status, duration, request ID and error/disconnect classification. Upstream classification also reaches request observations. | HTTP/alternate/upload/pressure/disconnect/shutdown and WS/WSS fixtures assert exactly-once reporting and exact accepted byte counts; the reference service adapter and Lua facade forward the snapshot. |
+| I06 | Heap allocation failure in path confinement returned a boolean false and became a path conflict. It now propagates NOMEM without mutation. | `filesystem-failure.c` observed CONFLICT before the fix and NOMEM afterward, with unchanged content and later reuse. |
+| I07 | PUT renamed its staged file before closing it, so a close failure could be reported as a successful commit. It now hashes/syncs/closes before rename, clears the descriptor once and retains the old value on failure. | Vectis's atomic close/sync/descriptor-reuse assertions observed OK on injected close failure before the fix. The shared native/synchronous implementation now reports IO, preserves old bytes and leaves the reused descriptor open. |
+| I08 | Physical write failures such as ENOSPC were classified as a configured quota limit, conflating disk failure with policy rejection. They now report IO, matching the baseline disk-write outcome; explicit quota checks still report LIMIT. | `filesystem-failure.c` injects ENOSPC during staged PUT, verifies IO, unchanged old content and subsequent successful replacement. |
+
 ## Portability and features are not automatically bugs
 
 Strict C89 conversion, platform integer/queue declarations and independent SDK
@@ -109,6 +126,15 @@ not evidence of an upstream defect. Any defect discovered in those changes gets
 its own entry above with an explicit cause and regression.
 
 ## Verification and outstanding evidence
+
+The assessment follow-up passes 17 affected C checks on each of GNU/musl,
+36 GNU Lua checks and 35 musl Lua checks. All seven toolchains compile the
+corrected Core, public headers, affected fixtures and installed-SDK Lua binding;
+relocated static/shared reference consumers and final SDK artifacts pass on
+all seven, with runtime execution on GNU/musl. See
+[verification](docs/verification.md) for the current gate and historical scope.
+
+The following paragraphs retain earlier defect-specific evidence.
 
 The PID regression was observed failing before patch 0062 and passing afterward
 on musl, including HTTP, key-manager and ACME children. Final selected-toolchain

@@ -20,6 +20,21 @@ typedef struct rotmos_proxy_inbound rotmos_proxy_inbound;
 typedef struct rotmos_proxy_outbound rotmos_proxy_outbound;
 typedef struct rotmos_proxy_response rotmos_proxy_response;
 typedef struct rotmos_proxy_local_response rotmos_proxy_local_response;
+/* Terminal accounting lifted from Vectis's proxy telemetry. HTTP counts are
+ * upload bytes consumed by curl and body bytes accepted downstream, excluding
+ * heads/chunk framing/trailers. WebSocket counts are accepted opaque relay
+ * bytes, excluding the opening handshake. Strings/request are borrowed during
+ * the owner-loop callback, once per admitted upstream exchange, before host
+ * request-close notification. The callback must not perform request I/O.
+ * Hosts retain event formatting and aggregation. */
+typedef struct rotmos_proxy_exchange {
+    rotmos_u64 request_id, upstream_bytes, downstream_bytes, duration_ms;
+    const char *route, *upstream, *kind, *disconnect_side, *error_category;
+    int status;
+    rotmos_status cause;
+} rotmos_proxy_exchange;
+typedef void (*rotmos_proxy_exchange_fn)(rotmos_request *,
+                                         const rotmos_proxy_exchange *, void *);
 
 /** Maximum copied body size for a proxy-generated local response. */
 #define ROTMOS_PROXY_LOCAL_BODY_LIMIT 65536u
@@ -242,6 +257,8 @@ typedef struct rotmos_proxy_config {
     rotmos_proxy_on_error_fn on_error;
     /* Caller-owned context; retain it until router destruction completes. */
     void *on_error_userdata;
+    rotmos_proxy_exchange_fn on_exchange;
+    void *on_exchange_userdata;
 } rotmos_proxy_config;
 
 /** Set the documented zero-value defaults. NULL is ignored. */

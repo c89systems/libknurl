@@ -38,6 +38,23 @@ struct fixture {
 static int failures;
 static int modifications;
 static int errors;
+static int terminal_reports, tunnel_report;
+static void exchange_report(rotmos_request *request,
+                            const rotmos_proxy_exchange *event, void *data)
+{
+    (void)request;
+    (void)data;
+    ++terminal_reports;
+    if (!strcmp(event->route, "/tunnel")) {
+        ++tunnel_report;
+        if (event->upstream_bytes.high || event->upstream_bytes.low != 65536 ||
+            event->downstream_bytes.high ||
+            event->downstream_bytes.low != 65536 || event->status != 101 ||
+            strcmp(event->kind, "websocket") ||
+            strcmp(event->error_category, "none"))
+            ++failures;
+    }
+}
 static rotmos_bytes view(const char *text)
 {
     rotmos_bytes b;
@@ -503,7 +520,8 @@ static int exited(rotmos_server *server, const rotmos_process_context *p,
     (void)server;
     (void)p;
     (void)data;
-    if (modifications != 4 || errors != 3) {
+    if (modifications != 4 || errors != 3 || terminal_reports != 7 ||
+        tunnel_report != 1) {
         (void)fprintf(stderr, "proxy WS hooks: modify=%d errors=%d\n",
                       modifications, errors);
         ++failures;
@@ -646,6 +664,7 @@ int main(int argc, char **argv)
         proxy.target = target;
         proxy.modify_response = modify;
         proxy.on_error = gateway;
+        proxy.on_exchange = exchange_report;
         proxy.buffer_limit_bytes = 8192;
         proxy.connect_timeout_ms = 1000;
         proxy.idle_timeout_ms = strcmp(paths[i], "/stall") == 0 ? 200 : 2000;

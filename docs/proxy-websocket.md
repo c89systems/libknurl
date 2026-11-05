@@ -1,6 +1,6 @@
 # WebSocket and WSS reverse proxy relays
 
-> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
 
 
 [`rotmos_router_proxy`](../include/rotmos/proxy.h) uses the same copied route

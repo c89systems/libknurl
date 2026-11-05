@@ -1,10 +1,45 @@
 # Extraction verification
 
-Development verification completed on 2026-11-05 for the extraction contract,
+Initial development verification at `f6bc8cb` completed on 2026-11-05,
 using Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19` as the behavioral baseline.
 The sibling checkout still has that exact HEAD and was not modified.
 The [operation audit](server-api-audit.md) maps every contract family to its
 implementation, reference forwarding adapter and observable cases.
+
+Vectis's subsequent integration assessment found gaps G1–G5 that these earlier
+family-level checks did not cover. The counts below are historical evidence for
+that snapshot, not proof of the missing standalone APIs, mount admission/defaults,
+concurrency or proxy diagnostics. The assessment follow-up adds explicit
+regressions and corrections for those cases; its evidence is recorded in the
+[operation audit](server-api-audit.md) and [KORE.md](../KORE.md).
+
+## Assessment follow-up
+
+G1–G5 corrections passed the following focused gate on 2026-11-05. This reuses
+the initial gate for unaffected behavior; the entire historical suite was not
+rerun for each correction.
+
+| Gate | Observed result |
+| --- | --- |
+| GNU and musl Core | Each passed 15 affected checks plus HTTP/2 proxy and response runtime checks (17 per target). These cover standalone calls before any server, managed/direct conditions and recovery, allocation/write/sync/close faults, mount admission, deterministic storage expiry, cancellation/abandonment, 257 simultaneous PUTs, HTTP terminal accounting, worker shutdown and WS/WSS. |
+| GNU Lua | All 36 checks passed: 34 preload/dynamic cases, source-package verification and source-rock reconstruction. |
+| Musl Lua | All 35 checks passed: the same 34 runtime cases and source-rock reconstruction; the target-independent source-package check reuses GNU. |
+| Seven toolchains | Static/shared Core, affected fixture executables, C89/C++98 public headers and Lua bindings against freshly installed shared Core SDKs built successfully. GNU/musl standalone cases execute on default-stack threads. |
+| Installed reference consumers | Standalone filesystem, service forwarding, proxy HTTP/WebSocket and configuration adapters compiled against relocated public static/shared SDKs on all seven targets and executed on GNU/musl. No sibling source or private Core header is part of those consumers. |
+| Seven SDK archives | Each rebuilt archive passed final-byte inventory/checksum, dependency/target/ABI/export and relocated CMake/pkg-config static/shared example checks. GNU/musl examples also executed; the other five targets have compile/link and artifact evidence. |
+
+The added Lua terminal cases inject callback exceptions and allocation failure,
+then verify transport cleanup and the final reported callback error. Standalone
+filesystem mutations and asynchronous WebDAV share the corrected disk engine.
+The extraction contract remains 145 lines. No dependency pins, pristine Kore
+sources, external patch series or sibling repositories changed in this follow-up.
+
+Selected-build `assessment-*.log` files and CTest `Testing/Temporary` results
+retain the local evidence; SDK archives remain under each build's `packages/`.
+This closes the assessment's demonstrated library gaps. Actual Vectis
+normal/packed integration and release verification remain separate gates.
+
+## Initial development snapshot
 
 | Gate | Observed result |
 | --- | --- |

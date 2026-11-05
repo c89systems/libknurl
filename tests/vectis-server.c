@@ -54,6 +54,7 @@ reference_server_translate(const struct reference_server_config *in,
         in->access_log.status_level_rule_count > 32)
         return invalid(error);
     rotmos_server_config_init(out);
+    out->timeouts.deferred_response.disabled = 1;
     out->name = "vectis";
     out->limits.max_connections = in->max_connections;
     out->limits.request_limit = in->request_limit;

@@ -1,6 +1,6 @@
 # Upload callbacks
 
-> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
 
 
 Include `<rotmos/upload.h>` or `<rotmos/rotmos.h>`. The stream facade lifts

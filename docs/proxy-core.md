@@ -1,6 +1,6 @@
 # HTTP framing and proxy core
 
-> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
 
 
 Proxy framing stays private in [proxy_framing.c](../src/proxy_framing.c), lifted
@@ -56,3 +56,25 @@ admission, the lifted handshake/wire validators and the public raw channel.
 Non-101 replies share the HTTP response writer. Vectis cutover still requires the
 complete
 [proxy specification](server-api-spec.md#executable-surface).
+
+## Terminal exchange diagnostics
+
+`rotmos_proxy_config.on_exchange` receives one borrowed terminal snapshot for
+each admitted upstream exchange, before the host request-close callback. The
+host can retain `vectis.proxy.exchange` formatting and its existing logger;
+accounting stays in the proxy engine. The snapshot includes the selected
+configured target, route, HTTP/WebSocket kind, final status, request ID, duration,
+accepted upload/download counts, error category and disconnect side. IDs and
+duration start at upstream admission, after rewrite/setup, as in Vectis.
+
+HTTP upload counts are bytes consumed by curl; download counts are body bytes
+accepted by the downstream queue, excluding heads, chunk framing and trailers.
+HEAD output contributes zero. WebSocket counts are accepted opaque relay bytes,
+excluding the opening handshake. These are accepted-byte counters, not bytes
+proven delivered to a peer. Hosts do not need to recreate transport logic.
+
+Lua's `proxy{on_exchange=function(snapshot) ... end}` copies those fields into a
+table through the same public C callback. Callback exceptions and allocation
+failure are protected and reported at server completion, after transport cleanup.
+The callback cannot replace an already completed response. Upstream failures
+also set the public request observation's upstream disconnect classification.

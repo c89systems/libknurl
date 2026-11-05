@@ -203,8 +203,6 @@ rotmos_storage_resource_new(rotmos_storage_operation *op,
         return status;
     if (op->retiring || op->acknowledged)
         return fail(error, ROTMOS_STATE, "storage operation already completed");
-    if (op->provider->resources >= ROTMOS_STORAGE_MAX_RESOURCES)
-        return fail(error, ROTMOS_LIMIT, "provider resource budget is full");
     r = calloc(1, sizeof(*r));
     if (r == NULL)
         return fail(error, ROTMOS_NOMEM, "allocating storage resource");
@@ -815,9 +813,6 @@ rotmos_storage_operation_start(rotmos_storage_provider *p, rotmos_loop *loop,
                             p->process != (long)getpid()))
         return fail(error, ROTMOS_STATE,
                     "provider is bound to another loop/run");
-    if (loop->storage_count >= ROTMOS_STORAGE_MAX_OPERATIONS)
-        return fail(error, ROTMOS_LIMIT,
-                    "loop storage operation budget is full");
     status = arguments_check(p, args, error);
     if (status != ROTMOS_OK)
         return status;

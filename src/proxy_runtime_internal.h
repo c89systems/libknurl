@@ -62,11 +62,15 @@ struct proxy_exchange {
     rotmos_u64 progress;
     curl_off_t uploaded;
     curl_off_t downloaded;
+    rotmos_proxy_exchange accounting;
+    rotmos_u64 accounting_started;
+    int accounting_active;
 };
 
 void rotmos_proxy_schedule(struct proxy_exchange *);
 void rotmos_proxy_release(void *);
 void rotmos_proxy_progress(void *, size_t);
+void rotmos_proxy_count(rotmos_u64 *, size_t);
 void rotmos_proxy_record_failure(struct proxy_exchange *, rotmos_status, int,
                                  const char *);
 void rotmos_proxy_upstream_ready(rotmos_proxy_http_upstream *,

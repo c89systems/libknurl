@@ -30,6 +30,7 @@
 struct fixture {
     int origin;
     int control[2];
+    int stop_notice[2];
     pid_t client;
     pid_t origin_pid;
     unsigned short origin_port;
@@ -41,6 +42,67 @@ static int gateway_errors;
 static int interim_closes;
 static int finish_trailers;
 static int request_trailers;
+static unsigned long reported_ids[32];
+static int reported, alternate_report, upload_report, pressure_report,
+    cancel_report;
+static int shutdown_report, upstream_observed;
+static void observed(rotmos_server *server, const rotmos_observation *event,
+                     void *data)
+{
+    (void)server;
+    (void)data;
+    if (event->kind == ROTMOS_OBSERVE_REQUEST_COMPLETE && event->request &&
+        !strcmp(rotmos_request_path(event->request).data, "/drop")) {
+        OBSERVE(event->disconnect_side == ROTMOS_DISCONNECT_UPSTREAM);
+        ++upstream_observed;
+    }
+}
+static void exchange_report(rotmos_request *request,
+                            const rotmos_proxy_exchange *event, void *data)
+{
+    size_t i;
+    rotmos_bytes path = rotmos_request_path(request);
+    (void)data;
+    OBSERVE(reported < 32 &&
+            event->request_id.high == (unsigned long)getpid() &&
+            event->request_id.low != 0 && !strcmp(event->kind, "http"));
+    for (i = 0; i < (size_t)reported && i < 32; ++i)
+        OBSERVE(reported_ids[i] != event->request_id.low);
+    if (reported < 32)
+        reported_ids[reported] = event->request_id.low;
+    ++reported;
+    if (!strcmp(event->route, "/shutdown")) {
+        OBSERVE(!strcmp(event->disconnect_side, "worker") &&
+                !strcmp(event->error_category, "shutdown") &&
+                event->downstream_bytes.low == 3);
+        ++shutdown_report;
+    }
+    if (path.length == 5 && !memcmp(path.data, "/p/ok", 5)) {
+        OBSERVE(strstr(event->upstream, "/alt") && event->status == 200 &&
+                event->upstream_bytes.low == 0 &&
+                event->downstream_bytes.low == 4 &&
+                !strcmp(event->error_category, "none"));
+        ++alternate_report;
+    }
+    if (!strcmp(event->route, "/upload")) {
+        OBSERVE(event->upstream_bytes.low == 65536 &&
+                event->downstream_bytes.low == 65536 && event->status == 200);
+        ++upload_report;
+    }
+    if (!strcmp(event->route, "/pressure")) {
+        OBSERVE(event->downstream_bytes.low == 8u * 1024u * 1024u &&
+                !strcmp(event->disconnect_side, "none"));
+        ++pressure_report;
+    }
+    if (!strcmp(event->route, "/pressure/cancel")) {
+        OBSERVE(event->downstream_bytes.low < 8u * 1024u * 1024u &&
+                !strcmp(event->disconnect_side, "downstream") &&
+                !strcmp(event->error_category, "disconnect"));
+        ++cancel_report;
+    }
+    if (!strcmp(event->route, "/drop") || !strcmp(event->route, "/truncated"))
+        OBSERVE(!strcmp(event->disconnect_side, "upstream"));
+}
 static rotmos_status empty_complete(rotmos_request *, void *, rotmos_error *);
 
 static rotmos_bytes view(const char *s)
@@ -242,7 +304,7 @@ static int origin(int listener, int control)
             (void)close(fd);
             continue;
         }
-        finish = strstr(metadata, " /base/finish ") != NULL;
+        finish = strstr(metadata, " /base/shutdown ") != NULL;
         if (strstr(metadata, " /base/drop ") != NULL) {
             (void)close(fd);
             continue;
@@ -254,13 +316,15 @@ static int origin(int listener, int control)
             continue;
         }
         if (strstr(metadata, " /base/truncated ") != NULL ||
-            strstr(metadata, " /base/total ") != NULL) {
+            strstr(metadata, " /base/total ") != NULL || finish) {
             const char *message =
                 "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc";
             CHECK(write_all(fd, message, strlen(message)) == 0 &&
                   write_all(control, "r", 1) == 0 &&
                   read_exact(control, &command, 1) == 0);
             (void)close(fd);
+            if (finish)
+                break;
             continue;
         }
         if (strstr(metadata, " /base/events ") != NULL) {
@@ -556,7 +620,7 @@ static int exchange(unsigned short port, const char *path, int expected,
     return 0;
 }
 
-static int client(unsigned short port, int control)
+static int client(unsigned short port, int control, int stopping)
 {
     const char *message;
     char metadata[4096];
@@ -733,8 +797,18 @@ static int client(unsigned short port, int control)
     CHECK(read(fd, data, sizeof(data)) == 0);
     (void)close(fd);
     CHECK(exchange(port, "/finish", 200, "pong") == 0);
+    fd = connect_to(port);
+    message = "GET /shutdown HTTP/1.1\r\nHost: client.test\r\n\r\n";
+    CHECK(fd >= 0 && write_all(fd, message, strlen(message)) == 0 &&
+          read_exact(control, &command, 1) == 0 && command == 'r' &&
+          head(fd, metadata, sizeof(metadata)) == 0 &&
+          read_chunk(fd, data, sizeof(data), &length, &done) == 0 &&
+          length == 3 && !done);
     other = exchange(port, "/stop", 200, "pong");
     CHECK(other == 0);
+    CHECK(read_exact(stopping, &command, 1) == 0 && command == 's');
+    CHECK(read(fd, data, 1) == 0 && close(fd) == 0 &&
+          write_all(control, "n", 1) == 0);
     return 0;
 }
 
@@ -762,6 +836,8 @@ static rotmos_status ready(rotmos_server *server,
     if (f->origin_pid < 0)
         return ROTMOS_IO;
     if (f->origin_pid == 0) {
+        close(f->stop_notice[0]);
+        close(f->stop_notice[1]);
         (void)signal(SIGTERM, SIG_DFL);
         (void)close(f->control[0]);
         result = origin(f->origin, f->control[1]);
@@ -773,10 +849,11 @@ static rotmos_status ready(rotmos_server *server,
     if (f->client < 0)
         return ROTMOS_IO;
     if (f->client == 0) {
+        close(f->stop_notice[1]);
         (void)signal(SIGTERM, SIG_DFL);
         (void)close(f->control[1]);
         (void)close(f->origin);
-        result = client(listener.port, f->control[0]);
+        result = client(listener.port, f->control[0], f->stop_notice[0]);
         if (result)
             (void)kill(getppid(), SIGTERM);
         _exit(result);
@@ -784,6 +861,8 @@ static rotmos_status ready(rotmos_server *server,
     (void)close(f->origin);
     (void)close(f->control[0]);
     (void)close(f->control[1]);
+    close(f->stop_notice[0]);
+    close(f->stop_notice[1]);
     return ROTMOS_OK;
 }
 static int exited(rotmos_server *server, const rotmos_process_context *p,
@@ -794,6 +873,10 @@ static int exited(rotmos_server *server, const rotmos_process_context *p,
     (void)data;
     OBSERVE(rewrites >= 8 && modified >= 6 && gateway_errors == 3 &&
             interim_closes == 1);
+    OBSERVE(reported == 17 && alternate_report == 1 && upload_report == 1 &&
+            pressure_report == 1 && cancel_report == 1 &&
+            shutdown_report == 1 && upstream_observed == 1);
+    close(((struct fixture *)data)->stop_notice[1]);
     return failures ? 1 : 0;
 }
 
@@ -806,12 +889,23 @@ static rotmos_status worker_start(rotmos_server *server,
     (void)p;
     (void)error;
     f = data;
+    close(f->stop_notice[0]);
     (void)close(f->origin);
     (void)close(f->control[0]);
     (void)close(f->control[1]);
     return ROTMOS_OK;
 }
 
+static rotmos_status worker_stopping(rotmos_server *server,
+                                     const rotmos_process_context *process,
+                                     void *data, rotmos_error *error)
+{
+    struct fixture *f = data;
+    (void)server;
+    (void)process;
+    (void)error;
+    return write_all(f->stop_notice[1], "s", 1) ? ROTMOS_IO : ROTMOS_OK;
+}
 int main(void)
 {
     struct fixture f;
@@ -823,7 +917,8 @@ int main(void)
     const char *paths[] = {
         "/p/:item", "^/raw/.*$",    "/deny",   "/drop",     "/badedit",
         "/upload",  "/chunked",     "/events", "/idle",     "/truncated",
-        "/finish",  "/local-large", "/total",  "/pressure", "/pressure/cancel"};
+        "/finish",  "/local-large", "/total",  "/pressure", "/pressure/cancel",
+        "/shutdown"};
     rotmos_server_config config;
     rotmos_server_effective effective;
     rotmos_listener_config listener;
@@ -840,6 +935,7 @@ int main(void)
     (void)signal(SIGPIPE, SIG_IGN);
     f.origin = socket(AF_INET, SOCK_STREAM, 0);
     CHECK(f.origin >= 0 && socketpair(AF_UNIX, SOCK_STREAM, 0, f.control) == 0);
+    CHECK(pipe(f.stop_notice) == 0);
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -868,6 +964,8 @@ int main(void)
     config.callbacks.on_parent_ready = ready;
     config.callbacks.on_worker_start = worker_start;
     config.callbacks.on_worker_exit = exited;
+    config.callbacks.on_worker_stopping = worker_stopping;
+    config.callbacks.on_observe = observed;
     config.callbacks.userdata = &f;
     CHECK(rotmos_server_new(&config, &server, &error) == ROTMOS_OK);
     CHECK(rotmos_server_effective_config(server, &effective, &error) ==
@@ -900,6 +998,7 @@ int main(void)
         proxy.rewrite = rewrite;
         proxy.modify_response = modify;
         proxy.on_error = gateway;
+        proxy.on_exchange = exchange_report;
         proxy.buffer_limit_bytes = 8192;
         proxy.idle_timeout_ms = i == 8 ? 100 : 2000;
         proxy.connect_timeout_ms = 1000;

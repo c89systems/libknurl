@@ -1,6 +1,6 @@
 # Storage operations and filesystem execution
 
-> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
 
 
 [`<rotmos/storage.h>`](../include/rotmos/storage.h) defines provider operations,
@@ -35,7 +35,9 @@ no retirement notification. Once accepted, even synchronous provider/protocol
 failure receives one terminal retirement. All paths, conditions and bounded byte
 chunks are copied. Paths use the confined normalized asset path rules. Chunks and
 conditions are at most 65536 bytes; paths/recovery strings are bounded to 4096.
-There are at most 256 active operations per loop and 256 resources per provider.
+There is no independent fixed 256-operation/resource rejection threshold.
+HTTP admission follows configured server capacity; native execution retains its
+bounded executor queue and backpressure. Callers own their operation/resource lifetimes.
 Only PUT_WRITE carries a nonempty chunk. A successful write acknowledges a positive
 prefix at most the offered length; the next call contains only unaccepted bytes.
 A resource permits one pending operation at a time and remains retained if its
@@ -172,16 +174,34 @@ hydration.
 
 PUT begin creates one bounded transaction resource and a randomly named
 `.vectis-tmp-` file in the destination parent. Writes copy only the offered chunk
-to that file; no complete upload is materialized. At most 16 open write resources
-per provider can own partial files, each capped by its per-file quota. Partial
-files and preserved recovery directories do not count as live content, so their
-separate bound is explicit. Uploads hold no mutation lock between operations.
+to that file; no complete upload is materialized. Concurrent uploads follow
+configured server capacity, with each transaction capped by its file quota.
+Partial files and preserved recovery directories do not count as live content.
+Uploads hold no mutation lock between operations.
 Finish reacquires the shared mutation lock, checks the original entity-tag
-conditions again, resolves the same parent, recomputes quotas, fsyncs data and
+conditions again, resolves the same parent, recomputes quotas, hashes/syncs/closes data and
 renames the transaction into place. A competing commit makes an old conditional
 upload fail without overwriting the winner. Abort or resource close removes owned
 partial output. `created` reports whether a committed destination was new; HTTP
 facades can select 201/204 without an unlocked lookup.
+
+## Standalone filesystem calls
+
+The `rotmos_storage_filesystem_lookup/read/put/delete/mkcol/copy/move/list`
+functions lift Vectis's standalone WebDAV filesystem operations. They require no
+server, loop or executor and use the same disk helpers, mutation locks, quotas,
+conditions, tombstones and recovery paths as HTTP. Pass NULL entity-tag arguments
+for unconditional mutation. COPY also takes depth 0 or -1; MOVE is recursive.
+`rotmos_storage_filesystem_path_normalize` uses the same baseline path rules.
+
+These calls borrow configuration/conditions only for their duration. Lookup
+returns the entry kind, size and storage path; read materializes malloc-owned
+bytes and supplies the unquoted 64-character SHA-256 ETag. Empty file reads return
+NULL/zero. A non-file entry follows the baseline read result with no body.
+Listing invokes its callback incrementally and stops successfully on zero.
+Scratch state is heap-backed for default worker stacks. The installed reference
+adapter is `tests/vectis-filesystem.h`; its ported baseline cases execute on a
+default-stack thread before any server starts.
 
 Native jobs perform lock waits, directory scans, SHA-256 entity tags, file writes,
 copy/move and cleanup. Lock acquisition uses cooperative nonblocking flock

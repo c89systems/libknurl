@@ -1,6 +1,6 @@
 # Lua server facade
 
-> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
 
 
 `require("rotmos")` uses the host's Lua 5.5.1 state. The host creates, configures
@@ -170,7 +170,12 @@ and performs no file lookup. Ordinary auth and route hooks apply.
 `webdav{path_prefix=..., cache_dir=..., site_id=..., root_dir=..., auth=...}` uses
 the public filesystem WebDAV mount, also on a group. `prefix` aliases the mount
 path, default `/`. File/total/resource quotas, body limit, content/cache policy
-and operation timeout/disable fields map directly to C. Vectis's
+and operation timeout/disable fields bind C. Omitted body limits forward the file
+quota; explicit body limits retain their override/zero-inheritance meaning.
+The extra operation deadline is disabled by default. Explicit timeout values
+enable it unless disabled explicitly. Deferred-response deadlines are also
+disabled by default; explicit server timeout declarations enable the C deadline.
+Vectis's
 `auth_required=true` and `conceal_unauthorized=true` defaults map to the public
 disabled flags; there is no implicit XDG/cache location. The callback provider
 receives each relative resource path, including child visibility and mutation

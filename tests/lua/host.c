@@ -857,7 +857,11 @@ static int drive_routes(unsigned short port)
     required_header = NULL;
     R("GET", "/dav/error", "", 0, 500, "", 0);
     R("GET", "/dav/oom", "", 0, 500, "", 0);
-    R("PUT", "/dav/oversized", "four", 4, 413, "", 0);
+    R("PUT", "/dav/oversized", "four", 4, 413,
+      "request body exceeds route limit", 32);
+    R("PUT", "/davhard/oversized", "12345678901234567", 17, 413, NULL, 0);
+    R("PUT", "/davzero/oversized", "abc", 3, 413, NULL, 0);
+    R("PUT", "/davoverride/oversized", "ab", 2, 413, NULL, 0);
     R("DELETE", "/dav/file", "", 0, 204, "", 0);
     R("GET", "/dav/file", "", 0, 404, "", 0);
     R("GET", "/stop", "", 0, 200, "ok", 2);

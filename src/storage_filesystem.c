@@ -18,10 +18,8 @@
 struct filesystem {
     rotmos_server *server;
     rotmos_fs_config config;
-    unsigned int writes;
 };
 struct disk_resource {
-    struct filesystem *filesystem;
     int fd, parent, ended, writing, failed;
     DIR *directory;
     char *path, *if_match, *if_none_match;
@@ -76,8 +74,6 @@ static void resource_close(void *data)
             (void)unlinkat(r->parent, r->temporary, 0);
         close(r->parent);
     }
-    if (r->writing)
-        __atomic_sub_fetch(&r->filesystem->writes, 1u, __ATOMIC_RELAXED);
     free(r->path);
     free(r->if_match);
     free(r->if_none_match);
@@ -91,8 +87,6 @@ static rotmos_storage_code errno_code(void)
         return ROTMOS_STORAGE_NOMEM;
     if (errno == EEXIST)
         return ROTMOS_STORAGE_EXISTS;
-    if (errno == ENOSPC || errno == EDQUOT || errno == EFBIG)
-        return ROTMOS_STORAGE_LIMIT;
     return ROTMOS_STORAGE_IO;
 }
 static int content_config(const rotmos_fs_config *config,
@@ -108,7 +102,8 @@ static int content_config(const rotmos_fs_config *config,
 }
 /* Check existing components before path-based managed-cache helpers. External
  * writers must coordinate with the mutation lock, as in Vectis. */
-static int path_confined(const rotmos_fs_config *config, const char *path)
+static rotmos_storage_code path_confined(const rotmos_fs_config *config,
+                                         const char *path)
 {
     rotmos_fs_config content;
     char *root, *leaf;
@@ -119,12 +114,12 @@ static int path_confined(const rotmos_fs_config *config, const char *path)
     if (root == NULL || leaf == NULL) {
         free(root);
         free(leaf);
-        return 0;
+        return ROTMOS_STORAGE_NOMEM;
     }
     if (!content_config(config, &content, root)) {
         free(root);
         free(leaf);
-        return 0;
+        return ROTMOS_STORAGE_INVALID;
     }
     if (strcmp(path, "/") == 0) {
         fd = rotmos_fs_direct_open_existing(&content, path, 1, NULL);
@@ -138,7 +133,7 @@ static int path_confined(const rotmos_fs_config *config, const char *path)
             ok = errno == ENOENT;
             free(root);
             free(leaf);
-            return ok;
+            return ok ? ROTMOS_STORAGE_OK : ROTMOS_STORAGE_CONFLICT;
         }
         ok = 1;
         if (fstatat(fd, leaf, &st, AT_SYMLINK_NOFOLLOW) == 0)
@@ -150,7 +145,7 @@ static int path_confined(const rotmos_fs_config *config, const char *path)
         close(fd);
     free(root);
     free(leaf);
-    return ok;
+    return ok ? ROTMOS_STORAGE_OK : ROTMOS_STORAGE_CONFLICT;
 }
 static int metadata(struct disk_operation *op, int fd, rotmos_asset_info *info,
                     int hash, rotmos_job *job)
@@ -185,6 +180,25 @@ static int metadata(struct disk_operation *op, int fd, rotmos_asset_info *info,
         info->last_modified = op->modified;
     }
     return 1;
+}
+static rotmos_storage_code directory_cursor(struct disk_operation *op, int fd)
+{
+    struct disk_resource *r = calloc(1, sizeof(*r));
+    if (r == NULL) {
+        close(fd);
+        return ROTMOS_STORAGE_NOMEM;
+    }
+    r->fd = r->parent = -1;
+    r->path = strdup(op->arguments->path);
+    r->directory = fdopendir(fd);
+    if (r->path == NULL || r->directory == NULL) {
+        if (r->directory == NULL)
+            close(fd);
+        resource_close(r);
+        return ROTMOS_STORAGE_NOMEM;
+    }
+    op->created = r;
+    return ROTMOS_STORAGE_OK;
 }
 static rotmos_storage_code open_read(struct disk_operation *op,
                                      const rotmos_fs_config *config)
@@ -239,33 +253,15 @@ static rotmos_storage_code open_read(struct disk_operation *op,
         close(fd);
     else if (op->arguments->action == ROTMOS_STORAGE_OPEN_READ)
         op->fd = fd;
-    else {
-        struct disk_resource *r = calloc(1, sizeof(*r));
-        if (r == NULL) {
-            close(fd);
-            code = ROTMOS_STORAGE_NOMEM;
-            goto done;
-        }
-        r->fd = r->parent = -1;
-        r->filesystem = op->filesystem;
-        r->path = strdup(op->arguments->path);
-        r->directory = fdopendir(fd);
-        if (r->path == NULL || r->directory == NULL) {
-            if (r->directory == NULL)
-                close(fd);
-            resource_close(r);
-            code = ROTMOS_STORAGE_NOMEM;
-            goto done;
-        }
-        op->created = r;
-    }
+    else
+        code = directory_cursor(op, fd);
 done:
     free(root);
     free(entry);
     return code;
 }
 static rotmos_storage_code list_next(struct disk_operation *op,
-                                     const rotmos_fs_config *config)
+                                     const rotmos_fs_config *config, int hash)
 {
     struct disk_resource *r = op->resource;
     struct dirent *entry;
@@ -284,7 +280,7 @@ static rotmos_storage_code list_next(struct disk_operation *op,
         return ROTMOS_STORAGE_NOMEM;
     }
     for (count = 0; count < 64; ++count) {
-        if (rotmos_job_cancelled(config->job)) {
+        if (rotmos_fs_cancelled(config->job)) {
             code = ROTMOS_STORAGE_IO;
             break;
         }
@@ -324,7 +320,7 @@ static rotmos_storage_code list_next(struct disk_operation *op,
             code = errno_code();
             break;
         }
-        if (!metadata(op, fd, &op->result.entry.info, 1, config->job)) {
+        if (!metadata(op, fd, &op->result.entry.info, hash, config->job)) {
             close(fd);
             code = ROTMOS_STORAGE_IO;
             break;
@@ -366,12 +362,6 @@ static rotmos_storage_code put_begin(struct disk_operation *op,
         rotmos_fs_unlock(lock);
         return code;
     }
-    if (__atomic_add_fetch(&op->filesystem->writes, 1u, __ATOMIC_RELAXED) >
-        16u) {
-        __atomic_sub_fetch(&op->filesystem->writes, 1u, __ATOMIC_RELAXED);
-        rotmos_fs_unlock(lock);
-        return ROTMOS_STORAGE_LIMIT;
-    }
     r = calloc(1, sizeof(*r));
     root = malloc(ROTMOS_FS_STORAGE_PATH_MAX);
     leaf = malloc(ROTMOS_FS_PATH_MAX + 1);
@@ -379,11 +369,9 @@ static rotmos_storage_code put_begin(struct disk_operation *op,
         free(r);
         free(root);
         free(leaf);
-        __atomic_sub_fetch(&op->filesystem->writes, 1u, __ATOMIC_RELAXED);
         rotmos_fs_unlock(lock);
         return ROTMOS_STORAGE_NOMEM;
     }
-    r->filesystem = op->filesystem;
     r->writing = 1;
     r->parent = r->fd = -1;
     r->path = strdup(op->arguments->path);
@@ -459,7 +447,7 @@ static rotmos_storage_code put_write(struct disk_operation *op,
         return ROTMOS_STORAGE_LIMIT;
     }
     while (offset < size) {
-        if (rotmos_job_cancelled(config->job)) {
+        if (rotmos_fs_cancelled(config->job)) {
             r->failed = 1;
             return ROTMOS_STORAGE_IO;
         }
@@ -488,7 +476,7 @@ static rotmos_storage_code put_finish(struct disk_operation *op,
     struct stat old, opened, current;
     uint64_t usage, resources, extra = 0, old_size = 0;
     char *root, *disk, *leaf;
-    int lock, parent = -1;
+    int lock, close_result, parent = -1;
     if (r->ended || r->failed)
         return ROTMOS_STORAGE_CONFLICT;
     root = malloc(ROTMOS_FS_STORAGE_PATH_MAX);
@@ -552,12 +540,22 @@ static rotmos_storage_code put_finish(struct disk_operation *op,
         code = ROTMOS_STORAGE_LIMIT;
         goto done;
     }
-    if (rotmos_job_cancelled(config->job)) {
+    if (rotmos_fs_cancelled(config->job)) {
         code = ROTMOS_STORAGE_IO;
         goto done;
     }
-    if (fsync(r->fd) != 0 ||
-        renameat(r->parent, r->temporary, parent, leaf) != 0) {
+    if (fsync(r->fd) != 0) {
+        code = errno_code();
+        goto done;
+    }
+    if (!metadata(op, r->fd, &op->result.info, 1, config->job)) {
+        code = ROTMOS_STORAGE_IO;
+        goto done;
+    }
+    close_result = close(r->fd);
+    r->fd = -1;
+    if (close_result || renameat(r->parent, r->temporary, parent, leaf)) {
+        r->failed = 1;
         code = errno_code();
         goto done;
     }
@@ -570,8 +568,7 @@ static rotmos_storage_code put_finish(struct disk_operation *op,
         code = ROTMOS_STORAGE_IO;
         op->result.partial = 1;
     }
-    if (metadata(op, r->fd, &op->result.info, 1, config->job))
-        op->result.has_info = 1;
+    op->result.has_info = 1;
 done:
     if (parent >= 0)
         close(parent);
@@ -593,7 +590,7 @@ static rotmos_storage_code scope_request(const char *path,
     __atomic_store_n(&op->scope_ready, 1u, __ATOMIC_RELEASE);
     (void)rotmos_waker_signal(op->scope_waker, NULL);
     while (__atomic_load_n(&op->scope_ready, __ATOMIC_ACQUIRE) != 2u) {
-        if (rotmos_job_cancelled(op->native_job))
+        if (rotmos_fs_cancelled(op->native_job))
             return ROTMOS_STORAGE_IO;
         (void)poll(NULL, 0, 1);
     }
@@ -636,7 +633,7 @@ static rotmos_status native_work(rotmos_job *job, rotmos_bytes arguments,
     config.result = &op->result;
     config.recovery = op->recovery;
     op->result.code = ROTMOS_STORAGE_IO;
-    if (rotmos_job_cancelled(job))
+    if (rotmos_fs_cancelled(job))
         return ROTMOS_OK;
     if (op->resource == NULL &&
         (!rotmos_fs_path_normalize(a->path, normalized) ||
@@ -658,12 +655,14 @@ static rotmos_status native_work(rotmos_job *job, rotmos_bytes arguments,
     lock = rotmos_fs_lock(&config);
     if (lock < 0)
         return ROTMOS_OK;
-    if (op->resource == NULL && action > ROTMOS_STORAGE_LIST_NEXT &&
-        (!path_confined(&config, a->path) ||
-         (a->destination != NULL && !path_confined(&config, a->destination)))) {
-        rotmos_fs_unlock(lock);
-        op->result.code = ROTMOS_STORAGE_CONFLICT;
-        return ROTMOS_OK;
+    if (op->resource == NULL && action > ROTMOS_STORAGE_LIST_NEXT) {
+        op->result.code = path_confined(&config, a->path);
+        if (op->result.code == ROTMOS_STORAGE_OK && a->destination != NULL)
+            op->result.code = path_confined(&config, a->destination);
+        if (op->result.code != ROTMOS_STORAGE_OK) {
+            rotmos_fs_unlock(lock);
+            return ROTMOS_OK;
+        }
     }
     if (action <= ROTMOS_STORAGE_LIST_OPEN) {
         op->result.code = open_read(op, &config);
@@ -672,9 +671,9 @@ static rotmos_status native_work(rotmos_job *job, rotmos_bytes arguments,
     }
     if (action == ROTMOS_STORAGE_LIST_NEXT) {
         do {
-            op->result.code = list_next(op, &config);
+            op->result.code = list_next(op, &config, 1);
         } while (op->result.code == ROTMOS_STORAGE_CONFLICT &&
-                 !rotmos_job_cancelled(job));
+                 !rotmos_fs_cancelled(job));
         rotmos_fs_unlock(lock);
         return ROTMOS_OK;
     }
@@ -1031,6 +1030,320 @@ void rotmos_storage_filesystem_config_init(
     config->max_file_bytes = 16u * 1024u * 1024u;
     config->max_total_bytes = 128u * 1024u * 1024u;
     config->max_resources = 4096;
+}
+/* Standalone callers use the same disk dispatcher as executor jobs. All
+ * multi-KiB scratch state remains on the heap on default musl worker stacks. */
+struct synchronous_disk {
+    struct filesystem filesystem;
+    struct disk_operation operation;
+    rotmos_storage_arguments arguments;
+    rotmos_fs_entry entry;
+    char path[ROTMOS_FS_PATH_MAX + 1], destination[ROTMOS_FS_PATH_MAX + 1];
+};
+static struct synchronous_disk *
+synchronous_new(const rotmos_storage_filesystem_config *config,
+                const char *path, const char *destination,
+                rotmos_storage_code *code)
+{
+    struct synchronous_disk *s;
+    *code = ROTMOS_STORAGE_INVALID;
+    if (config == NULL || path == NULL)
+        return NULL;
+    s = calloc(1, sizeof(*s));
+    if (s == NULL) {
+        *code = ROTMOS_STORAGE_NOMEM;
+        return NULL;
+    }
+    s->filesystem.config.cache_dir = config->cache_dir;
+    s->filesystem.config.site_id = config->site_id;
+    s->filesystem.config.root_dir = config->root_dir;
+    s->filesystem.config.max_file_bytes = config->max_file_bytes;
+    s->filesystem.config.max_total_bytes = config->max_total_bytes;
+    s->filesystem.config.max_resources = config->max_resources;
+    if (!rotmos_fs_config_valid(&s->filesystem.config) ||
+        !rotmos_fs_path_normalize(path, s->path) ||
+        (destination &&
+         !rotmos_fs_path_normalize(destination, s->destination))) {
+        free(s);
+        return NULL;
+    }
+    s->arguments.path = s->path;
+    s->arguments.destination = destination ? s->destination : NULL;
+    s->operation.filesystem = &s->filesystem;
+    s->operation.arguments = &s->arguments;
+    s->operation.fd = -1;
+    rotmos_storage_result_init(&s->operation.result);
+    *code = ROTMOS_STORAGE_OK;
+    return s;
+}
+static void synchronous_free(struct synchronous_disk *s)
+{
+    if (s->operation.fd >= 0)
+        close(s->operation.fd);
+    if (s->operation.created != NULL)
+        resource_close(s->operation.created);
+    if (s->operation.resource != NULL)
+        resource_close(s->operation.resource);
+    free(s);
+}
+static rotmos_storage_code synchronous_run(struct synchronous_disk *s,
+                                           rotmos_storage_action action)
+{
+    rotmos_bytes arguments = {0};
+    s->arguments.action = action;
+    (void)native_work(NULL, arguments, &s->operation, NULL);
+    return s->operation.result.code;
+}
+int rotmos_storage_filesystem_path_normalize(
+    const char *path, char out[ROTMOS_FILESYSTEM_PATH_MAX + 1])
+{
+    return out != NULL && rotmos_fs_path_normalize(path, out);
+}
+static rotmos_storage_code synchronous_lookup(struct synchronous_disk *s,
+                                              rotmos_filesystem_entry *out)
+{
+    rotmos_storage_code code;
+    memset(out, 0, sizeof(*out));
+    code = rotmos_fs_lookup(&s->filesystem.config, s->path, &s->entry);
+    if (code == ROTMOS_STORAGE_OK) {
+        out->kind = (rotmos_filesystem_entry_kind)s->entry.kind;
+        out->size = s->entry.size;
+        strcpy(out->storage_path, s->entry.storage_path);
+    }
+    return code;
+}
+rotmos_storage_code
+rotmos_storage_filesystem_lookup(const rotmos_storage_filesystem_config *config,
+                                 const char *path,
+                                 rotmos_filesystem_entry *entry)
+{
+    struct synchronous_disk *s;
+    rotmos_storage_code code;
+    if (entry == NULL)
+        return ROTMOS_STORAGE_INVALID;
+    memset(entry, 0, sizeof(*entry));
+    s = synchronous_new(config, path, NULL, &code);
+    if (s == NULL)
+        return code;
+    code = synchronous_lookup(s, entry);
+    synchronous_free(s);
+    return code;
+}
+rotmos_storage_code
+rotmos_storage_filesystem_read(const rotmos_storage_filesystem_config *config,
+                               const char *path, unsigned char **body,
+                               size_t *size, rotmos_filesystem_entry *entry)
+{
+    struct synchronous_disk *s;
+    rotmos_storage_code code;
+    unsigned char *bytes = NULL;
+    size_t total = 0, offset = 0;
+    ssize_t n;
+    rotmos_fs_config content;
+    int lock = -1;
+    if (body == NULL || size == NULL || entry == NULL)
+        return ROTMOS_STORAGE_INVALID;
+    *body = NULL;
+    *size = 0;
+    s = synchronous_new(config, path, NULL, &code);
+    if (s == NULL)
+        return code;
+    code = synchronous_lookup(s, entry);
+    if (code != ROTMOS_STORAGE_OK ||
+        entry->kind != ROTMOS_FILESYSTEM_ENTRY_FILE)
+        goto done;
+    lock = rotmos_fs_lock(&s->filesystem.config);
+    if (lock < 0) {
+        code = ROTMOS_STORAGE_IO;
+        goto done;
+    }
+    code = synchronous_lookup(s, entry);
+    if (code != ROTMOS_STORAGE_OK ||
+        entry->kind != ROTMOS_FILESYSTEM_ENTRY_FILE)
+        goto done;
+    if (!content_config(&s->filesystem.config, &content,
+                        s->operation.recovery)) {
+        code = ROTMOS_STORAGE_INVALID;
+        goto done;
+    }
+    s->operation.fd =
+        rotmos_fs_direct_open_existing(&content, s->path, 0, NULL);
+    if (s->operation.fd < 0 || !metadata(&s->operation, s->operation.fd,
+                                         &s->operation.result.info, 1, NULL)) {
+        code = ROTMOS_STORAGE_IO;
+        goto done;
+    }
+    if (rotmos_u64_to_size(s->operation.result.info.size, &total, NULL) !=
+            ROTMOS_OK ||
+        (config->root_dir != NULL && total > config->max_file_bytes) ||
+        (total && (bytes = malloc(total)) == NULL)) {
+        code = ROTMOS_STORAGE_IO;
+        goto done;
+    }
+    while (offset < total) {
+        n = read(s->operation.fd, bytes + offset, total - offset);
+        if (n <= 0) {
+            code = ROTMOS_STORAGE_IO;
+            goto done;
+        }
+        offset += (size_t)n;
+    }
+    if (close(s->operation.fd))
+        code = ROTMOS_STORAGE_IO;
+    s->operation.fd = -1;
+    if (code == ROTMOS_STORAGE_OK) {
+        memcpy(entry->etag, s->operation.etag + 1, 64);
+        entry->etag[64] = 0;
+        entry->size = *size = total;
+        *body = bytes;
+        bytes = NULL;
+    }
+done:
+    free(bytes);
+    if (s->operation.fd >= 0) {
+        close(s->operation.fd);
+        s->operation.fd = -1;
+    }
+    if (lock >= 0)
+        rotmos_fs_unlock(lock);
+    synchronous_free(s);
+    return code;
+}
+rotmos_storage_code
+rotmos_storage_filesystem_put(const rotmos_storage_filesystem_config *config,
+                              const char *path, const void *body, size_t size,
+                              const char *match, const char *none)
+{
+    struct synchronous_disk *s;
+    rotmos_storage_code code;
+    if (size && body == NULL)
+        return ROTMOS_STORAGE_INVALID;
+    s = synchronous_new(config, path, NULL, &code);
+    if (s == NULL)
+        return code;
+    s->arguments.if_match = match;
+    s->arguments.if_none_match = none;
+    code = synchronous_run(s, ROTMOS_STORAGE_PUT_BEGIN);
+    if (code == ROTMOS_STORAGE_OK) {
+        s->operation.resource = s->operation.created;
+        s->operation.created = NULL;
+        s->arguments.bytes.data = body;
+        s->arguments.bytes.length = size;
+        code = synchronous_run(s, ROTMOS_STORAGE_PUT_WRITE);
+        if (code == ROTMOS_STORAGE_OK)
+            code = synchronous_run(s, ROTMOS_STORAGE_PUT_FINISH);
+    }
+    synchronous_free(s);
+    return code;
+}
+static rotmos_storage_code
+synchronous_mutate(const rotmos_storage_filesystem_config *config,
+                   const char *path, const char *destination, int overwrite,
+                   int depth, const char *match, const char *none,
+                   rotmos_storage_action action)
+{
+    struct synchronous_disk *s;
+    rotmos_storage_code code;
+    if (action == ROTMOS_STORAGE_COPY && depth != 0 && depth != -1)
+        return ROTMOS_STORAGE_INVALID;
+    s = synchronous_new(config, path, destination, &code);
+    if (s == NULL)
+        return code;
+    s->arguments.if_match = match;
+    s->arguments.if_none_match = none;
+    s->arguments.overwrite = overwrite;
+    s->arguments.depth = depth;
+    code = synchronous_run(s, action);
+    synchronous_free(s);
+    return code;
+}
+rotmos_storage_code
+rotmos_storage_filesystem_delete(const rotmos_storage_filesystem_config *config,
+                                 const char *path, const char *match,
+                                 const char *none)
+{
+    return synchronous_mutate(config, path, NULL, 0, -1, match, none,
+                              ROTMOS_STORAGE_DELETE);
+}
+rotmos_storage_code
+rotmos_storage_filesystem_mkcol(const rotmos_storage_filesystem_config *config,
+                                const char *path, const char *match,
+                                const char *none)
+{
+    return synchronous_mutate(config, path, NULL, 0, -1, match, none,
+                              ROTMOS_STORAGE_MKCOL);
+}
+rotmos_storage_code
+rotmos_storage_filesystem_copy(const rotmos_storage_filesystem_config *config,
+                               const char *path, const char *destination,
+                               int overwrite, int depth, const char *match,
+                               const char *none)
+{
+    return synchronous_mutate(config, path, destination, overwrite, depth,
+                              match, none, ROTMOS_STORAGE_COPY);
+}
+rotmos_storage_code rotmos_storage_filesystem_move(
+    const rotmos_storage_filesystem_config *config, const char *path,
+    const char *destination, int overwrite, const char *match, const char *none)
+{
+    return synchronous_mutate(config, path, destination, overwrite, -1, match,
+                              none, ROTMOS_STORAGE_MOVE);
+}
+rotmos_storage_code
+rotmos_storage_filesystem_list(const rotmos_storage_filesystem_config *config,
+                               const char *path,
+                               rotmos_filesystem_list_fn callback, void *data)
+{
+    struct synchronous_disk *s;
+    rotmos_storage_code code;
+    size_t size;
+    int n, fd;
+    rotmos_fs_config content;
+    if (callback == NULL)
+        return ROTMOS_STORAGE_INVALID;
+    s = synchronous_new(config, path, NULL, &code);
+    if (s == NULL)
+        return code;
+    if (!content_config(&s->filesystem.config, &content,
+                        s->operation.recovery)) {
+        synchronous_free(s);
+        return ROTMOS_STORAGE_INVALID;
+    }
+    fd = rotmos_fs_direct_open_existing(&content, s->path, 1, NULL);
+    code = fd < 0 ? (errno == ENOENT ? ROTMOS_STORAGE_NOT_FOUND
+                                     : ROTMOS_STORAGE_IO)
+                  : directory_cursor(&s->operation, fd);
+    if (code == ROTMOS_STORAGE_OK) {
+        s->operation.resource = s->operation.created;
+        s->operation.created = NULL;
+        for (;;) {
+            rotmos_asset_entry *entry = &s->operation.result.entry;
+            code = list_next(&s->operation, &s->filesystem.config, 0);
+            if (code == ROTMOS_STORAGE_CONFLICT)
+                continue;
+            if (code != ROTMOS_STORAGE_OK)
+                break;
+            n = snprintf(s->destination, sizeof(s->destination), "%s%s%s",
+                         s->path, !strcmp(s->path, "/") ? "" : "/",
+                         entry->name);
+            if (n < 0 || (size_t)n >= sizeof(s->destination) ||
+                rotmos_u64_to_size(entry->info.size, &size, NULL) !=
+                    ROTMOS_OK) {
+                code = ROTMOS_STORAGE_IO;
+                break;
+            }
+            if (!callback(s->destination,
+                          entry->info.kind == ROTMOS_ASSET_FILE
+                              ? ROTMOS_FILESYSTEM_ENTRY_FILE
+                              : ROTMOS_FILESYSTEM_ENTRY_COLLECTION,
+                          size, data))
+                break;
+        }
+        if (code == ROTMOS_STORAGE_END)
+            code = ROTMOS_STORAGE_OK;
+    }
+    synchronous_free(s);
+    return code;
 }
 rotmos_status rotmos_storage_filesystem_new(
     rotmos_server *server, const rotmos_storage_filesystem_config *config,

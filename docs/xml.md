@@ -1,6 +1,6 @@
 # XML mapping, routes, DOM and SAX
 
-> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
 
 
 Include [`<rotmos/xml.h>`](../include/rotmos/xml.h), or the ordinary umbrella.

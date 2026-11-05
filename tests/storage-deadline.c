@@ -1,8 +1,10 @@
 #define _POSIX_C_SOURCE 200809L
 #include <rotmos/rotmos.h>
-#include <poll.h>
 #include <stdio.h>
 #include <string.h>
+/* Test-only expiry seam. Compile the actual storage implementation so the
+ * provider can expire its own timer before acknowledgement without sleeping. */
+#include "../src/storage.c"
 #define CHECK(t)                                                               \
     do {                                                                       \
         if (!(t)) {                                                            \
@@ -31,7 +33,8 @@ static rotmos_status invoke(rotmos_storage_operation *op,
     (void)args;
     /* Expire while the owner is in invoke, before the loop can dispatch its
      * timer; acknowledgement must still observe the absolute deadline. */
-    poll(NULL, 0, 30);
+    if (op->timer != NULL)
+        op->timer->due.high = op->timer->due.low = 0;
     if (args->action == ROTMOS_STORAGE_STAT)
         return rotmos_storage_operation_complete(op, NULL, error);
     rotmos_storage_result_init(&result);

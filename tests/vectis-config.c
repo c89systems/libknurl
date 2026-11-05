@@ -28,6 +28,9 @@ static int settings(void)
     CHECK(reference_server_new(&source, NULL, 0, NULL, NULL, &server, &error) ==
           ROTMOS_OK);
     CHECK(rotmos_server_effective_config(server, &effective, &error) ==
+              ROTMOS_OK &&
+          effective.config.timeouts.deferred_response.disabled);
+    CHECK(rotmos_server_effective_config(server, &effective, &error) ==
           ROTMOS_OK);
     CHECK(effective.requested_worker_count == 0 &&
           effective.config.workers.count >= 1 &&

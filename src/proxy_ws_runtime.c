@@ -443,6 +443,7 @@ static rotmos_status tunnel_step(struct proxy_exchange *x)
         if (status != ROTMOS_OK)
             return status;
         s->upload_offset += amount;
+        rotmos_proxy_count(&x->accounting.upstream_bytes, amount);
         if (amount != 0)
             rotmos_proxy_schedule(x);
     }
@@ -463,6 +464,7 @@ static rotmos_status tunnel_step(struct proxy_exchange *x)
             return status;
         if (status == ROTMOS_OK) {
             rotmos_proxy_http_upstream_consume(&x->upstream, amount);
+            rotmos_proxy_count(&x->accounting.downstream_bytes, amount);
             rotmos_proxy_schedule(x);
         }
         return ROTMOS_OK;

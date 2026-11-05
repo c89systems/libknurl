@@ -21,6 +21,7 @@ collectgarbage('collect')
 local retained,after_error,after_oom,group_reply,group_checks,uploads= nil,nil,nil,nil,0,0
 local server=ok(rotmos.server{
   port=0,workers={count=1,affinity_disabled=true},http={backend_quiet=true},
+  limits={default_body_bytes=2,hard_body_bytes=16},
   on_parent_ready=function(s) ok(fixture.spawn_routes(ok(s:listener()).port)) end,
 })
 local spec={path='/file',file=root..'/static/asset',cache_control='public,max-age=1',
@@ -59,7 +60,10 @@ ok(server:upload_file{path='/upload-file',file=root..'/uploaded',max_body_bytes=
 ok(server:upload_file{path='/upload-limit',file=root..'/never-created',max_body_bytes=2})
 local principal=string.rep('p',200)
 local observed={}
-ok(server:webdav{prefix='/dav',cache_dir=root..'/cache',site_id='fixture',max_file_bytes=3,max_body_bytes=10,
+ok(server:webdav{prefix='/davhard',cache_dir=root..'/cache',site_id='hard',max_file_bytes=32,auth_required=false})
+ok(server:webdav{prefix='/davzero',cache_dir=root..'/cache',site_id='zero',max_file_bytes=0,auth_required=false})
+ok(server:webdav{prefix='/davoverride',cache_dir=root..'/cache',site_id='override',max_file_bytes=32,max_body_bytes=1,auth_required=false})
+ok(server:webdav{prefix='/dav',cache_dir=root..'/cache',site_id='fixture',max_file_bytes=3,
   before=function(req) assert(req.principal==nil);req.marker=true end,
   auth={kind='callback',callback=function(req)
     assert(req.authorization=='Bearer fixture-token' and req.purpose=='webdav' and req.resource:sub(1,1)=='/')

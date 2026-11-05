@@ -1,6 +1,6 @@
 # WebDAV mounts
 
-> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
 
 
 [`<rotmos/webdav.h>`](../include/rotmos/webdav.h) registers filesystem, read-only
@@ -66,10 +66,16 @@ provider's explicit partial commit/recovery outcomes remain available even if
 HTTP delivery is cancelled; cancellation does not imply rollback.
 
 `operation_timeout_ms` zero selects 30000 ms, including queue/lock/policy wait.
-`operation_timeout_disabled` explicitly removes that deadline. The facade reports
+`operation_timeout_disabled` explicitly removes that deadline. The Vectis
+reference translator and Lua facade disable this additional deadline by default;
+an explicit Lua timeout enables it unless explicitly disabled. The facade reports
 an interrupted live operation as 504 for timeout, while storage retirement still
 waits for native acknowledgement. Worker shutdown retains its bounded escalation
-contract. `max_body_bytes` zero inherits the server's body policy.
+contract. Core `max_body_bytes` zero inherits the server's body policy.
+Vectis translation and Lua's omitted body limit forward `max_file_bytes`; an
+explicit Lua body limit overrides that translation, including zero inheritance.
+WebDAV caps the selected body allowance at the server hard limit, admitting
+smaller valid requests and returning 413 above the resulting allowance.
 
 ## Authorization inside mutations
 

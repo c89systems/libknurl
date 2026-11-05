@@ -21,6 +21,10 @@
 #include <unistd.h>
 
 static const char rotmos_fs_hex[] = "0123456789abcdef";
+int rotmos_fs_cancelled(const rotmos_job *job)
+{
+    return job != NULL && rotmos_job_cancelled(job);
+}
 
 static int rotmos_fs_remove_tree(const char *path);
 static int rotmos_fs_disk_usage(const char *path, uint64_t *total,
@@ -285,7 +289,7 @@ int rotmos_fs_lock(const rotmos_fs_config *config)
     char path[ROTMOS_FS_STORAGE_PATH_MAX];
     int fd;
 
-    if (rotmos_job_cancelled(config->job))
+    if (rotmos_fs_cancelled(config->job))
         return -1;
     if (!rotmos_fs_prepare(config) ||
         !rotmos_fs_base(config, base, sizeof(base)) ||
@@ -299,14 +303,14 @@ int rotmos_fs_lock(const rotmos_fs_config *config)
     /* Separate open descriptions exclude threads as well as worker processes.
      */
     while (flock(fd, LOCK_EX | LOCK_NB) == -1) {
-        if (rotmos_job_cancelled(config->job) ||
+        if (rotmos_fs_cancelled(config->job) ||
             (errno != EINTR && errno != EWOULDBLOCK && errno != EAGAIN)) {
             (void)close(fd);
             return -1;
         }
         (void)poll(NULL, 0, 5);
     }
-    if (rotmos_job_cancelled(config->job)) {
+    if (rotmos_fs_cancelled(config->job)) {
         close(fd);
         return -1;
     }
@@ -1000,7 +1004,7 @@ static int rotmos_fs_copy_fd(int source, int destination, rotmos_job *job)
     ssize_t n, written;
     size_t offset;
     for (;;) {
-        if (rotmos_job_cancelled(job))
+        if (rotmos_fs_cancelled(job))
             return 0;
         do {
             n = read(source, bytes, sizeof(bytes));
@@ -1080,7 +1084,7 @@ static int rotmos_fs_direct_copy_tree_at(int source_parent_fd,
     if (scan == NULL || scan->destination_fd < 0)
         goto failed;
     while (scan != NULL) {
-        if (rotmos_job_cancelled(job))
+        if (rotmos_fs_cancelled(job))
             goto failed;
         errno = 0;
         entry = readdir(scan->directory);
@@ -1477,7 +1481,7 @@ int rotmos_fs_etag_fd(int fd, char out[67], rotmos_job *job)
     ok = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) == 1;
     offset = 0;
     while (ok) {
-        if (rotmos_job_cancelled(job)) {
+        if (rotmos_fs_cancelled(job)) {
             ok = 0;
             break;
         }
@@ -1754,7 +1758,7 @@ static int rotmos_fs_copy_tree(const char *source, const char *destination,
         return 0;
     }
     while (scan != NULL) {
-        if (rotmos_job_cancelled(job))
+        if (rotmos_fs_cancelled(job))
             break;
         errno = 0;
         entry = readdir(scan->directory);

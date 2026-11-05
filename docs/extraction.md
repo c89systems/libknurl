@@ -16,5 +16,6 @@ userdata and provider registrations without importing private Vectis types.
 Preserve behavior through that boundary. A new public API is not permission to
 change streaming, serialization timing, limits, storage layouts or application
 requirements. Supporting runtime machinery stays private unless a real adapter
-consumer requires it. The implementation is incomplete and contains the
-[documented audit failures](server-api-audit.md); current APIs are under correction.
+consumer requires it. The [audit](server-api-audit.md) records operation coverage
+and the Vectis integration assessment corrections; [verification](verification.md)
+distinguishes tested development scope from actual consumer cutover and release.

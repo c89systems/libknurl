@@ -245,6 +245,13 @@ static rotmos_status proxy_error(const rotmos_error *cause, int code,
                                    b->callbacks.on_error_userdata, &e);
     return reference_error_to_rotmos(status, &e, error);
 }
+static void proxy_exchange(rotmos_request *request,
+                           const rotmos_proxy_exchange *event, void *data)
+{
+    struct reference_proxy_binding *b = data;
+    b->callbacks.on_exchange(rotmos_request_userdata(request), event,
+                             b->callbacks.on_exchange_userdata);
+}
 reference_status reference_proxy_register(
     struct reference_app *app, const struct reference_proxy_config *in,
     struct reference_proxy_binding *b, reference_error *error)
@@ -281,6 +288,8 @@ reference_status reference_proxy_register(
     c.modify_response_userdata = b;
     c.on_error = in->on_error ? proxy_error : NULL;
     c.on_error_userdata = b;
+    c.on_exchange = in->on_exchange ? proxy_exchange : NULL;
+    c.on_exchange_userdata = b;
     status =
         rotmos_router_proxy(rotmos_server_router(app->server), &c, NULL, &e);
     return reference_error_from_rotmos(status, &e, error);
@@ -638,6 +647,9 @@ reference_status reference_webdav_register(
     rotmos_webdav_config_init(&c);
     c.path_prefix = in->path_prefix;
     c.storage = in->storage;
+    (void)rotmos_u64_from_size(in->storage.max_file_bytes, &c.max_body_bytes,
+                               NULL);
+    c.operation_timeout_disabled = 1;
     c.provider = provider;
     c.auth_disabled = !in->auth_required;
     c.conceal_disabled = !in->conceal_unauthorized;

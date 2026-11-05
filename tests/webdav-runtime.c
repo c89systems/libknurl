@@ -402,6 +402,68 @@ static int streaming(unsigned short port, const char *root)
                    NULL, NULL) == 0);
     return 0;
 }
+static int staged_count(const char *root, int expected)
+{
+    DIR *directory;
+    struct dirent *entry;
+    struct stat st;
+    char path[4096];
+    int tries, count;
+    for (tries = 0; tries < 1000; ++tries) {
+        count = 0;
+        directory = opendir(root);
+        CHECK(directory != NULL);
+        while ((entry = readdir(directory)) != NULL) {
+            if (strncmp(entry->d_name, ".vectis-tmp-", 12))
+                continue;
+            snprintf(path, sizeof(path), "%s/%s", root, entry->d_name);
+            if (!stat(path, &st) && st.st_size == 3)
+                ++count;
+        }
+        closedir(directory);
+        if (count == expected)
+            return 0;
+        (void)poll(NULL, 0, 1);
+    }
+    fprintf(stderr, "expected %d staged uploads, got %d\n", expected, count);
+    return 1;
+}
+static int concurrent_puts(unsigned short port, const char *root)
+{
+    /* Cross both former undocumented thresholds (16 PUTs, 256 resources)
+     * under explicit server capacity. Native writes reaching the staging files
+     * form the barriers; no fixed wait stands in for completed admission. */
+    int sockets[257], i;
+    char wire[256], path[64], line_bytes[256];
+    for (i = 0; i < 257; ++i) {
+        sockets[i] = connect_to(port);
+        snprintf(wire, sizeof(wire),
+                 "PUT /dav/parallel%d HTTP/1.1\r\n"
+                 "Host: localhost\r\nConnection: close\r\nContent-Length: "
+                 "6\r\n\r\nabc",
+                 i);
+        CHECK(sockets[i] >= 0 &&
+              write_all(sockets[i], wire, strlen(wire)) == 0);
+        CHECK(staged_count(root, i + 1) == 0);
+    }
+    for (i = 0; i < 257; ++i) {
+        if (!(i % 2)) {
+            CHECK(write_all(sockets[i], "def", 3) == 0);
+            CHECK(line(sockets[i], line_bytes, sizeof(line_bytes)) == 0 &&
+                  strstr(line_bytes, " 201 "));
+        }
+        CHECK(close(sockets[i]) == 0);
+    }
+    CHECK(staged_count(root, 0) == 0);
+    for (i = 0; i < 257; ++i) {
+        snprintf(path, sizeof(path), "/dav/parallel%d", i);
+        CHECK(exchange(port, "GET", path, NULL, "", i % 2 ? 404 : 200,
+                       i % 2 ? "" : "abcdef", NULL, NULL) == 0);
+    }
+    CHECK(exchange(port, "PUT", "/dav/reused", NULL, "z", 201, "", NULL,
+                   NULL) == 0);
+    return 0;
+}
 static int valid_xml(void)
 {
     rotmos_xml_document *document;
@@ -416,6 +478,7 @@ static int client(unsigned short port, const char *root)
     char etag[256], headers[512];
     wire_body = malloc(32768);
     CHECK(wire_body != NULL);
+    CHECK(concurrent_puts(port, root) == 0);
     CHECK(exchange(port, "GET", "/dav/file", "X-Deny: yes\r\n", "", 401,
                    "authenticate", "www-authenticate: Basic", NULL) == 0);
     CHECK(exchange(port, "PUT", "/dav/file",
@@ -682,6 +745,8 @@ int main(void)
     config.workers.affinity_disabled = config.http.backend_quiet = 1;
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
     config.workers.shutdown_timeout_ms = 1000;
+    config.limits.max_connections = 512;
+    config.workers.rlimit_nofiles = 4096;
     config.io.chunk_bytes = 128;
     config.io.output_queue_bytes = 4096;
     config.callbacks.on_worker_start = worker_start;

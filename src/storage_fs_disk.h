@@ -27,6 +27,7 @@ typedef struct rotmos_fs_entry {
 rotmos_storage_code rotmos_fs_scope(const rotmos_fs_config *, const char *,
                                     const char *, int, int);
 int rotmos_fs_config_valid(const rotmos_fs_config *);
+int rotmos_fs_cancelled(const rotmos_job *);
 int rotmos_fs_path_normalize(const char *, char[ROTMOS_FS_PATH_MAX + 1]);
 int rotmos_fs_disk_path(const rotmos_fs_config *, const char *, const char *,
                         char[ROTMOS_FS_STORAGE_PATH_MAX]);

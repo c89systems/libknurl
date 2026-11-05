@@ -122,6 +122,15 @@ if(BUILD_TESTING)
       "-DSCRIPT=${rotmos_root}/tests/lua/proxy.lua" "-DWORKSPACE=${CMAKE_CURRENT_BINARY_DIR}/tests/proxy"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
     set_tests_properties(rotmos.lua-proxy-${mode} PROPERTIES TIMEOUT 10)
+    foreach(failure error oom)
+      add_test(NAME rotmos.lua-proxy-terminal-${failure}-${mode}
+        COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
+          "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:rotmos_lua_${mode}_host>"
+          "-DSCRIPT=${rotmos_root}/tests/lua/proxy-terminal-${failure}.lua"
+          "-DWORKSPACE=${CMAKE_CURRENT_BINARY_DIR}/tests/proxy-terminal-${failure}"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
+      set_tests_properties(rotmos.lua-proxy-terminal-${failure}-${mode} PROPERTIES TIMEOUT 10)
+    endforeach()
     add_test(NAME rotmos.lua-events-${mode} COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
       "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:rotmos_lua_${mode}_host>"
       "-DSCRIPT=${rotmos_root}/tests/lua/events.lua" "-DWORKSPACE=${CMAKE_CURRENT_BINARY_DIR}/tests/events"
@@ -171,6 +180,8 @@ if(BUILD_TESTING)
       set_tests_properties(rotmos.lua-routes-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-providers-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-proxy-${mode} PROPERTIES DISABLED TRUE)
+      set_tests_properties(rotmos.lua-proxy-terminal-error-${mode}
+        rotmos.lua-proxy-terminal-oom-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-events-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-codecs-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-typed-${mode} PROPERTIES DISABLED TRUE)

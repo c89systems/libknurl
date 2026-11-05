@@ -135,6 +135,7 @@ static int settings(lua_State *L, int index, void *config,
                 *(int *)out = lua_toboolean(L, -1);
             break;
         case DEADLINE_FIELD:
+            ((rotmos_deadline *)out)->disabled = 0;
             if (lua_istable(L, -1))
                 ok = settings(L, -1, out, deadline, N(deadline), error);
             else {
@@ -529,6 +530,7 @@ int rl_config_parse(lua_State *L, int options, int owner,
             goto invalid;
         rotmos_server_config_init_production_webserver(c);
     }
+    c->timeouts.deferred_response.disabled = 1;
     if (!rl_field_string(L, options, "name", &c->name))
         goto invalid;
     rl_field(L, options, "callbacks");

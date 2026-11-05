@@ -412,6 +412,55 @@ static rotmos_status on_error(const rotmos_error *cause, int code,
     call.phase = 3;
     return invoke(&call);
 }
+struct terminal_call {
+    struct rl_rule *rule;
+    const rotmos_proxy_exchange *exchange;
+};
+static int terminal_trampoline(lua_State *L)
+{
+    struct terminal_call *call = lua_touserdata(L, 1);
+    const rotmos_proxy_exchange *e = call->exchange;
+    rl_rule_options(L, call->rule);
+    rl_field(L, -1, "on_exchange");
+    lua_createtable(L, 0, 11);
+#define TEXT(name)                                                             \
+    lua_pushstring(L, e->name);                                                \
+    lua_setfield(L, -2, #name)
+#define COUNT(name)                                                            \
+    rl_push_u64(L, e->name);                                                   \
+    lua_setfield(L, -2, #name)
+    TEXT(route);
+    TEXT(upstream);
+    TEXT(kind);
+    TEXT(disconnect_side);
+    TEXT(error_category);
+    COUNT(request_id);
+    COUNT(upstream_bytes);
+    COUNT(downstream_bytes);
+    COUNT(duration_ms);
+#undef TEXT
+#undef COUNT
+    lua_pushinteger(L, e->status);
+    lua_setfield(L, -2, "status");
+    lua_pushinteger(L, e->cause);
+    lua_setfield(L, -2, "cause");
+    lua_call(L, 1, 0);
+    return 0;
+}
+static void terminal(rotmos_request *request, const rotmos_proxy_exchange *e,
+                     void *data)
+{
+    struct terminal_call call;
+    rotmos_error error;
+    struct rl_rule *rule = data;
+    (void)request;
+    call.rule = rule;
+    call.exchange = e;
+    if (rl_protect(rule->server->L, terminal_trampoline, &call, &error) !=
+            ROTMOS_OK &&
+        rule->server->callback_error.status == ROTMOS_OK)
+        rule->server->callback_error = error;
+}
 int rl_proxy(lua_State *L)
 {
     static const char *const fields[] = {"path",
@@ -431,9 +480,10 @@ int rl_proxy(lua_State *L)
                                          "preflight",
                                          "rewrite",
                                          "modify_response",
-                                         "on_error"};
-    static const char *const callbacks[] = {"preflight", "rewrite",
-                                            "modify_response", "on_error"};
+                                         "on_error",
+                                         "on_exchange"};
+    static const char *const callbacks[] = {
+        "preflight", "rewrite", "modify_response", "on_error", "on_exchange"};
     rotmos_proxy_config config;
     rotmos_route_config route;
     struct rl_rule *rule;
@@ -442,7 +492,7 @@ int rl_proxy(lua_State *L)
     const char *version = NULL, *kind = NULL;
     const char **alternates;
     size_t count, i, connect_ms = 0, idle_ms = 0, total_ms = 0;
-    int index, root, selected[4];
+    int index, root, selected[5];
     if (!lua_istable(L, 2))
         goto invalid;
     if (!rl_fields(L, 2, fields, N(fields), &error))
@@ -529,6 +579,10 @@ int rl_proxy(lua_State *L)
     if (selected[3]) {
         config.on_error = on_error;
         config.on_error_userdata = rule;
+    }
+    if (selected[4]) {
+        config.on_exchange = terminal;
+        config.on_exchange_userdata = rule;
     }
     root = rl_rule_root(L, index, rule);
     status = rotmos_router_proxy(rotmos_server_router(rule->server->native),

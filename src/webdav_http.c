@@ -1,4 +1,5 @@
 #include "webdav_internal.h"
+#include "server_internal.h"
 #include "static_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -575,6 +576,18 @@ rotmos_status rotmos_dav_headers(rotmos_request *request,
     plan->on_close = request_close;
     rotmos_body_policy_init_stream(&plan->body);
     plan->body.max_bytes = r->config.max_body_bytes;
+    {
+        rotmos_u64 hard = request->server->config.limits.hard_body_bytes;
+        int order = 0;
+        if (!plan->body.max_bytes.high && !plan->body.max_bytes.low)
+            plan->body.max_bytes =
+                request->server->config.limits.default_body_bytes;
+        if (hard.high || hard.low) {
+            (void)rotmos_u64_compare(plan->body.max_bytes, hard, &order, NULL);
+            if (order > 0)
+                plan->body.max_bytes = hard;
+        }
+    }
     s->path = resource(r, rotmos_request_path(request).data);
     if (s->path == NULL) {
         rotmos_dav_error(s, 404, ROTMOS_INVALID);

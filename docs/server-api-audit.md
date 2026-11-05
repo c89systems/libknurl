@@ -6,6 +6,26 @@ inventory. [Verification](verification.md) records the completed development
 gates and their scope; it does not certify the actual Vectis cutover. Sibling
 repositories remain read-only.
 
+## Vectis integration assessment follow-up
+
+Vectis's assessment of `f6bc8cb` identified concrete gaps not covered by the
+initial family-level gate. The corrections below preserve demonstrated Vectis
+operations and share the existing engines; they add no application requirement.
+
+| Gap | Correction and regression |
+| --- | --- |
+| G1 | Standalone public filesystem lookup/read/put/delete/mkcol/copy/move/list and normalization share disk helpers, cursors and mutations without a server/loop. `vectis-filesystem.h` forwards the baseline calls; `vectis-filesystem.c` ports conditional, managed/direct, listing, recovery and default-stack-thread cases. `filesystem-failure.c` covers allocation, sync/close/write failure, old-value preservation and descriptor reuse. |
+| G2 | C/Lua declarations forward file quotas into body admission, preserving zero inheritance/explicit overrides. WebDAV caps admission at the server hard ceiling. Separate small-limit C and Lua fixtures exercise acceptance between default and mount limits and rejection above mount/hard limits. |
+| G3 | C server/mount translation and Lua defaults disable the extra deferred-response/storage deadlines. Explicit deadlines remain selectable. Effective-setting assertions and a deterministic storage expiry seam prove completion versus selected timeout, commit and retirement; cancellation and shutdown/abandonment remain covered. |
+| G4 | The fixed 16-PUT and 256-operation/resource guards are removed. Configured server limits and bounded native execution/admission apply. The wire fixture holds 257 incremental uploads at staging barriers, then completes/cancels them and verifies content, cleanup and reuse. |
+| G5 | Public terminal proxy snapshots provide the existing event's accepted-byte counters, selected target, kind, ID, duration, status and error/disconnect classification. C/Lua adapters forward them. HTTP/alternate/upload/disconnect/worker shutdown and WS/WSS fixtures check exactly-once reporting; public request observations retain upstream classification. |
+
+Additional extraction defects found by the fault cases are recorded in
+[KORE.md](../KORE.md). Installed-consumer and target checks distinguish runtime
+execution on x86_64 GNU/musl from compilation/linking on the other five targets.
+
+## Operation inventory
+
 | Contract family | Implementation and forwarding evidence |
 | --- | --- |
 | Server | `tests/vectis-server.c` translates all 34 baseline fields; `vectis-config.c` covers effective values, host readiness, stop and shutdown. |
@@ -66,8 +86,8 @@ client sends `rest`, followed by `done`. This is live transport evidence,
 separate from H2 header-codec unit checks. It passes on GNU/musl and builds on
 the other five targets.
 
-The accumulated development gate is complete: GNU passes all 95 Core checks
-and 32 Lua checks; musl passes 90 Core checks and 31 Lua checks, reusing the
+The initial development gate at `f6bc8cb` passed all 95 GNU Core checks
+and 32 Lua checks; musl passed 90 Core checks and 31 Lua checks, reusing the
 same-host backend-tool and target-independent source-package checks. Full
 installed static/shared reference consumers pass on both runtimes. All seven
 SDK archives pass final-byte validation and four relocated example consumers
@@ -77,7 +97,8 @@ Historical defects without isolated regressions remain explicit limitations in
 KORE.md, rather than promises of exhaustive fault injection. Actual Vectis
 normal/packed cutover regressions require separately authorized Vectis edits.
 A release still requires the lifecycle's default-branch/signing/tagging and clean
-release-configuration gates. Development checks do not establish release readiness.
+release-configuration gates. Neither that initial gate nor these focused
+corrections certify the actual Vectis normal/packed cutover.
 
 Target evidence distinguishes executable GNU/musl checks from compile/link and
 artifact inspection on the other five toolchains. Installed static/shared

@@ -86,9 +86,20 @@ local function gateway(err)
   io.stderr:write('proxy fixture cause: '..err.message..'\n')
   return {status=503,body='gateway',headers={{name='X-Gateway',value='local'}}}
 end
+local exchange_ids={}
+local exchange_count=0
+local function exchange(e)
+  assert(type(e.request_id)=='number' and not exchange_ids[e.request_id])
+  exchange_ids[e.request_id]=true;exchange_count=exchange_count+1
+  assert(type(e.route)=='string' and type(e.upstream)=='string' and e.kind=='http')
+  assert(e.upstream_bytes>=0 and e.downstream_bytes>=0 and e.duration_ms>=0)
+  assert(type(e.disconnect_side)=='string' and type(e.error_category)=='string')
+  if proxy_terminal_mode=='oom' then fixture.fail_next();string.rep('x',30000) end
+  if proxy_terminal_mode then error('expected terminal snapshot callback failure') end
+end
 local function declare(path,changes)
   local opts={path=path,target=origin.http,preflight=preflight,rewrite=rewrite,modify_response=modify,on_error=gateway,
-    buffer_limit_bytes=8192,upstream_http_version='http1'}
+    buffer_limit_bytes=8192,upstream_http_version='http1',on_exchange=exchange}
   for k,v in pairs(changes or {}) do opts[k]=v end
   ok(server:proxy(opts));return opts
 end
@@ -115,7 +126,11 @@ declare('/gateway-getter',{target=origin.unavailable,on_error=function() return 
 ok(server:get('/stop',function()
   state(pre:param('id'));state(output:set_path('/expired'));state(response:set_status(200))
   assert(rewrites>=10 and modified>=4 and errors>=7)
+  assert(exchange_count>=5)
   ok(server:stop());return 'ok'
 end))
-ok(server:validate());ok(server:run());ok(fixture.join());ok(fixture.proxy_join());ok(server:close())
+ok(server:validate())
+local result,cause=server:run()
+if proxy_terminal_mode then assert(result==nil and cause.status) else ok(result,cause) end
+ok(fixture.join());ok(fixture.proxy_join());ok(server:close())
 ok(os.remove(fixture.workspace..'/proxy.key'))

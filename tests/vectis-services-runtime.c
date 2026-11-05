@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <dirent.h>
 #include <poll.h>
+#include <signal.h>
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,7 +27,7 @@ struct fixture {
     struct reference_proxy_binding proxy[2];
     struct reference_upload_binding upload[3];
     struct reference_websocket_binding websocket;
-    struct reference_webdav_binding dav;
+    struct reference_webdav_binding dav, dav_hard;
     rotmos_asset_provider *packed;
     pthread_t owner;
     char directory[96], cache[128], file[128];
@@ -37,6 +38,8 @@ struct fixture {
     int packed_opened, packed_closed, provider_closed;
     pid_t child, upstream;
     unsigned short port;
+    int admission, hard_limit;
+    int proxy_reports;
 };
 static int write_all(int fd, const void *bytes, size_t size)
 {
@@ -366,8 +369,12 @@ static rotmos_status acquire(rotmos_request *request,
     (void)error;
     if (!pthread_equal(f->owner, pthread_self()) ||
         metadata->path.length == 0 ||
-        rotmos_request_path_param(request, "id", &id, NULL) != ROTMOS_OK)
+        rotmos_request_path_param(request, "id", &id, NULL) != ROTMOS_OK) {
+        fprintf(stderr, "acquire owner=%d path=%lu\n",
+                pthread_equal(f->owner, pthread_self()),
+                (unsigned long)metadata->path.length);
         return ROTMOS_STATE;
+    }
     ++f->acquired;
     if (id.length == 4 && !memcmp(id.data, "fail", 4))
         return ROTMOS_IO;
@@ -390,11 +397,16 @@ static rotmos_status owner_read(const rotmos_upload_metadata *metadata,
     struct fixture *f = data;
     char byte;
     size_t count;
+    rotmos_status status;
     (void)reply;
+    status = rotmos_source_read(source, &byte, 1, &count, error);
     if (pthread_equal(f->owner, pthread_self()) || metadata->path.length != 9 ||
-        rotmos_source_read(source, &byte, 1, &count, error) != ROTMOS_OK ||
-        count != 1 || byte != 'x')
+        status != ROTMOS_OK || count != 1 || byte != 'x') {
+        fprintf(stderr, "owner reader: status=%d count=%lu path=%lu error=%s\n",
+                (int)status, (unsigned long)count,
+                (unsigned long)metadata->path.length, error->message);
         return ROTMOS_STATE;
+    }
     f->owner_read = 1;
     return ROTMOS_OK;
 }
@@ -502,15 +514,30 @@ static reference_status route(struct reference_app *app,
         return reference_response_stream_source(reply, 200, "text/event-stream",
                                                 &source->source, error);
     }
-    if (f->failed || f->opened != 1 || f->closed != 1 || f->finished != 1 ||
-        f->ws_opened != 1 || f->ws_closed != 1 || f->acquired != 3 ||
-        f->released != 1 || f->packed_opened != 4 || f->packed_closed != 4 ||
+    if (f->failed || f->proxy_reports != 2 || f->opened != 1 ||
+        f->closed != 1 || f->finished != 1 || f->ws_opened != 1 ||
+        f->ws_closed != 1 || f->acquired != 3 || f->released != 1 ||
+        f->packed_opened != 4 || f->packed_closed != 4 ||
         f->provider_closed != 0 ||
         !__atomic_load_n(&f->native_done, __ATOMIC_ACQUIRE) ||
         !__atomic_load_n(&f->cancelled, __ATOMIC_ACQUIRE))
         return REFERENCE_STATE;
     (void)rotmos_server_request_stop(app->server, NULL);
     return reference_response_text(reply, 200, "text/plain", "ok", error);
+}
+static void proxy_report(struct reference_request *request,
+                         const rotmos_proxy_exchange *event, void *data)
+{
+    struct fixture *f = data;
+    ++f->proxy_reports;
+    if (!request || reference_request_is_closed(request))
+        f->failed = 1;
+    if (!strcmp(event->route, "/proxy/:id") &&
+        (event->status != 202 || event->downstream_bytes.low != 7))
+        f->failed = 1;
+    if (!strcmp(event->route, "/dead") &&
+        (event->status != 529 || strcmp(event->disconnect_side, "upstream")))
+        f->failed = 1;
 }
 static int origin(int listener)
 {
@@ -631,6 +658,8 @@ static int client(struct fixture *f, unsigned short port)
     CHECK(!progress(f->progress[0]));
     CHECK(!exchange(port, "PUT", "/dav/item", "abc",
                     "Authorization: Bearer host\r\n", 201, "", NULL));
+    CHECK(!exchange(port, "PUT", "/dav/oversized", "abcde",
+                    "Authorization: Bearer host\r\n", 413, NULL, NULL));
     CHECK(!exchange(port, "GET", "/dav/item", "",
                     "Authorization: Bearer host\r\n", 200, "abc", NULL));
     CHECK(!exchange(port, "PROPFIND", "/dav", "",
@@ -658,6 +687,17 @@ static rotmos_status started(rotmos_server *server,
     f->owner = pthread_self();
     return ROTMOS_OK;
 }
+static int admission_client(struct fixture *f, unsigned short port)
+{
+    CHECK(!exchange(port, "PUT", "/dav/file", "abc", "", 201, "", NULL));
+    CHECK(!exchange(port, "GET", "/dav/file", "", "", 200, "abc", NULL));
+    CHECK(!exchange(port, "PUT", "/dav/ceiling", "abcd", "",
+                    f->hard_limit ? 413 : 201, NULL, NULL));
+    if (!f->hard_limit)
+        CHECK(!exchange(port, "PUT", "/dav/oversized", "abcde", "", 413,
+                        "request body exceeds route limit", NULL));
+    return 0;
+}
 static rotmos_status ready(rotmos_server *server,
                            const rotmos_process_context *process, void *data,
                            rotmos_error *error)
@@ -667,6 +707,15 @@ static rotmos_status ready(rotmos_server *server,
     (void)process;
     if (rotmos_server_listener_at(server, 0, &listener, error) != ROTMOS_OK)
         return ROTMOS_STATE;
+    if (f->admission) {
+        f->child = fork();
+        if (!f->child) {
+            int status = admission_client(f, listener.port);
+            (void)kill(getppid(), SIGTERM);
+            _exit(status);
+        }
+        return f->child > 0 ? ROTMOS_OK : ROTMOS_IO;
+    }
     f->upstream = fork();
     if (!f->upstream)
         _exit(origin(f->origin));
@@ -674,6 +723,53 @@ static rotmos_status ready(rotmos_server *server,
     if (!f->child)
         _exit(client(f, listener.port));
     return f->upstream > 0 && f->child > 0 ? ROTMOS_OK : ROTMOS_IO;
+}
+static int admission_case(int hard)
+{
+    struct fixture *f = calloc(1, sizeof(*f));
+    struct reference_webdav_config dav;
+    rotmos_server_config config;
+    rotmos_listener_config listener;
+    rotmos_error error;
+    reference_error translated;
+    rotmos_run_result result;
+    char *cwd;
+    int status;
+    CHECK(f != NULL);
+    f->admission = 1;
+    f->hard_limit = hard;
+    strcpy(f->directory, "dav-admission-XXXXXX");
+    CHECK(mkdtemp(f->directory) && (cwd = getcwd(NULL, 0)));
+    snprintf(f->cache, sizeof(f->cache), "%s/%s", cwd, f->directory);
+    free(cwd);
+    rotmos_server_config_init(&config);
+    rotmos_listener_config_init(&listener);
+    listener.bind = "127.0.0.1";
+    config.listeners = &listener;
+    config.listener_count = config.workers.count = 1;
+    config.workers.affinity_disabled = config.http.backend_quiet = 1;
+    config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
+    config.limits.default_body_bytes.low = 2;
+    config.limits.hard_body_bytes.low = hard ? 3 : 8;
+    reference_route_callbacks(&f->app, &config.callbacks);
+    config.callbacks.on_parent_ready = ready;
+    CHECK(rotmos_server_new(&config, &f->app.server, &error) == ROTMOS_OK);
+    memset(&dav, 0, sizeof(dav));
+    dav.path_prefix = "/dav";
+    dav.storage.cache_dir = f->cache;
+    dav.storage.site_id = "admission";
+    dav.storage.max_file_bytes = 4;
+    dav.storage.max_total_bytes = 1024;
+    dav.storage.max_resources = 16;
+    CHECK(reference_webdav_register(&f->app, &dav, &f->dav, NULL,
+                                    &translated) == REFERENCE_OK);
+    CHECK(rotmos_server_run(f->app.server, &result, &error) == ROTMOS_OK);
+    CHECK(waitpid(f->child, &status, 0) == f->child && WIFEXITED(status) &&
+          !WEXITSTATUS(status));
+    CHECK(rotmos_server_destroy(f->app.server, &error) == ROTMOS_OK);
+    CHECK(!remove_tree(f->directory));
+    free(f);
+    return 0;
 }
 int main(void)
 {
@@ -702,6 +798,7 @@ int main(void)
     int status;
     size_t i;
     CHECK(f != NULL);
+    CHECK(!admission_case(0) && !admission_case(1));
     strcpy(f->directory, "vectis-services-XXXXXX");
     CHECK(mkdtemp(f->directory));
     cwd = getcwd(NULL, 0);
@@ -767,12 +864,16 @@ int main(void)
     proxy.preflight = preflight;
     proxy.rewrite = rewrite;
     proxy.modify_response = modify;
+    proxy.on_exchange = proxy_report;
+    proxy.on_exchange_userdata = f;
     CHECK(reference_proxy_register(&f->app, &proxy, &f->proxy[0],
                                    &translated) == REFERENCE_OK);
     memset(&proxy, 0, sizeof(proxy));
     proxy.path = "/dead";
     proxy.target = "http://127.0.0.1:1";
     proxy.on_error = gateway;
+    proxy.on_exchange = proxy_report;
+    proxy.on_exchange_userdata = f;
     CHECK(reference_proxy_register(&f->app, &proxy, &f->proxy[1],
                                    &translated) == REFERENCE_OK);
     memset(&upload, 0, sizeof(upload));
@@ -826,9 +927,16 @@ int main(void)
     dav.path_prefix = "/dav";
     dav.storage.cache_dir = f->cache;
     dav.storage.site_id = "host";
+    dav.storage.max_file_bytes = 4;
+    dav.storage.max_total_bytes = 1024;
+    dav.storage.max_resources = 128;
     dav.auth_required = dav.conceal_unauthorized = 1;
     dav.auth = dav_auth;
     CHECK(reference_webdav_register(&f->app, &dav, &f->dav, NULL,
+                                    &translated) == REFERENCE_OK);
+    dav.path_prefix = "/dav-hard";
+    dav.storage.max_file_bytes = 32;
+    CHECK(reference_webdav_register(&f->app, &dav, &f->dav_hard, NULL,
                                     &translated) == REFERENCE_OK);
     memset(&ordinary, 0, sizeof(ordinary));
     ordinary.method = ROTMOS_HTTP_GET;

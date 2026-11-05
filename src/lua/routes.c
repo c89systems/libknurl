@@ -208,6 +208,9 @@ int rl_webdav(lua_State *L)
                                     "invalid WebDAV declaration fields"),
                             &error));
     rotmos_webdav_config_init(&config);
+    rl_field(L, 2, "operation_timeout_ms");
+    config.operation_timeout_disabled = lua_isnil(L, -1);
+    lua_pop(L, 1);
     rl_field(L, 2, "provider");
     if (!lua_isnil(L, -1)) {
         config.provider = rl_storage_provider(L, -1);
@@ -236,6 +239,8 @@ int rl_webdav(lua_State *L)
     config.operation_timeout_ms = (long)timeout;
     config.auth_disabled = !required;
     config.conceal_disabled = !conceal;
+    (void)rotmos_u64_from_size(config.storage.max_file_bytes,
+                               &config.max_body_bytes, NULL);
     rl_field(L, 2, "max_body_bytes");
     if (!lua_isnil(L, -1) && !rl_u64(L, -1, &config.max_body_bytes))
         goto invalid;

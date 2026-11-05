@@ -19,6 +19,7 @@
 #include <strings.h>
 #include <stdio.h>
 #include <limits.h>
+#include <unistd.h>
 
 static void step(struct proxy_exchange *);
 
@@ -82,8 +83,29 @@ static int xfer_progress(void *data, curl_off_t total_down, curl_off_t down,
 
 static void upload_consumed(void *data, size_t count)
 {
+    struct proxy_exchange *x = data;
+    rotmos_proxy_count(&x->accounting.upstream_bytes, count);
     rotmos_proxy_progress(data, count);
     rotmos_proxy_schedule(data);
+}
+void rotmos_proxy_count(rotmos_u64 *total, size_t count)
+{
+    rotmos_u64 amount;
+    (void)rotmos_u64_from_size(count, &amount, NULL);
+    (void)rotmos_u64_add(*total, amount, total, NULL);
+}
+static void accounting_start(struct proxy_exchange *x)
+{
+    static unsigned long next_id;
+    next_id = (next_id + 1) & 0xffffffffUL;
+    if (!next_id)
+        ++next_id;
+    x->accounting.request_id.high = (unsigned long)getpid() & 0xffffffffUL;
+    x->accounting.request_id.low = next_id;
+    x->accounting.route = x->route->path;
+    x->accounting_started = x->started;
+    (void)rotmos_loop_now(x->loop, &x->accounting_started, NULL);
+    x->accounting_active = 1;
 }
 
 void rotmos_proxy_record_failure(struct proxy_exchange *x, rotmos_status cause,
@@ -95,6 +117,17 @@ void rotmos_proxy_record_failure(struct proxy_exchange *x, rotmos_status cause,
         cause = ROTMOS_BACKEND;
     (void)rotmos_fail(&x->failure, cause, "proxy", message);
     x->local_status = status;
+    if (x->accounting.error_category == NULL) {
+        x->accounting.disconnect_side = status == 500 ? "worker" : "upstream";
+        x->accounting.error_category = cause == ROTMOS_TIMEOUT ? "timeout"
+                                       : status == 500         ? "internal"
+                                       : rotmos_proxy_ws_tunneled(x)
+                                           ? "transport"
+                                           : "upstream";
+    }
+    if (x->request != NULL &&
+        !strcmp(x->accounting.disconnect_side, "upstream"))
+        x->request->disconnect_side = ROTMOS_DISCONNECT_UPSTREAM;
 }
 
 static void stop_timer(struct proxy_exchange *x)
@@ -110,8 +143,46 @@ static void request_closed(rotmos_request *request,
 {
     struct proxy_exchange *x;
     struct proxy_exchange **slot;
-    (void)out;
     x = data;
+    if (x->accounting_active) {
+        rotmos_u64 now = x->accounting_started;
+        (void)rotmos_loop_now(x->loop, &now, NULL);
+        if (now.high > x->accounting_started.high ||
+            (now.high == x->accounting_started.high &&
+             now.low >= x->accounting_started.low)) {
+            x->accounting.duration_ms.low =
+                (now.low - x->accounting_started.low) & 0xffffffffUL;
+            x->accounting.duration_ms.high =
+                (now.high - x->accounting_started.high -
+                 (now.low < x->accounting_started.low)) &
+                0xffffffffUL;
+        }
+        x->accounting.status =
+            out->response.status ? out->response.status : x->local_status;
+        x->accounting.cause =
+            x->failure.status != ROTMOS_OK ? x->failure.status : out->cause;
+        if (request->server->state == ROTMOS_SERVER_STOPPING &&
+            out->cause != ROTMOS_OK) {
+            x->accounting.disconnect_side = "worker";
+            x->accounting.error_category = "shutdown";
+            request->disconnect_side = ROTMOS_DISCONNECT_HOST;
+        } else if (x->accounting.error_category == NULL &&
+                   out->cause != ROTMOS_OK) {
+            x->accounting.disconnect_side = "downstream";
+            x->accounting.error_category = "disconnect";
+        }
+        if (x->accounting.error_category == NULL) {
+            x->accounting.disconnect_side = "none";
+            x->accounting.error_category = "none";
+        }
+        if (!strcmp(x->accounting.disconnect_side, "upstream"))
+            request->disconnect_side = ROTMOS_DISCONNECT_UPSTREAM;
+        else if (!strcmp(x->accounting.disconnect_side, "downstream"))
+            request->disconnect_side = ROTMOS_DISCONNECT_DOWNSTREAM;
+        if (x->route->on_exchange != NULL)
+            x->route->on_exchange(request, &x->accounting,
+                                  x->route->on_exchange_userdata);
+    }
     request->response->progress = NULL;
     request->response->progress_data = NULL;
     x->request = NULL;
@@ -176,9 +247,12 @@ static void channel_closed(rotmos_channel *channel,
     struct proxy_exchange *x;
     (void)channel;
     x = data;
-    if (out->cause != ROTMOS_OK)
+    if (out->cause != ROTMOS_OK && x->failure.status == ROTMOS_OK) {
+        x->accounting.disconnect_side = "downstream";
+        x->accounting.error_category = "disconnect";
         rotmos_proxy_record_failure(x, out->cause, 502,
                                     "downstream channel closed");
+    }
     rotmos_proxy_schedule(x);
 }
 
@@ -526,6 +600,7 @@ static rotmos_status relay_step(struct proxy_exchange *x)
             status = rotmos_response_write(r, body, count, &accepted, NULL);
             if (status != ROTMOS_OK)
                 return status;
+            rotmos_proxy_count(&x->accounting.downstream_bytes, accepted);
         }
         rotmos_proxy_http_upstream_consume(&x->upstream, accepted);
         if (accepted != count) {
@@ -833,6 +908,7 @@ rotmos_status rotmos_proxy_dispatch(rotmos_request *request,
     ++w->refs;
     (void)rotmos_loop_now(x->loop, &x->started, NULL);
     x->progress = x->started;
+    x->accounting.kind = head.websocket_upgrade ? "websocket" : "http";
     plan->on_close = request_closed;
     plan->userdata = x;
     rotmos_channel_config_init(&channel);
@@ -859,11 +935,13 @@ rotmos_status rotmos_proxy_dispatch(rotmos_request *request,
     if (status != ROTMOS_OK)
         goto exchange_failed;
     url = route->targets[directed.target_index];
+    x->accounting.upstream = url;
     if (head.websocket_upgrade) {
         status =
             rotmos_proxy_ws_start(x, url, &inbound, &directed.headers, error);
         if (status != ROTMOS_OK)
             goto exchange_failed;
+        accounting_start(x);
         arm_timer(x);
         rotmos_proxy_schedule(x);
         goto finished;
@@ -964,6 +1042,7 @@ rotmos_status rotmos_proxy_dispatch(rotmos_request *request,
         curl_easy_cleanup(easy);
         goto exchange_failed;
     }
+    accounting_start(x);
     if (head.expect_continue && x->channel->receive_length == 0) {
         status =
             rotmos_response_interim(request->response, 100, NULL, 0, error);

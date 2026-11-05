@@ -101,6 +101,9 @@ struct reference_proxy_config {
     void *modify_response_userdata;
     reference_proxy_error_fn on_error;
     void *on_error_userdata;
+    void (*on_exchange)(struct reference_request *,
+                        const rotmos_proxy_exchange *, void *);
+    void *on_exchange_userdata;
 };
 struct reference_proxy_binding {
     struct reference_proxy_config callbacks;

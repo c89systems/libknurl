@@ -26,6 +26,8 @@ typedef struct rotmos_proxy_route_data {
     void *modify_response_userdata;
     rotmos_proxy_on_error_fn on_error;
     void *on_error_userdata;
+    rotmos_proxy_exchange_fn on_exchange;
+    void *on_exchange_userdata;
 } rotmos_proxy_route_data;
 
 #endif

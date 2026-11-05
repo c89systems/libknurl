@@ -283,6 +283,8 @@ rotmos_status rotmos_router_proxy(rotmos_router *router,
     data->modify_response_userdata = config->modify_response_userdata;
     data->on_error = config->on_error;
     data->on_error_userdata = config->on_error_userdata;
+    data->on_exchange = config->on_exchange;
+    data->on_exchange_userdata = config->on_exchange_userdata;
     data->buffer_limit_bytes = config->buffer_limit_bytes != 0u
                                    ? config->buffer_limit_bytes
                                    : ROTMOS_PROXY_DEFAULT_BUFFER_LIMIT_BYTES;

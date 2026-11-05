@@ -25,7 +25,12 @@ validation short circuits and error-policy failure behavior, and forwards the
 standalone mapped XML parse/write/materialize helpers. No private dependency
 layout or second codec enters the adapter.
 
-The accumulated baseline compatibility and streaming/failure gate is complete.
+The initial accumulated baseline compatibility and streaming/failure checks passed,
+but Vectis's subsequent assessment identified G1–G5 beyond that gate's coverage.
+The follow-up exposes standalone filesystem calls through the existing engine,
+corrects mount/default admission and deadlines, removes fixed concurrency guards,
+and forwards terminal proxy accounting. The [audit](server-api-audit.md) records
+the specific regressions and scope; the initial results are not a full cutover certificate.
 Combined restart/cancellation, live proxy pressure/reuse, HTTP/2 duplex delivery,
 DAV replacement recovery and raw cleartext/TLS header guardrails pass alongside
 the codec, route, ownership and lifecycle cases. Installed C/Lua consumers,

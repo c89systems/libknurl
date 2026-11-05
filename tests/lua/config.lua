@@ -40,6 +40,7 @@ local config=ok(server:effective_config())
 assert(config.workers.death_policy=='terminate' and config.requested_worker_count==1)
 assert(config.proxy.active_exchanges==3 and config.http.server_header=='lua-fixture')
 assert(config.timeouts.request_header.milliseconds>=1234)
+assert(config.timeouts.deferred_response.disabled)
 assert(config.requested_timeouts.request_header.milliseconds==1234 and config.timeouts.keepalive.disabled)
 assert(config.tls.version=='1.3' and config.tls.identities[1].private_key.path==pem.private_key_path)
 assert(config.tls.identities[1].require_client_certificate and config.tls.identities[2].bundle.bytes==pem.certificate..pem.private_key)
@@ -103,3 +104,10 @@ for _,bad in ipairs{
   assert(value==nil and why.status)
 end
 assert(host_marker=='preserved')
+for _,deadline in ipairs{5,{milliseconds=7},{disabled=true}} do
+  local owner=ok(rotmos.server{port=0,timeouts={deferred_response=deadline}})
+  local effective=ok(owner:effective_config()).timeouts.deferred_response
+  if type(deadline)=='table' and deadline.disabled then assert(effective.disabled)
+  else assert(not effective.disabled and effective.milliseconds==(type(deadline)=='table' and 7 or 5)) end
+  ok(owner:close())
+end

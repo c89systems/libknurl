@@ -1,6 +1,6 @@
 # LoneJSON codecs and typed routes
 
-> Implementation reference under correction. The [extraction contract](server-api-spec.md) governs required behavior and scope; this document describes current code, not compatibility or an additional product requirement. See the [audit](server-api-audit.md) for known failures.
+> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
 
 
 Include [`<rotmos/lonejson.h>`](../include/rotmos/lonejson.h) explicitly. The core
