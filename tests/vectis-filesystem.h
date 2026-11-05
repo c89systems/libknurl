@@ -21,6 +21,9 @@ typedef rotmos_storage_code reference_webdav_status;
 #define REFERENCE_WEBDAV_ENTRY_TOMBSTONE ROTMOS_FILESYSTEM_ENTRY_TOMBSTONE
 #define reference_webdav_config_init rotmos_storage_filesystem_config_init
 #define reference_webdav_path_normalize rotmos_storage_filesystem_path_normalize
+#define reference_webdav_content_dir(c, out, error)                            \
+    rotmos_storage_filesystem_content_directory(                               \
+        c, out, ROTMOS_FILESYSTEM_STORAGE_PATH_MAX, error)
 #define reference_webdav_lookup rotmos_storage_filesystem_lookup
 #define reference_webdav_read rotmos_storage_filesystem_read
 #define reference_webdav_put_conditional rotmos_storage_filesystem_put

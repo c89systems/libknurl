@@ -478,6 +478,83 @@ static int stop_listing(const char *path, reference_webdav_entry_kind kind,
     ++*(int *)data;
     return 0;
 }
+static int encoded_listing(const char *path, reference_webdav_entry_kind kind,
+                           size_t size, void *data)
+{
+    if (!strcmp(path, "/a %?\\ b.txt")) {
+        expect(kind == REFERENCE_WEBDAV_ENTRY_FILE && size == 7,
+               "external filename listing metadata");
+        ++*(int *)data;
+    }
+    return 1;
+}
+static void test_listing_metadata(const reference_webdav_config *config,
+                                  reference_webdav_entry *entry)
+{
+    char *path = malloc(4096), *leaf;
+    int count = 0, fd;
+    expect(path != NULL, "listing scratch allocation");
+    if (path == NULL)
+        return;
+    strcpy(path, entry->storage_path);
+    expect(chmod(path, 0000) == 0, "deny file reads while retaining metadata");
+    expect(reference_webdav_list(config, "/", listed, &count) ==
+                   REFERENCE_WEBDAV_OK &&
+               count == 1,
+           "listing does not require file read permission");
+    expect(chmod(path, 0600) == 0, "restore file permission");
+    leaf = strrchr(path, '/') + 1;
+    strcpy(leaf, "a %?\\ b.txt");
+    fd = open(path, O_CREAT | O_EXCL | O_WRONLY, 0600);
+    expect(fd >= 0, "create external filename");
+    if (fd >= 0) {
+        expect(write(fd, "fixture", 7) == 7 && close(fd) == 0,
+               "write external filename");
+        count = 0;
+        expect(reference_webdav_list(config, "/", encoded_listing, &count) ==
+                       REFERENCE_WEBDAV_OK &&
+                   count == 1,
+               "listing preserves external filenames");
+        expect(unlink(path) == 0, "remove external filename");
+    }
+    free(path);
+}
+static void test_content_directory(const char *root)
+{
+    reference_webdav_config config;
+    char *out = malloc(8192), *long_root = malloc(4096);
+    expect(out != NULL && long_root != NULL, "content directory scratch");
+    if (out != NULL && long_root != NULL) {
+        memset(&config, 0, sizeof(config));
+        config.root_dir = root;
+        expect(reference_webdav_content_dir(&config, out, NULL) == ROTMOS_OK &&
+                   !strcmp(out, root),
+               "direct root needs no cache configuration");
+        reference_webdav_config_init(&config);
+        config.cache_dir = root;
+        config.site_id = "managed";
+        config.max_file_bytes = 0;
+        expect(reference_webdav_content_dir(&config, out, NULL) ==
+                   ROTMOS_INVALID,
+               "managed directory uses baseline configuration validation");
+        memset(long_root, 'a', 4095);
+        long_root[0] = '/';
+        long_root[4095] = 0;
+        config.root_dir = long_root;
+        expect(reference_webdav_content_dir(&config, out, NULL) == ROTMOS_OK &&
+                   !strcmp(out, long_root),
+               "baseline direct-root path capacity");
+        reference_webdav_config_init(&config);
+        config.cache_dir = long_root;
+        config.site_id = "managed";
+        expect(rotmos_storage_filesystem_content_directory(
+                   &config, out, 8192, NULL) == ROTMOS_OVERFLOW &&
+                   !out[0],
+               "managed paths retain filesystem capacity with a larger output");
+    }
+    free(out);
+    free(long_root);
+}
 static void *standalone(void *data)
 {
     reference_webdav_config config;
@@ -494,6 +571,7 @@ static void *standalone(void *data)
         return NULL;
     }
     snprintf(direct, 4096, "%s/direct", root);
+    test_content_directory(root);
     expect(mkdir(direct, 0700) == 0, "direct root");
     for (mode = 0; mode < 2; ++mode) {
         reference_webdav_config_init(&config);
@@ -520,6 +598,7 @@ static void *standalone(void *data)
                    strlen(entry->etag) == 64,
                "standalone read and unquoted ETag");
         free(bytes);
+        test_listing_metadata(&config, entry);
         markers = stopped = 0;
         expect(reference_webdav_list(&config, "/", listed, &markers) ==
                        REFERENCE_WEBDAV_OK &&

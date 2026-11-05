@@ -51,6 +51,7 @@ static void exchange_report(rotmos_request *request,
             event->downstream_bytes.high ||
             event->downstream_bytes.low != 65536 || event->status != 101 ||
             strcmp(event->kind, "websocket") ||
+            strcmp(event->disconnect_side, "upstream") ||
             strcmp(event->error_category, "none"))
             ++failures;
     }

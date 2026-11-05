@@ -16,7 +16,10 @@ synchronously returns one new owned asset, or EOF for absence. Opening must
 return promptly. An opened asset supplies copied metadata, explicit-offset reads
 for a file, or an incremental immediate-child iterator for a directory.
 `rotmos_asset_stat` borrows the opened object's metadata. `rotmos_asset_read`
-never skips/collects preceding content. `rotmos_asset_list_next` returns one child
+never skips/collects preceding content. Listing names are literal directory
+components; URL punctuation is encoded by the HTTP facade. Dot/traversal names,
+slashes and control bytes are rejected. Request-path validation is separate.
+`rotmos_asset_list_next` returns one child
 or EOF; a call returning AGAIN supplies no child. ETags/content types/dates and list
 names have explicit finite bounds. Reads validate counts and treat premature EOF
 as I/O failure. Terminal failures latch; close remains available.

@@ -599,8 +599,11 @@ int main(int argc, char **argv)
     CHECK(rotmos_storage_filesystem_content_directory(
               &storage, path, 2, &error) == ROTMOS_OVERFLOW &&
           path[0] == 0);
+    snprintf(path, sizeof(path), "%s/../cache/.", f.cache);
+    storage.cache_dir = path;
     CHECK(rotmos_storage_filesystem_new(server, &storage, &f.provider,
                                         &error) == ROTMOS_OK);
+    storage.cache_dir = f.cache;
     storage.max_resources = 1;
     CHECK(rotmos_storage_filesystem_new(server, &storage, &f.limited, &error) ==
           ROTMOS_OK);

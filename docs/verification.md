@@ -39,6 +39,35 @@ retain the local evidence; SDK archives remain under each build's `packages/`.
 This closes the assessment's demonstrated library gaps. Actual Vectis
 normal/packed integration and release verification remain separate gates.
 
+## Follow-up sweep
+
+The sweep after `c9e9e11` rechecked the assessment, operation inventory and
+reference forwarding paths against the same Vectis baseline. I09–I12 in
+[KORE.md](../KORE.md) record four additional compatibility corrections and their
+failing regressions: WebSocket upstream EOF classification, metadata-only
+filesystem listing, literal names through mutable/read-only listing, and
+content-directory/provider configuration. No public API, ABI layout, dependency
+pin, Kore patch or contract family was added.
+
+GNU and musl each passed 19 affected Core checks and 10 Lua preload/dynamic
+checks. The Core selection extends the assessment follow-up with asset and
+static-serving coverage; Lua checks cover routes, providers, proxy and terminal
+callback exception/OOM handling. Standalone and asset cases run on default-stack
+threads. Path/traversal rejection, conditional mutation, cancellation, recovery
+and 257 simultaneous uploads remain in the affected checks.
+
+All seven selected toolchains built static/shared Core, affected fixtures,
+C89/C++98 headers and bindings against refreshed installed shared Core SDKs.
+Relocated public static/shared standalone-filesystem, asset, filesystem-provider,
+WebDAV and WebSocket consumers compiled on all seven targets and executed on
+GNU/musl. Each rebuilt SDK archive passed final-byte validation and four relocated
+CMake/pkg-config example consumers; only GNU/musl examples executed.
+
+Selected-build `sweep-*.log` files retain this evidence, including the deliberate
+before-fix failures. Earlier unaffected checks and the unchanged Lua source
+product reuse their recorded gates. This is a focused compatibility sweep,
+not an actual Vectis cutover or an exhaustive syscall fault-injection claim.
+
 ## Initial development snapshot
 
 | Gate | Observed result |

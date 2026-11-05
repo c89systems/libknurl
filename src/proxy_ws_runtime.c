@@ -488,8 +488,16 @@ static rotmos_status tunnel_step(struct proxy_exchange *x)
         x->upstream.body_length = amount;
         if ((code == CURLE_OK && amount == 0) ||
             (code == CURLE_AGAIN &&
-             (s->ready & (ROTMOS_READ_CLOSED | ROTMOS_EVENT_ERROR))))
+             (s->ready & (ROTMOS_READ_CLOSED | ROTMOS_EVENT_ERROR)))) {
             s->upstream_eof = 1;
+            if (x->accounting.error_category == NULL) {
+                x->accounting.disconnect_side = "upstream";
+                x->accounting.error_category =
+                    code == CURLE_AGAIN && (s->ready & ROTMOS_EVENT_ERROR)
+                        ? "transport"
+                        : "none";
+            }
+        }
         if (amount != 0 || s->upstream_eof)
             rotmos_proxy_schedule(x);
     }

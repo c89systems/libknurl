@@ -199,9 +199,18 @@ returns the entry kind, size and storage path; read materializes malloc-owned
 bytes and supplies the unquoted 64-character SHA-256 ETag. Empty file reads return
 NULL/zero. A non-file entry follows the baseline read result with no body.
 Listing invokes its callback incrementally and stops successfully on zero.
+Both standalone listing and HTTP PROPFIND use directory metadata without opening
+or hashing child files. Unreadable regular files and literal filename punctuation
+retain the baseline listing behavior; HTTP encodes the returned names.
 Scratch state is heap-backed for default worker stacks. The installed reference
 adapter is `tests/vectis-filesystem.h`; its ported baseline cases execute on a
 default-stack thread before any server starts.
+
+Content-directory calculation needs only an absolute direct root for direct
+storage; managed storage validates its cache/site/quotas. It retains the baseline
+4096-byte storage-path capacity. Absolute storage configuration may contain dot
+segments; component walks retain no-follow checks. Resource paths use their
+separate traversal checks.
 
 Native jobs perform lock waits, directory scans, SHA-256 entity tags, file writes,
 copy/move and cleanup. Lock acquisition uses cooperative nonblocking flock

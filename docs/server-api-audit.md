@@ -26,6 +26,13 @@ execution on x86_64 GNU/musl from compilation/linking on the other five targets.
 
 ## Operation inventory
 
+The subsequent sweep traced the operation inventory and G1–G5 against the same
+baseline. It found four further compatibility cases: WebSocket EOF accounting,
+metadata-only filesystem listing, literal names through asset/storage listing,
+and content-directory/provider configuration. The corrections reuse existing
+operations and reduce filesystem work; no public API or contract family was
+added. I09–I12 in [KORE.md](../KORE.md) record the causes and failing regressions.
+
 | Contract family | Implementation and forwarding evidence |
 | --- | --- |
 | Server | `tests/vectis-server.c` translates all 34 baseline fields; `vectis-config.c` covers effective values, host readiness, stop and shutdown. |

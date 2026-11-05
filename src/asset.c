@@ -79,7 +79,9 @@ int rotmos_asset_child_valid(const char *name)
         unsigned char c = (unsigned char)name[n];
         if (c == 0)
             return 1;
-        if (c < 32 || c == 127 || c == '/' || c == '\\' || c == '%' || c == '?')
+        /* Listing names are literal directory components. URL punctuation is
+         * encoded by the HTTP facade; it is never decoded as another path. */
+        if (c < 32 || c == 127 || c == '/')
             return 0;
     }
     return 0;

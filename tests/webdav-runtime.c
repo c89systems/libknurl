@@ -260,8 +260,8 @@ static rotmos_status list_next(rotmos_asset_entry *entry, void *data,
 {
     struct cursor *c = data;
     (void)error;
-    if (c->item++ == 0) {
-        entry->name = "a & b.txt";
+    if (c->item < 2) {
+        entry->name = c->item++ ? "a %?\\ b.txt" : "a & b.txt";
         entry->info.size.low = 6;
         return ROTMOS_OK;
     }
@@ -479,6 +479,11 @@ static int client(unsigned short port, const char *root)
     wire_body = malloc(32768);
     CHECK(wire_body != NULL);
     CHECK(concurrent_puts(port, root) == 0);
+    CHECK(exchange(port, "PROPFIND", "/dav/listing", "Depth: 1\r\n", "", 207,
+                   NULL, NULL, NULL) == 0 &&
+          valid_xml() == 0 &&
+          strstr(wire_body, "/dav/listing/blocked") != NULL &&
+          strstr(wire_body, "/dav/listing/a%20%25%3F%5C%20b.txt") != NULL);
     CHECK(exchange(port, "GET", "/dav/file", "X-Deny: yes\r\n", "", 401,
                    "authenticate", "www-authenticate: Basic", NULL) == 0);
     CHECK(exchange(port, "PUT", "/dav/file",
@@ -596,6 +601,7 @@ static int client(unsigned short port, const char *root)
     CHECK(exchange(port, "PROPFIND", "/ro/", "Depth: 1\r\n", "", 207, NULL,
                    NULL, NULL) == 0 &&
           valid_xml() == 0 && strstr(wire_body, "/ro/a%20%26%20b.txt") != NULL);
+    CHECK(strstr(wire_body, "/ro/a%20%25%3F%5C%20b.txt") != NULL);
     CHECK(exchange(port, "GET", "/g/assets/a%20%26%20b.txt", NULL, "", 200,
                    "packed", "X-Before: yes", NULL) == 0);
     CHECK(exchange(port, "PROPFIND", "/g/assets", "Depth: 1\r\n", "", 207, NULL,
@@ -720,6 +726,12 @@ int main(void)
     snprintf(f.root, sizeof(f.root), "%s/content", base);
     snprintf(f.cache, sizeof(f.cache), "%s/cache", base);
     CHECK(mkdir(f.root, 0700) == 0);
+    snprintf(path, sizeof(path), "%s/listing", f.root);
+    CHECK(mkdir(path, 0700) == 0);
+    snprintf(path, sizeof(path), "%s/listing/blocked", f.root);
+    CHECK(put(path, "metadata") && chmod(path, 0000) == 0);
+    snprintf(path, sizeof(path), "%s/listing/a %%?\\ b.txt", f.root);
+    CHECK(put(path, "fixture"));
     snprintf(path, sizeof(path), "%s/file", f.root);
     CHECK(put(path, "abcdef"));
     for (i = 0; i < 3; ++i) {

@@ -126,8 +126,9 @@ static int rotmos_fs_mkdir_p(const char *path)
         slash = strchr(segment, '/');
         if (slash != NULL)
             *slash = 0;
-        if (strcmp(segment, ".") == 0 || strcmp(segment, "..") == 0)
-            break;
+        /* These segments come from trusted absolute storage configuration;
+         * request resource paths are normalized separately. Keep O_NOFOLLOW
+         * on every component while preserving configured dot segments. */
         next = openat(fd, segment,
                       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         if (next < 0 && errno == ENOENT) {
@@ -326,8 +327,7 @@ void rotmos_fs_unlock(int fd)
     (void)close(fd);
 }
 
-static int rotmos_fs_tombstone_exists(const rotmos_fs_config *config,
-                                      const char *path)
+int rotmos_fs_tombstone_exists(const rotmos_fs_config *config, const char *path)
 {
     char normalized[ROTMOS_FS_PATH_MAX + 1u];
     char candidate[ROTMOS_FS_PATH_MAX + 1u];

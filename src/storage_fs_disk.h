@@ -50,6 +50,7 @@ int rotmos_fs_missing_path_resources(const char *, const char *, int,
 int rotmos_fs_resources_within_limit(const rotmos_fs_config *, uint64_t,
                                      uint64_t);
 int rotmos_fs_ancestor_tombstone_exists(const rotmos_fs_config *, const char *);
+int rotmos_fs_tombstone_exists(const rotmos_fs_config *, const char *);
 int rotmos_fs_clear_tombstones(const rotmos_fs_config *, const char *);
 int rotmos_fs_open_parent_fd(const rotmos_fs_config *, const char *, int,
                              char[ROTMOS_FS_PATH_MAX + 1]);

@@ -274,6 +274,37 @@ static int declarations(void)
                  "application/octet-stream") == 0);
     return 0;
 }
+static rotmos_status list_name(rotmos_asset_entry *entry, void *data,
+                               rotmos_error *error)
+{
+    (void)error;
+    entry->name = data;
+    return ROTMOS_OK;
+}
+static int listing_names(void)
+{
+    static const char *names[] = {
+        "a %?\\ b.txt", "../outside", "/absolute", ".",
+        "..",           "x/y",        "bad\nname"};
+    rotmos_asset_config config;
+    rotmos_asset *asset;
+    rotmos_asset_entry entry;
+    rotmos_error error;
+    size_t i;
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        rotmos_asset_config_init(&config);
+        config.info.kind = ROTMOS_ASSET_DIRECTORY;
+        config.next = list_name;
+        config.userdata = (void *)names[i];
+        CHECK(rotmos_asset_new(&config, &asset, &error) == ROTMOS_OK);
+        CHECK(rotmos_asset_list_next(asset, &entry, &error) ==
+              (i ? ROTMOS_INVALID : ROTMOS_OK));
+        if (!i)
+            CHECK(strcmp(entry.name, names[i]) == 0);
+        CHECK(rotmos_asset_close(asset, &error) == ROTMOS_OK);
+    }
+    return 0;
+}
 static void *run(void *data)
 {
     int *result = data;
@@ -282,6 +313,8 @@ static void *run(void *data)
         *result = custom();
     if (*result == 0)
         *result = filesystem();
+    if (*result == 0)
+        *result = listing_names();
     return NULL;
 }
 int main(void)

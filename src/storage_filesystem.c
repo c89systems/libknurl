@@ -147,37 +147,43 @@ static rotmos_storage_code path_confined(const rotmos_fs_config *config,
     free(leaf);
     return ok ? ROTMOS_STORAGE_OK : ROTMOS_STORAGE_CONFLICT;
 }
-static int metadata(struct disk_operation *op, int fd, rotmos_asset_info *info,
-                    int hash, rotmos_job *job)
+static int metadata_stat(struct disk_operation *op, const struct stat *st,
+                         rotmos_asset_info *info)
 {
     static const char *days[] = {"Sun", "Mon", "Tue", "Wed",
                                  "Thu", "Fri", "Sat"};
     static const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    struct stat st;
     struct tm utc;
-    if (fstat(fd, &st) != 0 || st.st_size < 0 ||
-        (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)))
+    if (st->st_size < 0 || (!S_ISREG(st->st_mode) && !S_ISDIR(st->st_mode)))
         return 0;
     memset(info, 0, sizeof(*info));
     info->kind =
-        S_ISDIR(st.st_mode) ? ROTMOS_ASSET_DIRECTORY : ROTMOS_ASSET_FILE;
-    if (S_ISREG(st.st_mode)) {
-        info->size.high = (unsigned long)((st.st_size >> 16) >> 16);
-        info->size.low = (unsigned long)st.st_size & 0xffffffffUL;
-        if (hash) {
-            if (!rotmos_fs_etag_fd(fd, op->etag, job))
-                return 0;
-            info->etag = op->etag;
-        }
+        S_ISDIR(st->st_mode) ? ROTMOS_ASSET_DIRECTORY : ROTMOS_ASSET_FILE;
+    if (S_ISREG(st->st_mode)) {
+        info->size.high = (unsigned long)((st->st_size >> 16) >> 16);
+        info->size.low = (unsigned long)st->st_size & 0xffffffffUL;
     }
-    if (gmtime_r(&st.st_mtime, &utc) != NULL && utc.tm_year >= -299 &&
+    if (gmtime_r(&st->st_mtime, &utc) != NULL && utc.tm_year >= -299 &&
         utc.tm_year <= 8099) {
         snprintf(op->modified, sizeof(op->modified),
                  "%s, %02d %s %04d %02d:%02d:%02d GMT", days[utc.tm_wday],
                  utc.tm_mday, months[utc.tm_mon], utc.tm_year + 1900,
                  utc.tm_hour, utc.tm_min, utc.tm_sec);
         info->last_modified = op->modified;
+    }
+    return 1;
+}
+static int metadata(struct disk_operation *op, int fd, rotmos_asset_info *info,
+                    int hash, rotmos_job *job)
+{
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !metadata_stat(op, &st, info))
+        return 0;
+    if (hash && S_ISREG(st.st_mode)) {
+        if (!rotmos_fs_etag_fd(fd, op->etag, job))
+            return 0;
+        info->etag = op->etag;
     }
     return 1;
 }
@@ -261,22 +267,18 @@ done:
     return code;
 }
 static rotmos_storage_code list_next(struct disk_operation *op,
-                                     const rotmos_fs_config *config, int hash)
+                                     const rotmos_fs_config *config)
 {
     struct disk_resource *r = op->resource;
     struct dirent *entry;
     struct stat st;
     char *path;
-    rotmos_fs_entry *visible;
     rotmos_storage_code code = ROTMOS_STORAGE_END;
-    int count, fd, n;
+    int count, n;
     if (r->ended)
         return ROTMOS_STORAGE_END;
     path = malloc(ROTMOS_FS_PATH_MAX + 1);
-    visible = malloc(sizeof(*visible));
-    if (path == NULL || visible == NULL) {
-        free(path);
-        free(visible);
+    if (path == NULL) {
         return ROTMOS_STORAGE_NOMEM;
     }
     for (count = 0; count < 64; ++count) {
@@ -296,16 +298,14 @@ static rotmos_storage_code list_next(struct disk_operation *op,
         n = snprintf(path, ROTMOS_FS_PATH_MAX + 1, "%s%s%s", r->path,
                      strcmp(r->path, "/") == 0 ? "" : "/", entry->d_name);
         if (n < 0 || n > (int)ROTMOS_FS_PATH_MAX) {
-            code = ROTMOS_STORAGE_INVALID;
+            code = ROTMOS_STORAGE_IO;
             break;
         }
-        code = rotmos_fs_lookup(config, path, visible);
-        if (code == ROTMOS_STORAGE_NOT_FOUND ||
-            (code == ROTMOS_STORAGE_OK &&
-             visible->kind == ROTMOS_FS_ENTRY_TOMBSTONE))
+        /* Vectis lists metadata without opening or hashing child contents.
+         * Directory entry names need not satisfy request-path spelling rules.
+         */
+        if (rotmos_fs_tombstone_exists(config, path))
             continue;
-        if (code != ROTMOS_STORAGE_OK)
-            break;
         if (fstatat(dirfd(r->directory), entry->d_name, &st,
                     AT_SYMLINK_NOFOLLOW) != 0) {
             code = errno_code();
@@ -313,19 +313,10 @@ static rotmos_storage_code list_next(struct disk_operation *op,
         }
         if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
             continue;
-        fd = openat(dirfd(r->directory), entry->d_name,
-                    O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC |
-                        (S_ISDIR(st.st_mode) ? O_DIRECTORY : 0));
-        if (fd < 0) {
-            code = errno_code();
-            break;
-        }
-        if (!metadata(op, fd, &op->result.entry.info, hash, config->job)) {
-            close(fd);
+        if (!metadata_stat(op, &st, &op->result.entry.info)) {
             code = ROTMOS_STORAGE_IO;
             break;
         }
-        close(fd);
         strncpy(op->child, entry->d_name, sizeof(op->child) - 1);
         op->result.entry.name = op->child;
         op->result.has_entry = 1;
@@ -337,7 +328,6 @@ static rotmos_storage_code list_next(struct disk_operation *op,
     if (count == 64)
         code = ROTMOS_STORAGE_CONFLICT;
     free(path);
-    free(visible);
     return code;
 }
 static rotmos_storage_code put_begin(struct disk_operation *op,
@@ -671,7 +661,7 @@ static rotmos_status native_work(rotmos_job *job, rotmos_bytes arguments,
     }
     if (action == ROTMOS_STORAGE_LIST_NEXT) {
         do {
-            op->result.code = list_next(op, &config, 1);
+            op->result.code = list_next(op, &config);
         } while (op->result.code == ROTMOS_STORAGE_CONFLICT &&
                  !rotmos_fs_cancelled(job));
         rotmos_fs_unlock(lock);
@@ -965,26 +955,6 @@ static void retired(rotmos_storage_operation *operation,
         rotmos_storage_resource_close(op->result.resource, NULL);
     operation_unref(op);
 }
-static int absolute_path(const char *path)
-{
-    const char *p, *end;
-    size_t n;
-    if (path == NULL || path[0] != '/' || strlen(path) > 3500)
-        return 0;
-    p = path;
-    while (*p != 0) {
-        while (*p == '/')
-            ++p;
-        if (*p == 0)
-            break;
-        end = strchr(p, '/');
-        n = end != NULL ? (size_t)(end - p) : strlen(p);
-        if ((n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.'))
-            return 0;
-        p += n;
-    }
-    return 1;
-}
 rotmos_status rotmos_storage_filesystem_content_directory(
     const rotmos_storage_filesystem_config *config, char *out, size_t capacity,
     rotmos_error *error)
@@ -992,28 +962,32 @@ rotmos_status rotmos_storage_filesystem_content_directory(
     int n;
     if (out != NULL && capacity != 0)
         out[0] = 0;
-    if (out == NULL || capacity == 0 || config == NULL ||
-        !absolute_path(config->cache_dir) ||
-        (config->root_dir != NULL && !absolute_path(config->root_dir)))
+    if (out == NULL || capacity == 0 || config == NULL)
         return rotmos_fail(error, ROTMOS_INVALID, "storage_filesystem",
-                           "provide configuration with absolute confined roots "
-                           "and output capacity");
-    if (config->root_dir != NULL)
+                           "provide configuration and output capacity");
+    if (config->root_dir != NULL) {
+        if (config->root_dir[0] != '/' ||
+            strlen(config->root_dir) >= ROTMOS_FS_STORAGE_PATH_MAX)
+            return rotmos_fail(error, ROTMOS_INVALID, "storage_filesystem",
+                               "provide an absolute root within path capacity");
         n = snprintf(out, capacity, "%s", config->root_dir);
-    else {
+    } else {
         rotmos_fs_config check;
         memset(&check, 0, sizeof(check));
         check.cache_dir = config->cache_dir;
         check.site_id = config->site_id;
-        check.max_file_bytes = check.max_total_bytes = check.max_resources = 1;
+        check.max_file_bytes = config->max_file_bytes;
+        check.max_total_bytes = config->max_total_bytes;
+        check.max_resources = config->max_resources;
         if (!rotmos_fs_config_valid(&check))
             return rotmos_fail(error, ROTMOS_INVALID, "storage_filesystem",
-                               "provide a site identifier of at most 63 "
-                               "letters, digits, hyphens or underscores");
+                               "provide an absolute cache, valid site "
+                               "identifier and finite nonzero quotas");
         n = snprintf(out, capacity, "%s/webdav/%s/content", config->cache_dir,
                      config->site_id);
     }
-    if (n < 0 || (size_t)n >= capacity) {
+    if (n < 0 || (size_t)n >= capacity ||
+        (size_t)n >= ROTMOS_FS_STORAGE_PATH_MAX) {
         out[0] = 0;
         return rotmos_fail(error, ROTMOS_OVERFLOW, "storage_filesystem",
                            "content directory exceeds output capacity");
@@ -1318,7 +1292,7 @@ rotmos_storage_filesystem_list(const rotmos_storage_filesystem_config *config,
         s->operation.created = NULL;
         for (;;) {
             rotmos_asset_entry *entry = &s->operation.result.entry;
-            code = list_next(&s->operation, &s->filesystem.config, 0);
+            code = list_next(&s->operation, &s->filesystem.config);
             if (code == ROTMOS_STORAGE_CONFLICT)
                 continue;
             if (code != ROTMOS_STORAGE_OK)
@@ -1383,9 +1357,7 @@ rotmos_status rotmos_storage_filesystem_new(
         filesystem_free(f);
         return ROTMOS_NOMEM;
     }
-    if (!rotmos_fs_config_valid(&f->config) ||
-        !absolute_path(f->config.cache_dir) ||
-        (f->config.root_dir != NULL && !absolute_path(f->config.root_dir))) {
+    if (!rotmos_fs_config_valid(&f->config)) {
         filesystem_free(f);
         return rotmos_fail(error, ROTMOS_INVALID, "storage_filesystem",
                            "absolute roots, site identifier and finite nonzero "
