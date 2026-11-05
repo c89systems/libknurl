@@ -1,6 +1,9 @@
 # Building and maintaining the extraction
 
-The [extraction contract](server-api-spec.md) defines the product. Current code is under correction; the [audit](server-api-audit.md) records compatibility failures. Build availability and passing existing tests do not establish Vectis replacement readiness.
+The [extraction contract](server-api-spec.md) defines the product. The
+[audit](server-api-audit.md) maps operation coverage and
+[verification](verification.md) records the completed development checks.
+Actual Vectis cutover and release verification have separate gates.
 
 ## Commands
 

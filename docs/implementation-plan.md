@@ -1,8 +1,9 @@
 # Extraction implementation plan
 
-The [small extraction contract](server-api-spec.md) governs the active goal.
+The [small extraction contract](server-api-spec.md) governs the extraction.
 The [audit matrix](server-api-audit.md) records the current operation-family
-coverage and concrete remaining gaps. Preserve Vectis commit
+coverage; [verification](verification.md) records the completed development
+checks and their limits. Preserve Vectis commit
 `6b1e263e0436687f68a7768ca55f4361a6e59e19`; sibling repositories stay read-only.
 
 Completed implementation includes the enhanced Kore backend, proxy, WebDAV,
@@ -24,17 +25,14 @@ validation short circuits and error-policy failure behavior, and forwards the
 standalone mapped XML parse/write/materialize helpers. No private dependency
 layout or second codec enters the adapter.
 
-Continue in coherent implementation batches:
-
-1. Finish the accumulated baseline compatibility and streaming/failure gate.
-   Cover combined restart/cancellation and outstanding historical fault cases
-   with existing fixtures and short targeted additions. Live proxy pressure,
-   cancellation/reuse, DAV replacement recovery and raw cleartext/TLS header
-   guardrails now pass. Resolve discrepancies against
-   Vectis, rather than accepting the current implementation as its own oracle.
-2. Complete installed C/Lua workflows and remaining lifecycle final-artifact
-   evidence. Reuse current seven-target SDK and Lua source/rock reconstruction
-   checks; keep release signing/tagging/publication outside this authorization.
+The accumulated baseline compatibility and streaming/failure gate is complete.
+Combined restart/cancellation, live proxy pressure/reuse, HTTP/2 duplex delivery,
+DAV replacement recovery and raw cleartext/TLS header guardrails pass alongside
+the codec, route, ownership and lifecycle cases. Installed C/Lua consumers,
+seven-target SDK final-byte/relocation checks and Lua source/rock reconstruction
+also pass. Historical fault-injection limits remain documented in KORE.md.
+Actual Vectis cutover and release signing/tagging/publication remain outside
+this authorization.
 
 Standalone C JSON validation, every DOM/XPath/SAX receiver operation and the
 host readiness/control/fork-exit translation now have concrete adapters and

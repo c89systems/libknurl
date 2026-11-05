@@ -137,4 +137,5 @@ callbacks; baseline KEEP/DROP and failure cases prove output before input EOF
 and preserve the legacy LoneJSON error category. Lua ordinary JSON parsing and
 JSON/XML sink writing use the same public Core operations, with Lua-owned
 record interop and protected callbacks. The consolidated operation/facade audit
-and consumer cutover remain open.
+and installed development checks are recorded in [verification](verification.md).
+Actual consumer cutover remains separately authorized work.

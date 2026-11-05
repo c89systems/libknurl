@@ -97,5 +97,5 @@ Keep memory owners alive until reader close. File readers do not remove artifact
 The [focused body fixture](../tests/body-runtime.c) is an executable public API
 example. [Connection channels](channels.md) provide exclusive raw input and
 tunnel takeover. The [full specification](server-api-spec.md) and
-[integration contract](vectis-integration-contract.md) retain the remaining
-codec, provider and language-facade requirements.
+[integration contract](vectis-integration-contract.md) define the related
+codec, provider and language-facade behavior.

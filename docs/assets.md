@@ -65,7 +65,7 @@ The Lua facade accepts host providers through public Lua interop values for
 and copied route declarations retain it through server close. The binding does
 not close borrowed providers. Packed lookup stays with the host, while these
 mounts use the same C static/storage/WebDAV implementation. See the
-[host-provider workflow](lua.md#host-providers-and-remaining-work).
+[host-provider workflow](lua.md#host-providers).
 Literal route groups provide the corresponding convenience registrations.
 Filesystem single-file registration preserves Vectis's configured GET/HEAD masks,
 so a separate POST route can use the same literal path. Directory/asset mounts

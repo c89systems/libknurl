@@ -167,7 +167,7 @@ pressure, forwarding and subsequent final-response replacement.
 The [native-source fixture](../tests/source-runtime.c) covers bounded executor
 admission, HTTP responsiveness during blocking reads, explicit and early wakes,
 invalid producer results, body suppression, disconnect and worker-stop cleanup.
-Producer-supplied trailer configuration and the remaining protocol helpers are
-separate implementation surfaces under the [complete specification](server-api-spec.md).
+Live replies enable trailers explicitly and supply their final fields through
+`rotmos_response_end`; proxy trailer forwarding stays in the proxy engine.
 [Connection channels](channels.md) support validated WebSocket tunnel upgrades
 and bounded duplex output.

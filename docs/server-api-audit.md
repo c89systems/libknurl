@@ -1,8 +1,10 @@
-# Extraction audit and remaining work
+# Extraction audit
 
 The [145-line contract](server-api-spec.md) governs scope. The behavioral baseline
 is Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19`. This is an implementation
-inventory, not a compatibility certificate. Sibling repositories remain read-only.
+inventory. [Verification](verification.md) records the completed development
+gates and their scope; it does not certify the actual Vectis cutover. Sibling
+repositories remain read-only.
 
 | Contract family | Implementation and forwarding evidence |
 | --- | --- |
@@ -64,20 +66,21 @@ client sends `rest`, followed by `done`. This is live transport evidence,
 separate from H2 header-codec unit checks. It passes on GNU/musl and builds on
 the other five targets.
 
-Remaining work is concrete:
+The accumulated development gate is complete: GNU passes all 95 Core checks
+and 32 Lua checks; musl passes 90 Core checks and 31 Lua checks, reusing the
+same-host backend-tool and target-independent source-package checks. Full
+installed static/shared reference consumers pass on both runtimes. All seven
+SDK archives pass final-byte validation and four relocated example consumers
+each; the Lua source rock reconstructs against installed public SDKs.
 
-- Finish the accumulated compatibility/failure gate against the baseline inputs,
-  including combined lifecycle/restart and the remaining historical fault
-  cases explicitly marked without isolated regressions in KORE.md.
-  Reuse matching passed evidence; do not rerun every suite per edit.
-- Complete the final clean release-configuration/artifact gate when preparing a
-  release. Seven-target debug SDK packaging/relocation and Lua source/rock
-  rehearsals exist; development builds do not establish release readiness.
-- Actual Vectis normal/packed cutover regressions require separately authorized
-  Vectis edits. No consumer cutover, publication or push is included here.
+Historical defects without isolated regressions remain explicit limitations in
+KORE.md, rather than promises of exhaustive fault injection. Actual Vectis
+normal/packed cutover regressions require separately authorized Vectis edits.
+A release still requires the lifecycle's default-branch/signing/tagging and clean
+release-configuration gates. Development checks do not establish release readiness.
 
 Target evidence distinguishes executable GNU/musl checks from compile/link and
 artifact inspection on the other five toolchains. Installed static/shared
 consumers, the installed shared Lua binding and source-rock reconstruction use
-pinned independent SDKs, never sibling build state. The active goal remains open
-until its implementation and required verification obligations are satisfied.
+pinned independent SDKs, never sibling build state. No consumer cutover,
+publication or push is included in this extraction work.

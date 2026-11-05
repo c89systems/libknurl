@@ -128,6 +128,11 @@ on all seven toolchains. The pressured upstream may observe FIN or reset after
 downstream cancellation; the fixture accepts both terminal socket outcomes.
 No new backend defect was found by these cases.
 
+The completed accumulated development gate and seven-target SDK artifact
+evidence are recorded in [verification](docs/verification.md). Historical
+isolated-regression limitations above remain explicit; actual Vectis cutover
+and signed clean release verification have separate gates.
+
 No remote upstream fix, report, release or CVE status has been inferred. When
 upgrading Kore, compare each recorded cause against the new pristine source,
 retain needed patches/regressions, and record why a patch can be removed.

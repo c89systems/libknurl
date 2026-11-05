@@ -563,7 +563,7 @@ The [ported XML fixture](../tests/lua/xml.lua) covers those workflows, bounded
 delivery beyond 16 MiB, callbacks/reentry, both collectors, owner release and
 allocation failures.
 
-## Host providers and remaining work
+## Host providers
 
 Hosts wrap public asset/storage providers with `rotmos_lua_push_asset_provider`
 and `rotmos_lua_push_storage_provider` from the installed Lua interop header.
@@ -588,10 +588,10 @@ HEAD suppression, bounded reads, PROPFIND and read-only mutation rejection.
 An [isolated consumer](../tests/lua/consumer/CMakeLists.txt) builds that same
 module against installed C/Lua SDKs and selected toolchains.
 
-Remaining direct dispatch/response bindings require concrete baseline consumer
-coverage before expansion. `make lua-package` ships the minimal source archive,
+`make lua-package` ships the facade/binding source archive,
 release rockspec and source rock with a checksum inventory. The
 [source-package instructions](../lua/README.md) cover installed public SDK inputs,
 toolchain selection, LuaRocks installation and embedded hosts. The full Vectis
-reference adapter and final compatibility/artifact checks remain part of the
-active implementation goal.
+reference adapter and completed development compatibility/artifact checks are
+recorded in [verification](verification.md). Actual Vectis cutover and release
+verification retain their separate gates.
