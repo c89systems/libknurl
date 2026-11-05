@@ -140,6 +140,9 @@ typedef struct rotmos_signal_config {
 typedef rotmos_status (*rotmos_process_fn)(
     rotmos_server *server, const rotmos_process_context *process,
     void *userdata, rotmos_error *error);
+/* Terminal callback after native teardown, in the exiting fork only. The
+ * context is a borrowed snapshot. It may destroy this fork's server/host state;
+ * Core does not access either after return. Nonzero becomes the exit status. */
 typedef int (*rotmos_worker_exit_fn)(rotmos_server *server,
                                      const rotmos_process_context *process,
                                      void *userdata);

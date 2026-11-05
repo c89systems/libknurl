@@ -1,0 +1,27 @@
+diff --git a/src/worker.c b/src/worker.c
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -261,18 +261,19 @@
+ 	worker_library_event(kw, KORE_LIBRARY_WORKER_SPAWNING, 0, 0, 0);
+ 	if (kore_library_hooks.fork_prepare != NULL)
+ 		kore_library_hooks.fork_prepare(kore_library_hooks.arg);
+-	kw->pid = fork();
++	pid = fork();
++	if (pid > 0)
++		kw->pid = pid;
+ 	if (kore_library_hooks.fork_complete != NULL)
+ 		kore_library_hooks.fork_complete(kore_library_hooks.arg);
+-	if (kw->pid == -1) {
++	if (pid == -1) {
+ 		kw->pid = 0;
+ 		kw->running = 0;
+ 		fatal("could not spawn worker child: %s", errno_s);
+ 	}
+ 
+-	if (kw->pid == 0) {
+-		kw->pid = getpid();
++	if (pid == 0) {
+ 		kore_worker_entry(kw);
+ 		_exit(1);
+ 	} else {
+ 		for (;;) {

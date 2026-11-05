@@ -8,6 +8,11 @@ umbrella remains independent of LoneJSON declarations. CMake consumers link
 `rotmos::shared` or `rotmos::static`; both expose the matching public LoneJSON
 dependency. Its header and library come from the selected released SDK.
 
+`rotmos_json_validate_cstr` preserves Vectis's standalone validation helper:
+NULL is INVALID, one NUL-terminated value is validated by LoneJSON, and parser
+failures return INVALID with the LoneJSON source/code and line/column message.
+It builds no mapped record or DOM and clears diagnostics on success.
+
 `rotmos_json_schema_from_map` converts a C-owned map into LoneJSON's public schema
 view. A supplied runtime is borrowed; NULL selects an independently owned default
 runtime for the operation or request. Existing public schema views can be passed

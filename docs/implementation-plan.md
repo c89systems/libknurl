@@ -26,16 +26,20 @@ layout or second codec enters the adapter.
 
 Continue in coherent implementation batches:
 
-1. Close the audit's explicit adapter gaps: standalone C JSON validation,
-   DOM/XPath/SAX C wrapper translation, and remaining host lifecycle/control use.
-   Use baseline declarations and observable cases before adding public interfaces.
-2. Finish the accumulated baseline compatibility and streaming/failure gate.
+1. Finish the accumulated baseline compatibility and streaming/failure gate.
    Cover combined restart/cancellation, proxy pressure and DAV recovery with
    existing fixtures and short targeted additions. Resolve discrepancies against
    Vectis, rather than accepting the current implementation as its own oracle.
-3. Complete installed C/Lua workflows and remaining lifecycle final-artifact
+2. Complete installed C/Lua workflows and remaining lifecycle final-artifact
    evidence. Reuse current seven-target SDK and Lua source/rock reconstruction
    checks; keep release signing/tagging/publication outside this authorization.
+
+Standalone C JSON validation, every DOM/XPath/SAX receiver operation and the
+host readiness/control/fork-exit translation now have concrete adapters and
+baseline cases. XML needed no new Core interface. Terminal worker callbacks can
+reclaim their fork's server and host after native teardown; callback failures
+still reach the parent. Host framing, shared readiness ownership, auth policy
+and outer supervision remain outside Core.
 
 Build only through explicit supported toolchains. The default selected target
 uses `build/debug` or `build/release`; the other six use

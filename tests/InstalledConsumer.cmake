@@ -13,6 +13,10 @@ file(COPY "${ROTMOS_ROOT}/tests/consumer/CMakeLists.txt"
   "${ROTMOS_ROOT}/tests/json-runtime.c"
   "${ROTMOS_ROOT}/tests/vectis-forward.c" "${ROTMOS_ROOT}/tests/vectis-forward.h"
   "${ROTMOS_ROOT}/tests/vectis-typed.c"
+  "${ROTMOS_ROOT}/tests/vectis-xml-runtime.c" "${ROTMOS_ROOT}/tests/vectis-xml.c"
+  "${ROTMOS_ROOT}/tests/vectis-xml.h"
+  "${ROTMOS_ROOT}/tests/vectis-host-runtime.c" "${ROTMOS_ROOT}/tests/vectis-host.c"
+  "${ROTMOS_ROOT}/tests/vectis-host.h"
   "${ROTMOS_ROOT}/tests/vectis-config.c" "${ROTMOS_ROOT}/tests/vectis-server.c" "${ROTMOS_ROOT}/tests/vectis-server.h"
   "${ROTMOS_ROOT}/tests/vectis-route-runtime.c" "${ROTMOS_ROOT}/tests/vectis-route.c" "${ROTMOS_ROOT}/tests/vectis-route.h"
   "${ROTMOS_ROOT}/tests/vectis-body-file.c"
@@ -68,6 +72,8 @@ foreach(variant static shared)
     run("${TEST_ROOT}/${variant}/declarations_consumer")
     run("${TEST_ROOT}/${variant}/vectis-config_consumer")
     run("${TEST_ROOT}/${variant}/vectis-typed_consumer")
+    run("${TEST_ROOT}/${variant}/vectis-xml-runtime_consumer")
+    run("${TEST_ROOT}/${variant}/vectis-host-runtime_consumer")
     run("${TEST_ROOT}/${variant}/vectis-route-runtime_consumer")
     run("${TEST_ROOT}/${variant}/vectis-body-file_consumer")
     run("${TEST_ROOT}/${variant}/vectis-request-reply_consumer")

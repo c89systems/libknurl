@@ -13,6 +13,8 @@
 #include <unistd.h>
 
 static int notes[2];
+static int publication[2];
+static pid_t parent_process;
 static int phase;
 static int turned;
 static int failure;
@@ -23,6 +25,21 @@ static int mode;
 static int deaths;
 static int restarts;
 static jmp_buf unwind;
+
+/* Force the child to reach fork_complete before the parent examines its fork
+ * result. Publishing the child's zero return into a shared PID slot used to
+ * turn the parent into a worker or report a live child as already exited. */
+static void fork_complete(void *userdata)
+{
+    char byte;
+    (void)userdata;
+    if (getpid() != parent_process) {
+        if (write(publication[1], "C", 1) != 1)
+            _exit(88);
+        (void)usleep(50000);
+    } else if (read(publication[0], &byte, 1) != 1)
+        _exit(89);
+}
 
 static unsigned int role(const struct kore_worker *child)
 {
@@ -123,6 +140,8 @@ static void cleanup(void *userdata)
 static int worker_exit(void *userdata)
 {
     (void)userdata;
+    if (getpid() == parent_process)
+        return 90;
     if (phase != 4 || !LIST_EMPTY(&kore_servers) || !TAILQ_EMPTY(&connections))
         return 86;
     note(5);
@@ -187,6 +206,9 @@ int main(int argc, char **argv)
     char *path;
     char *absolute;
     int okay;
+    parent_process = getpid();
+    if (pipe(publication) != 0)
+        return 1;
     mode = argc > 1 ? (strcmp(argv[1], "restart") == 0 ? 1 : 2) : 0;
     directory = malloc(64);
     path = malloc(4096);
@@ -202,6 +224,7 @@ int main(int argc, char **argv)
         return 3;
     (void)snprintf(path, 4096, "%s/%s", absolute, directory);
     hooks.fatal = fatal_hook;
+    hooks.fork_complete = fork_complete;
     hooks.process_start = process_start;
     hooks.worker_start = worker_start;
     hooks.worker_stopping = stopping;
@@ -265,6 +288,8 @@ int main(int argc, char **argv)
     }
     (void)close(notes[0]);
     (void)close(notes[1]);
+    (void)close(publication[0]);
+    (void)close(publication[1]);
     (void)snprintf(path, 4096, "%s/account-key.pem", directory);
     if (unlink(path) != 0)
         okay = 0;

@@ -356,6 +356,18 @@ int main(void)
     CHECK(array_sources() == 0);
     CHECK(rewriting() == 0);
     CHECK(xml_helpers() == 0);
+    CHECK(reference_json_validate_cstr("{\"ok\":true}", &error) ==
+              REFERENCE_OK &&
+          error.code == REFERENCE_OK);
+    CHECK(reference_json_validate_cstr("{\"ok\":", &error) ==
+              REFERENCE_INVALID &&
+          error.source == 4 && error.dependency_code != 0 &&
+          strstr(error.message, "invalid json at line") != NULL);
+    CHECK(reference_json_validate_cstr("true\0ignored", &error) ==
+          REFERENCE_OK);
+    CHECK(reference_json_validate_cstr(NULL, &error) == REFERENCE_INVALID &&
+          !strcmp(error.message, "json is required"));
+    CHECK(reference_json_validate_cstr("", NULL) == REFERENCE_INVALID);
     memset(&app, 0, sizeof(app));
     memset(&host, 0, sizeof(host));
     host.app = &app;

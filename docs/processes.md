@@ -29,7 +29,12 @@ They prevent readiness and run stopping/exit cleanup for the initialization that
 began. Stopping can precede the HTTP start hook after a process-start failure;
 hosts must track partial initialization. HTTP work drains while cancellation and
 completion delivery remain available. The worker exit callback runs after
-backend teardown and returns its child exit status. A returned shutdown/exit
+backend and logger teardown, with a detached stopped/failed server and a borrowed
+process snapshot. It may destroy that fork's server and host state; Core performs
+no later access to either. The original application process never receives this
+terminal worker callback. The parent fork's host cleanup belongs after run returns.
+Terminal cleanup must not start new work.
+The callback returns its child exit status. A returned shutdown/exit
 failure remains observable as failed cleanup.
 
 SIGKILL, a crash or a child which fails to finish teardown is reported as
@@ -46,7 +51,7 @@ does not poll an external process table. The parent constrains its event wait,
 escalates an expired child, reaps it and applies death policy. It also enforces
 the operation budget during shutdown. The budget uses atomic 32-bit publication
 and a wrap-safe monotonic deadline across the supported 32/64-bit targets.
-ACME PERSIST will use this primitive; the ACME activation path remains pending.
+ACME persistence uses this primitive for its existing activation/failure ordering.
 
 The [public fixture](../tests/process-runtime.c) covers recovery, unexpected
 zero exit, termination, returned startup failures, startup cancellation, failed
@@ -56,9 +61,17 @@ budgets during startup, serving and shutdown, and verifies budget cancellation.
 The [auxiliary fixture](../tests/auxiliary-runtime.c) proves loop/teardown hooks
 for HTTP, key-manager and ACME roles, key-manager restart/terminate policy, and
 existing account-key loading against a local unavailable directory endpoint.
-It provides no issuance, persistence or remote-CA evidence.
+Local-CA issuance/persistence is exercised separately by the ACME runtime and Lua
+fixtures; those are not claims about a remote CA.
 
-Arbitrary fatal/allocation failures still need the final failure-unwind checks.
-Candidate publication, ACME callbacks/activation, TLS identity observations and
-serving-gate acknowledgements remain required by the
-[server specification](server-api-spec.md).
+The [host adapter](../tests/vectis-host.c) maps shared readiness and existing
+READY/control providers, the baseline 100 ms readiness/60 s auth-maintenance
+timers and fork-exit forwarding. Its [runtime case](../tests/vectis-host-runtime.c)
+keeps outer supervision and control framing in the host and covers readiness,
+STOP/malformed/EOF shutdown, app/server reclamation and failed cleanup after
+reclamation. The accumulated failure-unwind gate remains tracked in the
+[audit](server-api-audit.md).
+
+The worker completion marker follows the terminal callback's return. A callback
+that hangs after reclaiming its app is still escalated and reported as abandoned;
+native teardown alone does not acknowledge completion of host cleanup.

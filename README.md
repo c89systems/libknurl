@@ -78,6 +78,7 @@ live outside its source tree and apply to disposable build copies, keeping
 upstream upgrades and local changes separate.
 
 - [Build availability, commands and backend maintenance](docs/development.md)
+- [Kore and backend-patch defect record](KORE.md)
 - [Lua server facade and embedding](docs/lua.md)
 - [Upload callbacks](docs/uploads.md)
 - [Source execution and response delivery](docs/responses.md)

@@ -111,6 +111,38 @@ rotmos_status rotmos_json_runtime(const lonejson_schema_view *schema,
     return ROTMOS_OK;
 }
 
+rotmos_status rotmos_json_validate_cstr(const char *json, rotmos_error *error)
+{
+    lonejson_error native;
+    lonejson_status code;
+    lonejson *runtime;
+    rotmos_status status;
+    int owned;
+    char message[384];
+    if (json == NULL)
+        return rotmos_fail(error, ROTMOS_INVALID, "json_validate",
+                           "json is required");
+    status = rotmos_json_runtime(NULL, &runtime, &owned, error);
+    if (status != ROTMOS_OK)
+        return status;
+    code = lonejson_validate_cstr(runtime, json, &native);
+    lonejson_free(runtime);
+    if (code == LONEJSON_STATUS_OK) {
+        rotmos_error_clear(error);
+        return ROTMOS_OK;
+    }
+    (void)snprintf(message, sizeof(message),
+                   "invalid json at line %lu column %lu: %s",
+                   (unsigned long)native.line, (unsigned long)native.column,
+                   native.message);
+    status = rotmos_fail(error, ROTMOS_INVALID, "json_validate", message);
+    if (error != NULL) {
+        error->source = ROTMOS_ERROR_LONEJSON;
+        error->native_code = (long)code;
+    }
+    return status;
+}
+
 struct json_reader {
     rotmos_body *body;
     rotmos_source *source;

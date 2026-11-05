@@ -4,6 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+reference_status reference_json_validate_cstr(const char *json,
+                                              reference_error *error)
+{
+    rotmos_error native;
+    rotmos_status status = rotmos_json_validate_cstr(json, &native);
+    return reference_error_from_rotmos(status, &native, error);
+}
 static reference_status invalid(reference_error *error, const char *message)
 {
     reference_error_clear(error);

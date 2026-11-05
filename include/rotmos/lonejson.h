@@ -8,6 +8,11 @@
 extern "C" {
 #endif
 
+/* Validate one NUL-terminated JSON value through LoneJSON. NULL is INVALID;
+ * parser failures preserve the baseline INVALID/LONEJSON diagnostic. */
+ROTMOS_API rotmos_status rotmos_json_validate_cstr(const char *,
+                                                   rotmos_error *);
+
 /* Schema metadata and optional runtime are borrowed through route destruction
  * or generator close. NULL runtime selects an independently owned runtime. */
 ROTMOS_API rotmos_status rotmos_json_schema_from_map(lonejson *runtime,

@@ -1282,18 +1282,23 @@ static int drive_policy(unsigned short http, unsigned short tls,
     if (!failed)
         failed = rotmos_lua_test_exchange(http, "GET", "/deny", "", 0, 403,
                                           "A\0B", 3);
+    required_body = "expected authentication callback failure";
     if (!failed)
         failed = rotmos_lua_test_exchange(http, "GET", "/auth-error", "", 0,
-                                          500, "", 0);
+                                          500, NULL, 0);
+    required_body = "auth response body must be bytes";
     if (!failed)
         failed = rotmos_lua_test_exchange(http, "GET", "/auth-invalid", "", 0,
-                                          400, "", 0);
+                                          400, NULL, 0);
+    required_body = "expected auth getter failure";
     if (!failed)
         failed = rotmos_lua_test_exchange(http, "GET", "/auth-getter", "", 0,
-                                          500, "", 0);
+                                          500, NULL, 0);
+    required_body = "memory";
     if (!failed)
         failed = rotmos_lua_test_exchange(http, "GET", "/auth-oom", "", 0, 500,
-                                          "", 0);
+                                          NULL, 0);
+    required_body = NULL;
     if (!failed)
         failed = rotmos_lua_test_exchange(http, "GET", "/guard/entry", "", 0,
                                           200, "group", 5);

@@ -3,6 +3,7 @@
 #include "vectis-route.h"
 #include <rotmos/lonejson.h>
 #include <rotmos/xml.h>
+reference_status reference_json_validate_cstr(const char *, reference_error *);
 reference_status
 reference_array_each_source(const struct reference_input_source *, const char *,
                             const lonejson_map *, void *, reference_array_item,

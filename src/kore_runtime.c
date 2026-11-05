@@ -317,24 +317,40 @@ static void fork_complete(void *userdata)
 static int worker_exit(void *userdata)
 {
     struct rotmos_runtime *runtime;
-    int status;
+    struct kore_worker *child;
+    rotmos_server *server;
+    rotmos_process_context process;
+    rotmos_worker_exit_fn callback;
+    void *data;
+    int status, failed;
     runtime = userdata;
     rotmos_kore_loop_finish(runtime);
     wake_close(runtime);
     rotmos_kore_acme_clear(runtime);
     rotmos_tls_prepared_clear(&runtime->tls);
-    status = 0;
-    if (runtime->server->config.callbacks.on_worker_exit != NULL)
-        status = runtime->server->config.callbacks.on_worker_exit(
-            runtime->server, &runtime->server->process,
-            runtime->server->config.callbacks.userdata);
-    if (status == 0 && runtime->status != ROTMOS_OK)
-        status = 70;
+    rotmos_kore_logging_finish(runtime);
+    failed = runtime->status != ROTMOS_OK;
     if (runtime->status != ROTMOS_OK)
         rotmos_kore_child_failure(runtime, &runtime->error);
-    if (worker != NULL)
-        __atomic_store_n(&worker->library_clean, 1, __ATOMIC_RELEASE);
-    return status;
+    child = worker;
+    server = runtime->server;
+    process = server->process;
+    callback = server->config.callbacks.on_worker_exit;
+    data = server->config.callbacks.userdata;
+    /* Vectis's terminal fork callback may reclaim its app and this fork's
+     * server. Publish native cleanup first and retain no host state afterward.
+     */
+    (void)pthread_mutex_lock(&runtime_lock);
+    server->state = failed ? ROTMOS_SERVER_FAILED : ROTMOS_SERVER_STOPPED;
+    server->runtime = NULL;
+    server->router->frozen = 0;
+    active_runtime = NULL;
+    runtime->server = NULL;
+    (void)pthread_mutex_unlock(&runtime_lock);
+    status = callback != NULL ? callback(server, &process, data) : 0;
+    if (child != NULL)
+        __atomic_store_n(&child->library_clean, 1, __ATOMIC_RELEASE);
+    return status != 0 ? status : failed ? 70 : 0;
 }
 
 static int worker_pending(void *userdata)
