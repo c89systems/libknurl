@@ -138,6 +138,7 @@ static int rest_json(lua_State *L)
     return 1;
 }
 struct rest_call {
+    rotmos_bytes body;
     struct rl_rule *rule;
     rotmos_request *request;
     rotmos_reply *reply;
@@ -152,7 +153,13 @@ static int decode_call(lua_State *L)
     rl_rule_options(L, call->rule);
     rl_field(L, -1, "decode");
     rl_request_push(L, request);
-    lua_call(L, 1, 2);
+    if (rotmos_body_kind(rotmos_request_body(call->request)) ==
+        ROTMOS_BODY_FILE)
+        lua_pushlstring(L, call->body.data != NULL ? call->body.data : "",
+                        call->body.length);
+    else
+        lua_pushnil(L);
+    lua_call(L, 2, 2);
     if (!lua_toboolean(L, -2))
         call->status =
             rl_callback_error(L, -1, call->error, "REST JSON decoding failed");
@@ -168,7 +175,7 @@ static rotmos_status rest_decode(rotmos_request *request, rotmos_bytes body,
     call.rule = data;
     call.request = request;
     call.error = error;
-    (void)body;
+    call.body = body;
     *decoded = NULL;
     /* The facade stores the decoded value on its existing request table. Core
      * owns phase sequencing; this callback transfers no Lua handle to Core. */

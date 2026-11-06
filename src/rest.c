@@ -7,6 +7,7 @@ struct rest_context {
     rotmos_rest_route_config config;
     lonejson *runtime;
     lonejson_json_value json;
+    rotmos_body_result input;
     void *decoded;
 };
 static void release(void *data)
@@ -19,6 +20,7 @@ static void release(void *data)
         lonejson_json_value_cleanup(&s->json);
         lonejson_free(s->runtime);
     }
+    rotmos_body_result_cleanup(&s->input);
     free(s);
 }
 static rotmos_status recover(rotmos_request *request, struct rest_context *s,
@@ -82,6 +84,8 @@ static rotmos_status dispatch(rotmos_request *request, rotmos_reply *reply,
     const rotmos_rest_route_config *config = data;
     struct rest_context *s;
     rotmos_bytes body;
+    rotmos_u64 length;
+    size_t size;
     lonejson_error native;
     rotmos_status status;
     int finished = 0;
@@ -93,7 +97,21 @@ static rotmos_status dispatch(rotmos_request *request, rotmos_reply *reply,
     request->codec_data = s;
     request->codec_cleanup = release;
     if (!config->decode_disabled) {
-        status = rotmos_request_body_bytes(request, &body, error);
+        if (rotmos_body_kind(rotmos_request_body(request)) ==
+            ROTMOS_BODY_FILE) {
+            /* REST decoding is explicitly buffered. Retain a public body copy
+             * through custom decoded-value release, leaving transport storage
+             * and its reader unchanged. */
+            status = rotmos_body_length(rotmos_request_body(request), &length,
+                                        error);
+            if (status == ROTMOS_OK)
+                status = rotmos_u64_to_size(length, &size, error);
+            if (status == ROTMOS_OK)
+                status = rotmos_request_body_copy(request, NULL, 0, &s->input,
+                                                  error);
+            body = s->input.memory;
+        } else
+            status = rotmos_request_body_bytes(request, &body, error);
         if (status != ROTMOS_OK)
             return recover(request, s, ROTMOS_REST_DECODE, status, error);
         if (config->decode != NULL || body.length != 0) {

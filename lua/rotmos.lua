@@ -451,9 +451,13 @@ local function rest_route_options(opts)
     route.body=body
   end
   route.decode_disabled=opts.decode_json==false
-  route.decode=function(req)
-    if req.body~=nil and req.body~='' then
-      local decoded,value=pcall(require('lonejson').decode_json,req.body)
+  route.decode=function(req,body)
+    -- File-backed snapshots have no byte view; Core supplies this explicitly
+    -- buffered decoder input. A before hook's replacement still takes priority.
+    local input=req.body
+    if input==nil and req.body_spooled then input=body end
+    if input~=nil and input~='' then
+      local decoded,value=pcall(require('lonejson').decode_json,input)
       if not decoded then return nil,{status=native.status.INVALID,source=native.rest.ERROR_SOURCE_LONEJSON,
         message=tostring(value)} end
       req.json=value

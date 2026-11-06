@@ -231,6 +231,8 @@ if(BUILD_TESTING)
   add_test(NAME rotmos.vectis-response-head-plain COMMAND rotmos_vectis-response-head plain)
   set_tests_properties(rotmos.vectis-response-head-bounded rotmos.vectis-response-head-plain
     PROPERTIES TIMEOUT 8)
+  add_test(NAME rotmos.rest-spill COMMAND rotmos_rest-runtime spill)
+  set_tests_properties(rotmos.rest-spill PROPERTIES TIMEOUT 10)
   add_test(NAME rotmos.storage-abandon COMMAND rotmos_storage-runtime abandon)
   set_tests_properties(rotmos.storage-abandon PROPERTIES TIMEOUT 5)
   add_test(NAME rotmos.storage-filesystem-managed COMMAND rotmos_storage-filesystem managed)

@@ -30,10 +30,12 @@ struct fixture {
     pthread_t owner;
     int failed, handled, errors, released, source_closed, after, auth,
         decoded_empty;
+    size_t memory_limit;
 };
 struct decoded {
     struct fixture *f;
     char text[16];
+    rotmos_bytes borrowed;
     size_t position;
     int closed;
 };
@@ -117,6 +119,10 @@ static rotmos_status handler(rotmos_request *request, const void *decoded,
     rotmos_bytes view;
     rotmos_status status;
     ++f->handled;
+    if (json != NULL)
+        VERIFY(f, rotmos_body_kind(rotmos_request_body(request)) ==
+                      (f->memory_limit == 1 ? ROTMOS_BODY_FILE
+                                            : ROTMOS_BODY_MEMORY));
     VERIFY(f, pthread_equal(f->owner, pthread_self()) &&
                   rotmos_request_userdata(request) == f);
     if (!strcmp(id(request), "conflict"))
@@ -160,7 +166,6 @@ static rotmos_status custom_decode(rotmos_request *request, rotmos_bytes body,
 {
     struct fixture *f = data;
     struct decoded *decoded;
-    (void)request;
     (void)error;
     *out = NULL;
     VERIFY(f, pthread_equal(f->owner, pthread_self()));
@@ -172,11 +177,15 @@ static rotmos_status custom_decode(rotmos_request *request, rotmos_bytes body,
         return ROTMOS_NOMEM;
     if (body.length >= 16)
         return ROTMOS_INVALID;
+    VERIFY(f,
+           rotmos_body_kind(rotmos_request_body(request)) ==
+               (f->memory_limit == 1 ? ROTMOS_BODY_FILE : ROTMOS_BODY_MEMORY));
     decoded = calloc(1, sizeof(*decoded));
     if (decoded == NULL)
         return ROTMOS_NOMEM;
     decoded->f = f;
     memcpy(decoded->text, body.data, body.length);
+    decoded->borrowed = body;
     *out = decoded;
     return ROTMOS_OK;
 }
@@ -210,6 +219,9 @@ static void release_decoded(void *data, void *userdata)
     struct fixture *f = userdata;
     struct decoded *decoded = data;
     VERIFY(f, decoded->closed && pthread_equal(f->owner, pthread_self()));
+    VERIFY(f, decoded->borrowed.length == strlen(decoded->text) &&
+                  !memcmp(decoded->borrowed.data, decoded->text,
+                          decoded->borrowed.length));
     ++f->released;
     free(decoded);
 }
@@ -307,6 +319,13 @@ static int client(unsigned short port)
     CHECK(exchange(port, "/api/auth", "{", 401, "auth", 0) == 0);
     CHECK(exchange(port, "/api/echo", "{", 400, "\"kind\":\"json_parse\"", 1) ==
           0);
+    CHECK(exchange(port, "/api/echo", "{broken", 400, "\"kind\":\"json_parse\"",
+                   1) == 0);
+    CHECK(
+        exchange(
+            port, "/api/echo",
+            "12345678901234567890123456789012345678901234567890123456789012345",
+            413, "", 1) == 0);
     CHECK(exchange(port, "/api/validation", "{}", 400,
                    "\"kind\":\"validation\"", 1) == 0);
     CHECK(exchange(port, "/api/short", "{}", 202, "validation", 0) == 0);
@@ -372,8 +391,8 @@ static int exited(rotmos_server *server, const rotmos_process_context *process,
     (void)server;
     (void)process;
     return f->failed || f->source_closed != 1 || f->released != 1 ||
-           f->auth != 1 || f->errors != 9 || f->handled != 11 ||
-           f->after != 13 || f->decoded_empty != 1;
+           f->auth != 1 || f->errors != 10 || f->handled != 11 ||
+           f->after != 14 || f->decoded_empty != 1;
 }
 static int replies(void)
 {
@@ -422,7 +441,7 @@ static int replies(void)
     lonejson_free(runtime);
     return 0;
 }
-int main(void)
+int main(int argc, char **argv)
 {
     struct fixture f;
     rotmos_server_config config;
@@ -439,6 +458,7 @@ int main(void)
     int child;
     CHECK(replies() == 0);
     memset(&f, 0, sizeof(f));
+    f.memory_limit = argc == 2 && !strcmp(argv[1], "spill") ? 1 : 64;
     f.child = -1;
     rotmos_server_config_init(&config);
     rotmos_listener_config_init(&listener);
@@ -466,7 +486,7 @@ int main(void)
     rest.path_kind = ROTMOS_PATH_PARAMS;
     rest.method = ROTMOS_HTTP_POST;
     rest.body.max_bytes.low = 64;
-    rest.body.memory_buffer_limit_bytes = 64;
+    rest.body.memory_buffer_limit_bytes = f.memory_limit;
     rest.handler = handler;
     rest.validate = validate;
     rest.on_error = on_error;
@@ -490,6 +510,7 @@ int main(void)
     CHECK(rotmos_router_rest_route(rotmos_server_router(server), &rest, NULL,
                                    &error) == ROTMOS_OK);
     rest.path = "/raw";
+    rest.body.memory_buffer_limit_bytes = 64;
     rest.decode_disabled = 1;
     rest.handler = raw_handler;
     CHECK(rotmos_router_rest_route(rotmos_server_router(server), &rest, NULL,

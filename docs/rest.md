@@ -11,7 +11,11 @@ copies the declaration and path and invokes no callback. Its default body is
 BUFFERED with a 1 MiB bound and memory budget. Explicit policies preserve the
 ordinary buffered route's memory/spill settings. NONE supports bodyless routes.
 These operations use the existing admission and completed-body access; REST
-decoding itself is buffered, including a completed spill when selected.
+decoding itself is buffered, including a completed spill when selected. A
+completed file-backed body is explicitly copied into memory for decoding, up to
+its admitted limit; lengths that cannot fit `size_t` fail with OVERFLOW. The
+transport body remains file-backed and its reader is rewound before and after
+the copy. Memory-backed bodies retain their borrowed view without another copy.
 
 Auth and before hooks run before REST decoding. With nonempty input, the default
 decoder uses LoneJSON to validate and compact one retained JSON value. The
@@ -24,7 +28,8 @@ A custom `decode(request, body, &decoded, userdata, error)` can prepare an
 application value. It runs even on empty input unless decoding is disabled. Success
 transfers one configured `release(decoded, userdata)` notification when decoded
 is non-NULL. Without a release callback the caller manages that custom value's
-lifetime. Failure cleans its own partial result. The value stays alive through response
+lifetime. Decoder input bytes remain borrowed through request cleanup, including
+custom-value release. Failure cleans its own partial result. The value stays alive through response
 source cleanup, including when an output source borrows it. All callbacks and
 release notifications execute on the owning loop. No runtime/private layouts
 cross this API boundary.
@@ -74,8 +79,12 @@ LoneJSON's null sentinel. `decode_json=false` leaves explicit buffered input raw
 Body policy accepts BUFFERED or NONE, defaulting to a 1 MiB input limit when
 decoding is enabled. Memory/spill policy follows the ordinary route; the facade
 does not impose a separate 1 MiB memory threshold. Buffered decoding uses
-`request.body`; body-reader and explicit materialization operations retain their
-own ownership.
+`request.body` when present, otherwise the public C decoder's buffered input for
+completed spills. File-backed requests retain their ordinary `body_spooled`,
+`body_path` and absent `body` snapshot fields; no transport storage changes.
+A before hook may provide replacement `request.body` bytes, or an empty string
+to skip JSON decoding. Body-reader and explicit materialization operations retain
+their own ownership.
 
 `validate(json, request)` may return nil/true to continue, an ordinary reply to
 short-circuit, or false/detail to reject with 400. Validator exceptions also

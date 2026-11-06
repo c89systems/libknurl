@@ -78,6 +78,7 @@ for n=0,48,4 do
   ok(s:close());sample=nil;collectgarbage('collect');assert(retained[1]==nil)
 end
 local server,calls,closed,before,after,errors
+local spills=0
 local validation_closed,policy_after,parse_errors=0,0,0
 local decoded,parse_error=pcall(lonejson.decode_json,'{')
 assert(not decoded)
@@ -88,11 +89,20 @@ server=ok(rotmos.server{port=0,workers=1,on_parent_ready=function(s)
 end,on_worker_exit=function()
   assert(calls==1 and closed==1 and before==1 and after==1 and errors==1)
   assert(validation_closed==1 and policy_after==0 and parse_errors==1)
+  assert(spills==2)
 end})
 for _,body in ipairs{'stream','materialized','streaming_upload'} do
   value,problem=rest.route(server,{path='/bad',body=body,handler=function() end})
   failed(value,problem,rotmos.status.INVALID)
 end
+ok(rest.route(server,{path='/spill',method='POST',body={mode='buffered',max_bytes=32,memory_buffer_limit_bytes=1},
+  handler=function(req)
+    assert(req.body_spooled and req.body==nil and req.json.n==2)
+    spills=spills+1;return req.json
+  end}))
+ok(rest.route(server,{path='/spill-edited',method='POST',body={mode='buffered',max_bytes=32,memory_buffer_limit_bytes=1},
+  before=function(req) assert(req.body_spooled);req.body='{"edited":true}' end,
+  handler=function(req) assert(req.json.edited);spills=spills+1;return req.json end}))
 for _,name in ipairs{'decode','decode_disabled','on_error'} do
   local count=server:route_count()
   local result,why=rest.route(server,{path='/reserved',handler=function() end,[name]=false})

@@ -330,9 +330,11 @@ typedef enum rotmos_rest_phase {
     /** Buffered REST error phase: handler. */
     ROTMOS_REST_HANDLER
 } rotmos_rest_phase;
-/** Owner-loop buffered decoder, including empty input when selected. Successful
- * decoded ownership lasts through release; a failed decoder cleans its own
- * partial result.
+/** Owner-loop buffered decoder, including empty input when selected. Completed
+ * spills are copied into memory within the admitted body limit. Input bytes
+ * remain borrowed until request cleanup, including decoded-value release.
+ * Successful decoded ownership lasts through release; a failed decoder cleans
+ * its own partial result.
  */
 typedef rotmos_status (*rotmos_rest_decode_fn)(rotmos_request *, rotmos_bytes,
                                                void **decoded, void *userdata,
