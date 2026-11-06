@@ -429,7 +429,7 @@
 ---@field count fun(high_or_decimal:rotmos.IntegerInput, low?:rotmos.IntegerInput): rotmos.Unsigned?, rotmos.Error? # Exact checked unsigned 64-bit construction, never rounded.
 ---@field server fun(options?:rotmos.ServerOptions): rotmos.Server?, rotmos.Error? # Inert copied declaration; no listeners/forks/callbacks on construction.
 ---@field source fun(options:table): rotmos.Source?, rotmos.Error? # Explicit read(capacity), optional reset, close(cause); nil, EOF/AGAIN convention.
----@field sse_encode fun(event:string|number|table, capacity:integer): string?, rotmos.Error? # One bounded event; preformatted frame wins, oversize fails without splitting.
+---@field sse_encode fun(event:string|number|table, capacity:integer): string?, rotmos.Error? # One bounded event; CR/LF/CRLF split field lines. Preformatted frame wins, oversize fails without splitting.
 ---@field json rotmos.JSON # Public LoneJSON-backed mapped operations.
 ---@field xml rotmos.XML # Public mapped XML, DOM/XPath and incremental SAX.
 ---@field rest rotmos.REST # Server-side REST route/response convenience facade.

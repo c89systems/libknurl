@@ -68,11 +68,32 @@ static rotmos_status handler(rotmos_request *request, rotmos_reply *reply,
                              void *userdata, rotmos_error *error)
 {
     rotmos_bytes value;
+    rotmos_bytes first;
+    rotmos_bytes second;
     rotmos_header header;
     const char *kind;
     rotmos_source_config source_config;
     rotmos_source *source;
+    rotmos_status first_status;
+    rotmos_status second_status;
     kind = userdata;
+    if (strcmp(kind, "optionals") == 0) {
+        first_status =
+            rotmos_request_path_param(request, "first", &first, error);
+        second_status =
+            rotmos_request_path_param(request, "second", &second, error);
+        if ((first_status != ROTMOS_OK && first_status != ROTMOS_EOF) ||
+            (second_status != ROTMOS_OK && second_status != ROTMOS_EOF) ||
+            (first_status == ROTMOS_OK && second_status != ROTMOS_OK) ||
+            (first_status == ROTMOS_OK && !equal(first, "a")) ||
+            (second_status == ROTMOS_OK && !equal(second, "b")))
+            return ROTMOS_INVALID;
+        return rotmos_reply_text(reply, 200, "text/plain",
+                                 first_status == ROTMOS_OK    ? "a|b"
+                                 : second_status == ROTMOS_OK ? "_|b"
+                                                              : "_|_",
+                                 error);
+    }
     if (strcmp(kind, "chain") == 0) {
         rotmos_source_config_init(&source_config);
         source_config.read = unused_read;
@@ -282,6 +303,18 @@ static int client(unsigned short port)
     CHECK(exchange(port, REQUEST("/group/result"), 201, "after",
                    "Set-Cookie: one=1\r\nSet-Cookie: two=2\r\n") == 0);
     CHECK(exchange(port, REQUEST("/optional/end"), 200, "optional", NULL) == 0);
+    CHECK(exchange(port, REQUEST("/optionals"), 200, "_|_", NULL) == 0);
+    CHECK(exchange(port, REQUEST("/optionals/b"), 200, "_|b", NULL) == 0);
+    CHECK(exchange(port, REQUEST("/optionals/a/b"), 200, "a|b", NULL) == 0);
+    CHECK(exchange(port, REQUEST("/optionals/a/b/extra"), 404, "", NULL) == 0);
+    CHECK(exchange(port, REQUEST("/literal-tail/end"), 200, "_|_", NULL) == 0);
+    CHECK(exchange(port, REQUEST("/literal-tail/b/end"), 200, "_|b", NULL) ==
+          0);
+    CHECK(exchange(port, REQUEST("/literal-tail/a/b/end"), 200, "a|b", NULL) ==
+          0);
+    CHECK(exchange(port, REQUEST("/literal-tail"), 404, "", NULL) == 0);
+    CHECK(exchange(port, REQUEST("/literal-tail/a/b"), 404, "", NULL) == 0);
+    CHECK(exchange(port, REQUEST("/optional"), 404, "", NULL) == 0);
     CHECK(exchange(port, REQUEST("/regex/123"), 200, "regex", NULL) == 0);
     CHECK(exchange(port,
                    "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: "
@@ -460,9 +493,12 @@ int main(void)
                            "/head",
                            "/stop",
                            "/optional/:first?/:last",
+                           "/optionals/:first?/:second?",
+                           "/literal-tail/:first?/:second?/end",
                            "^/regex/[0-9]+$"};
-    const char *kinds[] = {"metadata", "echo", "empty",    "failure",
-                           "head",     "stop", "optional", "regex"};
+    const char *kinds[] = {"metadata",  "echo", "empty",    "failure",
+                           "head",      "stop", "optional", "optionals",
+                           "optionals", "regex"};
     unsigned char notes[3];
     int child_status;
     int iteration;
@@ -505,9 +541,9 @@ int main(void)
     for (i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
         rotmos_route_config_init(&route);
         route.path = paths[i];
-        route.path_kind = i == 7 ? ROTMOS_PATH_REGEX
-                                 : ((i == 0 || i == 6) ? ROTMOS_PATH_PARAMS
-                                                       : ROTMOS_PATH_LITERAL);
+        route.path_kind = paths[i][0] == '^'              ? ROTMOS_PATH_REGEX
+                          : strchr(paths[i], ':') != NULL ? ROTMOS_PATH_PARAMS
+                                                          : ROTMOS_PATH_LITERAL;
         route.handler = handler;
         route.userdata = (void *)kinds[i];
         if (i == 1) {

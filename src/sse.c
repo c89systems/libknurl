@@ -43,11 +43,9 @@ static void lines(sse_output *out, const char *prefix, rotmos_bytes value)
     start = 0;
     for (;;) {
         end = start;
-        while (end < value.length && data[end] != '\n')
+        while (end < value.length && data[end] != '\n' && data[end] != '\r')
             ++end;
         length = end - start;
-        if (length > 0 && data[end - 1] == '\r')
-            --length;
         append(out, prefix, strlen(prefix));
         if (length > 0)
             append(out, data + start, length);
@@ -55,6 +53,8 @@ static void lines(sse_output *out, const char *prefix, rotmos_bytes value)
         if (end == value.length)
             break;
         start = end + 1;
+        if (data[end] == '\r' && start < value.length && data[start] == '\n')
+            ++start;
     }
 }
 

@@ -164,7 +164,10 @@ typedef struct rotmos_sse_event {
  * overrides.
  */
 ROTMOS_API void rotmos_sse_event_init(rotmos_sse_event *event);
-/** Encodes one event. Inputs must not overlap the destination. */
+/** Encodes one event. CR, LF and CRLF delimit field lines, emitted with LF
+ * endings and a prefix on every line. Preformatted frames are copied verbatim.
+ * Inputs must not overlap the destination.
+ */
 ROTMOS_API rotmos_status rotmos_sse_encode(const rotmos_sse_event *event,
                                            void *buffer, size_t capacity,
                                            size_t *written,

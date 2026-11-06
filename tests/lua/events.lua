@@ -3,6 +3,15 @@ local native=require('rotmos.native')
 local function ok(value,err) assert(value,err and (err.message..' '..err.detail));return value end
 local function state(value,err) assert(value==nil and err.status==rotmos.status.STATE) end
 assert(ok(rotmos.sse_encode{data='A\0B\nC'})=='data: A\0B\ndata: C\n\n')
+assert(ok(rotmos.sse_encode{data='A\0B\rC'})=='data: A\0B\ndata: C\n\n')
+for _,separator in ipairs{'\r','\n','\r\n'} do
+  local payload='hello'..separator..'event: injected'..separator..'data: forged'..separator
+  local expected='data: hello\ndata: event: injected\ndata: data: forged\ndata: \n\n'
+  assert(ok(rotmos.sse_encode({data=payload},#expected))==expected)
+  local value,err=rotmos.sse_encode({data=payload},#expected-1)
+  assert(value==nil and err.status==rotmos.status.LIMIT)
+  assert(ok(rotmos.sse_encode{comment=payload})==': hello\n: event: injected\n: data: forged\n: \n\n')
+end
 assert(ok(rotmos.sse_encode{retry=rotmos.count('18446744073709551615')})=='retry: 18446744073709551615\n\n')
 assert(ok(rotmos.sse_encode(setmetatable({frame='raw'},{__index=function() error('unselected event getter') end}),3))=='raw')
 for _,event in ipairs{{retry=-1},{retry=0.5},{retry=1.0},{retry='1'},{data={}},{frame={}}} do

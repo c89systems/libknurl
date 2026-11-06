@@ -1,5 +1,20 @@
 # Extraction verification
 
+## Routing and SSE review corrections
+
+The consecutive-optional-parameter and lone-CR SSE defects are corrected and
+recorded as I19/I20 in [KORE.md](../KORE.md). Five affected Core checks pass on
+each of GNU and musl: foundation/SSE framing, server routing/lifecycle, the
+reference Vectis route adapter, channels and loop smoke. The GNU foundation case
+passed separately after replacing an incorrect hand-counted regression input
+length; the other four earlier passing results are reused against the same Core.
+Both GNU Lua events checks pass in preload/dynamic modes, including binary data,
+CR/LF/CRLF data/comment framing and capacity failures through the public facade.
+
+Selected-toolchain GNU Core/Lua and the affected musl targets build successfully;
+formatting and diff checks pass. Logs are `build/review-route-sse-*.log`. The full
+runtime/matrix, memory and fuzz gates were not repeated for these focused fixes.
+
 ## Lifecycle alignment sweep
 
 The follow-up sweep reproduced ownership validation accepting a path through a

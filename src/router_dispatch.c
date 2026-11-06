@@ -65,14 +65,6 @@ static rotmos_status params_match(rotmos_route *route, rotmos_request *request,
             path_end = frame->path + strlen(frame->path);
         parameter = *frame->pattern == ':';
         optional = parameter && pattern_end[-1] == '?';
-        if (*frame->path == '\0') {
-            if (optional && *pattern_end == '\0') {
-                *matched = 1;
-                break;
-            }
-            --depth;
-            continue;
-        }
         if (frame->phase == 0 && optional) {
             frame->phase = 1;
             frames[depth].pattern =
@@ -80,6 +72,10 @@ static rotmos_status params_match(rotmos_route *route, rotmos_request *request,
             frames[depth].path = frame->path;
             frames[depth].params = frame->params;
             frames[depth++].phase = 0;
+            continue;
+        }
+        if (*frame->path == '\0') {
+            --depth;
             continue;
         }
         if (frame->phase < 2) {
