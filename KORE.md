@@ -133,6 +133,12 @@ its own entry above with an explicit cause and regression.
 
 ## Verification and outstanding evidence
 
+The final accumulated repository gate passes all 97 GNU Core checks and all 92
+selected musl Core checks, including full installed static/shared consumers.
+The unchanged Lua implementation retains its complete 36 GNU / 35 musl gate and
+seven-target build evidence. The final pass found no new defect; see
+[verification](docs/verification.md) for exact scope and remaining consumer proof.
+
 The assessment follow-up passes 17 affected C checks on each of GNU/musl,
 36 GNU Lua checks and 35 musl Lua checks. All seven toolchains compile the
 corrected Core, public headers, affected fixtures and installed-SDK Lua binding;

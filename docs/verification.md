@@ -1,17 +1,30 @@
 # Extraction verification
 
-Initial development verification at `f6bc8cb` completed on 2026-11-05,
+The final repository sweep on 2026-11-06 verified implementation `463521b`,
 using Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19` as the behavioral baseline.
 The sibling checkout still has that exact HEAD and was not modified.
 The [operation audit](server-api-audit.md) maps every contract family to its
 implementation, reference forwarding adapter and observable cases.
 
-Vectis's subsequent integration assessment found gaps G1–G5 that these earlier
-family-level checks did not cover. The counts below are historical evidence for
-that snapshot, not proof of the missing standalone APIs, mount admission/defaults,
-concurrency or proxy diagnostics. The assessment follow-up adds explicit
-regressions and corrections for those cases; its evidence is recorded in the
-[operation audit](server-api-audit.md) and [KORE.md](../KORE.md).
+## Final accumulated gate
+
+| Gate | Observed result |
+| --- | --- |
+| GNU Core | All 97 registered checks passed, including full relocated static/shared reference consumers, SDK checks and Kore preparation/replay/invalidation/upgrade. |
+| Musl Core | All 92 selected checks passed, including full relocated static/shared consumers. The five `kore.*` host-tool checks reuse the GNU run on this host. |
+| Lua | The unchanged implementation reuses its complete 36 GNU / 35 musl checks from the integer-conversion gate, including source-package/source-rock evidence. |
+| Seven targets | Selected-toolchain Core, C89/C++98 headers, latest Lua bindings and final SDK artifact evidence below remain valid for their unchanged inputs. Runtime execution covers x86_64 GNU/musl; the other five targets have compile/link and artifact evidence. |
+| Final review | No new actionable defect was found in the contract, C/Lua conversion, record/source ownership and failure-path pass. Formatting and diff checks passed. No executable changes were needed. |
+
+The complete Core suites ran once after the accumulated corrections; selected
+builds retain `final-sweep-build.log`, `final-sweep-tests.log` and the GNU
+`final-sweep-format.log`. This is development verification, not actual Vectis
+normal/packed cutover or release verification. Historical isolated fault-coverage
+limits in [KORE.md](../KORE.md) remain explicit.
+
+The sections below retain the initial `f6bc8cb` evidence and subsequent
+assessment/sweep corrections. G1–G5 and I01–I14 explain why the initial family-level
+gate was insufficient; the final gate includes their added regressions.
 
 ## Assessment follow-up
 
@@ -115,6 +128,9 @@ read-only at the declared baseline, and actual consumer cutover is still a
 separate verification gate.
 
 ## Initial development snapshot
+
+Initial development verification at `f6bc8cb` completed on 2026-11-05. The
+integration assessment subsequently identified G1–G5 gaps absent from that gate.
 
 | Gate | Observed result |
 | --- | --- |
