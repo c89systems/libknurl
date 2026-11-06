@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 include("${ROTMOS_ROOT}/cmake/OwnedPaths.cmake")
+include("${ROTMOS_ROOT}/cmake/Privacy.cmake")
 rotmos_require_owned_path("${TEST_ROOT}" "LuaRocks consumer")
 find_program(LUAROCKS luarocks REQUIRED)
 include("${ROTMOS_ROOT}/cmake/Version.cmake")
@@ -37,16 +38,13 @@ foreach(product "${module}" "${TEST_ROOT}/tree/share/lua/5.5/rotmos.lua"
   if(NOT EXISTS "${product}")
     message(FATAL_ERROR "Missing installed LuaRocks product: ${product}")
   endif()
+  rotmos_verify_private_bytes("${product}")
 endforeach()
 execute_process(COMMAND "${CMAKE_COMMAND}" -E compare_files
   "${ROTMOS_ROOT}/lua/rotmos.meta.lua"
   "${TEST_ROOT}/tree/share/lua/5.5/rotmos/meta.lua" RESULT_VARIABLE result)
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "Installed LuaRocks editor metadata differs from the shipped source")
-endif()
-file(STRINGS "${module}" strings)
-if(strings MATCHES "${ROTMOS_ROOT}" OR strings MATCHES "${TEST_ROOT}")
-  message(FATAL_ERROR "Installed LuaRocks module retains a workspace path")
 endif()
 if(HOST)
   execute_process(COMMAND "${HOST}" "${ROTMOS_ROOT}/tests/lua/foundation.lua"

@@ -17,6 +17,7 @@ endif()
 run("${CMAKE_COMMAND}" "-DBUILD_DIR=${BUILD_DIR}" "-DOUTPUT_DIR=${output}" -P "${SDK_ROOT}/cmake/Package.cmake")
 file(SHA256 "${output}/${package}.tar.gz" first)
 # A restrictive staging umask must not change shipped bytes.
+run("${CMAKE_COMMAND}" -E sleep 1)
 run(bash -c "umask 077; exec \"$@\"" sdk-package
   "${CMAKE_COMMAND}" "-DBUILD_DIR=${BUILD_DIR}" "-DOUTPUT_DIR=${output}" -P "${SDK_ROOT}/cmake/Package.cmake")
 file(SHA256 "${output}/${package}.tar.gz" second)
@@ -75,6 +76,33 @@ file(SHA256 "${readme}" afl_digest)
 string(REPLACE "${after}  share/rotmos/README.md" "${afl_digest}  share/rotmos/README.md" records "${records}")
 file(WRITE "${inventory}" "${records}")
 reject_bytes("Private path/instrumentation")
+# Credential-shaped fixtures are synthetic, not usable keys or tokens.
+string(REPEAT A 64 body)
+string(REPLACE "__afl_area_ptr" "-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----"
+  bytes "${bytes}")
+file(WRITE "${readme}" "${bytes}")
+file(SHA256 "${readme}" key_digest)
+string(REPLACE "${afl_digest}  share/rotmos/README.md" "${key_digest}  share/rotmos/README.md" records "${records}")
+file(WRITE "${inventory}" "${records}")
+reject_bytes("Private key/credential")
+# Replace the static library with an owned non-object archive fixture. Changing
+# its first member's UID demonstrates metadata rejection before link inspection.
+file(WRITE "${fixture}/member" "public fixture\n")
+set(library "${fixture}/${package}/lib/librotmos.a")
+file(SHA256 "${library}" before_library)
+file(REMOVE "${library}")
+run("${SDK_AR}" qc "${library}" "${fixture}/member")
+run(bash -c [=[printf '123   ' | dd of="$1" bs=1 seek=36 conv=notrunc 2>/dev/null]=]
+  archive-uid "${library}")
+file(SHA256 "${library}" after_library)
+string(REPLACE "${before_library}  lib/librotmos.a" "${after_library}  lib/librotmos.a" records "${records}")
+# Remove the earlier synthetic key so the metadata check is the failing guard.
+string(REPLACE "-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----" "public fixture" bytes "${bytes}")
+file(WRITE "${readme}" "${bytes}")
+file(SHA256 "${readme}" public_digest)
+string(REPLACE "${key_digest}  share/rotmos/README.md" "${public_digest}  share/rotmos/README.md" records "${records}")
+file(WRITE "${inventory}" "${records}")
+reject_bytes("Private/nondeterministic static archive metadata")
 # Remove the intentionally corrupt fixture instead of leaving a candidate.
 file(REMOVE "${output}/${package}.tar.gz" "${output}/${package}-BINARY-CHECKSUMS")
 file(REMOVE_RECURSE "${fixture}")

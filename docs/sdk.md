@@ -34,6 +34,24 @@ option. `rotmos.sdk-package` is the short CTest gate for reproducibility under a
 changed staging umask, final-byte/consumer validation, checksum corruption,
 unlisted private headers and private paths even with recomputed digests.
 
+The shared artifact privacy guard inspects declared text and binary payload for
+known workstation paths, the current checkout path, sanitizer/AFL markers,
+complete private-key PEM blocks (including SSH and encrypted-key forms), and
+long GitHub token forms. Diagnostics report the artifact and violation class
+without printing matched content. Public certificates, isolated PEM labels,
+API names and short redacted examples remain valid. Explicit inventories exclude
+unintended files; content matching cannot identify arbitrary opaque secrets.
+The selected target archiver also verifies zero member UID/GID and epoch
+timestamps inside the static library. Linux stripping uses deterministic-archive
+mode, so nested archive metadata neither discloses host IDs nor changes on repack.
+
+Lua source archives, standalone rockspecs and the source rock's metadata use
+the same guard. Its nested source tar must exactly match the verified standalone
+tar. Installed LuaRocks facade/module files are checked too. Existing Lua
+package/source-consumer CTest gates enforce this verification. To inspect staged
+products directly, use `cmake -DPRODUCT_DIR=<absolute-owned-directory>
+-P cmake/VerifyLuaPackage.cmake`; scratch stays under `build/`.
+
 These commands do not create a release, tag, upload or complete multi-product
 release inventory. A release must still follow the lifecycle's default-branch,
 signing, clean-build and full final-artifact gates. Lua products retain their

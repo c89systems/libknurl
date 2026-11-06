@@ -473,7 +473,7 @@ if(BUILD_TESTING)
     "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/lifecycle"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/Lifecycle.cmake")
   set_tests_properties(lifecycle.version lifecycle.failures PROPERTIES TIMEOUT 15)
-  foreach(contract OwnedPaths SourceInputs Testing KoreOwnership)
+  foreach(contract OwnedPaths SourceInputs Testing KoreOwnership Privacy)
     add_test(NAME lifecycle.${contract} COMMAND "${CMAKE_COMMAND}"
       "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
       "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/${contract}"

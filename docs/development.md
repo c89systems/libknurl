@@ -80,6 +80,11 @@ The three products and `lua-rotmos-<version>-CHECKSUMS` are written to `dist/`;
 no release or upload occurs. [Package instructions](../lua/README.md) describe
 the selected-target SDK build and LuaRocks variables. CTest's
 `rotmos.lua-package` checks reproducible final/nested bytes and source inventory;
+its public `cmake/VerifyLuaPackage.cmake` verifier applies the shared artifact
+privacy guard to source files and both standalone/nested rockspecs. The nested
+source tar must match the verified standalone bytes. Source-consumer checks use
+the same guard for installed Lua files and module binaries. See [SDK privacy
+coverage](sdk.md) for recognized content and its limits.
 `rotmos.lua-source-consumer` builds the source rock against installed public SDKs,
 with LuaRocks cache/temp/tree under its owned build directory. GNU/musl hosts
 execute the installed module using the matching target Lua runtime. Other

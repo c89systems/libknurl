@@ -1,5 +1,30 @@
 # Extraction verification
 
+## Artifact privacy follow-up
+
+Core and Lua verification now share byte checks for known workstation paths,
+instrumentation, complete private-key PEM blocks and long GitHub token forms.
+The Lua verifier covers source files, standalone and nested rockspecs, and exact
+nested-tar identity; installed source-consumer payload uses the same check.
+Synthetic rejection fixtures recompute inner/outer checksums. Positive fixtures
+permit public certificates, PEM labels, API names and redacted examples. Error
+checks ensure matched token content is not printed.
+
+Repackaging exposed GNU strip retaining host UID/GID and rewriting static-archive
+member timestamps. Linux SDK stripping now enables deterministic archives; the
+selected target archiver checks zero IDs and epoch timestamps. The SDK test
+separates repacks in time and rejects a synthetic archive with a changed member
+UID. All seven final SDK verifiers and relocated consumers pass. Existing Core
+and Lua binaries were reused; no server matrix recompilation was needed.
+
+The privacy fixtures, Lua package negatives, GNU SDK package gate, both native
+LuaRocks source-consumer checks, formatting and diff checks pass. All seven built
+Lua bindings and the rehearsal Lua products pass the expanded scan. The new ten
+product inventory is `build/privacy/CHECKSUMS`; six Linux SDK hashes changed due
+to normalized archive metadata. The earlier rehearsal inventory is preserved as
+historical evidence. Logs are under `build/privacy/`. All credential fixtures
+use synthetic, unusable data. Release refs remain unchanged.
+
 ## Release rehearsal
 
 The incremental rehearsal builds all seven Release Core/Lua products at version
