@@ -40,6 +40,14 @@ if(NOT EXISTS "${binary}/kore/incremental-marker")
   message(FATAL_ERROR "An unchanged build repeated source preparation")
 endif()
 
+# The shared ownership validator is a preparation input too.
+run("${CMAKE_COMMAND}" -E sleep 1)
+file(APPEND "${TEST_ROOT}/project/cmake/OwnedPaths.cmake" "\n# fixture ownership update\n")
+run("${CMAKE_COMMAND}" --build "${binary}" --parallel 1)
+if(EXISTS "${binary}/kore/incremental-marker")
+  message(FATAL_ERROR "Changing ownership validation did not invalidate source preparation")
+endif()
+
 # Ensure even coarse filesystem timestamp resolution can distinguish the edit.
 run("${CMAKE_COMMAND}" -E sleep 1)
 file(WRITE "${patch}" "--- a/src/kore.c\n+++ b/src/kore.c\n@@ -1 +1 @@\n-upstream\n+revised\n")

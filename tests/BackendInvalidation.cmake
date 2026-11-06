@@ -6,6 +6,7 @@ set(project "${TEST_ROOT}/project")
 set(binary "${project}/build/debug")
 file(MAKE_DIRECTORY "${project}/vendor/kore/src" "${project}/patches/kore" "${project}/cmake")
 file(COPY "${ROTMOS_ROOT}/cmake/KoreSources.cmake" "${ROTMOS_ROOT}/cmake/PrepareKore.cmake"
+  "${ROTMOS_ROOT}/cmake/OwnedPaths.cmake"
   DESTINATION "${project}/cmake")
 file(WRITE "${project}/vendor/kore.revision" "0123456789012345678901234567890123456789\n")
 file(WRITE "${project}/vendor/kore.url" "unused fixture\n")

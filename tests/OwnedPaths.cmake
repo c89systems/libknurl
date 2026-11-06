@@ -27,3 +27,16 @@ file(READ "${TEST_ROOT}/borrowed/victim" victim)
 if(NOT victim STREQUAL "preserve\n")
   message(FATAL_ERROR "Ownership probe modified borrowed bytes")
 endif()
+# Fixture installation must validate its destination before CMake can write it.
+file(MAKE_DIRECTORY "${TEST_ROOT}/owner/lua/cmake" "${TEST_ROOT}/owner/build/lua")
+file(COPY "${ROTMOS_ROOT}/lua/cmake/RunFixture.cmake" DESTINATION "${TEST_ROOT}/owner/lua/cmake")
+file(WRITE "${TEST_ROOT}/owner/build/lua/cmake_install.cmake"
+  "file(WRITE \"\${CMAKE_INSTALL_PREFIX}/installed\" \"must not write borrowed inputs\")\n")
+execute_process(COMMAND "${CMAKE_COMMAND}"
+  "-DBINARY=${TEST_ROOT}/owner/build/lua" "-DPREFIX=${TEST_ROOT}/borrowed"
+  -P "${TEST_ROOT}/owner/lua/cmake/RunFixture.cmake"
+  RESULT_VARIABLE code OUTPUT_VARIABLE log ERROR_VARIABLE errors)
+if(code EQUAL 0 OR NOT "${log}${errors}" MATCHES "must use this checkout" OR
+    EXISTS "${TEST_ROOT}/borrowed/installed")
+  message(FATAL_ERROR "Lua fixture wrote before rejecting its borrowed prefix: ${log}${errors}")
+endif()

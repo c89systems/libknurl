@@ -42,6 +42,8 @@ make clean                 # Remove all local build/, dist/ and .cache/ state.
 SDKs from c89systems. Once prepared, builds and tests are offline. SDKs have
 independent prefixes under `.cache/sdk/<target>/`; archives stay in this
 checkout's `.cache/`. Existing global cpkt archives may be read and copied.
+Each component SDK prefix must also be owned; symlinking a component to another
+checkout is rejected during preparation and Core configuration.
 Toolchain discovery is read-only; only explicit provisioning prepares compilers.
 One operation owns the checkout; run operations serially.
 
@@ -181,6 +183,10 @@ publishing a partially patched copy.
 Backend objects depend directly on successful source preparation. A patch edit
 must prepare and recompile its changed source in one build invocation; CTest's
 `kore.backend-invalidation` proves that behavior with a compiled fixture.
+Preparation also depends on the shared path validator. Source exports and patch
+inputs must belong to this checkout and stay separate from both the output and
+its staging directory; overlap is rejected before cleanup. Patch files and the
+series cannot be symlinks.
 
 ## Upgrading Kore
 

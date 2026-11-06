@@ -27,7 +27,7 @@ commit_fixture "$upstream"
 conflicting=$(git -C "$upstream" rev-parse HEAD)
 
 cp "$root/scripts/update-kore.sh" "$consumer/scripts/"
-cp "$root/cmake/PrepareKore.cmake" "$consumer/cmake/"
+cp "$root/cmake/PrepareKore.cmake" "$root/cmake/OwnedPaths.cmake" "$consumer/cmake/"
 printf 'upstream\n' > "$consumer/vendor/kore/src/kore.c"
 printf '%s\n' "$initial" > "$consumer/vendor/kore.revision"
 printf '%s\n' "$upstream" > "$consumer/vendor/kore.url"

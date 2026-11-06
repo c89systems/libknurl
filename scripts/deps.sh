@@ -37,6 +37,7 @@ while IFS=$'\t' read -r kind name version pin_target digest url; do
   [[ "$name" =~ ^[a-z0-9-]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$digest" =~ ^[a-f0-9]{64}$ && "$url" == https://github.com/c89systems/* ]] || {
     printf 'Invalid dependency pin: %s\n' "$name" >&2; exit 2;
   }
+  "${CMAKE:-cmake}" "-DROTMOS_CHECK_PATH=$prefix" -P "$repo_root/cmake/OwnedPaths.cmake"
   rotmos_acquire_archive "$url" "$digest" "$archive_cache" \
     "${XDG_CACHE_HOME:-${HOME:?HOME is required}/.cache}/cpkt/deps"
   archive="$archive_cache/archives/sha256/$digest/${url##*/}"

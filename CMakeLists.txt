@@ -473,7 +473,7 @@ if(BUILD_TESTING)
     "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/lifecycle"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/Lifecycle.cmake")
   set_tests_properties(lifecycle.version lifecycle.failures PROPERTIES TIMEOUT 15)
-  foreach(contract OwnedPaths SourceInputs Testing)
+  foreach(contract OwnedPaths SourceInputs Testing KoreOwnership)
     add_test(NAME lifecycle.${contract} COMMAND "${CMAKE_COMMAND}"
       "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
       "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/${contract}"
@@ -483,6 +483,9 @@ if(BUILD_TESTING)
   add_test(NAME lifecycle.acquisition COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/acquisition.sh"
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/tests/acquisition")
   set_tests_properties(lifecycle.acquisition PROPERTIES TIMEOUT 30)
+  add_test(NAME lifecycle.dependencies COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/dependencies.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/tests/dependencies")
+  set_tests_properties(lifecycle.dependencies PROPERTIES TIMEOUT 15)
   add_executable(rotmos_reply_test tests/reply.c)
   target_link_libraries(rotmos_reply_test PRIVATE rotmos::shared)
   rotmos_c89(rotmos_reply_test)

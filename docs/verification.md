@@ -24,6 +24,21 @@ unchanged server binaries and earlier matrix, memory, QEMU and fuzz evidence
 are reused. Logs are `build/alignment-{configure,contracts,packages,build,format}.log`.
 No release or actual Vectis cutover is claimed.
 
+The second ownership pass reproduced staging cleanup deleting a Kore source
+export, component SDK symlinks being reused, and a Lua fixture writing its install
+prefix before rejecting it. Kore preparation now checks both inputs against
+output/staging overlap and rejects borrowed patch inputs. SDK preparation and
+Core discovery validate each component prefix; Lua fixtures validate their build
+and install paths before installation. The shared path validator is a declared
+preparation dependency, with invalidation and unchanged-build regressions.
+
+All eight lifecycle and five Kore host checks pass, including real patch replay,
+source/build invalidation and the offline upgrade workflow. Two installed Lua
+checks pass through the repaired fixture runner (preload/dynamic). The replayed
+Kore tree is byte-identical to the one used by the existing Debug binaries, so
+no server rebuild or repeat matrix/memory/QEMU/fuzz campaign was needed. Bash
+syntax, formatting and diff checks pass; logs are under `build/alignment2/`.
+
 ## Lifecycle hardening gate
 
 The selected-toolchain Release gate now builds static/shared Core, C89/C++98
@@ -55,7 +70,7 @@ incremental and separate from static/shared execution via native CTest fixtures,
 with a per-program deadline and diagnostic. Its three cases pass on Debug and
 both Release runtimes; Release preparation logs show no consumer recompilation.
 The redundant JSON-only producer is removed without dropping its cases. The
-current inventory is 104 GNU / 97 selected musl Core checks. Unchanged earlier
+gate's inventory was 104 GNU / 97 selected musl Core checks. Unchanged earlier
 passes are reused; only the changed consumer groups and remaining Debug checks
 are rerun, not the matrix.
 
