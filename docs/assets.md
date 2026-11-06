@@ -90,7 +90,8 @@ once and preserves the raw query. Files with an added slash return 404. Indexes
 are resolved under the same confined root. No directory listing is exposed by a
 static route.
 
-Content type follows Vectis's extension mapping, with explicit overrides for
+Content type uses an extension mapping, including `.md` and `.markdown` as
+`text/markdown; charset=utf-8` (case-insensitive), with explicit overrides for
 filesystem routes. Packed entries retain manifest content types before their
 configured fallback, defaulting to application/octet-stream without an inferred
 extension type. Assets default to no-cache and a `not found\n` 404 with

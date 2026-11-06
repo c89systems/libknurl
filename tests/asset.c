@@ -270,6 +270,18 @@ static int declarations(void)
                  "text/html; charset=utf-8") == 0);
     CHECK(strcmp(rotmos_static_content_type("/a.mjs"),
                  "text/javascript; charset=utf-8") == 0);
+    CHECK(strcmp(rotmos_static_content_type("/README.md"),
+                 "text/markdown; charset=utf-8") == 0);
+    CHECK(strcmp(rotmos_static_content_type("/README.MD"),
+                 "text/markdown; charset=utf-8") == 0);
+    CHECK(strcmp(rotmos_static_content_type("/guide.markdown"),
+                 "text/markdown; charset=utf-8") == 0);
+    CHECK(strcmp(rotmos_static_content_type("/guide.MarkDown"),
+                 "text/markdown; charset=utf-8") == 0);
+    CHECK(strcmp(rotmos_static_content_type("/README.md.txt"),
+                 "text/plain; charset=utf-8") == 0);
+    CHECK(strcmp(rotmos_static_content_type("/folder.md/README"),
+                 "application/octet-stream") == 0);
     CHECK(strcmp(rotmos_static_content_type("/a.unknown"),
                  "application/octet-stream") == 0);
     return 0;

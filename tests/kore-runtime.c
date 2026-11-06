@@ -32,6 +32,7 @@ static int serve(struct http_request *request)
 {
     struct kore_buf head;
     struct http_response_field fields[3];
+    const char *markdown, *long_markdown;
     unsigned int counted;
     int failed;
     http_response_cookie(request, "session", "native", "/", 0, 0, NULL);
@@ -49,7 +50,13 @@ static int serve(struct http_request *request)
                                    HTTP_RESPONSE_HEAD_COUNTED, 6, fields, 3,
                                    &head);
     (void)kore_buf_stringify(&head, NULL);
-    failed = request->owner->http_response_count != counted ||
+    markdown = http_media_type("/README.MD");
+    long_markdown = http_media_type("/guide.MarkDown");
+    failed = markdown == NULL || long_markdown == NULL ||
+             strcmp(markdown, "text/markdown; charset=utf-8") != 0 ||
+             strcmp(long_markdown, "text/markdown; charset=utf-8") != 0 ||
+             http_media_type("/README.md.unknown") != NULL ||
+             request->owner->http_response_count != counted ||
              strstr((char *)head.data, "x-backend: retained\r\n") == NULL ||
              strstr((char *)head.data, "X-Overridden: staged\r\n") == NULL ||
              strstr((char *)head.data, "X-Overridden: native\r\n") != NULL ||
@@ -60,7 +67,9 @@ static int serve(struct http_request *request)
              strstr((char *)head.data, "set-cookie: second=two\r\n") == NULL ||
              strstr((char *)head.data, "set-cookie: third=three\r\n") == NULL;
     kore_buf_cleanup(&head);
-    http_response_header(request, "content-type", "text/plain");
+    http_response_header(request, "content-type",
+                         markdown != NULL ? markdown
+                                          : "application/octet-stream");
     http_response(request, failed ? 500 : 200, "alive\n", 6);
     kore_shutdown();
     return KORE_RESULT_OK;
@@ -104,6 +113,8 @@ static int client(unsigned short port)
         strstr(response, "set-cookie: session=native; Path=/; "
                          "Domain=localhost; HttpOnly; Secure\r\n") == NULL ||
         strstr(response, "x-backend: retained\r\n") == NULL ||
+        strstr(response, "content-type: text/markdown; charset=utf-8\r\n") ==
+            NULL ||
         strstr(response, "\r\n\r\nalive\n") == NULL)
         return 5;
     return 0;

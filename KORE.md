@@ -155,6 +155,22 @@ counts include relayed frame bytes but exclude the handshake, successful error
 categories are `"none"`, and standalone quotas must be positive after explicit
 configuration initialization. Their implemented baseline behavior is unchanged.
 
+## Markdown media types
+
+K21: Kore's built-in media registry omits `.md` and `.markdown`, so native file
+responses fall back to `application/octet-stream`. The Core filesystem mapping
+inherited the same omission. External patch 0063 registers both extensions as
+`text/markdown; charset=utf-8`; `rotmos_static_content_type()` now agrees. The
+charset follows the [required Markdown media-type parameter](https://www.rfc-editor.org/rfc/rfc7763.html#section-2)
+and the existing UTF-8 convention for inferred text types. Pristine Kore remains
+unchanged. Explicit filesystem overrides and packed-provider metadata/fallbacks
+retain their existing precedence.
+
+Evidence: `asset.c` checks both extensions, mixed case, exact-extension matching
+and unknown types. `static-runtime.c` checks directory GET/HEAD, an extensionless
+single-file route and an explicit override on the wire. `kore-runtime.c` checks
+the native registry and its emitted response type across backend restart.
+
 ## Portability and features are not automatically bugs
 
 Strict C89 conversion, platform integer/queue declarations and independent SDK

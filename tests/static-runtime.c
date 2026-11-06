@@ -247,6 +247,15 @@ static int client(unsigned short port)
     char etag[256], headers[1024];
     CHECK(exchange(port, "GET", "/files/data.txt", NULL, "", 200, "abcdef",
                    "content-type: text/plain; charset=utf-8", etag) == 0);
+    CHECK(exchange(port, "GET", "/files/README.MD", NULL, "", 200, "# Readme\n",
+                   "content-type: text/markdown; charset=utf-8", NULL) == 0);
+    CHECK(exchange(port, "HEAD", "/files/guide.MarkDown", NULL, "", 200, "",
+                   "content-type: text/markdown; charset=utf-8", NULL) == 0);
+    CHECK(exchange(port, "GET", "/markdown", NULL, "", 200, "# Readme\n",
+                   "content-type: text/markdown; charset=utf-8", NULL) == 0);
+    CHECK(exchange(port, "GET", "/markdown-override", NULL, "", 200,
+                   "# Readme\n", "content-type: text/plain; charset=us-ascii",
+                   NULL) == 0);
     CHECK(exchange(port, "HEAD", "/files/data.txt", "Range: bytes=1-3\r\n", "",
                    200, "", "content-length: 6", NULL) == 0);
     CHECK(exchange(port, "GET", "/files/data.txt", "Range: bytes=1-3\r\n", "",
@@ -416,6 +425,7 @@ int main(void)
     rotmos_status status;
     int child_status;
     char root[256], file[512], path[512], sub[512], space[512], secret[256];
+    char markdown[512];
     memset(&fixture, 0, sizeof(fixture));
     fixture.child = -1;
     strcpy(fixture.directory, "static-fixture-XXXXXX");
@@ -424,6 +434,10 @@ int main(void)
     CHECK(mkdir(root, 0700) == 0);
     snprintf(file, sizeof(file), "%s/data.txt", root);
     CHECK(put(file, "abcdef"));
+    snprintf(markdown, sizeof(markdown), "%s/README.MD", root);
+    CHECK(put(markdown, "# Readme\n"));
+    snprintf(path, sizeof(path), "%s/guide.MarkDown", root);
+    CHECK(put(path, "# Guide\n"));
     snprintf(path, sizeof(path), "%s/index.html", root);
     CHECK(put(path, "index"));
     snprintf(sub, sizeof(sub), "%s/sub", root);
@@ -470,6 +484,15 @@ int main(void)
     statics.index_enabled = 1;
     CHECK(rotmos_router_static_directory(rotmos_server_router(server), &statics,
                                          NULL, &error) == ROTMOS_OK);
+    statics.path = "/markdown";
+    statics.file_path = markdown;
+    CHECK(rotmos_router_static_file(rotmos_server_router(server), &statics,
+                                    NULL, &error) == ROTMOS_OK);
+    statics.path = "/markdown-override";
+    statics.content_type = "text/plain; charset=us-ascii";
+    CHECK(rotmos_router_static_file(rotmos_server_router(server), &statics,
+                                    NULL, &error) == ROTMOS_OK);
+    statics.content_type = NULL;
     statics.path = "/files/";
     CHECK(rotmos_router_static_directory(rotmos_server_router(server), &statics,
                                          NULL, &error) == ROTMOS_OK);
@@ -536,6 +559,9 @@ int main(void)
     CHECK(rotmos_server_destroy(server, &error) == ROTMOS_OK &&
           rotmos_asset_provider_close(provider, &error) == ROTMOS_OK);
     CHECK(unlink(file) == 0);
+    CHECK(unlink(markdown) == 0);
+    snprintf(path, sizeof(path), "%s/guide.MarkDown", root);
+    CHECK(unlink(path) == 0);
     snprintf(path, sizeof(path), "%s/index.html", root);
     CHECK(unlink(path) == 0);
     snprintf(path, sizeof(path), "%s/sub/index.html", root);

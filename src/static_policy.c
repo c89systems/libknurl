@@ -52,6 +52,9 @@ const char *rotmos_static_content_type(const char *path)
     if (extension_is(dot, "json") || extension_is(dot, "map")) {
         return "application/json";
     }
+    if (extension_is(dot, "md") || extension_is(dot, "markdown")) {
+        return "text/markdown; charset=utf-8";
+    }
     if (extension_is(dot, "txt") || extension_is(dot, "text") ||
         extension_is(dot, "log")) {
         return "text/plain; charset=utf-8";
