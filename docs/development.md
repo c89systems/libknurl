@@ -8,7 +8,9 @@ Actual Vectis cutover and release verification have separate gates.
 ## Commands
 
 Prerequisites: CMake >= 3.24, Ninja, Git, Make, Bash >= 4.4, curl, tar, flock,
-SHA-256 tools and clang-format. Linux compilation uses the lifecycle's pinned
+SHA-256 tools and clang-format. Host lifecycle checks also use Python 3 solely to
+serve a small local archive fixture; Bash/CMake drive and assert those checks.
+Linux compilation uses the lifecycle's pinned
 Bootlin GCC/binutils/sysroot collection, with no host compiler fallback.
 
 ```sh
@@ -43,6 +45,13 @@ checkout's `.cache/`. Existing global cpkt archives may be read and copied.
 Toolchain discovery is read-only; only explicit provisioning prepares compilers.
 One operation owns the checkout; run operations serially.
 
+Normal Make configuration enables the required Core tests, including when reusing
+a directory previously configured with `BUILD_TESTING=OFF`. Direct CMake builds
+may still select a library-only configuration. The `lifecycle.*` checks cover
+owned paths, tracked source inputs, version/release identity and archive-cache
+misses, zero-request hits, corruption and failure cleanup. Acquisition fixtures
+use a loopback origin and isolated caches under `build/`.
+
 Every build selects a concrete architecture/OS and the lifecycle toolchain for
 that target. The default is `x86_64-linux-gnu`, with `build/debug` and
 `build/release` directories. Other targets use `build/<target>/debug` or
@@ -63,6 +72,8 @@ does not replace shared SDKs with differently configured Lua providers.
 
 `make lua-package` needs GNU tar, gzip, zip and touch. It stages only the Lua
 facade/binding and their declared build inputs from `lua/source-manifest.txt`.
+Checkout inputs must be Git-tracked files reached without symlinks; injected
+VERSION is generated. Extracted source archives retain their declared inventory.
 The three products and `lua-rotmos-<version>-CHECKSUMS` are written to `dist/`;
 no release or upload occurs. [Package instructions](../lua/README.md) describe
 the selected-target SDK build and LuaRocks variables. CTest's

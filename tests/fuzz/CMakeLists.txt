@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
+if(NOT CMAKE_TOOLCHAIN_FILE OR NOT ROTMOS_TARGET)
+  message(FATAL_ERROR "Select the lifecycle toolchain and concrete ROTMOS_TARGET; use make fuzz-build")
+endif()
 set(ROTMOS_AFL TRUE CACHE BOOL "Pinned GCC-plugin instrumentation" FORCE)
 include(../../cmake/Version.cmake)
 get_filename_component(root "../.." ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")

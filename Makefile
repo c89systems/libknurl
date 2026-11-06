@@ -82,7 +82,7 @@ build-all:
 	@for target in $(SUPPORTED_TARGETS); do $(MAKE) --no-print-directory build TARGET="$$target" || exit $$?; done
 
 configure: deps
-	"$(CMAKE)" -S . -B '$(BUILD_DIR)' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DCMAKE_TOOLCHAIN_FILE='$(TOOLCHAIN)' -DROTMOS_TARGET='$(TARGET)' '$(VERSION_ARG)'
+	"$(CMAKE)" -S . -B '$(BUILD_DIR)' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DBUILD_TESTING=ON -DCMAKE_TOOLCHAIN_FILE='$(TOOLCHAIN)' -DROTMOS_TARGET='$(TARGET)' '$(VERSION_ARG)'
 
 build: configure
 	"$(CMAKE)" --build '$(BUILD_DIR)' --parallel '$(JOBS)'

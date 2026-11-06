@@ -25,6 +25,8 @@ foreach(field saved_crashes saved_hangs)
 endforeach()
 reject("AFL instrumentation belongs" "${CMAKE_COMMAND}" -S "${ROTMOS_ROOT}"
   -B "${TEST_ROOT}/instrumented-core" -DROTMOS_AFL=ON)
+reject("Select the lifecycle toolchain" "${CMAKE_COMMAND}" -S "${ROTMOS_ROOT}/tests/fuzz"
+  -B "${TEST_ROOT}/unselected-fuzz" -DCMAKE_C_COMPILER=/not-a-selected-compiler)
 reject("CHECK_KIND must be" "${CMAKE_COMMAND}" -S "${ROTMOS_ROOT}/cmake/checks"
   -B "${TEST_ROOT}/checks" "-DROTMOS_BUILD=${ROTMOS_BUILD}" -DCHECK_KIND=invalid)
 file(COPY "${ROTMOS_ROOT}/cmake/ReleaseCheck.cmake" "${ROTMOS_ROOT}/cmake/Version.cmake"

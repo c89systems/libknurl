@@ -3,7 +3,7 @@ set -euo pipefail
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 source "$script_dir/lifecycle/require-host-bash.sh"
-source "$script_dir/lifecycle/cpkt-archive-cache.sh"
+source "$script_dir/acquire-archive.sh"
 target=${1:-x86_64-linux-gnu}
 lua_sources=${2:-}
 case "$lua_sources" in ''|lua) ;; *) printf 'Usage: deps.sh TARGET [lua]\n' >&2; exit 2 ;; esac
@@ -17,29 +17,6 @@ for owned in "$sdk_root" "$archive_cache"; do
   "${CMAKE:-cmake}" "-DROTMOS_CHECK_PATH=$owned" -P "$repo_root/cmake/OwnedPaths.cmake"
 done
 mkdir -p "$sdk_root" "$archive_cache/archives/sha256" "$archive_cache/locks"
-
-acquire() (
-  local url=$1 digest=$2 name=${1##*/} destination temporary global_cache candidate actual
-  destination="$archive_cache/archives/sha256/$digest/$name"
-  mkdir -p "${destination%/*}"
-  exec 9>"$archive_cache/locks/$digest.lock"
-  flock -w 600 9
-  cpkt_restore_cached_archive "$destination" "$digest"
-  if [[ ! -f "$destination" ]]; then
-    temporary=$(mktemp "${destination%/*}/.download.XXXXXXXX")
-    trap 'rm -f -- "$temporary"' EXIT
-    global_cache="${XDG_CACHE_HOME:-${HOME:?HOME is required}/.cache}/cpkt/deps"
-    candidate="$global_cache/archives/sha256/$digest/$name"
-    if [[ -f "$candidate" ]]; then
-      cp -- "$candidate" "$temporary"
-    else
-      curl --fail --location --retry 3 --connect-timeout 20 --output "$temporary" "$url"
-    fi
-    actual=$(cpkt_cached_archive_sha256 "$temporary")
-    [[ "$actual" == "$digest" ]] || { printf 'Checksum mismatch: %s\n' "$name" >&2; exit 1; }
-    mv -- "$temporary" "$destination"
-  fi
-)
 
 staging=
 manifest=$(mktemp "$sdk_root/.manifest.XXXXXXXX")
@@ -60,7 +37,8 @@ while IFS=$'\t' read -r kind name version pin_target digest url; do
   [[ "$name" =~ ^[a-z0-9-]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$digest" =~ ^[a-f0-9]{64}$ && "$url" == https://github.com/c89systems/* ]] || {
     printf 'Invalid dependency pin: %s\n' "$name" >&2; exit 2;
   }
-  acquire "$url" "$digest"
+  rotmos_acquire_archive "$url" "$digest" "$archive_cache" \
+    "${XDG_CACHE_HOME:-${HOME:?HOME is required}/.cache}/cpkt/deps"
   archive="$archive_cache/archives/sha256/$digest/${url##*/}"
   if [[ ! -d "$prefix" || ! -f "$marker" || "$(cat "$marker")" != "$digest" ]]; then
     staging=$(mktemp -d "$sdk_root/.extract-$name.XXXXXXXX")

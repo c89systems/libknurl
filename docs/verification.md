@@ -1,5 +1,29 @@
 # Extraction verification
 
+## Lifecycle alignment sweep
+
+The follow-up sweep reproduced ownership validation accepting a path through a
+symlink followed by `..`, and source packaging accepting an untracked declared
+input. Ownership now examines raw ancestors before normalization; package inputs
+must be tracked in owned Git checkouts and canonical paths without symlinks.
+Valid owned paths with a trailing slash are also accepted.
+Direct fuzz configuration now rejects a missing toolchain/target before compiler
+discovery, matching Core/Lua; the existing pinned AFL configuration is reused.
+
+Six `lifecycle.*` checks pass, covering those regressions, normal Make
+configuration restoring required tests, full cleanup including hidden state,
+borrowed-root rejection, existing version/release identity, and archive
+acquisition against a local fixture origin. Verified local/renamed/global hits
+make zero requests; corruption triggers refetch, and checksum, HTTP, truncated
+download and corrupt-global failures publish no archive or temporary bytes.
+
+The two affected GNU Lua checks pass: reproducible final/nested source packaging
+and LuaRocks source reconstruction against installed public SDKs. Bash syntax,
+formatting and diff checks pass. The normal incremental build reports no work;
+unchanged server binaries and earlier matrix, memory, QEMU and fuzz evidence
+are reused. Logs are `build/alignment-{configure,contracts,packages,build,format}.log`.
+No release or actual Vectis cutover is claimed.
+
 ## Lifecycle hardening gate
 
 The selected-toolchain Release gate now builds static/shared Core, C89/C++98

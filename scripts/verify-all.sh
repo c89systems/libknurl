@@ -9,7 +9,7 @@ source "$root/scripts/lifecycle/require-host-bash.sh"
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || {
   printf 'The full local matrix requires x86_64 Linux with approved osxcross\n' >&2; exit 1;
 }
-for tool in valgrind qemu-aarch64 qemu-arm; do
+for tool in valgrind qemu-aarch64 qemu-arm ssh-keygen python3; do
   command -v "$tool" >/dev/null || { printf 'Required check tool missing: %s\n' "$tool" >&2; exit 1; }
 done
 "$root/scripts/lifecycle/cpkt-aflpp.sh" discover >/dev/null
