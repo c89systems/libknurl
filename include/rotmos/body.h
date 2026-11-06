@@ -133,7 +133,9 @@ ROTMOS_API rotmos_status rotmos_request_body_spill(
     rotmos_body_result *out, rotmos_error *error);
 
 /** Memory readers borrow the result/buffer until source close. File readers
- * pin an independently opened FD. Neither removes returned files. */
+ * pin an independently opened regular-file FD. Paths open with O_NONBLOCK
+ * before type validation, so a FIFO does not wait for a writer. Neither
+ * reader removes returned files. */
 ROTMOS_API rotmos_status rotmos_body_result_open_reader(
     const rotmos_body_result *result, rotmos_source **out, rotmos_error *error);
 

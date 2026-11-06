@@ -41,12 +41,14 @@ typedef struct rotmos_proxy_local_response rotmos_proxy_local_response;
 typedef struct rotmos_proxy_exchange {
     /** Exact terminal proxy exchange identifier. */
     rotmos_u64 request_id;
-    /** Exact HTTP upload or WebSocket upstream-relay payload bytes, excluding
-     * handshake/framing.
+    /** HTTP upload payload bytes consumed by curl, excluding HTTP framing;
+     * WebSocket opaque bytes accepted upstream, including frame bytes but
+     * excluding the opening handshake.
      */
     rotmos_u64 upstream_bytes;
-    /** Exact downstream accepted payload/relay bytes, excluding
-     * handshake/framing.
+    /** HTTP payload bytes accepted downstream, excluding HTTP framing;
+     * WebSocket opaque bytes accepted downstream, including frame bytes but
+     * excluding the opening handshake.
      */
     rotmos_u64 downstream_bytes;
     /** Exact monotonic operation duration in milliseconds. */
@@ -61,7 +63,7 @@ typedef struct rotmos_proxy_exchange {
     const char *kind;
     /** Downstream/upstream/host attribution when known. */
     const char *disconnect_side;
-    /** Terminal proxy failure category; empty on success. */
+    /** Terminal proxy failure category; "none" on success. */
     const char *error_category;
     /** HTTP status code; zero means unknown/unset where documented by this
      * event/builder.

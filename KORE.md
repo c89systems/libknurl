@@ -121,6 +121,22 @@ not defects attributed to pristine Kore. They were identified by Vectis's
 | I13 | The Lua static-asset binding inherited disabled filesystem-directory indexes, although Vectis's packed mount and the C reference adapter enable indexes. The binding now forwards that baseline default; explicit Lua disable and filesystem-directory defaults are retained. | `tests/lua/providers.lua` with a public provider index failed in preload/dynamic modes before the fix. Wire checks cover default server/group indexes, query-preserving redirect, HEAD, explicit disable aliases and unchanged filesystem-directory behavior. |
 | I14 | Integer fields in the Lua binding required Lua's integer subtype instead of the checked conversion used by Vectis. Exact whole-valued floats and numeric strings failed for settings, counts, body limits and replies; callback error fields and zero-status aliases also diverged. The binding now reuses `lua_tointegerx` with existing sign/range checks. Method/mode numeric values and signed control descriptors use the same conversion; names retain string handling. SSE retains Vectis's explicitly strict retry type. | Six configuration/foundation/typed preload/dynamic cases failed before the correction. Cases cover float/text settings and limits, HTTP statuses and zero fallback, callback status/source/native-code preservation, fractions/negatives/NaN/infinity/overflow rejection, exact full-width counts and strict SSE retries. |
 
+## Review stall corrections
+
+These are Core extraction defects, not bugs in pristine Kore. The 2026-11-06
+review supplied focused reproductions despite a passing accumulated Core suite.
+
+| ID | Cause and correction | Evidence |
+| --- | --- | --- |
+| I15 | Normalization accepted HTTP output queues of 32 bytes or less, but both explicit writes and producer pulls reserved 32 bytes and waited for impossible capacity. Normalization now rejects these declarations with INVALID and an actionable 33-byte minimum. A shared private framing-reserve constant keeps validation and delivery aligned. Zero still inherits 256 KiB. | `declarations.c` rejects every positive size through 32 and accepts 33/zero inheritance. `response-runtime.c`'s `minimum` case delivers explicit writes, known-length sources and unknown-length chunked sources with one-byte chunks and a 33-byte queue. |
+| I16 | Body-result readers opened paths synchronously before checking for regular files. A substituted FIFO could freeze the HTTP owner loop waiting for a writer. `body_reader.c` now opens with O_NONBLOCK before fstat, matching the existing file-source constructor. | `source-file.c` opens a FIFO with no writer and requires IO/NULL, with the existing five-second CTest timeout bounding a regression. Directory/missing/short paths, binary reads/reset, empty files and reader reuse after rejection remain covered. |
+
+The separate Vectis reassessment's D1/D2 documentation findings are corrected in the C/Lua
+proxy accounting comments and standalone filesystem quota contract: WebSocket
+counts include relayed frame bytes but exclude the handshake, successful error
+categories are `"none"`, and standalone quotas must be positive after explicit
+configuration initialization. Their implemented baseline behavior is unchanged.
+
 ## Portability and features are not automatically bugs
 
 Strict C89 conversion, platform integer/queue declarations and independent SDK

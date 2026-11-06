@@ -191,6 +191,11 @@ conditions, tombstones and recovery paths as HTTP. Pass NULL entity-tag argument
 for unconditional mutation. COPY also takes depth 0 or -1; MOVE is recursive.
 `rotmos_storage_filesystem_path_normalize` uses the same baseline path rules.
 
+Initialize with `rotmos_storage_filesystem_config_init` before applying standalone
+overrides. These calls preserve quota values and require positive file, total and
+resource quotas; they do not replace zero with defaults as the asynchronous
+filesystem provider constructor does.
+
 These calls borrow configuration/conditions only for their duration. Lookup
 returns the entry kind, size and storage path; read materializes malloc-owned
 bytes and supplies the unquoted 64-character SHA-256 ETag. Empty file reads return

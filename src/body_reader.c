@@ -162,7 +162,7 @@ rotmos_status rotmos_body_result_open_reader(const rotmos_body_result *result,
     reader->memory = result->memory.data;
     reader->length = result->length;
     if (result->kind == ROTMOS_BODY_FILE) {
-        reader->fd = open(result->path, O_RDONLY | O_CLOEXEC);
+        reader->fd = open(result->path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
         if (reader->fd == -1 || fstat(reader->fd, &st) != 0 ||
             !S_ISREG(st.st_mode) || st.st_size < offset) {
             close_result(reader, ROTMOS_IO);

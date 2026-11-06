@@ -82,6 +82,7 @@ int main(void)
     char path[] = "/items/:id";
     int fds[2];
     int calls;
+    size_t queue_bytes;
 
     calls = 0;
     domains[0] = domain;
@@ -192,6 +193,28 @@ int main(void)
     rotmos_server_config_init(&config);
     config.limits.max_response_header_bytes = 1023;
     REQUIRE(rotmos_server_new(&config, &server, &error) == ROTMOS_INVALID);
+
+    rotmos_server_config_init(&config);
+    config.io.chunk_bytes = config.io.input_queue_bytes = 1;
+    for (queue_bytes = 1; queue_bytes <= 32; ++queue_bytes) {
+        config.io.output_queue_bytes = queue_bytes;
+        REQUIRE(rotmos_server_new(&config, &server, &error) == ROTMOS_INVALID);
+        REQUIRE(server == NULL && error.status == ROTMOS_INVALID &&
+                strcmp(error.operation, "server_config") == 0 &&
+                strstr(error.message, "33 bytes") != NULL);
+    }
+    config.io.output_queue_bytes = 33;
+    REQUIRE(rotmos_server_new(&config, &server, &error) == ROTMOS_OK);
+    REQUIRE(rotmos_server_effective_config(server, &effective, &error) ==
+                ROTMOS_OK &&
+            effective.config.io.output_queue_bytes == 33);
+    REQUIRE(rotmos_server_destroy(server, &error) == ROTMOS_OK);
+    config.io.output_queue_bytes = 0;
+    REQUIRE(rotmos_server_new(&config, &server, &error) == ROTMOS_OK);
+    REQUIRE(rotmos_server_effective_config(server, &effective, &error) ==
+                ROTMOS_OK &&
+            effective.config.io.output_queue_bytes == 262144UL);
+    REQUIRE(rotmos_server_destroy(server, &error) == ROTMOS_OK);
 
     rotmos_server_config_init(&config);
     config.dispatch.mode = ROTMOS_DISPATCH_CALLBACK;

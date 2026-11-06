@@ -6,7 +6,32 @@ The sibling checkout still has that exact HEAD and was not modified.
 The [operation audit](vectis-integration-contract.md) maps every contract family to its
 implementation, reference forwarding adapter and observable cases.
 
-## Server implementation gate
+## Review follow-up
+
+The 2026-11-06 review after `821765d` reproduced two stalls outside the earlier
+suite's cases: an accepted output queue too small to make body progress, and a
+body-result path replaced by a FIFO. [I15/I16](../KORE.md#review-stall-corrections)
+record their corrections and regression locations.
+
+Nine affected Core checks pass on each of x86_64 GNU/musl, including the new
+33-byte output-queue wire case and no-writer FIFO rejection, existing body/file
+ownership and response behavior, and the filesystem compatibility cases. All
+seven selected toolchains compile/link static/shared Core, affected fixtures
+and C89/C++98 public headers. The other five targets have compile/link evidence.
+
+The GNU binding rebuilt against the updated installed public Core SDK; installed
+preload/dynamic loading, reproducible source packaging and LuaRocks reconstruction
+pass (four checks). Formatting and LuaLS diagnostics pass. Logs are under
+`build/review-stalls/`. The earlier full Core suites and SDK archive rehearsals
+below were not repeated for this focused repair; this is not release or Vectis
+cutover verification.
+
+Today's Vectis reassessment closes G1–G5 and recommends starting the consumer
+migration. Its D1/D2 proxy accounting and standalone quota documentation findings
+are corrected here; actual Vectis dependency alignment and normal/packed cutover
+remain consumer work. No sibling repository changed.
+
+## Earlier server implementation gate
 
 | Gate | Observed result |
 | --- | --- |

@@ -253,6 +253,9 @@ rotmos_status rotmos_config_normalize(rotmos_server_config *config,
          config->signals.mode != ROTMOS_SIGNALS_LIBRARY))
         return invalid(error,
                        "unknown worker death policy or signal ownership mode");
+    if (config->io.output_queue_bytes <= ROTMOS_RESPONSE_CHUNK_OVERHEAD)
+        return invalid(error, "output queue must hold at least 33 bytes for "
+                              "response framing and payload progress");
     if (config->io.chunk_bytes > config->io.input_queue_bytes ||
         config->io.chunk_bytes > config->io.output_queue_bytes)
         return invalid(error, "I/O chunk must fit each transport queue");

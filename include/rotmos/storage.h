@@ -444,15 +444,22 @@ typedef struct rotmos_storage_filesystem_config {
      * follow the owning operation.
      */
     const char *root_dir;
-    /** Per-file quota; zero selects 16 MiB. */
+    /** Per-file quota. Provider construction resolves zero to 16 MiB;
+     * standalone filesystem calls require a positive value.
+     */
     size_t max_file_bytes;
-    /** Total stored-file byte quota; zero selects 128 MiB. */
+    /** Total stored-file byte quota. Provider construction resolves zero to
+     * 128 MiB; standalone filesystem calls require a positive value.
+     */
     size_t max_total_bytes;
-    /** Resource-count quota; zero selects 4096. */
+    /** Resource-count quota. Provider construction resolves zero to 4096;
+     * standalone filesystem calls require a positive value.
+     */
     size_t max_resources;
 } rotmos_storage_filesystem_config;
-/** Initialize storage filesystem config with its documented defaults; call
- * before applying overrides.
+/** Initialize quotas to 16 MiB/file, 128 MiB total and 4096 resources. Call
+ * before standalone overrides: those calls preserve quota values and reject
+ * zero instead of inheriting provider-construction defaults.
  */
 ROTMOS_API void
 rotmos_storage_filesystem_config_init(rotmos_storage_filesystem_config *);

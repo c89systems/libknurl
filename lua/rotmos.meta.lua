@@ -325,14 +325,14 @@
 ---Copied terminal exchange accounting; excludes HTTP heads/framing or WS handshake.
 ---@class rotmos.ProxyExchange
 ---@field request_id rotmos.Unsigned # Exact exchange identifier.
----@field upstream_bytes rotmos.Unsigned # HTTP upload consumed or opaque relay bytes accepted upstream.
----@field downstream_bytes rotmos.Unsigned # Payload/relay bytes accepted downstream.
+---@field upstream_bytes rotmos.Unsigned # HTTP upload payload consumed by curl, or opaque WS bytes including frames; excludes HTTP framing/WS handshake.
+---@field downstream_bytes rotmos.Unsigned # HTTP payload or opaque WS bytes including frames accepted downstream; excludes HTTP framing/WS handshake.
 ---@field duration_ms rotmos.Unsigned # Monotonic exchange duration.
 ---@field route string # Configured route.
 ---@field upstream string # Selected configured upstream.
 ---@field kind string # HTTP/SSE/WebSocket exchange kind.
 ---@field disconnect_side string # Upstream/downstream/host/unknown attribution.
----@field error_category string # Terminal classification, empty on success.
+---@field error_category string # Terminal classification, "none" on success.
 ---@field status integer # Final HTTP status, zero when unknown.
 ---@field cause integer # Portable terminal status.
 
@@ -450,7 +450,7 @@
 ---@class rotmos.IO
 ---@field chunk_bytes? rotmos.IntegerInput # Bounded transport/generation chunk size in bytes.
 ---@field input_queue_bytes? rotmos.IntegerInput # Bounded downstream input queue capacity in bytes.
----@field output_queue_bytes? rotmos.IntegerInput # Output queue capacity; WebSocket zero retains Kore's unbounded send policy.
+---@field output_queue_bytes? rotmos.IntegerInput # HTTP queue bytes; zero inherits 256 KiB. Must resolve to at least 33 and hold chunk_bytes.
 
 ---Limits settings copied into the public Core declaration.
 ---@class rotmos.Limits

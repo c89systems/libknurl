@@ -38,6 +38,9 @@ struct context {
 static int failures;
 static int completions;
 static int pauses;
+static int minimum_queue;
+static size_t manual_bytes = 8192;
+static size_t output_bound = 4096;
 
 static void resume(rotmos_timer *timer, void *userdata)
 {
@@ -56,12 +59,23 @@ static void resume(rotmos_timer *timer, void *userdata)
 static rotmos_status pull(void *buffer, size_t capacity, size_t *produced,
                           void *userdata, rotmos_error *error)
 {
+    static const char payload[] = "payload";
     struct context *c;
     rotmos_timer *timer;
     (void)error;
     c = userdata;
     ++c->reads;
     *produced = 0;
+    if (minimum_queue) {
+        if (c->sent == 7)
+            return ROTMOS_EOF;
+        *produced = 7 - c->sent;
+        if (*produced > capacity)
+            *produced = capacity;
+        memcpy(buffer, payload + c->sent, *produced);
+        c->sent += *produced;
+        return ROTMOS_OK;
+    }
     if (c->mode == 1 && c->reads == 1) {
         ++pauses;
         if (rotmos_loop_timer(rotmos_request_loop(c->request), 100, 0, resume,
@@ -113,14 +127,18 @@ static void closed(rotmos_response *response,
     if (c->file != -1 && fcntl(c->file, F_GETFD) != -1)
         ++failures;
     if (rotmos_request_target(c->request).length == 0 ||
-        rotmos_response_queued_bytes(response) > 4096 || !out->committed ||
+        rotmos_response_queued_bytes(response) > output_bound ||
+        !out->committed ||
         rotmos_response_state(response) < ROTMOS_RESPONSE_COMPLETE)
         ++failures;
     if (c->mode == 1 &&
         (!c->resumed || !c->source_closed || out->body_bytes.low != 7))
         ++failures;
     if (c->mode == 7 &&
-        (out->body_bytes.high != 0 || out->body_bytes.low != 8192))
+        (out->body_bytes.high != 0 || out->body_bytes.low != manual_bytes))
+        ++failures;
+    if (minimum_queue && c->mode == 0 &&
+        (c->sent != 7 || out->body_bytes.low != 7 || !c->source_closed))
         ++failures;
     if (c->mode == 6 && (out->body_bytes.high != 0 || out->body_bytes.low != 0))
         ++failures;
@@ -138,8 +156,8 @@ static void writable(rotmos_response *response, void *userdata)
     size_t offered;
     c = userdata;
     memset(data, 'x', sizeof(data));
-    while (c->sent < 8192) {
-        offered = 8192 - c->sent;
+    while (c->sent < manual_bytes) {
+        offered = manual_bytes - c->sent;
         if (offered > sizeof(data))
             offered = sizeof(data);
         status = rotmos_response_write(response, data, offered, &count, NULL);
@@ -154,7 +172,7 @@ static void writable(rotmos_response *response, void *userdata)
             return;
         }
         c->sent += count;
-        if (rotmos_response_queued_bytes(response) > 4096)
+        if (rotmos_response_queued_bytes(response) > output_bound)
             ++failures;
     }
     if (rotmos_response_end(response, NULL, 0, NULL) != ROTMOS_OK ||
@@ -183,7 +201,8 @@ static rotmos_status handler(rotmos_request *request, rotmos_reply *reply,
     path = rotmos_request_path(request).data;
     if (strcmp(path, "/stop") == 0) {
         (void)rotmos_server_request_stop(rotmos_request_server(request), NULL);
-        if (failures || completions < 12 || pauses != 1)
+        if (failures || completions < (minimum_queue ? 3 : 12) ||
+            pauses != (minimum_queue ? 0 : 1))
             return rotmos_reply_text(reply, 500, "text/plain", "failed", error);
         return rotmos_reply_text(reply, 200, "text/plain", "stopped", error);
     }
@@ -201,7 +220,7 @@ static rotmos_status handler(rotmos_request *request, rotmos_reply *reply,
     if (strcmp(path, "/manual") == 0) {
         c->mode = 7;
         length.high = 0;
-        length.low = 8192;
+        length.low = (unsigned long)manual_bytes;
         if (rotmos_response_header_add(response, "Content-Length", "1", NULL) !=
                 ROTMOS_INVALID ||
             rotmos_response_header_add(response, "X-Bad", "x\r\ny", NULL) !=
@@ -212,8 +231,8 @@ static rotmos_status handler(rotmos_request *request, rotmos_reply *reply,
             rotmos_response_begin(response, error) != ROTMOS_OK)
             return ROTMOS_INVALID;
         count = 99;
-        if (rotmos_response_write(response, "x", 8193, &count, NULL) !=
-                ROTMOS_OVERFLOW ||
+        if (rotmos_response_write(response, "x", manual_bytes + 1, &count,
+                                  NULL) != ROTMOS_OVERFLOW ||
             count != 0)
             return ROTMOS_INVALID;
         writable(response, c);
@@ -318,7 +337,8 @@ static rotmos_status handler(rotmos_request *request, rotmos_reply *reply,
     config.read = pull;
     config.close = source_closed;
     config.userdata = c;
-    if (c->mode == 0 || c->mode == 4 || c->mode == 6) {
+    if ((c->mode == 0 || c->mode == 4 || c->mode == 6) &&
+        strcmp(path, "/chunked") != 0) {
         config.has_length = 1;
         config.length.low = 7;
     }
@@ -415,6 +435,18 @@ static int exchange(unsigned short port, const char *path, int expected,
 
 static int client(unsigned short port)
 {
+    if (minimum_queue) {
+        REQUIRE(exchange(port, "/manual", 200, "x", manual_bytes,
+                         "content-length: 7\r\n", 0) == 0);
+        REQUIRE(exchange(port, "/source", 200, "payload", 0,
+                         "content-length: 7\r\n", 0) == 0);
+        REQUIRE(exchange(port, "/chunked", 200,
+                         "1\r\np\r\n1\r\na\r\n1\r\ny\r\n1\r\nl\r\n"
+                         "1\r\no\r\n1\r\na\r\n1\r\nd\r\n0\r\n\r\n",
+                         0, "transfer-encoding: chunked\r\n", 0) == 0);
+        REQUIRE(exchange(port, "/stop", 200, "stopped", 0, NULL, 0) == 0);
+        return 0;
+    }
     REQUIRE(exchange(port, "/source", 200, "payload", 0,
                      "content-length: 7\r\n", 0) == 0);
     REQUIRE(exchange(port, "/pipeline", 200, "", 0, NULL, 0) == 0);
@@ -471,7 +503,7 @@ static rotmos_status ready(rotmos_server *server,
     return ROTMOS_OK;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     struct fixture fixture;
     rotmos_server_config config;
@@ -482,6 +514,11 @@ int main(void)
     rotmos_run_result result;
     rotmos_status status;
     int child_status;
+    minimum_queue = argc > 1 && strcmp(argv[1], "minimum") == 0;
+    if (minimum_queue) {
+        manual_bytes = 7;
+        output_bound = 33;
+    }
     fixture.client = -1;
     rotmos_server_config_init(&config);
     rotmos_listener_config_init(&listener);
@@ -491,8 +528,8 @@ int main(void)
     config.workers.affinity_disabled = config.http.backend_quiet = 1;
     config.workers.shutdown_timeout_ms = 100;
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
-    config.io.chunk_bytes = 257;
-    config.io.output_queue_bytes = 4096;
+    config.io.chunk_bytes = minimum_queue ? 1 : 257;
+    config.io.output_queue_bytes = output_bound;
     config.timeouts.response_write_idle.milliseconds = 50;
     config.callbacks.on_parent_ready = ready;
     config.callbacks.userdata = &fixture;

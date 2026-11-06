@@ -6,6 +6,9 @@
 #include <rotmos/router.h>
 #include <signal.h>
 
+/* Reserve chunk framing storage and leave at least one payload byte. */
+#define ROTMOS_RESPONSE_CHUNK_OVERHEAD 32U
+
 struct rotmos_runtime;
 struct rotmos_proxy_worker;
 struct rotmos_autoblock;

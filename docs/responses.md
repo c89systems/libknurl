@@ -37,6 +37,11 @@ bounded queue segments before body writes or producer reads. They can exceed
 `io.output_queue_bytes`; end trailers and individual interim heads must still fit
 that queue. Replacement/cancellation releases pending metadata.
 
+The resolved HTTP output queue must hold at least 33 bytes: the sender reserves
+32 bytes for chunk framing and needs one payload byte to make progress. Smaller
+explicit queues fail server configuration with INVALID. Zero still inherits
+256 KiB, and `io.chunk_bytes` must fit both input and output queues.
+
 `rotmos_response_write` accepts a bounded prefix and reports its length.
 AGAIN always accepts zero bytes. Retain the unaccepted suffix and continue from
 the writable callback after capacity returns. An offer exceeding a declared

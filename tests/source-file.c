@@ -17,15 +17,34 @@ int main(void)
 {
     char path[] = "rotmos-source.XXXXXX", buffer[8];
     rotmos_source *source = NULL;
+    rotmos_source *reader = NULL;
+    rotmos_body_result result;
     rotmos_error error;
     size_t count;
     int fd;
+    rotmos_body_result_init(&result);
+    result.kind = ROTMOS_BODY_FILE;
+    result.path = ".";
+    CHECK(rotmos_body_result_open_reader(&result, &reader, &error) ==
+              ROTMOS_IO &&
+          reader == NULL);
     CHECK(rotmos_source_file(NULL, &source, &error) == ROTMOS_INVALID);
     CHECK(rotmos_source_file("", &source, &error) == ROTMOS_INVALID);
     CHECK(rotmos_source_file(".", &source, &error) == ROTMOS_IO);
     fd = mkstemp(path);
     CHECK(fd >= 0 && write(fd, "A\0BC", 4) == 4);
     CHECK(rotmos_source_file(path, &source, &error) == ROTMOS_OK);
+    result.path = path;
+    result.length.low = 4;
+    CHECK(rotmos_body_result_open_reader(&result, &reader, &error) ==
+          ROTMOS_OK);
+    CHECK(rotmos_source_read(reader, buffer, sizeof(buffer), &count, &error) ==
+              ROTMOS_OK &&
+          count == 4 && memcmp(buffer, "A\0BC", 4) == 0);
+    CHECK(rotmos_source_reset(reader, &error) == ROTMOS_OK);
+    CHECK(rotmos_source_read(reader, buffer, 1, &count, &error) == ROTMOS_OK &&
+          count == 1 && buffer[0] == 'A');
+    CHECK(rotmos_source_destroy(reader, &error) == ROTMOS_OK);
     CHECK(write(fd, "growth", 6) == 6 && unlink(path) == 0);
     CHECK(rotmos_source_read(source, buffer, sizeof(buffer), &count, &error) ==
           ROTMOS_OK);
@@ -42,12 +61,30 @@ int main(void)
     CHECK(rotmos_source_destroy(source, &error) == ROTMOS_OK);
     CHECK(rotmos_source_file(path, &source, &error) == ROTMOS_IO &&
           source == NULL);
+    result.length.low = 0;
+    CHECK(rotmos_body_result_open_reader(&result, &reader, &error) ==
+              ROTMOS_IO &&
+          reader == NULL);
     CHECK(mkfifo(path, 0600) == 0);
     CHECK(rotmos_source_file(path, &source, &error) == ROTMOS_IO &&
           source == NULL);
+    CHECK(rotmos_body_result_open_reader(&result, &reader, &error) ==
+              ROTMOS_IO &&
+          reader == NULL && error.status == ROTMOS_IO);
     CHECK(unlink(path) == 0);
     fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
     CHECK(fd >= 0 && close(fd) == 0);
+    result.length.low = 1;
+    CHECK(rotmos_body_result_open_reader(&result, &reader, &error) ==
+              ROTMOS_IO &&
+          reader == NULL);
+    result.length.low = 0;
+    CHECK(rotmos_body_result_open_reader(&result, &reader, &error) ==
+          ROTMOS_OK);
+    CHECK(rotmos_source_read(reader, buffer, sizeof(buffer), &count, &error) ==
+              ROTMOS_EOF &&
+          count == 0);
+    CHECK(rotmos_source_destroy(reader, &error) == ROTMOS_OK);
     CHECK(rotmos_source_file(path, &source, &error) == ROTMOS_OK);
     CHECK(rotmos_source_read(source, buffer, sizeof(buffer), &count, &error) ==
               ROTMOS_EOF &&

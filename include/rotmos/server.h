@@ -251,8 +251,8 @@ typedef struct rotmos_io_config {
     size_t chunk_bytes;
     /** Bounded downstream input queue capacity in bytes. */
     size_t input_queue_bytes;
-    /** Output queue capacity; WebSocket zero retains Kore's unbounded send
-     * policy.
+    /** HTTP output queue capacity in bytes; zero inherits 256 KiB. Resolved
+     * capacity must be at least 33 bytes and must hold chunk_bytes.
      */
     size_t output_queue_bytes;
 } rotmos_io_config;

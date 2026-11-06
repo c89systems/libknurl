@@ -576,18 +576,18 @@ static rotmos_status write_body(rotmos_response *r, const void *data,
         return ROTMOS_AGAIN;
     }
     capacity = r->bound - r->queued;
-    if (capacity <= 32) {
+    if (capacity <= ROTMOS_RESPONSE_CHUNK_OVERHEAD) {
         r->blocked = 1;
-        r->writable_need = 33;
+        r->writable_need = ROTMOS_RESPONSE_CHUNK_OVERHEAD + 1;
         rotmos_error_clear(error);
         return ROTMOS_AGAIN;
     }
     count = length;
     if (count > r->chunk)
         count = r->chunk;
-    if (count > capacity - 32)
-        count = capacity - 32;
-    copy = malloc(count + 32);
+    if (count > capacity - ROTMOS_RESPONSE_CHUNK_OVERHEAD)
+        count = capacity - ROTMOS_RESPONSE_CHUNK_OVERHEAD;
+    copy = malloc(count + ROTMOS_RESPONSE_CHUNK_OVERHEAD);
     if (copy == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "response_write",
                            "cannot allocate bounded chunk");
@@ -1272,9 +1272,9 @@ void rotmos_response_step(rotmos_response *r)
         return;
     }
     capacity = r->bound - r->queued;
-    if (capacity <= 32)
+    if (capacity <= ROTMOS_RESPONSE_CHUNK_OVERHEAD)
         return;
-    capacity -= 32;
+    capacity -= ROTMOS_RESPONSE_CHUNK_OVERHEAD;
     if (capacity > r->chunk)
         capacity = r->chunk;
     buffer = NULL;
