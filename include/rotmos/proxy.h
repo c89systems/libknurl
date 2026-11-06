@@ -1,6 +1,11 @@
 #ifndef ROTMOS_PROXY_H
 #define ROTMOS_PROXY_H
 
+/** @file proxy.h Public proxy API. Expected failures return rotmos_status and
+ * optional bounded rotmos_error diagnostics. Take operations transfer
+ * ownership only on success; views remain borrowed for their documented scope.
+ */
+
 #include <rotmos/router.h>
 
 #ifdef __cplusplus
@@ -9,30 +14,65 @@ extern "C" {
 
 /** Protocol selection for ordinary HTTP and SSE upstream exchanges. */
 typedef enum rotmos_proxy_http_version {
-    /* Prefer HTTP/2 over HTTPS with HTTP/1.1 fallback; cleartext uses HTTP/1.1.
+    /** Prefer HTTP/2 over HTTPS with HTTP/1.1 fallback; cleartext uses
+     * HTTP/1.1.
      */
     ROTMOS_PROXY_HTTP_AUTO = 0,
-    /* Force HTTP/1.1 for every exchange. WebSocket always uses HTTP/1.1. */
+    /** Force HTTP/1.1 for every exchange. WebSocket always uses HTTP/1.1. */
     ROTMOS_PROXY_HTTP_1_1 = 1
 } rotmos_proxy_http_version;
 
+/** Callback-scoped inbound proxy metadata; never retain after the hook. */
 typedef struct rotmos_proxy_inbound rotmos_proxy_inbound;
+/** Callback-scoped validated proxy request editor; failed edits are sticky. */
 typedef struct rotmos_proxy_outbound rotmos_proxy_outbound;
+/** Callback-scoped sanitized downstream response metadata/editor. */
 typedef struct rotmos_proxy_response rotmos_proxy_response;
+/** Callback-scoped local response builder used before upstream/downstream
+ * commitment.
+ */
 typedef struct rotmos_proxy_local_response rotmos_proxy_local_response;
-/* Terminal accounting lifted from Vectis's proxy telemetry. HTTP counts are
- * upload bytes consumed by curl and body bytes accepted downstream, excluding
- * heads/chunk framing/trailers. WebSocket counts are accepted opaque relay
- * bytes, excluding the opening handshake. Strings/request are borrowed during
- * the owner-loop callback, once per admitted upstream exchange, before host
- * request-close notification. The callback must not perform request I/O.
- * Hosts retain event formatting and aggregation. */
+/** Terminal owner-loop proxy accounting, once per admitted upstream exchange
+ * before host request close. Strings/request are borrowed for the callback; no
+ * request I/O is permitted. HTTP counts exclude heads/framing/trailers;
+ * WebSocket counts exclude its handshake. Counts measure accepted bytes, not
+ * proven peer delivery.
+ */
 typedef struct rotmos_proxy_exchange {
-    rotmos_u64 request_id, upstream_bytes, downstream_bytes, duration_ms;
-    const char *route, *upstream, *kind, *disconnect_side, *error_category;
+    /** Exact terminal proxy exchange identifier. */
+    rotmos_u64 request_id;
+    /** Exact HTTP upload or WebSocket upstream-relay payload bytes, excluding
+     * handshake/framing.
+     */
+    rotmos_u64 upstream_bytes;
+    /** Exact downstream accepted payload/relay bytes, excluding
+     * handshake/framing.
+     */
+    rotmos_u64 downstream_bytes;
+    /** Exact monotonic operation duration in milliseconds. */
+    rotmos_u64 duration_ms;
+    /** Copied configured route name/path for terminal proxy accounting. */
+    const char *route;
+    /** Selected configured upstream URL in terminal accounting. */
+    const char *upstream;
+    /** Representation or event discriminator; inspect before interpreting other
+     * fields.
+     */
+    const char *kind;
+    /** Downstream/upstream/host attribution when known. */
+    const char *disconnect_side;
+    /** Terminal proxy failure category; empty on success. */
+    const char *error_category;
+    /** HTTP status code; zero means unknown/unset where documented by this
+     * event/builder.
+     */
     int status;
+    /** Portable terminal status; OK indicates successful completion. */
     rotmos_status cause;
 } rotmos_proxy_exchange;
+/** Once-per-admitted-exchange owner-loop terminal accounting. Request/snapshot
+ * are borrowed for the call; no request I/O.
+ */
 typedef void (*rotmos_proxy_exchange_fn)(rotmos_request *,
                                          const rotmos_proxy_exchange *, void *);
 
@@ -198,73 +238,81 @@ ROTMOS_API rotmos_status rotmos_proxy_response_remove_header(
  * bodies flow through bounded chunk buffers; they are never materialized.
  */
 typedef struct rotmos_proxy_config {
-    /* Required librotmos route pattern; copied before registration returns. */
+    /** Required librotmos route pattern; copied before registration returns. */
     const char *path;
-    /* Zero selects all supported librotmos HTTP methods. WebSocket requires
+    /** Zero selects all supported librotmos HTTP methods. WebSocket requires
      * GET. */
     rotmos_http_methods methods;
-    /* Zero selects a literal path. Parameter and regex routes are supported. */
+    /** Zero selects a literal path. Parameter and regex routes are supported.
+     */
     rotmos_route_path_kind path_kind;
-    /* Required HTTP or HTTPS base URL. Its authority is fixed for this route.
+    /** Required HTTP or HTTPS base URL. Its authority is fixed for this route.
      */
     const char *target;
-    /* Optional additional allowed base URLs. The director may select only a
+    /** Optional additional allowed base URLs. The director may select only a
      * configured target. Each string and the array are borrowed until this
      * registration call returns, then copied by librotmos. */
     const char *const *alternate_targets;
-    /* Number of additional configured targets in alternate_targets. */
+    /** Number of additional configured targets in alternate_targets. */
     size_t alternate_target_count;
-    /* Zero selects ROTMOS_PROXY_HTTP_AUTO. */
+    /** Zero selects ROTMOS_PROXY_HTTP_AUTO. */
     rotmos_proxy_http_version upstream_http_version;
-    /* Zero uses a 10-second connection deadline; negative values are invalid.
+    /** Zero uses a 10-second connection deadline; negative values are invalid.
      */
     long connect_timeout_ms;
-    /* Zero uses a 60-second no-progress deadline; negative values are invalid.
+    /** Zero uses a 60-second no-progress deadline; negative values are invalid.
      */
     long idle_timeout_ms;
-    /* Zero disables the total deadline, including for SSE and WebSocket. */
+    /** Zero disables the total deadline, including for SSE and WebSocket. */
     long total_timeout_ms;
-    /* Zero uses a 16 KiB per-direction transport chunk limit. Allowed range is
+    /** Zero uses a 16 KiB per-direction transport chunk limit. Allowed range is
      * 8 KiB through 1 MiB. Header limits are separate. */
     size_t buffer_limit_bytes;
-    /* Optional PEM CA bundle for verifying HTTPS and WSS upstream peers.
+    /** Optional PEM CA bundle for verifying HTTPS and WSS upstream peers.
      * NULL uses libcurl's configured default trust store. The PEM text is
      * borrowed until registration returns, then copied. It replaces libcurl's
      * default CA bundle for this route; peer and hostname checks remain on.
      * A nonempty bundle may contain at most 256 KiB of PEM text. */
     const char *tls_ca_pem;
-    /* Optional PEM client certificate chain and private key for HTTPS/WSS
+    /** Optional PEM client certificate chain and private key for HTTPS/WSS
      * upstream authentication. Both must be set together. Each is borrowed
      * until registration returns, then copied, and may contain 1 to 256 KiB
      * of PEM text. No certificate or key file is created. */
     const char *tls_client_cert_pem;
-    /* PEM key paired with tls_client_cert_pem; copied and cleansed on release.
+    /** PEM key paired with tls_client_cert_pem; copied and cleansed on release.
      */
     const char *tls_client_key_pem;
-    /* Optional synchronous rewrite hook and borrowed application context. */
+    /** Optional synchronous rewrite hook and borrowed application context. */
     rotmos_proxy_rewrite_fn rewrite;
-    /* Caller-owned context; retain it until router destruction completes. */
+    /** Caller-owned context; retain it until router destruction completes. */
     void *rewrite_userdata;
-    /* Optional headers-time admission hook and borrowed application context. */
+    /** Optional headers-time admission hook and borrowed application context.
+     */
     rotmos_proxy_preflight_fn preflight;
-    /* Caller-owned context; retain it until router destruction completes. */
+    /** Caller-owned context; retain it until router destruction completes. */
     void *preflight_userdata;
-    /* Optional final response hook and borrowed application context. */
+    /** Optional final response hook and borrowed application context. */
     rotmos_proxy_modify_response_fn modify_response;
-    /* Caller-owned context; retain it until router destruction completes. */
+    /** Caller-owned context; retain it until router destruction completes. */
     void *modify_response_userdata;
-    /* Optional uncommitted gateway-error hook and borrowed context. */
+    /** Optional uncommitted gateway-error hook and borrowed context. */
     rotmos_proxy_on_error_fn on_error;
-    /* Caller-owned context; retain it until router destruction completes. */
+    /** Caller-owned context; retain it until router destruction completes. */
     void *on_error_userdata;
+    /** Owner-loop terminal proxy accounting callback, once per admitted
+     * exchange; must not perform request I/O.
+     */
     rotmos_proxy_exchange_fn on_exchange;
+    /** Caller-owned terminal accounting context retained through router
+     * destruction.
+     */
     void *on_exchange_userdata;
 } rotmos_proxy_config;
 
 /** Set the documented zero-value defaults. NULL is ignored. */
 ROTMOS_API void rotmos_proxy_config_init(rotmos_proxy_config *config);
 
-/* Registration copies strings, targets, TLS material and callbacks. */
+/** Registration copies strings, targets, TLS material and callbacks. */
 ROTMOS_API rotmos_status rotmos_router_proxy(rotmos_router *router,
                                              const rotmos_proxy_config *config,
                                              rotmos_route **route,

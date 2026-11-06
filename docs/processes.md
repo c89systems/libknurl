@@ -1,8 +1,5 @@
 # Process lifecycle and observations
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 `rotmos_server_run` keeps the runtime parent on its caller thread and forks the
 backend's declared children. The parent must remain thread-quiescent while
 replacement forks are possible. Initialize process-local bindings in
@@ -70,7 +67,7 @@ timers and fork-exit forwarding. Its [runtime case](../tests/vectis-host-runtime
 keeps outer supervision and control framing in the host and covers readiness,
 STOP/malformed/EOF shutdown, app/server reclamation and failed cleanup after
 reclamation. The accumulated failure-unwind gate remains tracked in the
-[audit](server-api-audit.md).
+[integration inventory](vectis-integration-contract.md).
 
 The worker completion marker follows the terminal callback's return. A callback
 that hangs after reclaiming its app is still escalated and reported as abandoned;

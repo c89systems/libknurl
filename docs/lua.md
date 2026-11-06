@@ -1,7 +1,10 @@
 # Lua server facade
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
+Editor types and per-operation hover comments ship in
+[`rotmos.meta.lua`](../lua/rotmos.meta.lua); the [facade source](../lua/rotmos.lua)
+attaches them to the exported module and dynamically registered methods. Add the
+installed `share/lua/5.5` directory to your Lua language server library paths
+when working outside this source tree. This metadata contains no runtime code.
 
 `require("rotmos")` uses the host's Lua 5.5.1 state. The host creates, configures
 and closes that state. The separately built C binding links the installed public
@@ -359,7 +362,9 @@ The independent Lua CMake project discovers that installed shared SDK plus the
 selected dependency SDKs. Its compilation database is `build/debug/lua`, matching
 the Lua paths in `.clangd`. Neither the build nor the shipped binding owns an
 interpreter. Binding install layout is `lib/lua/5.5/rotmos/native.so`,
-`share/lua/5.5/rotmos.lua`, its embedding header and `rotmos_lua` CMake package.
+`share/lua/5.5/rotmos.lua`, `share/lua/5.5/rotmos.meta.lua`, its embedding header
+and `rotmos_lua` CMake package. LuaRocks installs the same metadata at
+`share/lua/5.5/rotmos/meta.lua`.
 
 Embedding applications may link `rotmos::lua` and call
 `rotmos_lua_preload(existing_state, &error)` before `require("rotmos")`. The host
@@ -367,33 +372,6 @@ must open the base, package and string libraries. Registration is idempotent and
 rejects conflicting loaders/loaded modules. It neither opens host libraries nor
 changes unrelated globals. A standalone Lua host instead uses the installed Lua
 and C module search paths.
-
-The short [installed-runtime fixture](../tests/lua/foundation.lua) exercises both
-preloading and dynamic loading through a [host-owned VM](../tests/lua/host.c).
-It covers wire behavior, route/group parity, binary bodies, protected getters,
-chunk remainders, scoped invalidation, source cleanup, and allocation failure in
-registration/reply conversion/producer setup.
-The [configuration fixture](../tests/lua/config.lua) adds live mutual TLS,
-memory/file/bundle inputs, raw-target HTTPS redirects, copied/effective values,
-paused startup, trusted proxies, shared autoblock events, auth ordering/challenges
-and failures, and constructor allocation unwinding through the same installed
-preload/dynamic paths.
-The [body/upload fixture](../tests/lua/body-upload.lua) adds request/result reader
-lifetimes, explicit spill/copy ownership, delivery before EOF, aliases and
-callback order, prefix/AGAIN resumption and callback/cleanup/allocation failures.
-The [native-route fixture](../tests/lua/routes.lua) adds static range/conditional
-responses and indexes, copied declarations, staged hook mutation/replacement and
-scope expiry, admitted file uploads, protected WebDAV reads/writes/listing/quotas,
-resource auth, principal refresh and protected callback/allocation failures.
-The [proxy fixture](../tests/lua/proxy.lua) adds all four callbacks, target/path/
-query/method/header edits, copied declarations, mutual TLS upstreams, SSE,
-WebSocket preflight rejection, binary local replies and metadata scope expiry.
-It withholds the rest of an upload until the origin receives the first chunk,
-and checks ignored setter failures, protected getters/OOM and gateway fallback.
-The [events fixture](../tests/lua/events.lua) combines loop registration,
-cancellation/retirement, fork invalidation and callback/registration allocation
-failure with live SSE pause/resume and WebSocket HTTP/mTLS echo, frame replay,
-atomic backpressure, copied handshake fields and terminal callback errors.
 
 `rotmos.json` and `rotmos.xml` expose `serialize(options)`, `source(options)`
 and `write(options, sink)`. They use the installed C codecs and LoneJSON's
@@ -473,7 +451,7 @@ Any ordinary or typed handler may select `{json={schema=...,value=...}}` or
 `{xml={schema=...,value=...}}` for bounded live output from privately assigned table
 input. Explicit `{json_materialized={schema=...,record=...}}` and
 `{xml_materialized={schema=...,record=...}}` accept mutable records or value tables,
-plus `max_bytes`; they serialize synchronously with the same finite default bound.
+plus `max_bytes`; they serialize synchronously; zero/omitted `max_bytes` adds no output ceiling.
 Status, content type and headers remain ordinary response fields. Nil from a
 general typed handler selects 204. Typed handlers prepare their selected reply
 before after-hooks, matching the C operations. After-hook replacement retires
@@ -609,3 +587,18 @@ toolchain selection, LuaRocks installation and embedded hosts. The full Vectis
 reference adapter and completed development compatibility/artifact checks are
 recorded in [verification](verification.md). Actual Vectis cutover and release
 verification retain their separate gates.
+
+## Selected JSON arrays
+
+`rotmos.json.array_each{schema=..., selector=..., callback=..., source=...}`
+accepts exactly one `source`, `data` or `path`. A source is borrowed at its current
+position, never reset or closed; AGAIN is an error for this synchronous operation.
+`request.json_array_each{schema=..., selector=..., callback=...}` uses completed
+request input and rewinds before and after. An empty selector selects the root
+array; a nonempty selector selects a direct object member.
+
+The binding reuses one public Lua-owned mapped record as Core's per-item storage,
+then uses LoneJSON's public conversion for `callback(value, zero_based_index)`.
+Each callback receives an independently converted item table. No whole array or
+document is collected. A non-nil second callback result stops with an error;
+success returns `true, count`.

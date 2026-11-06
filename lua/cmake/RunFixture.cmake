@@ -3,6 +3,12 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --install "${BINARY}" --prefix "${PRE
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "Lua fixture install failed: ${log}${errors}")
 endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E compare_files
+  "${CMAKE_CURRENT_LIST_DIR}/../rotmos.meta.lua"
+  "${PREFIX}/share/lua/5.5/rotmos.meta.lua" RESULT_VARIABLE result)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "Installed Lua editor metadata differs from the shipped source")
+endif()
 set(arguments "${SCRIPT}" "${PREFIX}")
 if(DEFINED WORKSPACE)
   include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/OwnedPaths.cmake")

@@ -1,8 +1,5 @@
 # XML mapping, routes, DOM and SAX
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 Include [`<rotmos/xml.h>`](../include/rotmos/xml.h), or the ordinary umbrella.
 Opaque document, node and SAX handles keep libxml2 layouts private. The selected
 cpkt libxml2 supplies the implementation. This surface lifts Vectis's generic

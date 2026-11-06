@@ -1,12 +1,8 @@
 # HTTP framing and proxy core
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 Proxy framing stays private in [proxy_framing.c](../src/proxy_framing.c), lifted
 from Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19` under the repository's
-[MIT license](../LICENSE). The unused standalone public framer and its wrapper
-have been removed. Callers register proxy routes through the public proxy API;
+[MIT license](../LICENSE). Callers register proxy routes through the public proxy API;
 their adapters own fixed/chunked body decoding, backpressure and trailers.
 The [private framing fixture](../tests/proxy-framing.c) retains protocol and
 partial-progress coverage. The installed wire fixture uses its own existing

@@ -33,109 +33,43 @@ Readiness requires a concrete installed reference adapter here and the affected
 Vectis regressions during the separately authorized consumer cutover. A broad
 library API alone does not establish a simple replacement.
 
-The installed fixture [vectis-server.c](../tests/vectis-server.c) translates all
-34 server fields from the test-only baseline declarations in
-[vectis-server.h](../tests/vectis-server.h). It retains Vectis's application name,
-server header and explicit body-limit inheritance; normalization remains in the
-library. [vectis-config.c](../tests/vectis-config.c) checks defaults, overrides,
-copied declarations, baseline timeout saturation and foreground/supervised worker
-lifecycle. A supervised host attaches its control FD and signal policy after
-translation. Successful construction transfers that FD; shutdown closes it.
-This is configuration/lifecycle evidence, not a completed application adapter.
+## Installed reference adapter
 
-The public proxy fixture [proxy-h2.c](../tests/proxy-h2.c) preserves the baseline
-HTTP/2 duplex case's rewritten target/authority and `pingrest`/`pongdone` bytes.
-It requires real TLS ALPN negotiation and receives the first response bytes
-before sending the second upload piece. Codec-only H2 fixtures do not establish
-that transport behavior. The live case passes on GNU/musl and compiles/links
-on the other five toolchains.
+The adapter is test-only consumer code compiled against installed public C/Lua
+SDKs. It translates declarations, errors and handles, forwards callbacks, and
+registers host providers. It contains no replacement transport or codec.
+The operation inventory below names its implementation and behavioral cases.
+The [verification record](verification.md) distinguishes tested library behavior
+from the separately authorized Vectis normal/packed cutover.
 
-[vectis-route.c](../tests/vectis-route.c) adds the ordinary app/request/response
-callback shape, status/error translation, NUL-terminated request strings and
-host-source vtable forwarding. Request associations and route callback owners are
-the only retained adapter state. Source reset/read/close, live delivery, spooling,
-reply replacement and HTTP error selection stay in public library operations.
-The [runtime case](../tests/vectis-route-runtime.c) checks duplicate query/headers,
-captures, binary input, 255-byte diagnostics, source ownership and hook/reset/
-suppression/failure timing. No Lockd SDK or sibling source is a build input.
+| Contract family | Implementation and forwarding evidence |
+| --- | --- |
+| Server | `tests/vectis-server.c` translates all 34 baseline fields; `vectis-config.c` covers effective values, host readiness, stop and shutdown. |
+| Routes | `tests/vectis-route.c` translates baseline declarations/callbacks/errors; `vectis-route-runtime.c` covers order, masks, conflicts and hooks. Lua verb/group and fixed text/JSON/redirect/authenticated-JSON helpers use that same ordinary route engine. |
+| Requests/bodies | `vectis-route.c`, `vectis-body-file.c` and `vectis-request-reply.c` cover strings/lookups, borrowed readers, materialization, independent copies, spill and cleanup. |
+| Replies/sources | The same adapter covers staged replies and borrowed/taken sources. `vectis-response-head.c` covers shared Kore header generation, manual commitment/backpressure and bodyless replies; file opening occurs after hooks. |
+| Uploads | `vectis-services.c` forwards chunk/file/native-reader callbacks. `vectis-services-runtime.c` checks progress before EOF, default 204 and cancellation ownership through native acknowledgement. |
+| JSON | `vectis-forward.c` translates typed declarations/raw records, materialized/generated replies and array rewriting; `vectis-route.c` forwards request parsing/selected-array iteration. `vectis-typed.c` and `json-runtime.c` exercise ownership, limits, callback errors and completed ordinary output before after hooks. |
+| XML | `vectis-forward.c` translates typed routes and standalone source/reader parse, sink write and owned-byte output. `vectis-typed.c` covers options, source precedence/current position, borrowed ownership, partial failure, sink errors and the baseline trailing NUL. `xml-runtime.c` observes live parsing before EOF. `vectis-xml.c` translates every DOM/XPath/SAX receiver operation; `vectis-xml-runtime.c` runs the baseline's original assertions through that adapter, including mutation, namespace handling, callback failure/reentry and foreign process/thread rejection. |
+| REST/OpenAPI | Lua REST binds public C REST registrations for decode/validate/handler sequencing. Lua owns application error policy and the existing LoneJSON Lua value conversion. Replies encode once. `rest-runtime.c`, `tests/lua/rest.lua` and `openapi.c` cover errors, validation, groups, annotations and generation. |
+| Static/assets | `vectis-services.c` forwards file/directory/packed-provider mounts; `openapi.c` and the Lua asset fixture cover indexes, MIME, HEAD/ranges/conditions and borrowed provider ownership. |
+| WebDAV/storage | The service adapter forwards mount/auth/storage declarations. `vectis-services-runtime.c`, `webdav-runtime.c` and filesystem fixtures exercise the existing engines. Interrupted PUT creation leaves no file; interrupted replacement preserves the old file during and after cancellation, clears staging and permits a later replacement. Packed/durable clients stay in the host. |
+| Reverse proxy | The service adapter forwards declarations, admission and edit/response/error callbacks. Proxy runtime/WebSocket/WSS and framing fixtures exercise native relay execution. The live HTTP pressure case stops client reads, observes upstream backpressure before the full body, checks unrelated request progress, resumes exact byte delivery, then cancels under pressure and verifies exchange reuse. No proxy state machine belongs to the adapter. |
+| Application WebSocket/SSE | The service adapter forwards WebSocket callbacks/send/close and source-based SSE. Wire cases preserve Kore frame/close behavior and incremental source ownership. Lua delegates transport to Core. |
+| TLS/ACME | The service adapter translates resolved file/memory/borrowed-source material and ACME host callbacks. TLS and local-CA issuance/renewal fixtures cover serving, persistence failure and error preservation, including the host Lua VM. Kore runtime files are working state; durable storage remains host-owned. |
+| Policy/logging | Baseline server translation drives policy/observation/log fixtures. Lua borrows released public pslog references; derived HTTP logging and independent access files use Core. |
+| Host/backend | `vectis-host.c` forwards shared readiness, READY/control providers, parent maintenance timers and the terminal worker callback. `vectis-host-runtime.c` checks outer host ownership, 503-to-200 readiness, STOP/malformed/EOF shutdown and fork-exit cleanup that destroys host/server state. Callback failure after reclamation reaches the parent. Existing process/auxiliary/TLS fixtures cover restart and child roles; the config fixture covers foreground use. The opaque Kore accessor is forwarded. |
 
-[vectis-body-file.c](../tests/vectis-body-file.c) extends that adapter with the
-borrowed body-reader/path and file-reply shapes. It checks JSON/buffered/legacy
-upload spill behavior, defaults and registration failures, disabled spilling,
-spool I/O failure and cleanup, then after-hook file creation/replacement/removal
-and final 404/HEAD/bodyless handling. The adapter never collects input or opens
-reply files; those operations remain in librotmos.
+## Compatibility corrections and remaining gate
 
-[vectis-response-head.c](../tests/vectis-response-head.c) uses the baseline server
-translation to check configured Server, keep-alive timeout/budget, ordinary error
-pages, HEAD/304, optional header limits and large-head queueing/replacement.
-Kore's head codec is shared through an external patch; the adapter adds no encoder.
-The TLS/backend cases separately cover HSTS and native cookies/header merging.
-[vectis-request-reply.c](../tests/vectis-request-reply.c) extends the ordinary
-adapter with fixed/owned memory materialization, independent spill files/readers,
-read-all copying and binary responses. It also checks registration order/masks/
-conflicts, file Last-Modified and exact conditional matching, empty files, HEAD
-representation lengths, duplicate cookies/headers and staged transport fields.
-Its source adapters only forward public read/reset/close; collection, files and
-HTTP execution stay in the library.
+Vectis's integration assessment identified standalone filesystem calls, mount
+admission/default deadlines, fixed concurrency guards and terminal proxy
+accounting (G1–G5). The existing engines now supply those operations; subsequent
+sweeps corrected WebSocket EOF attribution, metadata-only/literal-name listing,
+content-directory configuration, provider index defaults and Lua integer
+conversion. Causes and regression references belong in [KORE.md](../KORE.md).
 
-[vectis-services.c](../tests/vectis-services.c) adds proxy preflight/rewrite/
-response/error and edit operations; upload stream, native reader and file
-helpers; WebSocket callbacks/send/close; WebDAV filesystem/provider and auth
-translation; and resolved TLS identity/redirect/ACME configuration. It retains
-callback owners and converts value/error/string shapes. Native-reader ownership
-uses the public acquire/release pair to preserve the host request facade after
-HTTP cancellation, without sharing live Core handles with native work.
-The [combined case](../tests/vectis-services-runtime.c) exercises real proxy
-requests, local/error replies, file output, implicit 204, reader progress before
-EOF, cancellation metadata, acquisition failures, DAV PUT/GET/PROPFIND/auth,
-WebSocket raw frames and SSE through the ordinary source adapter. TLS declarations
-are checked as values here. The [TLS fixture](../tests/tls-runtime.c) also uses
-that adapter for file/memory/borrowed material, cipher/version, live TLS/mTLS and
-raw-URI redirects. Borrowed source reset/read goes through public sources without
-closing the host owner. The [ACME protocol fixture](../tests/acme-protocol.c)
-forwards host hydrate/persist callbacks through real issuance/renewal against a
-local HTTPS CA. The directory is the configured Kore runtime root, exactly as
-the host's existing state helpers expect. The generation store and extra startup
-PERSIST are removed. The [Lua issuance fixture](../tests/lua/acme.lua) also exercises
-the shipped facade/binding in its host VM through real issuance, live certificate
-serving and returned/thrown/OOM PERSIST failure, with original error preservation.
-
-The same C service adapter now maps file/directory/packed mounts, with no file
-or asset execution in its wrappers. The combined case checks index defaults,
-canonical redirects, custom content type, HEAD/ranges/conditions, missing packed
-entries and borrowed provider ownership. OpenAPI builders reuse identical public
-value layouts; app/title/error/output translation delegates attachment and JSON/
-YAML generation to the router. The [OpenAPI case](../tests/openapi.c) checks that
-adapter with baseline defaults, schema references, normalized paths, duplicate
-annotations and generation without handler execution. Default materialized codec,
-REST and OpenAPI output no longer acquire an unrequested 10 MiB ceiling; explicit
-limits retain their failure behavior.
-
-The typed adapter in [vectis-forward.c](../tests/vectis-forward.c) now accepts the
-baseline JSON/dynamic-JSON/XML declarations, including maps, explicit record
-sizes, selectors, body policy, XML options and reader capacity. It converts them
-to public schema views and registrations. Callbacks use the app/request/response/
-error associations above. Per-response JSON map/status and generated file-backed
-output delegate to public reply operations; no codec runs in the adapter.
-[Declaration checks](../tests/vectis-typed.c) preserve Vectis's required XML map,
-exact storage sizes and 10 MiB declared-record limit. Absent JSON maps ignore
-their size fields as in Vectis. This limit concerns storage, not encoded bytes.
-Live JSON/XML cases run through these declarations against installed SDKs.
-
-Policy/observation and logging runtime cases use the baseline server translation
-for trusted proxies, autoblock thresholds/rules and access logging, then attach
-host correlation/admission/observation callbacks through public configuration.
-The normal handler's explicit Kore accessor is exercised in installed static
-and shared consumers. Its opaque native pointer remains revision-specific; the
-adapter imports no private backend header or transport implementation.
-Request JSON parsing and request/source array iteration now accept the baseline
-raw-map/storage/callback types. Source descriptors retain source-over-path-over-
-memory precedence. Borrowed readers start at their current position and remain
-open. Selected-array rewriting forwards LoneJSON's existing options and sink
-callbacks; baseline KEEP/DROP and failure cases prove output before input EOF
-and preserve the legacy LoneJSON error category. Lua ordinary JSON parsing and
-JSON/XML sink writing use the same public Core operations, with Lua-owned
-record interop and protected callbacks. The consolidated operation/facade audit
-and installed development checks are recorded in [verification](verification.md).
-Actual consumer cutover remains separately authorized work.
+Actual cutover still requires replacing Vectis's implementations with forwarding,
+then running its normal and packed regressions. This repository's reference
+adapter and target matrix do not certify that consumer cutover. No sibling
+repository is a writable or compiled dependency of this project.

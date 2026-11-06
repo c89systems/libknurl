@@ -1,8 +1,5 @@
 # Application WebSockets
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 The [public API](../include/rotmos/websocket.h) accepts application WebSockets
 from a headers callback or registers them through `rotmos_router_websocket`.
 The handle, frames and terminal outcome are borrowed. Send, close, resume and
@@ -113,6 +110,7 @@ request/open/close ordering, atomic queue pressure, capacity notifications,
 early frames, held frame redelivery, extended lengths, control frames, malformed protocol,
 close timeout and worker drain. The private channel fixture also checks that
 reused Kore connection objects start with cleared event flags and retained frame
-allocations continue to consume queue capacity. Forced TLS retry
-directions, allocator faults and installed Lua coverage remain part of the
-combined integration work.
+allocations continue to consume queue capacity. The [installed Lua cases](../tests/lua/events.lua)
+cover callback failures, replay and backpressure through the host VM. Exhaustive
+TLS retry/fault combinations are not established by these fixtures; see
+[verification](verification.md).

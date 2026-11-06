@@ -30,11 +30,18 @@ if(NOT result EQUAL 0)
 endif()
 set(module "${TEST_ROOT}/tree/lib/lua/5.5/rotmos/native.so")
 foreach(product "${module}" "${TEST_ROOT}/tree/share/lua/5.5/rotmos.lua"
+    "${TEST_ROOT}/tree/share/lua/5.5/rotmos/meta.lua"
     "${TEST_ROOT}/tree/lib/luarocks/rocks-5.5/lua-rotmos/${version}-1/doc/LICENSE")
   if(NOT EXISTS "${product}")
     message(FATAL_ERROR "Missing installed LuaRocks product: ${product}")
   endif()
 endforeach()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E compare_files
+  "${ROTMOS_ROOT}/lua/rotmos.meta.lua"
+  "${TEST_ROOT}/tree/share/lua/5.5/rotmos/meta.lua" RESULT_VARIABLE result)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "Installed LuaRocks editor metadata differs from the shipped source")
+endif()
 file(STRINGS "${module}" strings)
 if(strings MATCHES "${ROTMOS_ROOT}" OR strings MATCHES "${TEST_ROOT}")
   message(FATAL_ERROR "Installed LuaRocks module retains a workspace path")

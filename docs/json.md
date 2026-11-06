@@ -1,8 +1,5 @@
 # LoneJSON codecs and typed routes
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 Include [`<rotmos/lonejson.h>`](../include/rotmos/lonejson.h) explicitly. The core
 umbrella remains independent of LoneJSON declarations. CMake consumers link
 `rotmos::shared` or `rotmos::static`; both expose the matching public LoneJSON
@@ -124,7 +121,7 @@ before and after, including errors. Live blocking sources run on native threads;
 a synchronous reader returning AGAIN fails with STATE. No document/array is
 collected. Callback failures stop immediately and retain their error details.
 The source and item storage must remain valid and exclusively used through
-return. The unused owned-record push-parser wrapper has been removed.
+return.
 
 `rotmos_json_array_rewrite_source` lifts Vectis's reader/sink rewrite helper via
 LoneJSON's public rewrite options. It borrows the current source position, mapped

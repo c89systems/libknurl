@@ -15,7 +15,7 @@ build = {
   type = "command",
   build_command = [[bash lua/build-rock.sh "$(ROTMOS_TARGET)" "$(ROTMOS_CORE_PREFIX)" "$(ROTMOS_SDK_ROOT)"]],
   install = {
-    lua = { rotmos = "lua/rotmos.lua" },
+    lua = { rotmos = "lua/rotmos.lua", ["rotmos.meta"] = "lua/rotmos.meta.lua" },
     lib = { ["rotmos.native"] = "build/rock/rotmos/native.so" },
   },
 }

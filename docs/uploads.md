@@ -1,8 +1,5 @@
 # Upload callbacks
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 Include `<rotmos/upload.h>` or `<rotmos/rotmos.h>`. The stream facade lifts
 Vectis's open/write/finish/close lifecycle onto the existing managed body plan.
 It adds no transport, parser, Vectis state, or private dependency types.

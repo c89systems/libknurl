@@ -1,52 +1,85 @@
 #ifndef ROTMOS_REPLY_H
 #define ROTMOS_REPLY_H
 
+/** @file reply.h Public reply API. Expected failures return rotmos_status and
+ * optional bounded rotmos_error diagnostics. Take operations transfer
+ * ownership only on success; views remain borrowed for their documented scope.
+ */
+
 #include <rotmos/io.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/** Values for reply kind. */
 typedef enum rotmos_reply_kind {
+    /** Staged payload representation: empty. */
     ROTMOS_REPLY_EMPTY = 0,
+    /** Public bound for reply bytes, in bytes or entries as named. */
     ROTMOS_REPLY_BYTES,
+    /** Staged payload representation: file. */
     ROTMOS_REPLY_FILE,
+    /** Staged payload representation: source. */
     ROTMOS_REPLY_SOURCE
 } rotmos_reply_kind;
 
+/** Configuration for source materialize. Use the owning operation's initializer
+ * before applying overrides.
+ */
 typedef struct rotmos_source_materialize_config {
+    /** Maximum bytes for this operation; zero-inheritance/unlimited behavior is
+     * operation-specific.
+     */
     size_t max_bytes;
+    /** Bounded transport/generation chunk size in bytes. */
     size_t chunk_bytes;
+    /** Nonzero requests a source reset before explicit synchronous
+     * materialization.
+     */
     int reset_before;
+    /** Nonzero requests a source reset after explicit synchronous
+     * materialization.
+     */
     int reset_after;
 } rotmos_source_materialize_config;
 
-/* Standalone builders can be used by custom dispatchers and tests. */
+/** Standalone builders can be used by custom dispatchers and tests. */
 ROTMOS_API rotmos_status rotmos_reply_new(rotmos_reply **out,
                                           rotmos_error *error);
+/** Release a standalone builder and its selected payload; transferred runtime
+ * builders cannot be destroyed.
+ */
 ROTMOS_API rotmos_status rotmos_reply_destroy(rotmos_reply *reply,
                                               rotmos_error *error);
-/* Status-only selection releases payload/type while retaining headers. */
+/** Status-only selection releases payload/type while retaining headers. */
 ROTMOS_API rotmos_status rotmos_reply_status(rotmos_reply *reply, int status,
                                              rotmos_error *error);
+/** Append a copied header, preserving duplicates and registration order. */
 ROTMOS_API rotmos_status rotmos_reply_header_add(rotmos_reply *reply,
                                                  const char *name,
                                                  const char *value,
                                                  rotmos_error *error);
-/* Replaces all case-insensitive occurrences at their first position. */
+/** Replaces all case-insensitive occurrences at their first position. */
 ROTMOS_API rotmos_status rotmos_reply_header_set(rotmos_reply *reply,
                                                  const char *name,
                                                  const char *value,
                                                  rotmos_error *error);
+/** Copy NUL-terminated text and content type into a staged reply; no network
+ * output occurs.
+ */
 ROTMOS_API rotmos_status rotmos_reply_text(rotmos_reply *reply, int status,
                                            const char *content_type,
                                            const char *text,
                                            rotmos_error *error);
+/** Copy binary bytes and content type into a staged reply; no network output
+ * occurs.
+ */
 ROTMOS_API rotmos_status rotmos_reply_bytes(rotmos_reply *reply, int status,
                                             const char *content_type,
                                             rotmos_bytes body,
                                             rotmos_error *error);
-/* Copies a path. After-hooks may replace it or change the file before the
+/** Copies a path. After-hooks may replace it or change the file before the
  * selected reply is submitted. Submission opens/pins the regular file; a
  * missing/unreadable path produces an empty 404. Bodyless statuses do not open
  * it; HEAD still resolves its representation. Explicit source_file pins early.
@@ -55,15 +88,19 @@ ROTMOS_API rotmos_status rotmos_reply_file(rotmos_reply *reply, int status,
                                            const char *content_type,
                                            const char *path,
                                            rotmos_error *error);
-/* No read/reset occurs. Success transfers the source until terminal cleanup. */
+/** No read/reset occurs. Success transfers the source until terminal cleanup.
+ */
 ROTMOS_API rotmos_status rotmos_reply_source_take(rotmos_reply *reply,
                                                   int status,
                                                   const char *content_type,
                                                   rotmos_source *source,
                                                   rotmos_error *error);
+/** Initialize source materialize config with its documented defaults; call
+ * before applying overrides.
+ */
 ROTMOS_API void
 rotmos_source_materialize_config_init(rotmos_source_materialize_config *config);
-/* Synchronous, explicitly buffered operation. Borrows the source, never closes
+/** Synchronous, explicitly buffered operation. Borrows the source, never closes
  * it, and rejects AGAIN. Reset is performed only when explicitly requested.
  * Zero bounds select defaults (10 MiB / 8192 bytes). Failure preserves the
  * prior reply but may consume input unless reset_after is enabled. */
@@ -72,7 +109,7 @@ ROTMOS_API rotmos_status rotmos_reply_source_materialized(
     rotmos_source *source, const rotmos_source_materialize_config *config,
     rotmos_error *error);
 
-/* Synchronous file-backed materialization. Borrows an unowned source, resets
+/** Synchronous file-backed materialization. Borrows an unowned source, resets
  * once when supported, and never closes it. Consumes to EOF in bounded chunks;
  * AGAIN fails. No memory/body ceiling is added. The target file-offset range
  * and filesystem limits still apply. NULL/empty directory selects /tmp.
@@ -83,14 +120,26 @@ ROTMOS_API rotmos_status rotmos_reply_source_spooled(
     rotmos_reply *reply, int status, const char *content_type,
     rotmos_source *source, const char *directory, rotmos_error *error);
 
-/* These snapshots borrow the builder's storage until its next mutation. */
+/** These snapshots borrow the builder's storage until its next mutation. */
 ROTMOS_API int rotmos_reply_is_selected(const rotmos_reply *reply);
+/** Read the staged HTTP status without submitting it. */
 ROTMOS_API int rotmos_reply_status_code(const rotmos_reply *reply);
+/** Read the selected payload representation without consuming it. */
 ROTMOS_API rotmos_reply_kind
 rotmos_reply_payload_kind(const rotmos_reply *reply);
+/** Borrow the staged content type until the builder's next mutation or
+ * destruction.
+ */
 ROTMOS_API rotmos_bytes rotmos_reply_content_type(const rotmos_reply *reply);
+/** Borrow a staged byte payload until mutation/destruction; does not read
+ * file/source payloads.
+ */
 ROTMOS_API rotmos_bytes rotmos_reply_body(const rotmos_reply *reply);
+/** Return the ordered staged header count, including repeated fields. */
 ROTMOS_API size_t rotmos_reply_header_count(const rotmos_reply *reply);
+/** Borrow an ordered header by zero-based index until the next
+ * mutation/destruction.
+ */
 ROTMOS_API rotmos_status rotmos_reply_header_at(const rotmos_reply *reply,
                                                 size_t index,
                                                 rotmos_header *out,

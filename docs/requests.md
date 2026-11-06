@@ -1,8 +1,5 @@
 # Request plans and bodies
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 Include `<rotmos/dispatch.h>` and `<rotmos/body.h>`, or `<rotmos/rotmos.h>`.
 The ordinary route facade still accepts staged handlers and middleware. The
 router submits that handler's final reply after its selected body has completed.
@@ -47,7 +44,8 @@ The default-directory regression runs real spill requests and cleanup, rather
 than checking registration alone.
 STREAM never collects or spools the message. The [typed JSON facade](json.md)
 decodes completed JSON/BUFFERED/MATERIALIZED bodies and retains its records through
-response cleanup. Native-reader upload remains a separate implementation surface.
+response cleanup. [Native-reader uploads](uploads.md) use live bounded input independently of this
+completed-body decoder.
 
 For STREAM, `on_body` receives a borrowed chunk capped by `io.chunk_bytes` and
 `io.input_queue_bytes`. OK consumes only the reported prefix; a short prefix
@@ -63,7 +61,7 @@ Independent application deadlines still apply.
 Successful EOF invokes `on_body_end` once; it means input completed, not that a
 reply drained. Truncation, disconnect, timeout and callback errors reach close
 without a false EOF. Managed POST/PUT/PATCH require Content-Length; DELETE,
-PROPFIND and MKCOL permit an absent length. The initial managed method rules
+PROPFIND and MKCOL permit an absent length. The managed method rules
 reject positive lengths for GET/HEAD/OPTIONS/COPY/MOVE. Chunked transfer coding
 reaches the headers decision and requires takeover for actual body delivery.
 

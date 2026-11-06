@@ -1,7 +1,7 @@
-# Building and maintaining the extraction
+# Development
 
 The [extraction contract](server-api-spec.md) defines the product. The
-[audit](server-api-audit.md) maps operation coverage and
+[integration inventory](vectis-integration-contract.md) maps operation coverage and
 [verification](verification.md) records the completed development checks.
 Actual Vectis cutover and release verification have separate gates.
 
@@ -74,9 +74,8 @@ direct preset configuration. Linux uses pinned Bootlin collections; Darwin uses
 the selected Apple tools on macOS or approved osxcross on Linux. Discovery never
 acquires a compiler or falls back to a host compiler. Runtime checks execute only
 when the selected target matches the execution host; other configurations supply
-compile/link evidence. Full runtime and artifact validation follows the larger
-implementation surfaces. The [implementation constraints](implementation-plan.md)
-record this scope and cadence.
+compile/link evidence. The [contract](server-api-spec.md) defines runtime/artifact
+acceptance and the implementation cadence.
 
 Some user-mode QEMU builds return `ENOSYS` for `get_robust_list`; that prevents
 preparation of the required robust shared autoblock lock. Those emulated runs
@@ -133,6 +132,19 @@ original patches were imported from Vectis commit
 separately in `patches/kore/vectis.revision`. Fixes belong in this repository's
 external patch stack.
 
-The [ownership boundary](extraction.md) and [specification audit](server-api-audit.md)
-provide implementation context and evidence limits. Imported Kore sources retain
-their notices in [vendor/kore/LICENSE](../vendor/kore/LICENSE).
+The [contract](server-api-spec.md), [integration inventory](vectis-integration-contract.md)
+and [verification record](verification.md) define scope and evidence limits.
+Imported Kore sources retain their notices in [vendor/kore/LICENSE](../vendor/kore/LICENSE).
+
+## Public API editor comments
+
+Public C headers carry Doxygen comments recognized by clangd, including callbacks,
+configuration members, enum values and ownership/error rules. Build the selected
+Core/Lua products once to populate their compilation databases before using
+`.clangd`. Keep declaration comments with the public API when behavior changes.
+
+The Lua facade's annotations reference the shipped `rotmos.meta.lua` definitions,
+including methods implemented dynamically in C. LuaLS discovers both files in the
+source tree; installed consumers add their `share/lua/5.5` prefix to the language
+server's workspace library. Metadata contains no runtime implementation and
+requires no extra module at runtime. CMake and LuaRocks both install it.

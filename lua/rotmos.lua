@@ -1,6 +1,10 @@
+---HTTP/WebDAV/proxy server facade over the installed public librotmos API.
+---Uses the host VM; server declarations are inert until validation/run.
 local native = require('rotmos.native')
 local M = { AGAIN = native.AGAIN, EOF = native.EOF, count = native.count, status = native.status }
+---WebSocket/loop constants and bounded single-event SSE encoding from Core.
 M.websocket,M.loop,M.sse_encode=native.websocket,native.loop,native.sse_encode
+---Host-control FD readiness constants; see Server:control_interest.
 M.control=native.control
 local Server, Group = {}, {}
 Server.__index, Group.__index = Server, Group
@@ -54,7 +58,9 @@ local function request(handle,early)
   request_ready[handle]=not early
   return out
 end
+---Explicit bounded source constructor; callbacks use nil, EOF/AGAIN.
 M.source=native.source
+---Public mapped codecs and XML DOM/SAX; live versus materialized output is explicit.
 M.json,M.xml=native.json,native.xml
 local function options(opts,handler,body_mode)
   opts=copy(opts)
@@ -109,6 +115,7 @@ local function route(self,path,handler,opts)
   opts=options(opts,handler);opts.path=path
   return register(self,'route',opts,'GET')
 end
+---Register one ordinary staged route; accepts table or path/handler/options forms.
 Server.route,Group.route=route,route
 local function typed_route(self,kind,declaration)
   if type(declaration)~='table' or type(declaration.handler)~='function' then
@@ -154,10 +161,12 @@ local function fixed_route(self,kind,opts)
     return {status=code,body=body,content_type=content_type,headers=copy(headers)}
   end,{method=opts.method,methods=opts.methods,auth=kind=='auth_json' and opts.auth or nil,openapi=opts.openapi})
 end
+---Copied fixed reply registrations; JSON is already encoded and forwarded unchanged.
 for _,name in ipairs{'text','json','redirect','auth_json'} do
   Server[name]=function(self,opts) return fixed_route(self,name,opts) end
   Group[name]=Server[name]
 end
+---Facade argument adaptation over public C typed-route registrations; no second codec/dispatcher.
 for _,name in ipairs{'json_route','json_typed_route','xml_route'} do
   Server[name]=function(self,opts) return typed_route(self,name,opts) end
   Group[name]=Server[name]
@@ -179,6 +188,7 @@ local function upload(self,opts)
   end
   return register(self,'upload',opts,'POST')
 end
+---Live owner-thread upload callbacks with prefix/AGAIN backpressure.
 Server.upload,Group.upload=upload,upload
 local function convenience(self,name,opts)
   if type(opts)~='table' then return invalid(name..' declaration table required') end
@@ -202,16 +212,19 @@ local function convenience(self,name,opts)
   opts=options(opts,nil,name=='upload_file' and native.BODY_STREAMING_UPLOAD or nil)
   return register(self,name,opts,name=='upload_file' and 'POST' or name=='webdav' and 'ANY' or {'GET','HEAD'})
 end
+---Static, upload-file and DAV declarations forwarded to their public native registrations.
 for _,name in ipairs{'static_file','static_directory','static_assets','upload_file','webdav'} do
   Server[name]=function(self,opts) return convenience(self,name,opts) end
   Group[name]=Server[name]
 end
+---Verb helpers share the same native route registry and lifetime rules.
 for name,method in pairs(native.methods) do
   local function verb(self,path,handler,opts)
     opts=copy(opts);opts.method=method;return route(self,path,handler,opts)
   end
   Server[name:lower()],Group[name:lower()]=verb,verb
 end
+---Copy shared defaults into ordered REST registrations.
 function Server:group(prefix,opts)
   if type(prefix)=='table' then
     opts=prefix;prefix=opts.prefix or opts.path_prefix or ''
@@ -239,19 +252,33 @@ function Server:group(prefix,opts)
   if type(normalized)=='string' and normalized:sub(-1)=='/' then normalized=normalized:sub(1,-2) end
   return setmetatable({_native=handle,_server=self,_prefix=normalized},Group)
 end
+---Run lifecycle to terminal result; do not reenter.
 function Server:run() return self._native:run() end
+---Request graceful stop.
 function Server:stop() return self._native:stop() end
+---Release callback owners without delivering events.
 function Server:close() return self._native:close() end
+---Checks declarations/materials; may call TLS openers, never binds/forks.
 function Server:validate() return self._native:validate() end
+---Copied normalized settings; snapshot includes configured TLS memory bytes.
 function Server:effective_config() return self._native:effective_config() end
+---Inactive-server registration; failures preserve prior logger owners.
 function Server:set_pslog(logger,access_log) return self._native:set_pslog(logger,access_log) end
+---Change active readiness serving gate.
 function Server:set_serving(value) return self._native:set_serving(value) end
+---connecting/open/closing/closed.
 function Server:state() return self._native:state() end
+---One-based active-run bound address/port snapshot.
 function Server:listener(index) return self._native:listener(index) end
+---Size of the existing dispatch/OpenAPI registry.
 function Server:route_count() return self._native:route_count() end
+---Attach annotations with retained immutable public maps.
 function Server:openapi_doc(opts) return self._native:openapi_doc(opts) end
+---Materialized OpenAPI JSON/YAML, without running handlers.
 function Server:openapi(opts) return self._native:openapi(opts) end
+---Change host-control readiness mask.
 function Server:control_interest(interest) return self._native:control_interest(interest) end
+---One-based active identity availability.
 function Server:tls_identity_state(index) return self._native:tls_identity_state(index) end
 local function supervision_options(self,opts)
   if type(opts)~='table' then return opts end
@@ -260,13 +287,16 @@ local function supervision_options(self,opts)
   if type(fn)=='function' then opts.on_event=function(_,events) return fn(self,events) end end
   return opts
 end
+---Successful control FD transfer owns close; failure retains caller FD.
 function Server:supervision_take(opts) return self._native:supervision_take(supervision_options(self,opts)) end
+---Native live HTTP/HTTPS/H2/SSE and opaque WS/WSS proxy transport.
 function Server:proxy(opts)
   if type(opts)~='table' then return invalid('proxy declaration table required') end
   local handle,err=self._native:proxy(copy(opts))
   if not handle then return nil,err end
   return true
 end
+---CONTINUATION/TEXT/BINARY/CLOSE/PING/PONG opcodes.
 function Server:websocket(opts)
   if type(opts)~='table' then return invalid('websocket declaration table required') end
   opts=copy(opts)
@@ -275,12 +305,14 @@ function Server:websocket(opts)
   if not handle then return nil,err end
   return true
 end
+---Owner-loop registration helpers; tokens are bound to one process/run and retained through retirement.
 for _,name in ipairs{'defer','timer','watch','waker'} do
   Server[name]=function(self,opts)
     if type(opts)=='function' then opts={callback=opts} end
     return self._native[name](self._native,opts)
   end
 end
+---Exact monotonic milliseconds from the active owner loop.
 function Server:now() return self._native:now() end
 local function sse(self,opts)
   if type(opts)~='table' or type(opts.read)~='function' then return invalid('SSE declaration and read callback required') end
@@ -324,10 +356,13 @@ local function sse(self,opts)
   end
   return self:route(route_opts)
 end
+---Register an ordinary route backed by a live bounded SSE source.
 Server.sse,Group.sse=sse,sse
 -- Lifted from vectis.rest's server helpers. Outbound clients stay in Vectis.
 local rest={JSON_CONTENT_TYPE='application/json; charset=utf-8'}
+---Server REST response/route convenience helpers; outbound clients remain host-owned.
 M.rest=rest
+---Encode one REST response through public LoneJSON interop; no intermediate parse.
 function rest.json(value,opts)
   local response,err=native.rest.json(value,opts)
   if err then err.kind='json_encode' end
@@ -350,6 +385,7 @@ local function error_http_status(err)
   return err.status==status.INVALID and 400 or err.status==status.CONFLICT and 409 or
     err.status==status.NOT_SUPPORTED and 501 or err.status==status.TIMEOUT and 504 or 500
 end
+---Compose a staged error envelope, with an encoding-failure fallback.
 function rest.error_response(value,opts)
   opts=opts or {}
   local err=error_value(value,opts)
@@ -461,12 +497,14 @@ local function register_rest(server,declaration)
   end
   return register(server,'rest_route',route,'GET')
 end
+---Register buffered REST phases through the public Core route operation.
 function rest.route(server,opts)
   if type(server)~='table' or type(server.route)~='function' then return invalid('REST server or group required') end
   local route,err=rest_route_options(opts)
   if not route then return nil,err end
   return register_rest(server,route)
 end
+---Register ordered REST routes after copying shared prefix/defaults.
 function rest.group(server,opts)
   if type(server)~='table' or type(server.group)~='function' or type(opts)~='table' or type(opts.routes)~='table' then
     return invalid('REST server, group options and routes required')
@@ -492,6 +530,10 @@ function rest.group(server,opts)
   end
   return true
 end
+---Create an inert server; copy declarations and retain callback/schema/provider owners.
+---@param opts? rotmos.ServerOptions
+---@return rotmos.Server? server
+---@return rotmos.Error? error
 function M.server(opts)
   if opts~=nil and type(opts)~='table' then return invalid('server configuration table required') end
   opts=copy(opts)
@@ -544,4 +586,5 @@ function M.server(opts)
   self._native=handle
   return self
 end
+---@cast M rotmos.Module
 return M

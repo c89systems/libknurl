@@ -1,6 +1,10 @@
 #ifndef ROTMOS_ROTMOS_H
 #define ROTMOS_ROTMOS_H
 
+/** @file rotmos.h Umbrella for the dependency-neutral public Core API;
+ * lonejson.h, pslog.h and kore.h are opt-in adapters.
+ */
+
 #include <rotmos/common.h>
 #include <rotmos/http.h>
 #include <rotmos/io.h>

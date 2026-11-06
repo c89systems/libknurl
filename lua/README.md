@@ -61,3 +61,8 @@ ABI compatibility.
 `source-manifest.txt` lists source inputs; the generated `RELEASE_MANIFEST` hashes
 their bytes. The archive, release rockspec and source rock have a separate
 `lua-rotmos-VERSION-CHECKSUMS` inventory. These files do not authorize a release.
+
+The package also ships `rotmos.meta.lua` alongside the facade (LuaRocks installs
+it as `rotmos/meta.lua`). Add the installed `share/lua/5.5` prefix to LuaLS's
+workspace library for completion and hover comments on facade and C userdata
+methods. This metadata is comment-only and is never loaded by the facade.

@@ -8,6 +8,7 @@ scripts/lifecycle/require-host-bash.sh
 lua/README.md
 lua/CMakeLists.txt
 lua/rotmos.lua
+lua/rotmos.meta.lua
 lua/include/rotmos/lua.h
 lua/build-rock.sh
 lua/source-manifest.txt

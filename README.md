@@ -99,8 +99,8 @@ upstream upgrades and local changes separate.
 - [WebDAV mounts and authorization](docs/webdav.md)
 - [Server API specification](docs/server-api-spec.md)
 - [Vectis integration contract](docs/vectis-integration-contract.md)
-- [Ownership boundary](docs/extraction.md)
-- [Specification audit](docs/server-api-audit.md)
+- [Documentation index](docs/README.md)
+- [Lua editor types](lua/rotmos.meta.lua)
 
 ## License
 

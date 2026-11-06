@@ -1,8 +1,5 @@
 # Address policy, admission and request observations
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 Include `<rotmos/server.h>` and `<rotmos/request.h>`, or `<rotmos/rotmos.h>`.
 These callbacks separate the server mechanisms from application policy. They
 execute on the HTTP worker's owning loop. Configuration is inert: construction

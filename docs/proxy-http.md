@@ -1,8 +1,5 @@
 # HTTP and SSE reverse proxy routes
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 Include [`<rotmos/proxy.h>`](../include/rotmos/proxy.h), or the umbrella
 `<rotmos/rotmos.h>`. Initialize `rotmos_proxy_config`, set a route pattern and
 HTTP/HTTPS base target, then call `rotmos_router_proxy`. Registration copies
@@ -41,9 +38,9 @@ changed through generic header edits; repeated end-to-end fields retain order.
 
 The worker rebuilds forwarding headers from connection metadata and the inbound
 Host, removing spoofed forwarding fields and connection-nominated fields. The
-currently implemented peer source is the socket peer. Generic trusted-client
-resolution remains a separate required server surface, after which this path
-must use its resolved result. Configured default trust uses the selected curl
+forwarding source is the real TCP socket peer. Server trusted-client resolution
+is available separately as request effective-address metadata; it does not
+replace the proxy transport's socket-peer forwarding source. Configured default trust uses the selected curl
 SDK; optional copied CA/client identity bundles are passed in memory. Peer and
 hostname verification stay enabled. HTTPS auto mode prefers HTTP/2 with HTTP/1.1
 fallback; cleartext uses HTTP/1.1. This adapter accepts HTTP/1.1 downstream
@@ -102,6 +99,6 @@ and shared installed SDKs, without private headers or Kore declarations.
 The same registrations also execute [WebSocket/WSS relays](proxy-websocket.md),
 with validated opening responses, opaque duplex bytes and streamed non-101
 rejections. Their admission and deadlines use this worker policy. Upstream
-HTTP2 live exchanges, forced transport faults and slow-peer memory measurements
-remain required combined proxy verification under
-the [complete specification](server-api-spec.md#executable-surface).
+The [HTTP/2 fixture](../tests/proxy-h2.c) proves live TLS/ALPN duplex delivery
+before upload EOF. Forced retry/fault combinations and slow-peer RSS claims
+require their own evidence; see [verification](verification.md).

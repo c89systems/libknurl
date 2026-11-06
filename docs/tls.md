@@ -1,8 +1,5 @@
 # TLS listeners
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 Declare a `ROTMOS_LISTENER_HTTPS` listener and set `identity_index` to an entry in
 `config.tls.identities`. A manual identity has explicit domains and either a
 certificate/key PEM bundle or separate certificate and private-key material.
@@ -63,7 +60,7 @@ take precedence over `SSL_CERT_FILE`/`SSL_CERT_DIR`; file bytes and resolved
 directory paths are captured before forks. The selected SDK supplies defaults
 when these inputs are absent.
 
-The [host state bridge](acme-state.md) runs RESTORE in the quiescent parent,
+The [host state bridge](acme.md) runs RESTORE in the quiescent parent,
 using the configured Kore runtime directory. The key manager loads or generates
 keys there. Kore writes a completed certificate, then calls PERSIST before
 distributing it to workers, matching Vectis's existing hook. Startup does not
@@ -94,7 +91,7 @@ pending challenge handling, certificate replacement, persistence failure and
 parent-enforced timeout/recovery. Its [private driver](../tests/acme-backend.c)
 submits the real ACME-to-key-manager certificate/challenge messages; it does not
 simulate a remote ACME directory, JWS account/order exchange or renewal schedule.
-The separate [protocol fixture](acme-protocol.md) drives a local HTTPS CA through
+The separate [protocol fixture](acme.md#account-order-and-recovery-flow) drives a local HTTPS CA through
 account recovery, signed orders, CSR, TLS-ALPN-01, issuance and renewal selection
 after ACME-process restart. It also covers captured trust and transport bounds.
 Complete allocation/fatal unwinding and in-flight protocol fault coverage remain.
@@ -142,7 +139,7 @@ The [installed Lua fixture](../tests/lua/tls.lua) covers live mutual TLS with
 callback certificate/key/chain, copied declarations, source reset/close and
 busy/closed ownership, bounded input, callback/OOM failures and startup reentry.
 It also exercises actual parent RESTORE/ERROR delivery, stop before fork and
-startup without an invented PERSIST call. The C reference provider exercises
+startup without an extra PERSIST call. The C reference provider exercises
 real key-manager PERSIST during issuance/renewal. The [Lua issuance fixture](../tests/lua/acme.lua)
 reuses that local CA in the host VM, with actual challenge verification and live
 certificate serving. Returned, thrown and OOM persistence failures reach the

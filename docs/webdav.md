@@ -1,8 +1,5 @@
 # WebDAV mounts
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 [`<rotmos/webdav.h>`](../include/rotmos/webdav.h) registers filesystem, read-only
 and custom storage mounts through `rotmos_router_webdav` and
 `rotmos_route_group_webdav`. The same [storage operation contract](storage.md)
@@ -50,8 +47,8 @@ spools. A zero-byte upload also follows begin/finish. New destinations produce 2
 replacement produces 204, using the provider's locked `created` outcome.
 
 The current managed HTTP transport uses Content-Length for PUT and delivers those
-bytes incrementally; chunked input remains part of the generic transport work in
-the full goal. Non-PUT request payloads are discarded incrementally when admitted.
+bytes incrementally. Chunked managed PUT is unsupported; chunked body delivery
+requires the separate raw takeover path described in [requests](requests.md). Non-PUT request payloads are discarded incrementally when admitted.
 MKCOL rejects a nonempty body with 415. DELETE returns 204; MKCOL returns 201.
 Storage quota failures preserve Vectis's 413 mapping, conditions/existing overwrite
 conflicts return 412, and missing/tombstoned reads return 404.
@@ -113,9 +110,9 @@ It retains one bounded item's metadata and serializes URI-encoded hrefs, collect
 kind and wide content lengths directly into caller output spans. It pauses while
 a listing operation is pending and resumes through the public response producer.
 No complete listing/document or undisclosed staging file is constructed. The
-current opened-file asset path uses bounded ordinary pread calls. The generic
-[source API](responses.md) supports native-reader execution and explicit readiness;
-WebDAV's opened-file path has not yet moved onto that execution policy.
+opened-file asset path uses bounded ordinary pread calls, which may block in the
+filesystem. The generic [source API](responses.md) separately supports
+native-reader execution; WebDAV file delivery does not select that mode.
 
 The [HTTP fixture](../tests/webdav-runtime.c) drives real sockets with 128-byte
 transport chunks. It covers auth/challenge/redirect, middleware and principal/
@@ -123,6 +120,6 @@ userdata ownership, read-only/packed mounts, validators/ranges/HEAD, incremental
 PUT before end-of-body, empty/conditional uploads, disconnect cleanup, MKCOL,
 finite-depth XML, hidden children, recursive/mapped/overwritten authorization,
 request abort during native policy handoff, destination confinement and COPY/MOVE.
-It also runs against relocated installed static/shared consumers. Broader TLS,
-HTTP framing, slow-peer measurements and combined transport faults remain in the
-full implementation goal.
+It also runs against relocated installed static/shared consumers. The [verification record](verification.md) covers the accumulated transport and
+installed-consumer gate; it does not establish exhaustive fault combinations or
+a slow-peer memory bound.

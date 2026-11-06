@@ -1,8 +1,5 @@
 # Response delivery
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 Include `<rotmos/response.h>`, or the umbrella `<rotmos/rotmos.h>`.
 `rotmos_request_response(request)` borrows the request's response on its owning
 loop. Ordinary routes normally use the staged reply argument: middleware can
@@ -78,7 +75,7 @@ configured); failed/unselected sources close before request-close callbacks.
 Reset callbacks cannot mutate the
 busy reply. The default remains false; manual, parsing and spooled consumers retain
 their explicit reset policy. Lua legacy stream declarations use this same C
-option; their separate first-read reset path has been removed.
+option.
 
 `rotmos_response_file_take` takes an open regular-file descriptor on success and
 checks its offset and length against the target's actual seek representation.

@@ -1,8 +1,5 @@
 # Storage operations and filesystem execution
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 [`<rotmos/storage.h>`](../include/rotmos/storage.h) defines provider operations,
 resource handles and acknowledged cancellation without Vectis, Lua, filesystem or
 backend layouts. The native worker executor is private supporting machinery in
@@ -219,7 +216,7 @@ check cancellation. Listing retains one directory cursor and returns one immedia
 child per operation, with explicit END; it never constructs a tree/vector.
 Opened read results keep one descriptor for metadata and subsequent bounded
 pread calls. Those asset reads are ordinary synchronous filesystem calls; the
-asset provider has not yet selected the generic NATIVE_READER execution policy.
+asset provider uses owner-loop execution, so its filesystem reads may block.
 
 Conditions and quota accounting share the storage mutation lock with every
 provider using the same cache/site. External filesystem writers must coordinate

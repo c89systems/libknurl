@@ -1,8 +1,5 @@
 # WebSocket and WSS reverse proxy relays
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 [`rotmos_router_proxy`](../include/rotmos/proxy.h) uses the same copied route
 configuration for ordinary HTTP/SSE and WebSocket opening requests. A configured
 HTTP target supplies a plain upstream socket; an HTTPS target supplies TLS.
@@ -71,6 +68,7 @@ commitment. The TLS variant verifies both listener TLS and upstream mTLS using
 copied in-memory material. A recovered worker crash fails the fixture. Both
 variants also run against relocated static and shared installed SDKs.
 
-Upstream HTTP2 live coverage, forced TLS retry-direction faults, allocation/close
-fault matrices and slow-peer memory measurements remain combined proxy
-verification under the [complete specification](server-api-spec.md#executable-surface).
+Live upstream HTTP/2 belongs to the [HTTP proxy fixture](../tests/proxy-h2.c),
+not the opaque WebSocket relay. Exhaustive TLS retry/fault combinations and
+slow-peer memory measurements are not established by these cases; see
+[verification](verification.md).

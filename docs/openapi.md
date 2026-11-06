@@ -1,8 +1,5 @@
 # OpenAPI documents
 
-> Implementation reference. The [extraction contract](server-api-spec.md) governs required behavior and scope. See the [audit](server-api-audit.md) and [verification](verification.md) for evidence and limits.
-
-
 Include `<rotmos/openapi.h>`. This surface lifts Vectis's route annotations and
 LoneJSON-map projection into the router. It produces materialized JSON or YAML
 OpenAPI 3.1.0 metadata without invoking handlers or requiring another application

@@ -1,7 +1,6 @@
 # librotmos extraction contract
 
-This is the complete product contract. It replaces the previous server redesign
-specification. Other feature documents describe the existing implementation;
+This is the complete product contract. Feature guides describe the implementation;
 they cannot enlarge this contract or establish compatibility.
 
 ## Purpose and boundary
