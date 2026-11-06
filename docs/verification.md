@@ -1,10 +1,34 @@
 # Extraction verification
 
-The final repository sweep on 2026-11-06 verified implementation `463521b`,
+The earlier accumulated sweep on 2026-11-06 verified implementation `463521b`,
 using Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19` as the behavioral baseline.
-The sibling checkout still has that exact HEAD and was not modified.
+That sweep left the sibling checkout unchanged at the baseline.
 The [operation audit](vectis-integration-contract.md) maps every contract family to its
 implementation, reference forwarding adapter and observable cases.
+
+## Kore snapshot upgrade
+
+The upgrade after `7c379ac` imports pristine upstream
+`c5fe59f521bdc1f2c486b5d8cc90227d72fcc628` with all 62 external patches unchanged.
+The native parser/scheduler [ordering regression](../tests/kore-request-order.c)
+failed on the previous pin and passes on GNU/musl with the new pin. It covers
+older pending handlers, FIFO creation, sleeper wakeup order and cleanup.
+
+| Gate | Observed result |
+| --- | --- |
+| GNU/musl Core | 29 affected checks pass on each runtime: native ordering, request/body/reply delivery, routes, TLS, static/uploads, XML/REST, DAV, WebSocket/SSE, proxy HTTP/2/WS/WSS and serving lifecycle. |
+| Kore tools | All five preparation, replay, invalidation and updater checks pass on GNU; these host-tool results are reused for the other targets. |
+| Lua | All 36 GNU / 35 musl checks pass against freshly installed shared Core SDKs, including source-rock reconstruction. |
+| Seven targets | Static/shared Core, C89/C++98 public headers, fixture executables and installed-Core Lua bindings compile/link with the selected toolchains. |
+| Seven SDK archives | Final bytes, dependency/ABI/target/export metadata and relocated CMake/pkg-config static/shared examples verify. Each archive's BACKEND metadata and shared-library bytes contain the new pin. GNU/musl examples execute; the other five targets supply compile/link and ELF/Mach-O evidence. |
+
+The updater's export matches the pristine source tree byte for byte. Formatting
+and diff checks pass; no patch or dependency pin changed beyond Kore. Evidence is
+under `build/kore-upgrade-evidence/`, with SDK archives in each selected build's
+`packages/`. This pass selects affected Core checks; it does not repeat the full
+Core suites or full installed reference-adapter suites recorded below. Actual
+Vectis normal/packed cutover and clean signed release verification remain
+separate gates.
 
 ## Review follow-up
 

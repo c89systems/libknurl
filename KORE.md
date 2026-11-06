@@ -5,15 +5,15 @@ and librotmos's Kore patches/adapter here, including defects fixed before a
 commit. Add the reproducer, cause, fix and evidence when finding a new bug;
 update its status as verification progresses. Keep feature additions separate.
 
-The pristine snapshot is `1ff3c0f6f7973dc7fc8bf38369790ef2d8079b3b` in
+The pristine snapshot is `c5fe59f521bdc1f2c486b5d8cc90227d72fcc628` in
 [`vendor/kore`](vendor/kore). Patches 0001–0042 were imported from the Vectis
 revision recorded in [`patches/kore/vectis.revision`](patches/kore/vectis.revision).
 [`series`](patches/kore/series) is the authoritative application order. Patches
 apply to disposable build trees; fixes never modify the pristine snapshot.
 
-“Upstream” below means the defective code is present in that pinned snapshot,
-not a claim about current upstream releases. “Patched stack” identifies behavior
-introduced by, or specific to, our integration. The fixture column identifies
+"Upstream" attributes the defect to Kore; each entry records whether the pin
+imports an upstream correction or retains an external fix. "Patched stack" means
+behavior introduced by, or specific to, our integration. The fixture column identifies
 coverage sources; it does not certify every historical fix on every platform.
 An entry with no isolated regression explicitly says so.
 
@@ -69,20 +69,21 @@ of the enclosing implementation batch. The final matrix results are recorded bel
 
 ## Upstream comparison: 2026-11-06
 
-Candidate `c5fe59f521bdc1f2c486b5d8cc90227d72fcc628` is three commits after the
-current pin. These upstream fixes are not imported into the tracked snapshot:
+The pin `c5fe59f521bdc1f2c486b5d8cc90227d72fcc628` imports three upstream commits
+after the previous `1ff3c0f6f7973dc7fc8bf38369790ef2d8079b3b` snapshot:
 
 | ID | Cause and upstream correction | Scope and evidence |
 | --- | --- | --- |
-| K19 | New HTTP requests were inserted at the head of the global request queue ahead of older pending requests. [c5a1e77](https://git.kore.io/kore/commit/c5a1e77535e3073f7e530d2dab2074078162e4f8), dated 2026-10-03, inserts them at the tail. | The selected backend compiles this HTTP scheduler. After replaying our complete stack on the candidate, `src/http.c` differs from the current patched tree only at that insertion. Source comparison establishes the change; an isolated runtime ordering regression has not been run. |
+| K19 | New HTTP requests were inserted at the head of the global request queue ahead of older pending requests. [c5a1e77](https://git.kore.io/kore/commit/c5a1e77535e3073f7e530d2dab2074078162e4f8), dated 2026-10-03, inserts them at the tail. | [kore-request-order.c](tests/kore-request-order.c) failed on the previous pin and passes on the new pin on GNU/musl. It checks FIFO creation, a pending older handler returning RETRY, sleep/wakeup tail order and terminal cleanup through the actual parser/scheduler. The other five targets compile/link the fixture. |
 | K20 | PostgreSQL connection loss could strand asynchronous work or recycle a broken connection. [315c508](https://git.kore.io/kore/commit/315c5085b79c067358960f4b88bc5136999edfe3), dated 2026-11-01, repairs notification, cleanup and connection reuse. | Kore PostgreSQL is excluded from our selected backend. No librotmos runtime defect or PostgreSQL runtime verification is claimed. Our C89 queue-declaration patch addresses a separate concern. |
 
 The 2026-11-04 commit adds `kore_task_channel_pending`, a feature in Kore's task
 module, which is also excluded from our selected backend. It supersedes no patch.
-All 62 ordered patches replay unchanged onto the candidate in disposable
-`build/kore-status/` trees. None is superseded, wholly or partially, by these
-three commits. Replay is source-preparation evidence only; the candidate still
-needs build/runtime qualification before an upgrade is declared verified.
+All 62 ordered patches replay unchanged onto the new pin. None is superseded,
+wholly or partially, by these three commits. The updater preserves pristine
+upstream sources and applies patches only to disposable build trees.
+[Verification](docs/verification.md) distinguishes replay, selected-target builds
+and executable runtime evidence.
 
 ## ACME defects and recovery
 

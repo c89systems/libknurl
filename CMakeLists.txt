@@ -423,6 +423,18 @@ if(BUILD_TESTING)
   rotmos_local_runtime(rotmos_kore_runtime)
   add_test(NAME rotmos.kore-runtime COMMAND rotmos_kore_runtime)
   set_tests_properties(rotmos.kore-runtime PROPERTIES TIMEOUT 20)
+  add_executable(rotmos_kore_request_order tests/kore-request-order.c $<TARGET_OBJECTS:rotmos_kore>)
+  add_dependencies(rotmos_kore_request_order kore-source)
+  rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/kore-request-order.c")
+  target_compile_definitions(rotmos_kore_request_order PRIVATE $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
+  target_include_directories(rotmos_kore_request_order PRIVATE "${kore_source_dir}/include/kore")
+  target_link_libraries(rotmos_kore_request_order PRIVATE cpkt::openssl_ssl_shared cpkt::curl_shared
+    lonejson::lonejson pslog::pslog_shared)
+  rotmos_c89(rotmos_kore_request_order)
+  rotmos_local_runtime(rotmos_kore_request_order)
+  add_test(NAME rotmos.kore-request-order COMMAND rotmos_kore_request_order)
+  set_tests_properties(rotmos.kore-request-order PROPERTIES TIMEOUT 5)
   add_test(NAME kore.backend-invalidation COMMAND "${CMAKE_COMMAND}"
     "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
     "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/backend invalidation"

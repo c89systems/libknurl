@@ -126,8 +126,10 @@ update. Patch application alone does not prove runtime compatibility: C89,
 behavior and installed-consumer checks also apply once the library is built.
 The upgrade command does not commit, tag or push changes.
 
-The initial source pin is `1ff3c0f6f7973dc7fc8bf38369790ef2d8079b3b`. The
-original patches were imported from Vectis commit
+The current source pin is `c5fe59f521bdc1f2c486b5d8cc90227d72fcc628`; the
+original extraction used `1ff3c0f6f7973dc7fc8bf38369790ef2d8079b3b`. All 62
+patches replay unchanged across that upgrade. The original patches came from
+Vectis commit
 `6b1e263e0436687f68a7768ca55f4361a6e59e19`; that provenance is recorded
 separately in `patches/kore/vectis.revision`. Fixes belong in this repository's
 external patch stack.
