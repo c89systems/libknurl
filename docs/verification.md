@@ -1,5 +1,32 @@
 # Extraction verification
 
+## Release rehearsal
+
+The incremental rehearsal builds all seven Release Core/Lua products at version
+`0.0.0`, using product sources from `c18b2be`. All 110 GNU / 97 selected musl
+Core checks and 36 GNU / 35 musl Lua checks pass. Each ARM Linux target passes
+its three basic QEMU checks. All seven SDK archives pass final-byte inspection
+and four relocated consumers, including target-correct Darwin inspection.
+Twenty Valgrind cases, six fuzz seed replays, the ten-second AFL smoke campaign
+and formatting pass. AFL reports zero saved crashes/hangs; its 34,581 execution
+count is cumulative across resumed smoke campaigns.
+
+The initial preparation command stopped after 94 passing GNU checks because
+the Testing fixture inherited `CONFIG=release` from Make while inspecting its
+Debug directory. The fixture now selects Debug explicitly and simulates that
+parent override even under direct CTest execution. Its focused check and the
+remaining 15 GNU checks pass; the completed builds and unaffected results were
+reused. Only the fixture and this verification record changed.
+
+Seven Core archives and three Lua products are checksum-verified in
+`build/rehearsal-c18b2be-CHECKSUMS`. This is a rehearsal inventory under `build/`,
+not a release upload set. Logs are `build/rehearsal-prerelease.log`,
+`build/rehearsal-testing-fix.log`, `build/rehearsal-prerelease-resume.log` and
+`build/rehearsal-checksum-verification.log`. The real release identity guard
+correctly rejects the feature branch. No default-branch integration, full clean,
+product signing, release tagging, push or publication occurred; the signed clean
+release gate remains separate.
+
 ## Routing and SSE review corrections
 
 The consecutive-optional-parameter and lone-CR SSE defects are corrected and

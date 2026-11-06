@@ -26,7 +26,9 @@ function(run)
 endfunction()
 find_program(MAKE make REQUIRED)
 run("${CMAKE_COMMAND}" -S "${TEST_ROOT}" -B "${TEST_ROOT}/build/debug" -G Ninja -DBUILD_TESTING=OFF)
-run("${MAKE}" -C "${TEST_ROOT}" configure "CMAKE=${CMAKE_COMMAND}")
+# Parent Make options must not redirect this Debug fixture into a Release tree.
+run("${CMAKE_COMMAND}" -E env "MAKEFLAGS=-- CONFIG=release"
+  "${MAKE}" -C "${TEST_ROOT}" configure "CMAKE=${CMAKE_COMMAND}" CONFIG=debug)
 run("${CMAKE_CTEST_COMMAND}" --test-dir "${TEST_ROOT}/build/debug" -R ^fixture$
   --no-tests=error --output-on-failure)
 foreach(directory build dist .cache global)
