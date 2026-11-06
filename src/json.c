@@ -339,6 +339,7 @@ static rotmos_status make_source(const rotmos_json_source_config *config,
     rotmos_source_config source;
     rotmos_status status;
     lonejson_status code;
+    *state = NULL;
     if (out != NULL)
         *out = NULL;
     if (config == NULL || out == NULL ||

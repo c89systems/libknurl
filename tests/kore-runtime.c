@@ -1,5 +1,7 @@
 #include "library.h"
 #include "http.h"
+#include "sha1.h"
+#include <openssl/sha.h>
 
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -16,6 +18,33 @@ static int cleaning;
 static int saved_fd;
 static char diagnostic[384];
 static struct kore_native_callbacks callbacks = {0};
+
+static int sha1_blocks(void)
+{
+    unsigned char storage[131], expected[SHA_DIGEST_LENGTH];
+    unsigned char actual[SHA1_DIGEST_LENGTH];
+    SHA1_CTX context;
+    size_t length, step, at, count, i;
+    for (i = 0; i < sizeof(storage); ++i)
+        storage[i] = (unsigned char)i;
+    for (length = 0; length <= 129; ++length) {
+        if (SHA1(storage + 1, length, expected) == NULL)
+            return 1;
+        for (step = 1; step <= 64; step *= 8) {
+            SHA1Init(&context);
+            for (at = 0; at < length; at += count) {
+                count = length - at;
+                if (count > step)
+                    count = step;
+                SHA1Update(&context, storage + 1 + at, count);
+            }
+            SHA1Final(actual, &context);
+            if (memcmp(actual, expected, sizeof(actual)))
+                return 1;
+        }
+    }
+    return 0;
+}
 
 static void backend_fatal(void *userdata, const char *message)
 {
@@ -192,6 +221,8 @@ int main(void)
     u_int8_t wire[10];
     u_int64_t wide;
     int parse_error;
+    if (sha1_blocks())
+        return 24;
     if (strcmp(kore_u64_text(~(u_int64_t)0, number), "18446744073709551615") !=
             0 ||
         strcmp(kore_i64_text(KORE_INT64_MIN, number), "-9223372036854775808") !=

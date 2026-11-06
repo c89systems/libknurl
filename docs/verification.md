@@ -1,5 +1,65 @@
 # Extraction verification
 
+## Lifecycle hardening gate
+
+The selected-toolchain Release gate now builds static/shared Core, C89/C++98
+headers, fixtures and the public-SDK Lua binding for all seven targets. The first
+complete run passed 103 GNU Core checks, 96 musl Core checks (reusing seven GNU host-tool checks),
+36 GNU / 35 musl Lua checks, all seven final SDK archive/relocated-consumer gates,
+and formatting. No native Darwin execution is claimed.
+
+The four ARM Linux targets each pass exactly three QEMU smoke checks: basic
+public values/HTTP lifecycle and preload/dynamic Lua JSON/declaration workflows.
+The deep native suites, fuzzing and memory checking do not run through QEMU.
+
+Twenty Valgrind cases pass on GNU: twelve Core cases and eight Lua cases. The
+initial nineteen-case gate is reused; the added spilled REST/custom-decoder case
+passes separately against the same binaries.
+The AFL++ GCC-plugin build instruments owned parsers, retaining strict C89 and
+enabled assertions. Six canonical byte seeds replay successfully; the initial
+10-second smoke campaign executed 10,403 inputs without saved crashes or hangs.
+After finalizing the harness buffer capacity, a 10-second resumed smoke and a
+fresh 60-second campaign pass; the latter executes 73,921 inputs. Saved findings
+are rejected before resume; clean resume is also checked. Counts in resumed
+campaign statistics are cumulative.
+These are bounded fuzz results, not exhaustive source-coverage claims.
+
+The default GNU Debug pass covers its complete inventory and all 36 Lua checks.
+It exposed the old combined installed-consumer deadline: rebuilding both variants
+and running every case together could exceed 60 seconds. Preparation is now
+incremental and separate from static/shared execution via native CTest fixtures,
+with a per-program deadline and diagnostic. Its three cases pass on Debug and
+both Release runtimes; Release preparation logs show no consumer recompilation.
+The redundant JSON-only producer is removed without dropping its cases. The
+current inventory is 104 GNU / 97 selected musl Core checks. Unchanged earlier
+passes are reused; only the changed consumer groups and remaining Debug checks
+are rerun, not the matrix.
+
+Release compilation exposed Kore's SHA-1 diagnostic/alignment issue, corrected
+in external patch 0064 and documented as K22 in [KORE.md](../KORE.md). Incremental
+digests at block/padding boundaries match OpenSSL. Private JSON/response/header
+helper outputs now initialize their empty failure state explicitly, removing
+optimized-build warnings without suppressing diagnostics.
+
+Git version fixtures cover untagged/candidate/lightweight identities, malformed,
+annotated/symbolic/ambiguous tags, and extracted/enclosing-checkout ownership.
+Release fixtures reject wrong branches, dirty trees, unsigned commits, candidate
+overrides and altered artifacts, and exercise signed lightweight-tagged artifact
+staging using an ephemeral SSH key entirely under owned build scratch. No active
+release ref, workstation key, sibling checkout or remote state is changed.
+
+Both upstream lifecycle resolver contracts pass. Ordinary clangd LSP discovery
+publishes empty diagnostics for the changed JSON implementation and new fuzz
+harness, using their Debug and instrumented Release databases respectively.
+
+`build/lifecycle-release-gate.log` records the complete Release operation; the
+selected target directories retain CTest results and SDK archives. Valgrind logs
+are under `build/release/checks/memory/`, and AFL inputs/results are under
+`build/release/fuzz/`. [Development](development.md) defines commands and scope.
+Actual signed default-branch release and Vectis cutover remain separate actions.
+
+## Earlier evidence
+
 The earlier accumulated sweep on 2026-11-06 verified implementation `463521b`,
 using Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19` as the behavioral baseline.
 That sweep left the sibling checkout unchanged at the baseline.

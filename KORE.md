@@ -157,6 +157,18 @@ counts include relayed frame bytes but exclude the handshake, successful error
 categories are `"none"`, and standalone quotas must be positive after explicit
 configuration initialization. Their implemented baseline behavior is unchanged.
 
+## SHA-1 Release diagnostics
+
+K22: The first selected GCC Release build diagnosed possible 64-byte reads from
+the one-byte/eight-byte inputs used by SHA-1 padding. The inherited update loop
+used additive block-bound checks; the transform also cast a byte-aligned array
+to a word-access union. External patch 0064 uses remaining-length subtraction
+and an actual union workspace, eliminating the optimizer diagnostic and the
+alignment/aliasing dependency without disabling warnings. `kore-runtime.c`
+compares incremental digests against OpenSSL for lengths 0..129, chunk sizes
+1/8/64 and unaligned inputs, covering both padding/block boundaries. No remote
+upstream report/fix or observed production overread is claimed.
+
 ## Markdown media types
 
 K21: Kore's built-in media registry omits `.md` and `.markdown`, so native file

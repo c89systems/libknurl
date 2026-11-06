@@ -1,2 +1,4 @@
 # Unified diffs preserve upstream indentation and blank context lines literally.
 patches/kore/*.patch -whitespace
+# Seeds are exact byte inputs, including CRLF and NUL.
+tests/fuzz/corpus/* binary

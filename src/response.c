@@ -639,6 +639,8 @@ static rotmos_status make_ending(rotmos_response *r,
     char *name;
     char *value;
     unsigned char *text;
+    *out = NULL;
+    *length = 0;
     if ((count != 0 && trailers == NULL) ||
         (count != 0 && !r->trailers_enabled))
         return rotmos_fail(error, ROTMOS_INVALID, "response_end",

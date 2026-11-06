@@ -23,6 +23,13 @@ make sdk-package           # Stage the selected Core SDK binary rehearsal under 
 make sdk-verify            # Inspect that archive and build its relocated consumers.
 make build-all CONFIG=release
 make test                  # Run checks for the selected toolchain target.
+make memcheck              # Native GNU Core/Lua Valgrind gate, reusing ordinary binaries.
+make qemu-smoke TARGET=armhf-linux-musl  # Three basic checks; no fuzzing.
+make fuzz-smoke            # Seed replay and a 10-second native AFL++ campaign.
+make fuzz FUZZ_SECONDS=300 # Longer native campaign; same instrumented producer.
+make verify-all CONFIG=release # One matrix build followed by all declared gates.
+make prerelease            # Release preparation; no clean, signing, tags or publication.
+make release-check         # Read-only default-branch/signature/exact-tag validation.
 make install               # Install to owned build/install/<target>/debug by default.
 make format-check          # Check project sources; excludes pristine/patched Kore.
 make prepare-kore          # Source preparation only; no compiler or SDK acquisition.
@@ -49,6 +56,11 @@ The [Lua product](lua.md) uses its own `build/debug/lua/compile_commands.json`;
 Run `make lua` once to prepare those installed public SDK inputs before editing
 the binding. Core C headers/installations remain independent of Lua.
 
+Lua provider SDKs have one Release producer per target under
+`build/<target>/release/lua-deps/` (default GNU: `build/release/lua-deps/`). Both
+Core configurations reuse those dependency bytes. Switching Core configuration
+does not replace shared SDKs with differently configured Lua providers.
+
 `make lua-package` needs GNU tar, gzip, zip and touch. It stages only the Lua
 facade/binding and their declared build inputs from `lua/source-manifest.txt`.
 The three products and `lua-rotmos-<version>-CHECKSUMS` are written to `dist/`;
@@ -72,16 +84,73 @@ Darwin. `make build TARGET=<target> CONFIG=release` selects one concrete build;
 default selected target. Prepare SDKs with `make deps TARGET=<target>` before
 direct preset configuration. Linux uses pinned Bootlin collections; Darwin uses
 the selected Apple tools on macOS or approved osxcross on Linux. Discovery never
-acquires a compiler or falls back to a host compiler. Runtime checks execute only
-when the selected target matches the execution host; other configurations supply
-compile/link evidence. The [contract](server-api-spec.md) defines runtime/artifact
+acquires a compiler or falls back to a host compiler. Full runtime suites execute
+when the selected target matches the execution host. The four ARM Linux targets
+also have an explicit, limited QEMU smoke gate; Darwin cross builds supply
+compile/link/artifact evidence. The [contract](server-api-spec.md) defines runtime/artifact
 acceptance and the implementation cadence.
+
+## Verification profiles and reuse
+
+The full local matrix requires x86_64 Linux, approved osxcross, Valgrind,
+`qemu-arm`, `qemu-aarch64`, and the skill-pinned AFL++ GCC-plugin collection.
+Provision missing AFL++ explicitly with `make fuzz-toolchain`; normal discovery
+never downloads or substitutes host compilers. Git release-contract fixtures
+also require `ssh-keygen`; their temporary keys and refs stay under `build/`.
+
+| Profile | Scope |
+| --- | --- |
+| Native plain | Full GNU/musl Core and Lua suites, installed consumers and source reconstruction. Release test assertions remain enabled. |
+| Native memory | Twelve Core cases and eight installed Lua cases, including both loading modes and custom decoding of spilled bodies, through Valgrind. Invalid memory/uninitialized uses and definite/indirect leaks fail. Logs are per process; no blanket suppressions. |
+| ARM QEMU | Three cases per target: wide-count/MIME/basic HTTP lifecycle and Lua preload/dynamic loading with basic JSON and inert routes. No full runtime suite, Valgrind or fuzzing. |
+| Native fuzz | Owned proxy HTTP/chunk framing, WebSocket handshake/frame, route/range/ETag parsers. Instrumented C89 sources reuse the installed GNU Release SDK for support code. Seed replay, coverage-map presence, nonzero executions and zero saved crashes/hangs are required. |
+
+`make verify-all` builds each selected configuration once through `lua-all`,
+then checks its existing binaries. Host-tool checks run once. Native SDK tests
+preserve and verify the final archive separately from their corruption fixtures;
+cross SDKs get their own final-byte and relocated-consumer checks. No check invokes
+another full matrix or cleans matching Core/Lua products. The default Debug/editor build
+and the optimized Release build are distinct inputs, not interchangeable proof.
+
+Installed reference consumers use a CTest preparation fixture and separate
+static/shared execution cases, retaining consumer objects and unchanged SDK
+timestamps between invocations. The original install prefix is unavailable while
+they configure, link and execute against the relocated SDK. Each executed program
+has its own bounded deadline and diagnostic; preparation no longer shares one
+timeout with the entire execution inventory. JSON cases share this producer.
+
+There is one instrumented producer at `build/release/fuzz/`, including its clangd
+database, shared by smoke and longer campaigns. The smoke budget is 10 seconds;
+`make fuzz` defaults to 300 seconds. AFL's own queue resumes within the selected
+campaign directory. Saved findings fail the command and remain available for
+reproduction. The harness is non-dumpable; no host core handler, CPU policy or
+affinity is changed. Fuzz and memory tools never run through QEMU or on macOS.
+Resume refuses unresolved saved crashes/hangs before AFL can rotate their counts.
 
 Some user-mode QEMU builds return `ENOSYS` for `get_robust_list`; that prevents
 preparation of the required robust shared autoblock lock. Those emulated runs
 can prove log transport but cannot supply autoblock runtime evidence. Use a
 Linux execution environment with robust-list support for that check; the
 library retains its worker-death recovery requirement.
+
+## Version and release identity
+
+An owned Git checkout uses one exact lightweight `vX.Y.Z` tag on HEAD,
+an explicit `CANDIDATE_VERSION=X.Y.Z` preparation override, or `0.0.0`.
+Annotated/symbolic and ambiguous release tags are rejected. A checked-in VERSION
+is not consulted. Lua source archives receive VERSION and RELEASE_MANIFEST;
+extracted builds validate those bytes and ignore an enclosing checkout's Git
+identity. Both products and their source/installed consumers share this rule.
+
+`make prerelease` incrementally completes the Release matrix without publishing.
+`make release-local` first requires the resolved default branch, a clean committed
+tree, a verified signed HEAD, its exact lightweight tag and no candidate override.
+Only then does it clean once, run the complete Release gate and copy verified
+Core/Lua products to `dist/release-vX.Y.Z/`. Its complete CHECKSUMS inventory and
+the manifest's SHA-256 are reported. Existing final output is not overwritten.
+These commands never sign, create active release refs, push or publish; branch
+integration, signing/tagging and publication retain the lifecycle's operator
+authorization boundary.
 
 ## Source ownership
 

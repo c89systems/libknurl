@@ -5,3 +5,8 @@ If:
   PathMatch: (src/lua/.*|lua/include/.*|tests/lua/.*)
 CompileFlags:
   CompilationDatabase: build/debug/lua
+---
+If:
+  PathMatch: tests/fuzz/.*
+CompileFlags:
+  CompilationDatabase: build/release/fuzz

@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 if(NOT CMAKE_TOOLCHAIN_FILE OR NOT ROTMOS_TARGET)
   message(FATAL_ERROR "Select the lifecycle toolchain and concrete ROTMOS_TARGET; use make lua")
 endif()
-file(STRINGS ../VERSION rotmos_version LIMIT_COUNT 1)
+include(../cmake/Version.cmake)
+rotmos_version("${CMAKE_CURRENT_SOURCE_DIR}/.." rotmos_version)
 project(rotmos_lua VERSION "${rotmos_version}" LANGUAGES C)
 set(CMAKE_C90_STANDARD_COMPILE_OPTION "-std=c89")
 option(BUILD_TESTING "Build repository Lua binding tests" OFF)
@@ -57,6 +58,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/rotmos_luaConfig.cmake" "${CMAKE_CURR
 if(BUILD_TESTING)
   if(ROTMOS_TARGET STREQUAL "x86_64-linux-gnu")
     add_test(NAME rotmos.lua-package COMMAND "${CMAKE_COMMAND}"
+      "-DROTMOS_CANDIDATE_VERSION=${ROTMOS_CANDIDATE_VERSION}"
       "-DROTMOS_ROOT=${rotmos_root}" "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/package"
       -P "${rotmos_root}/tests/LuaPackage.cmake")
     set_tests_properties(rotmos.lua-package PROPERTIES TIMEOUT 15)
@@ -64,19 +66,19 @@ if(BUILD_TESTING)
   add_library(rotmos_provider_fixture MODULE ../tests/lua/providers.c)
   set_target_properties(rotmos_provider_fixture PROPERTIES PREFIX "" SUFFIX ".so"
     C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden)
-  target_compile_options(rotmos_provider_fixture PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes)
+  target_compile_options(rotmos_provider_fixture PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -UNDEBUG)
   target_compile_definitions(rotmos_provider_fixture PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   target_link_libraries(rotmos_provider_fixture PRIVATE rotmos::lua)
   add_library(rotmos_acme_fixture MODULE ../tests/lua/acme.c ../tests/acme-ca.c)
   set_target_properties(rotmos_acme_fixture PROPERTIES PREFIX "" SUFFIX ".so"
     C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden)
-  target_compile_options(rotmos_acme_fixture PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes)
+  target_compile_options(rotmos_acme_fixture PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -UNDEBUG)
   target_compile_definitions(rotmos_acme_fixture PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   target_link_libraries(rotmos_acme_fixture PRIVATE rotmos::lua cpkt::openssl_ssl_shared lonejson::lonejson)
   foreach(mode preload dynamic)
     add_executable(rotmos_lua_${mode}_host ../tests/lua/host.c ../tests/lua/events.c)
     set_target_properties(rotmos_lua_${mode}_host PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
-    target_compile_options(rotmos_lua_${mode}_host PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes)
+    target_compile_options(rotmos_lua_${mode}_host PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -UNDEBUG)
     target_compile_definitions(rotmos_lua_${mode}_host PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
     target_compile_definitions(rotmos_lua_${mode}_host PRIVATE "ROTMOS_LONEJSON_LUA_PREFIX=\"${ROTMOS_SDK_ROOT}/lonejson-lua\"")
     target_compile_definitions(rotmos_lua_${mode}_host PRIVATE "ROTMOS_PSLOG_LUA_PREFIX=\"${ROTMOS_SDK_ROOT}/pslog-lua\"")
@@ -173,7 +175,8 @@ if(BUILD_TESTING)
       "-DSCRIPT=${rotmos_root}/tests/lua/acme.lua" "-DWORKSPACE=${CMAKE_CURRENT_BINARY_DIR}/tests/acme"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
     set_tests_properties(rotmos.lua-acme-${mode} PROPERTIES TIMEOUT 10)
-    if(NOT ROTMOS_TARGET MATCHES "^x86_64-linux-(gnu|musl)$" OR NOT CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    if(NOT CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME OR
+        NOT CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL CMAKE_SYSTEM_PROCESSOR)
       set_tests_properties(rotmos.lua-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-config-${mode} PROPERTIES DISABLED TRUE)
       set_tests_properties(rotmos.lua-body-upload-${mode} PROPERTIES DISABLED TRUE)
@@ -201,6 +204,7 @@ if(BUILD_TESTING)
     "-DROTMOS_ROOT=${rotmos_root}" "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/rock-consumer"
     "-DROTMOS_TARGET=${ROTMOS_TARGET}" "-DROTMOS_CORE_PREFIX=${ROTMOS_CORE_PREFIX}"
     "-DROTMOS_SDK_ROOT=${ROTMOS_SDK_ROOT}" "-DHOST=${source_consumer_host}"
+    "-DROTMOS_CANDIDATE_VERSION=${ROTMOS_CANDIDATE_VERSION}"
     -P "${rotmos_root}/tests/LuaRockConsumer.cmake")
   set_tests_properties(rotmos.lua-source-consumer PROPERTIES TIMEOUT 60)
 endif()

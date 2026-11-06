@@ -23,7 +23,13 @@ file(SHA256 "${output}/${package}.tar.gz" second)
 if(NOT first STREQUAL second)
   message(FATAL_ERROR "SDK package depends on staging timestamps/umask")
 endif()
-run("${CMAKE_COMMAND}" "-DBUILD_DIR=${BUILD_DIR}" "-DOUTPUT_DIR=${output}" -P "${SDK_ROOT}/cmake/VerifySDK.cmake")
+# Keep the final rehearsal bytes intact while negative cases mutate their own
+# copy. Verify the final path once, including its relocated consumers.
+file(MAKE_DIRECTORY "${BUILD_DIR}/packages")
+foreach(name "${package}.tar.gz" "${package}-BINARY-CHECKSUMS")
+  configure_file("${output}/${name}" "${BUILD_DIR}/packages/${name}" COPYONLY)
+endforeach()
+run("${CMAKE_COMMAND}" "-DBUILD_DIR=${BUILD_DIR}" "-DOUTPUT_DIR=${BUILD_DIR}/packages" -P "${SDK_ROOT}/cmake/VerifySDK.cmake")
 # The public verifier must reject altered final bytes before extraction/build.
 file(APPEND "${output}/${package}.tar.gz" "modified")
 execute_process(COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${BUILD_DIR}" "-DOUTPUT_DIR=${output}"
@@ -60,6 +66,13 @@ file(SHA256 "${readme}" after)
 set(inventory "${fixture}/${package}/share/rotmos/RELEASE_MANIFEST")
 file(READ "${inventory}" records)
 string(REPLACE "${before}  share/rotmos/README.md" "${after}  share/rotmos/README.md" records "${records}")
+file(WRITE "${inventory}" "${records}")
+reject_bytes("Private path/instrumentation")
+file(READ "${readme}" bytes)
+string(REPLACE "/home/fixture/private-checkout" "__afl_area_ptr" bytes "${bytes}")
+file(WRITE "${readme}" "${bytes}")
+file(SHA256 "${readme}" afl_digest)
+string(REPLACE "${after}  share/rotmos/README.md" "${afl_digest}  share/rotmos/README.md" records "${records}")
 file(WRITE "${inventory}" "${records}")
 reject_bytes("Private path/instrumentation")
 # Remove the intentionally corrupt fixture instead of leaving a candidate.

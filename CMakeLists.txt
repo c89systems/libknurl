@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.24)
 include(cmake/OwnedPaths.cmake)
 rotmos_require_owned_path("${CMAKE_BINARY_DIR}" "Build directory")
+if(ROTMOS_AFL)
+  message(FATAL_ERROR "AFL instrumentation belongs to tests/fuzz, never the shipped Core SDK")
+endif()
 if(NOT CMAKE_TOOLCHAIN_FILE)
   message(FATAL_ERROR "Select a concrete lifecycle toolchain target with make build or a CMake preset")
 endif()
-file(STRINGS VERSION rotmos_version LIMIT_COUNT 1)
+include(cmake/Version.cmake)
+rotmos_version("${CMAKE_CURRENT_SOURCE_DIR}" rotmos_version)
 project(rotmos VERSION "${rotmos_version}" LANGUAGES C CXX)
 include(CTest)
 include(GNUInstallDirs)
@@ -20,6 +24,10 @@ function(rotmos_c89 target)
     "$<$<COMPILE_LANGUAGE:C>:-std=c89;-Wstrict-prototypes;-Wmissing-prototypes>"
     "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
     "-ffile-prefix-map=${CMAKE_BINARY_DIR}=build")
+  get_target_property(kind ${target} TYPE)
+  if(kind STREQUAL "EXECUTABLE")
+    target_compile_options(${target} PRIVATE -UNDEBUG)
+  endif()
 endfunction()
 
 function(rotmos_local_runtime target)
@@ -142,6 +150,12 @@ endif()
 include(cmake/SDK.cmake)
 
 if(BUILD_TESTING)
+  add_executable(rotmos_target_smoke tests/target-smoke.c)
+  target_link_libraries(rotmos_target_smoke PRIVATE rotmos::shared)
+  rotmos_c89(rotmos_target_smoke)
+  rotmos_local_runtime(rotmos_target_smoke)
+  add_test(NAME rotmos.target-smoke COMMAND rotmos_target_smoke)
+  set_tests_properties(rotmos.target-smoke PROPERTIES TIMEOUT 10)
   add_test(NAME rotmos.sdk-package COMMAND "${CMAKE_COMMAND}"
     "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/SDKPackage.cmake")
   set_tests_properties(rotmos.sdk-package PROPERTIES TIMEOUT 60)
@@ -449,6 +463,16 @@ if(BUILD_TESTING)
   rotmos_c89(rotmos_declarations)
   rotmos_local_runtime(rotmos_declarations)
   add_test(NAME rotmos.declarations COMMAND rotmos_declarations)
+  add_test(NAME lifecycle.version COMMAND "${CMAKE_COMMAND}"
+    "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/version"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/Version.cmake")
+  add_test(NAME lifecycle.failures COMMAND "${CMAKE_COMMAND}"
+    "-DROTMOS_BUILD=${CMAKE_CURRENT_BINARY_DIR}"
+    "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/lifecycle"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/Lifecycle.cmake")
+  set_tests_properties(lifecycle.version lifecycle.failures PROPERTIES TIMEOUT 15)
   add_executable(rotmos_reply_test tests/reply.c)
   target_link_libraries(rotmos_reply_test PRIVATE rotmos::shared)
   rotmos_c89(rotmos_reply_test)
@@ -481,21 +505,21 @@ if(BUILD_TESTING)
   add_test(NAME rotmos.headers.cpp COMMAND rotmos_headers_cpp)
   find_package(Git REQUIRED)
   add_test(NAME rotmos.installed-consumer COMMAND "${CMAKE_COMMAND}"
+    "-DROTMOS_CANDIDATE_VERSION=${ROTMOS_CANDIDATE_VERSION}"
     "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}" "-DROTMOS_BINARY=${CMAKE_CURRENT_BINARY_DIR}"
     "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/consumer"
     "-DTOOLCHAIN=${rotmos_toolchain}" "-DROTMOS_TARGET=${ROTMOS_TARGET}"
     "-DROTMOS_SDK_ROOT=${ROTMOS_SDK_ROOT}"
-    "-DROTMOS_CAN_RUN=${rotmos_can_run}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/InstalledConsumer.cmake")
-  set_tests_properties(rotmos.installed-consumer PROPERTIES TIMEOUT 60)
-  add_test(NAME rotmos.installed-json-consumer COMMAND "${CMAKE_COMMAND}"
-    "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}" "-DROTMOS_BINARY=${CMAKE_CURRENT_BINARY_DIR}"
-    "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/json-consumer"
-    "-DTOOLCHAIN=${rotmos_toolchain}" "-DROTMOS_TARGET=${ROTMOS_TARGET}"
-    "-DROTMOS_SDK_ROOT=${ROTMOS_SDK_ROOT}" "-DROTMOS_CAN_RUN=${rotmos_can_run}"
-    "-DROTMOS_CONSUMER_SURFACES=json;json-runtime;vectis-typed"
-    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/InstalledConsumer.cmake")
-  set_tests_properties(rotmos.installed-json-consumer PROPERTIES TIMEOUT 30)
+  set_tests_properties(rotmos.installed-consumer PROPERTIES TIMEOUT 60 FIXTURES_SETUP installed-sdk)
+  foreach(variant static shared)
+    add_test(NAME "rotmos.installed-consumer.${variant}" COMMAND "${CMAKE_COMMAND}"
+      "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+      "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/consumer" "-DVARIANT=${variant}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/RunConsumers.cmake")
+    set_tests_properties("rotmos.installed-consumer.${variant}" PROPERTIES TIMEOUT 60
+      FIXTURES_REQUIRED installed-sdk)
+  endforeach()
   add_test(NAME kore.patch-replay
     COMMAND "${CMAKE_COMMAND}"
       "-DROTMOS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
@@ -526,7 +550,7 @@ if(BUILD_TESTING)
     get_property(runtime_tests DIRECTORY PROPERTY TESTS)
     list(FILTER runtime_tests INCLUDE REGEX "^rotmos\\.")
     list(REMOVE_ITEM runtime_tests rotmos.public-boundary rotmos.installed-consumer
-      rotmos.installed-json-consumer rotmos.sdk-package)
+      rotmos.sdk-package)
     set_tests_properties(${runtime_tests} PROPERTIES DISABLED TRUE)
   endif()
 endif()

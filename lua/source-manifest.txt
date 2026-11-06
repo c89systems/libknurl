@@ -1,6 +1,7 @@
 LICENSE
 VERSION
 cmake/OwnedPaths.cmake
+cmake/Version.cmake
 cmake/toolchains/selected.cmake
 scripts/lifecycle/cpkt-archive-cache.sh
 scripts/lifecycle/cpkt-toolchains.sh

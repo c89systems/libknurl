@@ -61,3 +61,4 @@
 0061-direct-acme-host-persistence.patch
 0062-parent-owned-worker-pid.patch
 0063-markdown-media-types.patch
+0064-sha1-bounded-blocks.patch

@@ -64,6 +64,8 @@ static int single(rotmos_request *request, const char *name, rotmos_bytes *out)
 {
     size_t i;
     int count;
+    out->data = NULL;
+    out->length = 0;
     count = 0;
     for (i = 0; i < request->header_count; ++i)
         if (rotmos_text_equal_case(request->headers[i].name.data, name)) {

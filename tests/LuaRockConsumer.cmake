@@ -2,12 +2,14 @@ cmake_minimum_required(VERSION 3.24)
 include("${ROTMOS_ROOT}/cmake/OwnedPaths.cmake")
 rotmos_require_owned_path("${TEST_ROOT}" "LuaRocks consumer")
 find_program(LUAROCKS luarocks REQUIRED)
-file(STRINGS "${ROTMOS_ROOT}/VERSION" version LIMIT_COUNT 1)
+include("${ROTMOS_ROOT}/cmake/Version.cmake")
+rotmos_version("${ROTMOS_ROOT}" version)
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(MAKE_DIRECTORY "${TEST_ROOT}/tmp" "${TEST_ROOT}/tree")
 if(NOT PRODUCT_DIR)
   set(PRODUCT_DIR "${TEST_ROOT}/products")
   execute_process(COMMAND "${CMAKE_COMMAND}" "-DOUTPUT_DIR=${PRODUCT_DIR}"
+    "-DROTMOS_CANDIDATE_VERSION=${ROTMOS_CANDIDATE_VERSION}"
     -P "${ROTMOS_ROOT}/lua/cmake/Package.cmake" RESULT_VARIABLE result
     OUTPUT_VARIABLE output ERROR_VARIABLE errors)
   if(NOT result EQUAL 0)

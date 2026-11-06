@@ -12,9 +12,11 @@ function(run)
 endfunction()
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(MAKE_DIRECTORY "${TEST_ROOT}/extract" "${TEST_ROOT}/nested")
-file(STRINGS "${ROTMOS_ROOT}/VERSION" version LIMIT_COUNT 1)
+include("${ROTMOS_ROOT}/cmake/Version.cmake")
+rotmos_version("${ROTMOS_ROOT}" version)
 set(package "lua-rotmos-${version}")
 run("${CMAKE_COMMAND}" "-DOUTPUT_DIR=${TEST_ROOT}/products"
+  "-DROTMOS_CANDIDATE_VERSION=${ROTMOS_CANDIDATE_VERSION}"
   -P "${ROTMOS_ROOT}/lua/cmake/Package.cmake")
 file(STRINGS "${TEST_ROOT}/products/${package}-CHECKSUMS" checksums)
 set(expected "${package}.tar.gz" "${package}-1.rockspec" "${package}-1.src.rock")
@@ -33,6 +35,7 @@ if(NOT actual STREQUAL expected)
 endif()
 run("${CMAKE_COMMAND}" -E env TZ=Pacific/Honolulu "${BASH}" -c
   [=[umask 077 && exec "$@"]=] -- "${CMAKE_COMMAND}"
+  "-DROTMOS_CANDIDATE_VERSION=${ROTMOS_CANDIDATE_VERSION}"
   "-DOUTPUT_DIR=${TEST_ROOT}/repeat" -P "${ROTMOS_ROOT}/lua/cmake/Package.cmake")
 file(STRINGS "${TEST_ROOT}/repeat/${package}-CHECKSUMS" repeated)
 if(NOT checksums STREQUAL repeated)

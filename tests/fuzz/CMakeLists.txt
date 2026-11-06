@@ -1,0 +1,36 @@
+cmake_minimum_required(VERSION 3.24)
+set(ROTMOS_AFL TRUE CACHE BOOL "Pinned GCC-plugin instrumentation" FORCE)
+include(../../cmake/Version.cmake)
+get_filename_component(root "../.." ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+rotmos_version("${root}" version)
+project(rotmos_fuzz VERSION "${version}" LANGUAGES C CXX)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+enable_testing()
+include("${root}/cmake/OwnedPaths.cmake")
+rotmos_require_owned_path("${CMAKE_BINARY_DIR}" "Fuzzer build")
+foreach(prefix "${ROTMOS_CORE_PREFIX}" "${ROTMOS_SDK_ROOT}/cpkt" "${ROTMOS_SDK_ROOT}/lonejson" "${ROTMOS_SDK_ROOT}/pslog")
+  list(APPEND CMAKE_PREFIX_PATH "${prefix}")
+  list(APPEND CMAKE_FIND_ROOT_PATH "${prefix}")
+endforeach()
+find_package(rotmos ${version} EXACT CONFIG REQUIRED COMPONENTS static)
+# Instrument the owned parsers, reusing the ordinary installed SDK for support
+# operations. Do not rebuild/instrument Kore or dependency SDKs for this lane.
+add_executable(rotmos_fuzz parsers.c
+  "${root}/src/proxy_framing.c" "${root}/src/proxy_headers.c"
+  "${root}/src/proxy_http.c" "${root}/src/proxy_ws_wire.c"
+  "${root}/src/static_policy.c" "${root}/src/route_path.c"
+  "${root}/src/websocket_frame.c" "${root}/src/websocket.c")
+target_include_directories(rotmos_fuzz PRIVATE "${root}/src")
+target_link_libraries(rotmos_fuzz PRIVATE rotmos::static)
+set_target_properties(rotmos_fuzz PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+target_compile_options(rotmos_fuzz PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -UNDEBUG)
+file(GLOB loaders "${CMAKE_SYSROOT}/lib/ld-linux*.so*")
+list(GET loaders 0 loader)
+target_link_options(rotmos_fuzz PRIVATE "-Wl,--dynamic-linker,${loader}" -Wl,--disable-new-dtags)
+set_target_properties(rotmos_fuzz PROPERTIES BUILD_RPATH "${CMAKE_SYSROOT}/lib;${CMAKE_SYSROOT}/usr/lib;${ROTMOS_SDK_ROOT}/cpkt/lib;${ROTMOS_SDK_ROOT}/lonejson/lib;${ROTMOS_SDK_ROOT}/pslog/lib")
+file(GLOB seeds "${CMAKE_CURRENT_SOURCE_DIR}/corpus/*")
+foreach(seed IN LISTS seeds)
+  get_filename_component(name "${seed}" NAME)
+  add_test(NAME "fuzz.replay.${name}" COMMAND rotmos_fuzz "${seed}")
+  set_tests_properties("fuzz.replay.${name}" PROPERTIES TIMEOUT 5)
+endforeach()
