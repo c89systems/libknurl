@@ -52,7 +52,9 @@ int rl_sse_encode(lua_State *L)
             }
             lua_getfield(L, 1, "retry");
             if (!lua_isnil(L, -1)) {
-                if (!rl_u64(L, -1, &event.retry_ms))
+                if ((!lua_isinteger(L, -1) &&
+                     luaL_testudata(L, -1, RL_COUNT) == NULL) ||
+                    !rl_u64(L, -1, &event.retry_ms))
                     goto invalid;
                 event.has_retry = 1;
             }

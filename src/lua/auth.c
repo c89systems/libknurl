@@ -12,7 +12,7 @@ static int modes(lua_State *L, int index, unsigned int *out)
         *out = 0;
         return 1;
     }
-    if (lua_isinteger(L, index)) {
+    if (lua_isnumber(L, index)) {
         if (!rl_size(L, index, &value) || value > UINT_MAX)
             return 0;
         *out = (unsigned int)value;
@@ -24,7 +24,7 @@ static int modes(lua_State *L, int index, unsigned int *out)
             lua_rawgeti(L, index, (lua_Integer)i + 1);
         else
             lua_pushvalue(L, index);
-        if (lua_isinteger(L, -1)) {
+        if (lua_isnumber(L, -1)) {
             if (!rl_size(L, -1, &value) || value > UINT_MAX)
                 return 0;
             flags |= (unsigned int)value;

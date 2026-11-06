@@ -46,7 +46,7 @@ ok(server:get('/text',function(req)
   return 'hello'
 end))
 ok(server:get('/nil',function() end))
-ok(server:post('/echo',function(req) assert(req.body_size==3);return {status=201,body=req.body} end,{body={mode='buffered',max_bytes=16}}))
+ok(server:post('/echo',function(req) assert(req.body_size==3);return {status=201.0,body=req.body} end,{body={mode='buffered',max_bytes='16.0'}}))
 local group=ok(server:group('/group',{before=function(req) req.group_seen=true end}))
 ok(group:get('/value/:id',function(req)
   assert(req.group_seen and req.query('x')=='' and #req.queries==2)
@@ -55,7 +55,7 @@ end))
 local value,why=server:route{path='/literal/:value',path_kind='literal',handler=function() end}
 assert(value==nil and why.status==rotmos.status.INVALID)
 ok(server:get('/before',function() skipped=skipped+1 end,{before=function() return {status=403,body='blocked'} end,after=function() error('after short circuit') end}))
-ok(server:get('/after',function() return {body='original',headers={['X-First']='one'}} end,{after=function(_,reply) reply.status=202;reply.body='changed';reply.headers['X-After']='yes' end}))
+ok(server:get('/after',function() return {body='original',headers={['X-First']='one'}} end,{after=function(_,reply) reply.status_code=0.0;reply.status='202';reply.body='changed';reply.headers['X-After']='yes' end}))
 ok(server:get('/throw',function() error('expected protected handler error') end))
 ok(server:get('/stream',function()
   local state={n=0}

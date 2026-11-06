@@ -385,7 +385,7 @@ int rl_method_value(lua_State *L, int index, rotmos_http_method *out)
                                   "PROPFIND", "MKCOL",  "COPY", "MOVE"};
     const char *text;
     size_t i, j, length, value;
-    if (lua_isinteger(L, index)) {
+    if (lua_type(L, index) == LUA_TNUMBER) {
         if (!rl_size(L, index, &value) || value > ROTMOS_HTTP_MOVE)
             return 0;
         *out = (rotmos_http_method)value;

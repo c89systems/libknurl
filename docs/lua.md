@@ -20,6 +20,12 @@ and [existing bridge](../../vectis/src/vectis_cli.c), rather than a new server
 framework. The [integration contract](vectis-integration-contract.md) remains
 the complete replacement requirement.
 
+Integer-valued fields use Lua's checked conversion, matching Vectis: exact whole
+floats and numeric strings are accepted within the field's sign/range limits.
+Fractions, nonfinite values and overflow are rejected. Exact unsigned counts
+above Lua's signed range use `rotmos.count`. Method names keep their string
+meaning; SSE retry retains its explicit integer/count requirement.
+
 The [buffered REST facade](rest.md) also lifts Vectis's server-side
 `rotmos.rest.route/group/json/error_response` workflow. [OpenAPI](openapi.md)
 binds `server:openapi_doc/openapi` and route annotations to the same public C

@@ -98,6 +98,7 @@ rotmos_status rl_protect_value(lua_State *, lua_CFunction, void *, int,
 void rl_table_copy(lua_State *, int);
 void rl_push_size(lua_State *, size_t);
 void rl_push_u64(lua_State *, rotmos_u64);
+int rl_integer(lua_State *, int, lua_Integer *);
 int rl_size(lua_State *, int, size_t *);
 int rl_u64(lua_State *, int, rotmos_u64 *);
 int rl_field_size(lua_State *, int, const char *, size_t *);

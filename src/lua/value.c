@@ -56,22 +56,19 @@ rotmos_status rl_callback_error(lua_State *L, int index, rotmos_error *error,
     if (!lua_istable(L, index))
         return error->status;
     rl_field(L, index, "status");
-    if (lua_isinteger(L, -1)) {
-        value = lua_tointeger(L, -1);
+    if (rl_integer(L, -1, &value)) {
         if (value >= ROTMOS_INVALID && value <= ROTMOS_BACKEND)
             error->status = (rotmos_status)value;
     }
     lua_pop(L, 1);
     rl_field(L, index, "source");
-    if (lua_isinteger(L, -1)) {
-        value = lua_tointeger(L, -1);
+    if (rl_integer(L, -1, &value)) {
         if (value >= ROTMOS_ERROR_NONE && value <= ROTMOS_ERROR_XML)
             error->source = (rotmos_error_source)value;
     }
     lua_pop(L, 1);
     rl_field(L, index, "native_code");
-    if (lua_isinteger(L, -1)) {
-        value = lua_tointeger(L, -1);
+    if (rl_integer(L, -1, &value)) {
         if (value >= LONG_MIN && value <= LONG_MAX)
             error->native_code = (long)value;
     }
@@ -164,12 +161,21 @@ int rl_fields(lua_State *L, int index, const char *const *fields, size_t count,
     }
     return 1;
 }
+int rl_integer(lua_State *L, int index, lua_Integer *out)
+{
+    int valid;
+    /* Same exact conversion as Vectis's luaL_checkinteger, returning the
+     * binding's ordinary error result instead of throwing across C owners. */
+    *out = lua_tointegerx(L, index, &valid);
+    return valid;
+}
 int rl_size(lua_State *L, int index, size_t *out)
 {
+    lua_Integer value;
     lua_Unsigned n;
-    if (!lua_isinteger(L, index) || lua_tointeger(L, index) < 0)
+    if (!rl_integer(L, index, &value) || value < 0)
         return 0;
-    n = (lua_Unsigned)lua_tointeger(L, index);
+    n = (lua_Unsigned)value;
     if (n > (lua_Unsigned)(size_t)-1)
         return 0;
     *out = (size_t)n;
@@ -178,14 +184,15 @@ int rl_size(lua_State *L, int index, size_t *out)
 int rl_u64(lua_State *L, int index, rotmos_u64 *out)
 {
     rotmos_u64 *value = luaL_testudata(L, index, RL_COUNT);
+    lua_Integer integer;
     lua_Unsigned n;
     if (value != NULL) {
         *out = *value;
         return 1;
     }
-    if (!lua_isinteger(L, index) || lua_tointeger(L, index) < 0)
+    if (!rl_integer(L, index, &integer) || integer < 0)
         return 0;
-    n = (lua_Unsigned)lua_tointeger(L, index);
+    n = (lua_Unsigned)integer;
     out->high = (unsigned long)(n >> 32);
     out->low = (unsigned long)(n & 0xffffffffUL);
     return 1;

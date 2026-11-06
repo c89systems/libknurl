@@ -344,12 +344,12 @@ static int reply_snapshot(lua_State *L, int index)
         "json",      "xml",         "json_materialized", "xml_materialized",
         "body"};
     int snapshot, i;
+    lua_Integer status;
     index = lua_absindex(L, index);
     lua_newtable(L);
     snapshot = lua_absindex(L, -1);
     lua_getfield(L, index, "status_code");
-    if (lua_isnil(L, -1) ||
-        (lua_isinteger(L, -1) && lua_tointeger(L, -1) == 0)) {
+    if (lua_isnil(L, -1) || (rl_integer(L, -1, &status) && status == 0)) {
         lua_pop(L, 1);
         lua_getfield(L, index, "status");
     }

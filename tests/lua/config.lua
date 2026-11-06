@@ -1,5 +1,22 @@
 local rotmos=require('rotmos')
 local function ok(value,err) assert(value,err and (err.message..' '..err.detail));return value end
+-- Vectis uses Lua's checked integer conversion, including exact floats/text.
+for _,limit in ipairs{32.0,'32','32.0',' 32 '} do
+  local owner=ok(rotmos.server{port=0.0,workers={count='1'},
+    limits={max_connections=limit,default_body_bytes=16.0,hard_body_bytes='32'},
+    timeouts={request_header='5000.0'},supervision={control_fd=-1.0}})
+  local effective=ok(owner:effective_config())
+  assert(effective.workers.count==1 and effective.limits.max_connections==32)
+  assert(effective.limits.default_body_bytes==16 and effective.limits.hard_body_bytes==32)
+  ok(owner:route{path='/integer',method=1.0,handler=function() return 'ok' end})
+  ok(owner:close())
+end
+for _,bad in ipairs{-1,-1.0,0.5,'0.5','-1','9223372036854775808',math.huge,-math.huge,0/0,{},true} do
+  local owner,why=rotmos.server{port=bad}
+  assert(owner==nil and why.status==rotmos.status.INVALID)
+  owner,why=rotmos.server{port=0,limits={default_body_bytes=bad}}
+  assert(owner==nil and why.status==rotmos.status.INVALID)
+end
 local pem=fixture.tls_setup(fixture.root..'/fixture-key.pem')
 local opts={
   profile='production_webserver',start_paused=true,
@@ -66,7 +83,7 @@ local function decision(request)
   if request.resource=='/deny' then return {action='deny',body='A\0B'} end
   return {action='allow',principal='alice'}
 end
-local auth={purpose='route',allowed_modes=0,provider={kind='callback',callback=decision,allowed_modes={1,'bearer'}}}
+local auth={purpose='route',allowed_modes=0.0,provider={kind='callback',callback=decision,allowed_modes={'1.0','bearer'}}}
 for _,path in ipairs{'/allow','/required','/redirect','/deny','/auth-error','/auth-invalid','/auth-getter','/auth-oom'} do
   ok(server:route{path=path,auth=auth,
     before=function(req) assert(req.principal=='alice');req.authorized=true end,

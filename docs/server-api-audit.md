@@ -39,6 +39,12 @@ missing from the C binding, although the C reference adapter already translates
 it. I13 records that correction and its preload/dynamic wire regression. It adds
 no Core API or server mechanism.
 
+A further conversion/failure pass found integer-subtype checks rejecting values
+that Vectis accepts through Lua's checked integer conversion. I14 records the
+shared conversion repair, numeric response/error/zero-alias cases, rejection
+bounds and the preserved strict SSE retry type. Core APIs and ownership rules
+are unchanged.
+
 | Contract family | Implementation and forwarding evidence |
 | --- | --- |
 | Server | `tests/vectis-server.c` translates all 34 baseline fields; `vectis-config.c` covers effective values, host readiness, stop and shutdown. |

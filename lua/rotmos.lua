@@ -310,7 +310,7 @@ local function sse(self,opts)
     local state
     if opts.open then state=opts.open(req) end
     local status=opts.status_code
-    if status==nil or status==0 then status=opts.status or 200 end
+    if status==nil or tonumber(status)==0 then status=opts.status or 200 end
     return {status_code=status,content_type=opts.content_type or 'text/event-stream; charset=utf-8',headers=headers,
       stream_source={
         read=function(capacity)

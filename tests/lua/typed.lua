@@ -31,9 +31,9 @@ good,err=rotmos.json.array_each{schema=text,data='[{}]',callback=function() erro
 assert(good==nil and err.status==rotmos.status.INVALID)
 local callbacks=0
 good,err=rotmos.json.array_each{schema=text,data=array_input,selector='items',callback=function()
-  callbacks=callbacks+1;return nil,{status=rotmos.status.IO,message='item failure'}
+  callbacks=callbacks+1;return nil,{status=tostring(rotmos.status.IO)..'.0',source=2.0,native_code='-7',message='item failure'}
 end}
-assert(good==nil and err.status==rotmos.status.IO and err.message=='item failure' and callbacks==1)
+assert(good==nil and err.status==rotmos.status.IO and err.source==2 and err.native_code==-7 and err.message=='item failure' and callbacks==1)
 local awaiting=ok(rotmos.source{read=function() return nil,rotmos.AGAIN end})
 good,err=rotmos.json.array_each{schema=text,source=awaiting,callback=function() error('unready item') end}
 assert(good==nil and err.status==rotmos.status.STATE);ok(awaiting:close())

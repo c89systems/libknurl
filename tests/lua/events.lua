@@ -5,7 +5,7 @@ local function state(value,err) assert(value==nil and err.status==rotmos.status.
 assert(ok(rotmos.sse_encode{data='A\0B\nC'})=='data: A\0B\ndata: C\n\n')
 assert(ok(rotmos.sse_encode{retry=rotmos.count('18446744073709551615')})=='retry: 18446744073709551615\n\n')
 assert(ok(rotmos.sse_encode(setmetatable({frame='raw'},{__index=function() error('unselected event getter') end}),3))=='raw')
-for _,event in ipairs{{retry=-1},{retry=0.5},{data={}},{frame={}}} do
+for _,event in ipairs{{retry=-1},{retry=0.5},{retry=1.0},{retry='1'},{data={}},{frame={}}} do
   local value,err=rotmos.sse_encode(event);assert(value==nil and err.status==rotmos.status.INVALID)
 end
 local value,err=rotmos.sse_encode('too big',2);assert(value==nil and err.status==rotmos.status.LIMIT)
@@ -63,7 +63,7 @@ local server=ok(rotmos.server{
   on_worker_exit=function() assert(opens==6 and closes==6 and pauses==2 and writes==1 and sse_closed==2) end,
 })
 state(server:now());state(server:defer(function() end))
-ok(server:sse{path='/sse',status_code=0,status=200,headers={{name='X-SSE',value='copied'}},
+ok(server:sse{path='/sse',status_code='0.0',status=200.0,headers={{name='X-SSE',value='copied'}},
   open=function(req) retained_request=req;return {n=0,request=req} end,
   read=function(s,capacity)
     assert(capacity>0)

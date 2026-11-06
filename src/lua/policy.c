@@ -479,9 +479,8 @@ static int supervision(lua_State *L, int index,
     config->userdata = s;
     rl_field(L, index, "control_fd");
     if (!lua_isnil(L, -1)) {
-        if (!lua_isinteger(L, -1))
+        if (!rl_integer(L, -1, &fd))
             goto invalid;
-        fd = lua_tointeger(L, -1);
         if (fd < -1 || fd > INT_MAX)
             goto invalid;
         config->control_fd = (int)fd;

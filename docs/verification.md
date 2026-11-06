@@ -90,6 +90,30 @@ not change. Their prior Core runtime, header and seven-target SDK artifact gates
 remain applicable. Selected Lua builds retain `sweep2-*.log` evidence. No further
 mismatch was found in the reviewed paths; actual Vectis cutover remains unverified.
 
+## Integer conversion sweep
+
+On 2026-11-06, the conversion/failure pass after `9f7689a` found Lua integer-subtype
+checks rejecting Vectis's accepted exact floats and numeric strings. Six
+configuration/foundation/typed preload and dynamic cases failed before the fix.
+I14 in [KORE.md](../KORE.md) records the shared checked conversion and preserved
+field bounds, error metadata and zero-status aliases. SSE retry keeps its explicit
+integer/count requirement; its float/text rejection and full-width count cases
+remain covered.
+
+GNU passed all 36 Lua checks and musl all 35, including source-rock reconstruction;
+the target-independent source-package check runs on GNU. All seven selected
+toolchains built the binding, embedded facade and fixture hosts against installed
+public SDKs in strict C89. The other five targets have compile/link evidence only.
+Formatting and diff checks passed. Selected Lua builds retain
+`conversion-before.log`, `conversion-after.log`, `conversion-build.log` and
+`conversion-tests.log` as applicable.
+
+Core source, public C APIs/ABI, dependency pins, pristine Kore and its patches are
+unchanged; their previous gates are reused. This corrects an input-conversion
+contract, without adding a server mechanism or a second parser. Vectis remains
+read-only at the declared baseline, and actual consumer cutover is still a
+separate verification gate.
+
 ## Initial development snapshot
 
 | Gate | Observed result |
