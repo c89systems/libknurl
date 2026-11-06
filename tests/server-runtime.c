@@ -254,12 +254,25 @@ static int client(unsigned short port)
                    "gEt /items/a%2Bb?x=first&x=second&bare&empty=&=skip&&z=a+b "
                    "HTTP/1.1\r\nX-First: 1\r\nHost: localhost\r\nX-Repeat: "
                    "first\r\nX-Repeat: second\r\nConnection: close\r\n\r\n",
-                   200, "metadata", NULL) == 0);
+                   200, "metadata", "server: fixture-http\r\n") == 0);
     CHECK(exchange(port,
                    "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: "
                    "7\r\nConnection: close\r\n\r\npayload",
                    200, "payload", NULL) == 0);
     CHECK(exchange(port, REQUEST("/empty"), 204, "", NULL) == 0);
+    CHECK(exchange(port,
+                   "GET /empty HTTP/1.1\r\nHost: localhost\r\nContent-Length: "
+                   "0\r\nConnection: close\r\n\r\n",
+                   204, "", NULL) == 0);
+    CHECK(exchange(port,
+                   "POST /empty HTTP/1.1\r\nHost: localhost\r\nContent-Length: "
+                   "1\r\nConnection: close\r\n\r\nx",
+                   413, "request body is not allowed for this route",
+                   NULL) == 0);
+    CHECK(exchange(port,
+                   "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: "
+                   "1025\r\nConnection: close\r\n\r\n",
+                   413, "request body exceeds route limit", NULL) == 0);
     CHECK(exchange(port, REQUEST("/failure"), 400, "", NULL) == 0);
     CHECK(exchange(port, REQUEST("/absent"), 404, "", NULL) == 0);
     CHECK(exchange(port,
@@ -465,6 +478,9 @@ int main(void)
     fixture.config.workers.affinity_disabled = 1;
     fixture.config.workers.shutdown_timeout_ms = 1000;
     fixture.config.http.backend_quiet = 1;
+    fixture.config.name = "fixture-instance";
+    fixture.config.http.server_header = "fixture-http";
+    fixture.config.limits.hard_body_bytes.low = 1024;
     fixture.config.start_paused = 1;
     fixture.config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
     fixture.config.callbacks.on_process_start = process_start;
@@ -478,6 +494,14 @@ int main(void)
     fixture.config.callbacks.userdata = &fixture;
     CHECK(rotmos_server_new(&fixture.config, &server, &error) == ROTMOS_OK);
     router = rotmos_server_router(server);
+    rotmos_route_config_init(&route);
+    route.path = "/over-hard-limit";
+    route.handler = handler;
+    route.userdata = "echo";
+    rotmos_body_policy_init_buffered(&route.body);
+    route.body.max_bytes.low = 1025;
+    CHECK(rotmos_router_route(router, &route, NULL, &error) == ROTMOS_INVALID &&
+          rotmos_router_route_count(router) == 0);
     for (i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
         rotmos_route_config_init(&route);
         route.path = paths[i];
@@ -503,6 +527,7 @@ int main(void)
     route.handler = handler;
     route.userdata = "chain";
     CHECK(rotmos_route_group_route(group, &route, NULL, &error) == ROTMOS_OK);
+    CHECK(rotmos_server_validate(server, &error) == ROTMOS_OK);
     CHECK(sigaction(SIGTERM, NULL, &before_signal) == 0);
     for (iteration = 0; iteration < 6; ++iteration) {
         fixture.phase = fixture.worker_phase = 0;

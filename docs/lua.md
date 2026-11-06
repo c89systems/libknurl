@@ -317,6 +317,11 @@ overrides. `server:effective_config()` copies normalized values and requested
 deadlines; editing the snapshot cannot change the server. It includes configured
 TLS memory bytes, so callers control how that configuration is handled.
 
+Set `http={server_header="vectis"}` when constructing the server to configure
+the emitted `Server` header (C: `config.http.server_header`). The value defaults
+to `"rotmos"`, is copied, and accepts 1..53 bytes valid in an HTTP header value.
+The top-level `name` identifies the instance independently.
+
 Listeners accept `kind="http"`, `"https"` or `"redirect"`, separate bind/presented
 ports, `redirect_https_port` and a one-based `identity_index`. `tls.identities`
 contains explicit domains and manual bundle or certificate/private-key inputs,

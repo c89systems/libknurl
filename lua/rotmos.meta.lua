@@ -472,7 +472,7 @@
 ---@field socket_backlog? rotmos.IntegerInput # Listener accept backlog.
 ---@field request_process_budget_ms? rotmos.IntegerInput # Owner-loop request-processing budget in milliseconds.
 ---@field backend_quiet? boolean # Nonzero selects quiet backend logging.
----@field server_header? string # Copied Server response-header value.
+---@field server_header? string # Copied Server response-header value; default "rotmos", independent of instance name (valid HTTP header value, 1..53 bytes).
 ---@field access_log_path? string # Independent file access-log path; unaffected by structured logger disable.
 ---@field hsts_max_age_seconds? rotmos.IntegerInput # Strict-Transport-Security max-age in seconds.
 ---@field backend_curl_timeout_seconds? rotmos.IntegerInput # Kore backend curl timeout, distinct from reverse-proxy deadlines.

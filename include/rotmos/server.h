@@ -217,7 +217,9 @@ typedef struct rotmos_timeout_config {
  * applying overrides.
  */
 typedef struct rotmos_http_config {
-    /** Copied Server response-header value. */
+    /** Copied Server response-header value; defaults to "rotmos", independently
+     * of the instance name. Must be a valid HTTP header value of 1..53 bytes.
+     */
     const char *server_header;
     /** Independent file access-log path; unaffected by structured logger
      * disable.
@@ -680,7 +682,7 @@ typedef struct rotmos_proxy_resource_config {
  * applying overrides.
  */
 typedef struct rotmos_server_config {
-    /** Name of this declaration, field or listed resource. */
+    /** Copied instance name; independent of http.server_header. */
     const char *name;
     /** Listener declarations copied during inert server construction. */
     const rotmos_listener_config *listeners;

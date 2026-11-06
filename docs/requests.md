@@ -29,8 +29,11 @@ separately and closes; it cannot turn unread input into EOF or reuse that
 connection. Upgrade/takeover dispositions require their installed capability.
 
 Body policies resolve zero limits through the configured default and enforce a
-positive hard server ceiling. JSON, BUFFERED and MATERIALIZED retain completed
-input up to a memory threshold, then spill unless `disk_spool_disabled` is set.
+positive hard server ceiling. NONE rejects positive body lengths and does not
+compare its unused inherited budget with that ceiling; bodyless routes work
+when the hard ceiling is smaller than the default body budget.
+JSON, BUFFERED and MATERIALIZED retain completed input up to a memory threshold,
+then spill unless `disk_spool_disabled` is set.
 Zero threshold selects min(limit, 256 KiB); an explicit threshold above the limit
 is invalid. Disabled spilling accepts fitting input and rejects input that
 crosses the threshold with 413, matching Vectis. Spill failures also produce 413

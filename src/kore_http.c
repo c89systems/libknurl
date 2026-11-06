@@ -196,7 +196,8 @@ static rotmos_status admit(rotmos_request *request, rotmos_error *error)
     if (!rotmos_u64_valid(policy->max_bytes))
         return rotmos_fail(error, ROTMOS_INVALID, "request_plan",
                            "invalid body limit words");
-    if (hard.high || hard.low) {
+    /* NONE never admits payload bytes; its inherited budget is unused. */
+    if (policy->mode != ROTMOS_BODY_NONE && (hard.high || hard.low)) {
         (void)rotmos_u64_compare(policy->max_bytes, hard, &order, NULL);
         if (order > 0)
             return rotmos_fail(
