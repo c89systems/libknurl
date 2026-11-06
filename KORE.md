@@ -67,6 +67,23 @@ of the enclosing implementation batch. The final matrix results are recorded bel
 | K17 | Access-log formatting failed to subtract its record header from remaining capacity; an absent User-Agent was also passed to string formatting. | [0057](patches/kore/0057-bounded-access-and-worker-logs.patch) accounts for the header and supplies the missing-field value. | [log-backend.c](tests/log-backend.c), [policy-logs-runtime.c](tests/policy-logs-runtime.c). |
 | K18 | Parent access-log drain could spin forever on a lock left held by a killed worker. | [0057](patches/kore/0057-bounded-access-and-worker-logs.patch) uses nonblocking lock acquisition and avoids an unnecessary empty forced buffer. | [log-backend.c](tests/log-backend.c) deliberately leaves an unfinished locked record. |
 
+## Upstream comparison: 2026-11-06
+
+Candidate `c5fe59f521bdc1f2c486b5d8cc90227d72fcc628` is three commits after the
+current pin. These upstream fixes are not imported into the tracked snapshot:
+
+| ID | Cause and upstream correction | Scope and evidence |
+| --- | --- | --- |
+| K19 | New HTTP requests were inserted at the head of the global request queue ahead of older pending requests. [c5a1e77](https://git.kore.io/kore/commit/c5a1e77535e3073f7e530d2dab2074078162e4f8), dated 2026-10-03, inserts them at the tail. | The selected backend compiles this HTTP scheduler. After replaying our complete stack on the candidate, `src/http.c` differs from the current patched tree only at that insertion. Source comparison establishes the change; an isolated runtime ordering regression has not been run. |
+| K20 | PostgreSQL connection loss could strand asynchronous work or recycle a broken connection. [315c508](https://git.kore.io/kore/commit/315c5085b79c067358960f4b88bc5136999edfe3), dated 2026-11-01, repairs notification, cleanup and connection reuse. | Kore PostgreSQL is excluded from our selected backend. No librotmos runtime defect or PostgreSQL runtime verification is claimed. Our C89 queue-declaration patch addresses a separate concern. |
+
+The 2026-11-04 commit adds `kore_task_channel_pending`, a feature in Kore's task
+module, which is also excluded from our selected backend. It supersedes no patch.
+All 62 ordered patches replay unchanged onto the candidate in disposable
+`build/kore-status/` trees. None is superseded, wholly or partially, by these
+three commits. Replay is source-preparation evidence only; the candidate still
+needs build/runtime qualification before an upgrade is declared verified.
+
 ## ACME defects and recovery
 
 These affect the imported/patched ACME implementation. Some paths were replaced
