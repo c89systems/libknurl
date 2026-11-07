@@ -1,5 +1,16 @@
 # Extraction verification
 
+## XML rejection fixture correction
+
+The XML wire fixture now permits terminal ECONNRESET for its header-time auth
+and body-limit rejections even when the client sent the complete request body.
+It still requires the full expected HTTP status, framing and body first. Normal
+responses and unrelated socket errors retain their strict checks. Added late-body
+cases wait for rejection headers before writing, exercising unread input without
+microsecond sleeps. The XML runtime check passes on GNU Debug/Release and musl
+Debug; only the fixture executable was rebuilt. Formatting and diff checks pass.
+Logs are `build/xml-reset-*.log`. Server behavior and release artifacts are unchanged.
+
 ## Artifact privacy follow-up
 
 Core and Lua verification now share byte checks for known workstation paths,

@@ -256,7 +256,7 @@ static int line(int fd, char *out, size_t bound)
 }
 static int exchange(unsigned short port, const char *path, const char *body,
                     int code, const char *expected, int before_header,
-                    int withheld)
+                    int withheld, int late_body)
 {
     struct sockaddr_in address;
     struct timeval timeout;
@@ -264,7 +264,9 @@ static int exchange(unsigned short port, const char *path, const char *body,
     char *result, *length;
     size_t used, total, count;
     ssize_t n;
-    int fd;
+    int fd, early_rejection;
+    early_rejection = strcmp(path, "/deny") == 0 || strcmp(path, "/limit") == 0;
+    CHECK(!late_body || early_rejection);
     fd = socket(AF_INET, SOCK_STREAM, 0);
     CHECK(fd >= 0);
     timeout.tv_sec = 3;
@@ -298,7 +300,7 @@ static int exchange(unsigned short port, const char *path, const char *body,
             return 0;
         }
         CHECK(write_all(fd, body + prefix, strlen(body) - prefix) == 0);
-    } else
+    } else if (!late_body)
         CHECK(write_all(fd, body, strlen(body) - (withheld ? 1 : 0)) == 0);
     used = 0;
     metadata[0] = 0;
@@ -313,6 +315,14 @@ static int exchange(unsigned short port, const char *path, const char *body,
     CHECK(strstr(metadata, request) != NULL);
     if (before_header)
         CHECK(strstr(metadata, "X-Before: yes") != NULL);
+    if (late_body) {
+        /* Exercise a body arriving after rejection, without a timing delay.
+         * The peer may already have closed, but its full reply is still
+         * required. */
+        n = write(fd, body, strlen(body));
+        CHECK(n == (ssize_t)strlen(body) ||
+              (n == -1 && (errno == EPIPE || errno == ECONNRESET)));
+    }
     result = malloc(131100);
     CHECK(result != NULL);
     total = 0;
@@ -342,8 +352,11 @@ static int exchange(unsigned short port, const char *path, const char *body,
         fprintf(stderr, "%s body: %s\n", path, result);
     CHECK(strcmp(result, expected) == 0);
     n = read(fd, ending, 1);
-    /* Rejecting an unfinished upload may reset the unread TCP input. */
-    CHECK(n == 0 || (withheld > 0 && n == -1 && errno == ECONNRESET));
+    /* Header rejection can leave unread input even if the whole body was sent.
+     * Status, framing and body have already been checked; only the terminal
+     * reset is permitted here, not truncated replies or other socket errors. */
+    CHECK(n == 0 || ((withheld > 0 || early_rejection) && n == -1 &&
+                     errno == ECONNRESET));
     free(result);
     (void)close(fd);
     return 0;
@@ -357,39 +370,44 @@ static int client(unsigned short port)
     strcat(live, "</message><ignored>");
     memset(live + strlen(live), ' ', 8192);
     strcat(live, "</ignored></doc>");
-    CHECK(exchange(port, "/live", live, 0, "", 0, -1) == 0);
-    CHECK(exchange(port, "/live", live, 200, "parsed live", 0, 0) == 0);
+    CHECK(exchange(port, "/live", live, 0, "", 0, -1, 0) == 0);
+    CHECK(exchange(port, "/live", live, 200, "parsed live", 0, 0, 0) == 0);
     CHECK(exchange(port, "/provider-fail",
-                   "<doc><message>unused</message></doc>", 500, "", 0, 0) == 0);
+                   "<doc><message>unused</message></doc>", 500, "", 0, 0,
+                   0) == 0);
     /* A wrong root is rejected without receiving the declared final byte. */
     memset(live, 0, 50000);
     strcpy(live, "<wrong>");
     memset(live + strlen(live), ' ', 8192);
     strcat(live, "</wrong>");
-    CHECK(exchange(port, "/api/echo", live, 400, "", 1, 1) == 0);
+    CHECK(exchange(port, "/api/echo", live, 400, "", 1, 1, 0) == 0);
     free(live);
     CHECK(exchange(port, "/api/echo",
                    "<doc><message>hello &amp; XML</message></doc>", 200,
-                   "<doc><message>hello &amp; XML</message></doc>", 1, 0) == 0);
+                   "<doc><message>hello &amp; XML</message></doc>", 1, 0,
+                   0) == 0);
     CHECK(exchange(port, "/api/echo",
                    "<doc><message>allocated</message><message/></doc>", 400, "",
-                   0, 0) == 0);
+                   0, 0, 0) == 0);
     CHECK(exchange(port, "/small-queue", "<doc><message>file</message></doc>",
-                   200, "<doc><message>file</message></doc>", 0, 0) == 0);
+                   200, "<doc><message>file</message></doc>", 0, 0, 0) == 0);
     CHECK(exchange(port, "/replace", "<doc><message>hidden</message></doc>",
-                   201, "replaced", 0, 0) == 0);
-    CHECK(exchange(port, "/deny", "<", 403, "denied", 0, 0) == 0);
+                   201, "replaced", 0, 0, 0) == 0);
+    CHECK(exchange(port, "/deny", "<", 403, "denied", 0, 0, 0) == 0);
     CHECK(exchange(port, "/limit", "<doc><message>too large</message></doc>",
-                   413, "request body exceeds route limit", 0, 0) == 0);
+                   413, "request body exceeds route limit", 0, 0, 0) == 0);
+    CHECK(exchange(port, "/deny", "<", 403, "denied", 0, 0, 1) == 0);
+    CHECK(exchange(port, "/limit", "<doc><message>too large</message></doc>",
+                   413, "request body exceeds route limit", 0, 0, 1) == 0);
     CHECK(exchange(port, "/api/echo",
                    "<!DOCTYPE doc [<!ENTITY x "
                    "'entity'>]><doc><message>&x;</message></doc>",
-                   400, "", 0, 0) == 0);
+                   400, "", 0, 0, 0) == 0);
     CHECK(exchange(port, "/empty", "<doc><message>x</message></doc>", 204, "",
-                   0, 0) == 0);
+                   0, 0, 0) == 0);
     CHECK(exchange(port, "/unsupported", "<doc><message>x</message></doc>", 501,
-                   "", 0, 0) == 0);
-    CHECK(exchange(port, "/stop", "", 200, "stopped", 0, 0) == 0);
+                   "", 0, 0, 0) == 0);
+    CHECK(exchange(port, "/stop", "", 200, "stopped", 0, 0, 0) == 0);
     return 0;
 }
 static rotmos_status ready(rotmos_server *server,
