@@ -168,26 +168,30 @@ static void arm_read(struct rotmos_input *input)
     kore_platform_event_all(connection->fd, connection);
 }
 
-static int rate_failed(struct rotmos_input *input)
+static u_int64_t rate_wait(struct rotmos_input *input)
 {
     const rotmos_server_config *config;
     u_int64_t elapsed;
     u_int64_t rate;
-    u_int64_t seconds;
+    u_int64_t seconds, deadline;
     config = &input->request->server->config;
     if (config->limits.body_min_rate_disabled)
-        return 0;
-    elapsed = kore_time_ms() - input->started - input->pause_time;
-    if (elapsed <
-            (u_int64_t)config->timeouts.body_min_rate_grace.milliseconds ||
-        elapsed < 1000)
-        return 0;
+        return KORE_WAIT_INFINITE;
     rate =
         ((u_int64_t)config->limits.body_min_rate_bytes_per_second.high << 32) |
         config->limits.body_min_rate_bytes_per_second.low;
-    seconds = elapsed / 1000;
-    /* Division avoids overflow in received * 1000 or elapsed * rate. */
-    return rate != 0 && input->received / seconds < rate;
+    if (rate == 0)
+        return KORE_WAIT_INFINITE;
+    /* received / (elapsed / 1000) first falls below rate at this second.
+     * Divide before multiplying so even 64-bit byte/rate values are safe. */
+    seconds = input->received / rate;
+    if (seconds >= (u_int64_t)-1 / 1000)
+        return KORE_WAIT_INFINITE;
+    deadline = (seconds + 1) * 1000;
+    if (deadline < (u_int64_t)config->timeouts.body_min_rate_grace.milliseconds)
+        deadline = (u_int64_t)config->timeouts.body_min_rate_grace.milliseconds;
+    elapsed = kore_time_ms() - input->started - input->pause_time;
+    return elapsed >= deadline ? 0 : deadline - elapsed;
 }
 
 static void finish_metadata(rotmos_request *request, struct rotmos_input *input)
@@ -245,7 +249,7 @@ void rotmos_kore_body_step(rotmos_request *request)
     }
     if (input->paused || input->waiting)
         return;
-    if (rate_failed(input)) {
+    if (rate_wait(input) == 0) {
         rotmos_kore_request_fail(request, ROTMOS_TIMEOUT, 408);
         return;
     }
@@ -370,12 +374,17 @@ u_int64_t rotmos_kore_body_wait(rotmos_request *request, u_int64_t maximum)
     u_int64_t wait;
     input = request->input;
     timeout = request->server->config.timeouts.request_body_idle;
-    if (input == NULL || !input->waiting || input->dead || timeout.disabled)
+    if (input == NULL || !input->waiting || input->dead)
         return maximum;
-    elapsed = kore_time_ms() - input->waiting_since;
-    wait = elapsed >= (u_int64_t)timeout.milliseconds
-               ? 0
-               : (u_int64_t)timeout.milliseconds - elapsed;
+    if (!timeout.disabled) {
+        elapsed = kore_time_ms() - input->waiting_since;
+        wait = elapsed >= (u_int64_t)timeout.milliseconds
+                   ? 0
+                   : (u_int64_t)timeout.milliseconds - elapsed;
+        if (wait < maximum)
+            maximum = wait;
+    }
+    wait = rate_wait(input);
     if (wait < maximum)
         maximum = wait;
     return maximum;

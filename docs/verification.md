@@ -1,5 +1,23 @@
 # Extraction verification
 
+## Upload rate and selected-array corrections (2026-11-07)
+
+The five affected Core checks (`json`, `json-runtime`, `body-runtime`,
+`body-rate`, `body-unlimited`) pass on selected x86_64 GNU and musl Debug
+toolchains, using incremental builds and strict C89. Rate cases cover silence,
+partial input, grace, pause exclusion, independent idle enforcement and disabled
+protections. Mapped-array cases cover caller-owned capacity limits, repeated
+reuse, omitted fields and cleanup on parse/callback failures.
+
+These array checks use NULL schema runtimes or supplied runtimes configured
+with `clear_destination_by_default = 0`. A separate GNU probe using supplied
+default clearing still fails: LoneJSON 0.46.0 initializes its first stream item
+and loses configured backing. The public API has no per-stream override; that
+dependency limitation remains open, with no sibling repository changes. See
+[I21/I22](../KORE.md#upload-rate-and-mapped-item-storage). The full release matrix
+and existing rehearsal artifacts were not rebuilt for these changes.
+Repository formatting and whitespace checks pass.
+
 ## XML rejection fixture correction
 
 The XML wire fixture now permits terminal ECONNRESET for its header-time auth

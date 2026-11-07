@@ -41,6 +41,7 @@ static rotmos_status each(struct array_input *input, const char *selector,
     lonejson_array_stream *stream;
     lonejson_array_stream_result result;
     lonejson_record_view view;
+    lonejson_config config;
     lonejson_error native;
     rotmos_status status;
     int owned;
@@ -56,16 +57,23 @@ static rotmos_status each(struct array_input *input, const char *selector,
     view.abi_version = LONEJSON_VIEW_ABI_VERSION;
     view.schema = *schema;
     view.record = item;
-    status = rotmos_json_runtime(schema, &view.schema.runtime, &owned, error);
-    if (status != ROTMOS_OK)
-        return status;
+    owned = schema->runtime == NULL;
+    if (owned) {
+        /* This operation resets initialized storage itself. The stream must
+         * not initialize it again and discard caller-owned array backing. */
+        config = lonejson_default_config();
+        config.clear_destination_by_default = 0;
+        view.schema.runtime = lonejson_new(&config, &native);
+        if (view.schema.runtime == NULL)
+            return rotmos_json_error(native.code, &native, error);
+    }
     stream = lonejson_array_stream_open_reader(view.schema.runtime, selector,
                                                read_input, input, &native);
     if (stream == NULL)
         status = rotmos_json_error(native.code, &native, error);
     else {
         for (;;) {
-            lonejson_init(view.schema.runtime, schema->map, item);
+            lonejson_reset(view.schema.runtime, schema->map, item);
             result =
                 lonejson_array_stream_next(stream, schema->map, item, &native);
             if (result == LONEJSON_ARRAY_STREAM_ITEM) {
@@ -79,7 +87,7 @@ static rotmos_status each(struct array_input *input, const char *selector,
                 status = ROTMOS_OK;
             else
                 status = rotmos_json_error(native.code, &native, error);
-            lonejson_cleanup(schema->map, item);
+            lonejson_reset(view.schema.runtime, schema->map, item);
             if (status != ROTMOS_OK || result != LONEJSON_ARRAY_STREAM_ITEM)
                 break;
         }

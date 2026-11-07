@@ -51,9 +51,13 @@ typedef rotmos_status (*rotmos_json_array_item_fn)(
     rotmos_error *error);
 /** Synchronous selected-array iteration, matching Vectis. NULL/empty selector
  * selects the root array; otherwise it selects one direct object key. Caller
- * provides empty mapped storage, initialized and cleaned for every item,
- * including failures. The callback borrows that same record at a zero-based
- * index; copy values that must survive return. No array/body is collected.
+ * provides initialized, empty mapped storage. Each item is reset before parsing
+ * and after delivery, including failures, preserving fixed-capacity array
+ * backing. NULL runtime selects record reuse automatically; with LoneJSON
+ * 0.46.0 a supplied runtime must use clear_destination_by_default = 0 to retain
+ * configured backing. Caller owns final cleanup. The callback borrows that
+ * same record at a zero-based index; copy values that must survive return.
+ * No array/body is collected.
  * Non-OK callback results stop iteration. Sources are borrowed and read from
  * their current position; AGAIN fails with STATE (use a blocking reader on a
  * native thread for live input). Request bodies must be completed and are

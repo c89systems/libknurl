@@ -15,6 +15,97 @@ struct record {
 static const lonejson_field fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(struct record, message, "message")};
 LONEJSON_MAP_DEFINE(map, struct record, fields);
+struct fixed_record {
+    lonejson_i64_array nums;
+    char *message;
+};
+static const lonejson_field fixed_fields[] = {
+    LONEJSON_FIELD_I64_ARRAY(struct fixed_record, nums, "nums",
+                             LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_ALLOC(struct fixed_record, message, "message")};
+LONEJSON_MAP_DEFINE(fixed_map, struct fixed_record, fixed_fields);
+struct fixed_items {
+    struct fixed_record *storage;
+    lonejson_int64 *backing;
+    size_t count;
+    int fail;
+};
+static rotmos_status fixed_item(size_t index, const lonejson_record_view *view,
+                                void *data, rotmos_error *error)
+{
+    struct fixed_items *items = data;
+    struct fixed_record *record = view->record;
+    (void)error;
+    if (record != items->storage || record->nums.items != items->backing ||
+        record->nums.capacity != 1 ||
+        record->nums.flags != LONEJSON_ARRAY_FIXED_CAPACITY ||
+        index != items->count || index > 2)
+        return ROTMOS_STATE;
+    if (index < 2 && (record->nums.count != 1 ||
+                      record->nums.items[0] != (lonejson_int64)(index + 1) ||
+                      record->message == NULL))
+        return ROTMOS_STATE;
+    if (index == 2 && (record->nums.count != 0 || record->message != NULL))
+        return ROTMOS_STATE;
+    ++items->count;
+    return items->fail ? ROTMOS_CANCELLED : ROTMOS_OK;
+}
+static int fixed_items(void)
+{
+    static const char *documents[] = {
+        "[{\"nums\":[1],\"message\":\"one\"},"
+        "{\"nums\":[2],\"message\":\"two\"},{}]",
+        "[{\"message\":\"allocated\",\"nums\":[1,2]}]",
+        "[{\"nums\":[1],\"message\":\"one\"}]",
+        "[{\"message\":\"allocated\",\"nums\":[1,"};
+    static const rotmos_status statuses[] = {ROTMOS_OK, ROTMOS_LIMIT,
+                                             ROTMOS_CANCELLED, ROTMOS_INVALID};
+    struct fixed_record storage;
+    struct fixed_items items;
+    lonejson_int64 backing[1];
+    lonejson_schema_view schema;
+    lonejson_config config;
+    lonejson *runtime;
+    lonejson_error native;
+    rotmos_source *source;
+    rotmos_bytes bytes;
+    rotmos_error error;
+    int supplied, scenario;
+    for (supplied = 0; supplied < 2; ++supplied) {
+        config = lonejson_default_config();
+        config.clear_destination_by_default = 0;
+        runtime = supplied ? lonejson_new(&config, &native) : NULL;
+        CHECK(!supplied || runtime != NULL);
+        CHECK(rotmos_json_schema_from_map(runtime, &fixed_map, &schema,
+                                          &error) == ROTMOS_OK);
+        lonejson_init(runtime, &fixed_map, &storage);
+        storage.nums.items = backing;
+        storage.nums.capacity = 1;
+        storage.nums.flags = LONEJSON_ARRAY_FIXED_CAPACITY;
+        for (scenario = 0; scenario < 4; ++scenario) {
+            memset(&items, 0, sizeof(items));
+            items.storage = &storage;
+            items.backing = backing;
+            items.fail = scenario == 2;
+            bytes.data = documents[scenario];
+            bytes.length = strlen(documents[scenario]);
+            CHECK(rotmos_source_bytes(bytes, &source, &error) == ROTMOS_OK);
+            CHECK(rotmos_json_array_each_source(source, NULL, &schema, &storage,
+                                                fixed_item, &items,
+                                                &error) == statuses[scenario]);
+            CHECK(items.count == (scenario == 0 ? 3 : scenario == 2 ? 1 : 0));
+            CHECK(storage.nums.items == backing && storage.nums.count == 0 &&
+                  storage.nums.capacity == 1 &&
+                  storage.nums.flags == LONEJSON_ARRAY_FIXED_CAPACITY &&
+                  storage.message == NULL);
+            CHECK(rotmos_source_destroy(source, &error) == ROTMOS_OK);
+        }
+        lonejson_cleanup(&fixed_map, &storage);
+        if (supplied)
+            lonejson_free(runtime);
+    }
+    return 0;
+}
 /* A declared record size is a schema property, not an HTTP/output limit. */
 struct large_record {
     char value[10485761UL];
@@ -242,6 +333,7 @@ int main(void)
     size_t length;
     struct sink_fixture sink;
     CHECK(selected_items() == 0);
+    CHECK(fixed_items() == 0);
     CHECK(parse_sources() == 0);
     CHECK(rotmos_json_schema_from_map(NULL, &large_map, &schema, &error) ==
               ROTMOS_OK &&

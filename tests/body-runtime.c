@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,7 @@ struct context {
     int ended;
 };
 static int failures;
+static int rate_mode;
 static int opened;
 static int closed_count;
 static rotmos_http_methods methods;
@@ -329,7 +331,7 @@ static rotmos_status configure_plan(rotmos_request *request,
     ++opened;
     if (is(c, "/stop")) {
         OBSERVE(opened == closed_count + 1 &&
-                methods == ROTMOS_HTTP_METHODS_ALL);
+                (rate_mode != 0 || methods == ROTMOS_HTTP_METHODS_ALL));
         (void)rotmos_server_request_stop(rotmos_request_server(request), NULL);
         return failures ? ROTMOS_INVALID : ROTMOS_OK;
     }
@@ -453,13 +455,25 @@ static int exchange(unsigned short port, const char *method, const char *path,
     ssize_t count;
     size_t used;
     int fd;
+    struct pollfd input;
     fd = connect_to(port);
     CHECK(fd >= 0);
     (void)snprintf(
         request, sizeof(request),
         "%s %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n%s\r\n%s",
-        method, path, fields, body);
+        method, path, fields, strcmp(path, "/slow") == 0 ? "" : body);
     CHECK(write(fd, request, strlen(request)) == (ssize_t)strlen(request));
+    input.fd = fd;
+    input.events = POLLIN;
+    input.revents = 0;
+    if (strcmp(path, "/slow") == 0) {
+        /* Both protections are disabled: silence must not reject the body. */
+        CHECK(poll(&input, 1, 1200) == 0);
+        CHECK(write(fd, body, strlen(body)) == (ssize_t)strlen(body));
+    } else if (rate_mode == 1 && strcmp(path, "/idle") == 0) {
+        /* The rate deadline must respect its one-second grace period. */
+        CHECK(poll(&input, 1, 500) == 0);
+    }
     used = 0;
     while (used < sizeof(response) - 1) {
         count = read(fd, response + used, sizeof(response) - 1 - used);
@@ -581,6 +595,23 @@ static int client(unsigned short port)
     for (i = 0; i < 64; ++i)
         pattern[i] = (char)('a' + i % 26);
     pattern[64] = '\0';
+    if (rate_mode != 0) {
+        if (rate_mode == 1) {
+            CHECK(exchange(port, "POST", "/idle", "Content-Length: 3\r\n", "",
+                           408, "") == 0);
+            CHECK(exchange(port, "POST", "/idle", "Content-Length: 3\r\n", "a",
+                           408, "") == 0);
+            /* Application backpressure must not spend the rate budget. */
+            CHECK(exchange(port, "POST", "/again", "Content-Length: 64\r\n",
+                           pattern, 200, "ok") == 0);
+        } else {
+            CHECK(exchange(port, "POST", "/slow", "Content-Length: 64\r\n",
+                           pattern, 200, "ok") == 0);
+        }
+        CHECK(exchange(port, "GET", "/ping", "", "", 200, "ok") == 0);
+        CHECK(exchange(port, "GET", "/stop", "", "", 200, "ok") == 0);
+        return 0;
+    }
     CHECK(pipeline(port) == 0);
     CHECK(progressive(port, pattern) == 0);
     CHECK(exchange(port, "POST", "/again", "Content-Length: 64\r\n", pattern,
@@ -650,7 +681,7 @@ static rotmos_status ready(rotmos_server *server,
     return ROTMOS_OK;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     struct fixture fixture;
     rotmos_server_config config;
@@ -661,6 +692,10 @@ int main(void)
     rotmos_error error;
     rotmos_status status;
     int child_status;
+    CHECK(argc == 1 || (argc == 2 && (strcmp(argv[1], "rate") == 0 ||
+                                      strcmp(argv[1], "unlimited") == 0)));
+    if (argc == 2)
+        rate_mode = strcmp(argv[1], "rate") == 0 ? 1 : 2;
     fixture.client = -1;
     rotmos_body_result_init(&retained);
     rotmos_server_config_init(&config);
@@ -674,7 +709,9 @@ int main(void)
     config.dispatch.on_headers = headers;
     config.limits.body_spool_directory = ".";
     config.timeouts.request_body_idle.milliseconds = 1000;
-    config.timeouts.body_min_rate_grace.milliseconds = 1;
+    config.timeouts.body_min_rate_grace.milliseconds = rate_mode ? 1000 : 3000;
+    config.timeouts.request_body_idle.disabled = rate_mode != 0;
+    config.limits.body_min_rate_disabled = rate_mode == 2;
     config.timeouts.deferred_response.milliseconds = 50;
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
     config.io.chunk_bytes = 32;

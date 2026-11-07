@@ -112,10 +112,17 @@ The source configuration is copied; the record itself is borrowed. Materialized
 serializers and generated sources are distinct operations.
 
 `rotmos_json_array_each_source` and `rotmos_request_json_array_each` lift Vectis's
-selected-array pull loop. The caller supplies empty mapped item storage; each
-item is initialized, parsed, passed with a zero-based index, and cleaned before
-the next read, including callback/parse failures. The source stays borrowed and
-open. NULL/empty selector selects a root array; a non-empty selector names one
+selected-array pull loop. The caller supplies initialized, empty mapped item
+storage; each item is reset, parsed, passed with a zero-based index, and reset
+before the next read, including callback/parse failures. Reset retains
+caller-owned fixed-capacity array backing and enforces its declared capacity;
+the caller owns final cleanup. A NULL schema runtime selects record reuse
+automatically. With LoneJSON 0.46.0, a supplied runtime must be created with
+`config.clear_destination_by_default = 0` to retain configured backing: its
+default stream initialization otherwise overwrites that backing on the first
+item. There is no public per-stream override in that dependency version.
+The source stays borrowed and open. NULL/empty selector selects a root array;
+a non-empty selector names one
 direct object key. Request iteration rewinds its completed memory/file body
 before and after, including errors. Live blocking sources run on native threads;
 a synchronous reader returning AGAIN fails with STATE. No document/array is
