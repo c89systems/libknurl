@@ -26,7 +26,7 @@ make sdk-verify            # Inspect that archive and build its relocated consum
 make build-all CONFIG=release
 make test                  # Run checks for the selected toolchain target.
 make memcheck              # Native GNU Core/Lua Valgrind gate, reusing ordinary binaries.
-make qemu-smoke TARGET=armhf-linux-musl  # Three basic checks; no fuzzing.
+make qemu-smoke TARGET=armhf-linux-musl  # Core/Lua and stack checks; no fuzzing.
 make fuzz-smoke            # Seed replay and a 10-second native AFL++ campaign.
 make fuzz FUZZ_SECONDS=300 # Longer native campaign; same instrumented producer.
 make verify-all CONFIG=release # One matrix build followed by all declared gates.
@@ -241,3 +241,33 @@ including methods implemented dynamically in C. LuaLS discovers both files in th
 source tree; installed consumers add their `share/lua/5.5` prefix to the language
 server's workspace library. Metadata contains no runtime implementation and
 requires no extra module at runtime. CMake and LuaRocks both install it.
+
+## Traversal performance checks
+
+The normal `rotmos.xml-stack` and `rotmos.kore-json-stack` checks assert
+allocation-cost bounds as well as worker-stack correctness. The
+`rotmos.traversal-performance-contract` check proves that the timing comparator
+accepts a 4% increase and rejects a 6% increase against its 5% budget. These
+deterministic checks run without timing the machine.
+
+For a measured before/after comparison, build `rotmos_traversal_benchmark` in
+Release and save its executable under owned `build/` before changing production
+code. It links Core statically. Keep the selected compiler, dependency SDKs and
+benchmark source/configuration identical for the candidate, and record the
+baseline revision. Build the candidate Release executable, then run:
+
+```sh
+cmake -DBASELINE="$PWD/build/traversal-performance/baseline-benchmark" \
+  -DCANDIDATE="$PWD/build/release/rotmos_traversal_benchmark" \
+  -DOUTPUT_DIR="$PWD/build/traversal-performance/results" \
+  -P tests/TraversalPerformance.cmake
+```
+
+The script alternates three baseline/candidate runs. Each reports the median
+of five process-CPU samples of at least 50 ms per workload; the comparator
+asserts that the median of the three reported values does not regress by more
+than 5%. XML covers a scalar record and depths 3/128; Kore covers narrow/wide
+serialization, nested serialization and wide/nested destruction. Destruction
+timing excludes tree construction. Logs retain both raw sets and the ratios.
+These focused checks support traversal changes; server throughput and other
+hardware/dependency configurations need their own measurements.

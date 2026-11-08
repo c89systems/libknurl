@@ -6,8 +6,8 @@ identify the baseline and reference adapters. Feature guides explain the public
 operations; they do not expand the contract. [Verification](verification.md)
 records measured evidence and its limits; [KORE.md](../KORE.md) tracks backend,
 patch and extraction defects with regression references.
-The [musl worker-stack assessment](musl-stack-assessment.md) records the scoped
-frame measurements, known recursion findings and pending corrections.
+The [musl worker-stack assessment](musl-stack-assessment.md) records historical
+frame measurements and the findings behind the delivered traversal corrections.
 
 | Use | Reference |
 | --- | --- |

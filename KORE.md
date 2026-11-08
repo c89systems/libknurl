@@ -241,7 +241,7 @@ the native registry and its emitted response type across backend restart.
 
 ## JSON tree traversal on musl workers
 
-**Status: upstream recursion present in the pristine pin; correction pending.**
+**Status: fixed locally by patch 0066; upstream recursion remains in the pristine pin.**
 `kore_json_item_tobuf` and `kore_json_item_free` recursively visit children with
 native call frames. Programmatically constructed trees can exceed a default musl
 worker's stack budget. This is separate from librotmos's local XML mapper.
@@ -254,13 +254,26 @@ The executions use the patched Core artifacts; the recursive implementation
 is also present in pristine `vendor/kore/src/json.c`. A pristine-only executable
 and HTTP reachability of equivalent tree depths have not been tested.
 
-No fix is claimed. Iterative traversal must preserve serialization order and
-make destruction possible for an already constructed tree, including creation
-paths that do not populate parent pointers. The upstream CR draft is retained
-locally as `stash/CR-kore-json-tree-musl-stack.md`. See the
-[stack assessment](docs/musl-stack-assessment.md) for exact scope and evidence.
-The diagnostic probes characterize failures; they are not passing product
-regressions for a correction.
+The observations above describe the pre-fix baseline. Patch
+[0066](patches/kore/0066-iterative-json-traversal.patch) serializes with a bounded
+inline ancestor stack that spills geometrically to the Kore heap allocator.
+It preserves byte output, sibling order and subtree boundaries without requiring
+parent pointers. Destruction transfers child lists to an intrusive worklist,
+visiting each node once with constant native storage and no allocation.
+
+The normal [regression](tests/kore-json-stack.c) checks exact mixed-type bytes,
+parsed/constructed/attached trees, subtree ownership, 6,000-level mixed
+serialization and 65,536-level destruction on a default-attribute worker. It
+asserts zero traversal allocations for shallow serialization and all destruction,
+and logarithmic growth cost for deep serialization. The pristine snapshot is
+unchanged. No public C API or ABI changes are required.
+
+The CR draft remains locally as `stash/CR-kore-json-tree-musl-stack.md`, with the
+local correction recorded for upstream handoff. The
+[historical assessment](docs/musl-stack-assessment.md) retains baseline limits;
+[verification](docs/verification.md) records the correction and performance
+comparison. The earlier diagnostic probes remain historical characterization,
+separate from the new required correctness regressions.
 
 ## Portability and features are not automatically bugs
 

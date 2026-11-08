@@ -608,12 +608,6 @@ static rotmos_status rotmos_xml_skip_element(xmlTextReaderPtr reader,
     }
 }
 
-static rotmos_status
-rotmos_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
-                         const rotmos_xml_config *config, lonejson *runtime,
-                         void *out, size_t depth, int parent_space_preserve,
-                         rotmos_error *error);
-
 static rotmos_status rotmos_xml_finish_array(rotmos_xml_field_state *states,
                                              size_t *open_index)
 {
@@ -977,7 +971,8 @@ static rotmos_status rotmos_xml_stream_array_scalar_content(
 static rotmos_status rotmos_xml_stream_field_value(
     lonejson *runtime, const lonejson_map *map, xmlTextReaderPtr reader,
     const lonejson_field *field, const rotmos_xml_config *config, void *out,
-    size_t depth, int parent_space_preserve, rotmos_error *error)
+    size_t depth, const lonejson_map **child_map, void **child_out,
+    rotmos_error *error)
 {
     void *field_value;
     void *item;
@@ -1000,9 +995,9 @@ static rotmos_status rotmos_xml_stream_field_value(
                           "XML object field requires a submap");
             return ROTMOS_INVALID;
         }
-        return rotmos_xml_stream_object(reader, field->submap, config, runtime,
-                                        field_value, depth,
-                                        parent_space_preserve, error);
+        *child_map = field->submap;
+        *child_out = field_value;
+        return ROTMOS_OK;
     }
     if (field->kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY) {
         if (rotmos_xml_append_object_array_item(runtime, map, out, field,
@@ -1010,9 +1005,9 @@ static rotmos_status rotmos_xml_stream_field_value(
                                                 error) != ROTMOS_OK) {
             return error != NULL ? error->status : ROTMOS_INVALID;
         }
-        return rotmos_xml_stream_object(reader, field->submap, config, runtime,
-                                        item, depth, parent_space_preserve,
-                                        error);
+        *child_map = field->submap;
+        *child_out = item;
+        return ROTMOS_OK;
     }
     if (rotmos_xml_field_is_array(field)) {
         return rotmos_xml_stream_array_scalar_content(
@@ -1212,12 +1207,38 @@ static rotmos_status rotmos_xml_stream_text_field(
     return status;
 }
 
-static rotmos_status
-rotmos_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
-                         const rotmos_xml_config *config, lonejson *runtime,
-                         void *out, size_t depth, int parent_space_preserve,
-                         rotmos_error *error)
+/* The common shallow case needs no traversal allocation. Field states retain
+ * their existing per-object ownership; only suspended reader positions grow. */
+struct rotmos_xml_object_frame {
+    const lonejson_map *map;
+    void *out;
+    rotmos_xml_field_state *states;
+    size_t depth, open_index;
+    int start_depth, space_preserve, has_element_children, entered;
+};
+static void rotmos_xml_frame_cleanup(struct rotmos_xml_object_frame *frame)
 {
+    size_t i;
+    if (frame->states == NULL)
+        return;
+    for (i = 0u; i < frame->map->field_count; ++i) {
+        rotmos_string_builder_cleanup(&frame->states[i].text);
+        if (frame->states[i].deferred_spool_initialized)
+            lonejson_spooled_cleanup(&frame->states[i].deferred_spool);
+    }
+    free(frame->states);
+    frame->states = NULL;
+}
+/* A child map requests descent. The reader stays on its opening element until
+ * the driver enters that frame; source status remains synchronous. */
+static rotmos_status rotmos_xml_stream_frame(
+    xmlTextReaderPtr reader, const rotmos_xml_config *config, lonejson *runtime,
+    struct rotmos_xml_object_frame *frame, const lonejson_map **child_map,
+    void **child_out, rotmos_error *error)
+{
+    const lonejson_map *map = frame->map;
+    void *out = frame->out;
+    size_t depth = frame->depth;
     rotmos_xml_field_state *states;
     rotmos_string_builder attr_key;
     const lonejson_field *field;
@@ -1236,6 +1257,15 @@ rotmos_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
     int rc;
     rotmos_status status;
 
+    memset(&attr_key, 0, sizeof(attr_key));
+    if (frame->entered) {
+        states = frame->states;
+        open_index = frame->open_index;
+        start_depth = frame->start_depth;
+        space_preserve = frame->space_preserve;
+        has_element_children = frame->has_element_children;
+        goto read_elements;
+    }
     if (depth > config->max_depth) {
         xml_set_error(error, ROTMOS_INVALID, "XML nesting exceeds max_depth");
         return ROTMOS_INVALID;
@@ -1251,6 +1281,8 @@ rotmos_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
                       "failed to allocate XML field state");
         return ROTMOS_NOMEM;
     }
+    frame->states = states;
+    frame->entered = 1;
     for (i = 0u; i < map->field_count; ++i) {
         states[i].array = rotmos_xml_field_is_array(&map->fields[i]);
         if (rotmos_xml_field_is_direct_text_stream(&map->fields[i])) {
@@ -1264,7 +1296,7 @@ rotmos_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
     open_index = SIZE_MAX;
     empty = xmlTextReaderIsEmptyElement(reader);
     space = xmlTextReaderGetAttribute(reader, (const xmlChar *)"xml:space");
-    space_preserve = parent_space_preserve;
+    space_preserve = frame->space_preserve;
     if (space != NULL) {
         if (xmlStrEqual(space, (const xmlChar *)"preserve")) {
             space_preserve = 1;
@@ -1335,6 +1367,7 @@ rotmos_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
         (void)xmlTextReaderMoveToElement(reader);
     }
     if (!empty) {
+    read_elements:
         for (;;) {
             rc = xmlTextReaderRead(reader);
             if (rc != 1) {
@@ -1427,7 +1460,15 @@ rotmos_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
                 }
                 status = rotmos_xml_stream_field_value(
                     runtime, map, reader, field, config, out, depth + 1u,
-                    space_preserve, error);
+                    child_map, child_out, error);
+                if (status == ROTMOS_OK && *child_map != NULL) {
+                    frame->open_index = open_index;
+                    frame->start_depth = start_depth;
+                    frame->space_preserve = space_preserve;
+                    frame->has_element_children = has_element_children;
+                    rotmos_string_builder_cleanup(&attr_key);
+                    return ROTMOS_OK;
+                }
                 if (status != ROTMOS_OK) {
                     goto cleanup;
                 }
@@ -1530,13 +1571,71 @@ rotmos_xml_stream_object(xmlTextReaderPtr reader, const lonejson_map *map,
 
 cleanup:
     rotmos_string_builder_cleanup(&attr_key);
-    for (i = 0u; i < map->field_count; ++i) {
-        rotmos_string_builder_cleanup(&states[i].text);
-        if (states[i].deferred_spool_initialized) {
-            lonejson_spooled_cleanup(&states[i].deferred_spool);
+    rotmos_xml_frame_cleanup(frame);
+    return status;
+}
+
+static rotmos_status rotmos_xml_stream_object(xmlTextReaderPtr reader,
+                                              const lonejson_map *map,
+                                              const rotmos_xml_config *config,
+                                              lonejson *runtime, void *out,
+                                              rotmos_error *error)
+{
+    struct rotmos_xml_object_frame local[8], *frames = local, *next;
+    const lonejson_map *child_map;
+    void *child_out;
+    size_t count = 1u, capacity = 8u;
+    rotmos_status status;
+    memset(&frames[0], 0, sizeof(frames[0]));
+    frames[0].map = map;
+    frames[0].out = out;
+    frames[0].depth = 1u;
+    while (count != 0u) {
+        child_map = NULL;
+        child_out = NULL;
+        status = rotmos_xml_stream_frame(reader, config, runtime,
+                                         &frames[count - 1u], &child_map,
+                                         &child_out, error);
+        if (status != ROTMOS_OK)
+            goto cleanup;
+        if (child_map == NULL) {
+            --count;
+            continue;
         }
+        if (count == capacity) {
+            if (capacity > SIZE_MAX / sizeof(frames[0]) / 2u) {
+                status = xml_set_error(error, ROTMOS_NOMEM,
+                                       "XML traversal size overflow");
+                goto cleanup;
+            }
+            if (frames == local) {
+                next = malloc(capacity * 2u * sizeof(frames[0]));
+                if (next != NULL)
+                    memcpy(next, frames, count * sizeof(frames[0]));
+            } else {
+                next = realloc(frames, capacity * 2u * sizeof(frames[0]));
+            }
+            if (next == NULL) {
+                status = xml_set_error(error, ROTMOS_NOMEM,
+                                       "allocating XML traversal frames");
+                goto cleanup;
+            }
+            frames = next;
+            capacity *= 2u;
+        }
+        memset(&frames[count], 0, sizeof(frames[count]));
+        frames[count].map = child_map;
+        frames[count].out = child_out;
+        frames[count].depth = frames[count - 1u].depth + 1u;
+        frames[count].space_preserve = frames[count - 1u].space_preserve;
+        ++count;
     }
-    free(states);
+    status = ROTMOS_OK;
+cleanup:
+    while (count != 0u)
+        rotmos_xml_frame_cleanup(&frames[--count]);
+    if (frames != local)
+        free(frames);
     return status;
 }
 
@@ -1578,8 +1677,7 @@ static rotmos_status rotmos_xml_stream_document(xmlTextReaderPtr reader,
                        name != NULL ? name : "", config->root_element);
         return ROTMOS_INVALID;
     }
-    status = rotmos_xml_stream_object(reader, map, config, runtime, out, 1u, 0,
-                                      error);
+    status = rotmos_xml_stream_object(reader, map, config, runtime, out, error);
     if (status != ROTMOS_OK) {
         return status;
     }

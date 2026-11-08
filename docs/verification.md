@@ -1,8 +1,61 @@
 # Extraction verification
 
+## Iterative XML mapping and Kore JSON traversal (2026-11-09)
+
+Mapped XML now suspends reader state in an iterative frame stack, with bounded
+inline storage for shallow input and geometric heap growth at greater depth.
+Kore patch 0066 removes JSON serialization/destruction recursion without changing
+the pristine snapshot. Serialization retains exact bytes and subtree boundaries;
+destruction uses a single-pass intrusive worklist with no allocations.
+
+The new default-worker regressions pass on x86_64 musl: 512-level XML mapping,
+6,000-level mixed JSON serialization and 65,536-level destruction. They check
+XML depth boundaries, incremental chunks, nested-array ownership, inherited
+`xml:space`, source/malformed-input failures, new allocation failures and cleanup
+followed by reuse. Musl cases assert a measured worker stack below 256 KiB.
+Six existing XML/Kore checks pass too. Normal memory and ARM QEMU check
+configurations now include the new regressions.
+
+Deterministic cost assertions require no added shallow traversal allocations,
+no destruction allocations, and geometric growth cost at depth. The separate
+performance comparator verifies that 4% slowdowns pass and 6% slowdowns fail its
+5% CPU-time budget. Three paired GNU Release benchmark runs against a saved
+pre-change Core archive pass all eight workload assertions. Each run reports a
+five-sample process-CPU median; comparison takes the median of the three paired
+results. XML ratios are 0.9779, 1.0225 and 1.0044 for depths 0, 3 and 128.
+JSON write ratios are 0.8002/0.8053 for widths 8/128 and 0.6964 at depth 128;
+destruction ratios are 0.9570 wide and 0.8658 deep. These are focused traversal
+measurements on the selected host, not whole-server throughput guarantees.
+
+Both complete native Core suites pass: 119 GNU Release checks and 119 musl
+Debug checks, including installed consumers and patch replay/invalidation.
+The new correctness/cost checks also pass in the ordinary GNU Debug build.
+Core and both traversal regressions compile/link on all seven selected targets;
+each of the four ARM Linux targets passes Core HTTP and both stack regressions
+under QEMU. Darwin evidence is compile/link only. The two new regressions and
+existing mapped-XML test pass the targeted GNU Valgrind gate with no reported
+memory errors or definite/indirect leaks. Both Lua XML modes pass on GNU and
+musl against freshly installed Debug Core SDKs; the Lua runtime is unchanged.
+Formatting and whitespace checks pass.
+
+The ordinary editor database is refreshed by the GNU Debug build. clangd source
+and public-header parsing/feature checks pass using normal `.clangd` discovery
+with code-action self-tests disabled (`--tweaks=none`). The unrestricted
+code-action self-test reports overlapping replacements in existing `isspace`
+macro expansions and cross-file `DefineInline` replacements; it reports no
+compiler diagnostics. Those code-action limitations are not corrected here.
+
+Logs are `build/traversal-debug-tests.log`,
+`build/traversal-performance/results/{baseline,candidate}.tsv` and
+`build/traversal-performance.log`; full native, ARM, memory, Lua and editor logs
+use `build/traversal-*`. No release/tag/push or full Lua/package/release matrix
+was performed. The earlier
+[assessment](musl-stack-assessment.md) remains historical. LoneJSON native
+initialization and provisional Lua binding CRs are separate open handoffs.
+
 ## Scoped musl worker-stack assessment (2026-11-08)
 
-The [assessment](musl-stack-assessment.md) records retained O0/O3 Core/Kore frame
+The historical [assessment](musl-stack-assessment.md) records retained O0/O3 Core/Kore frame
 measurements for three musl architectures and fresh focused default-worker-stack
 observations. Six existing x86_64 musl XML/filesystem/WebDAV checks pass. The
 diagnostic probes confirm unresolved XML mapping and LoneJSON initialization

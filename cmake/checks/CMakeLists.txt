@@ -20,7 +20,7 @@ if(CHECK_KIND STREQUAL "memory")
   set(runner "${VALGRIND}" --error-exitcode=99 --leak-check=full
     --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect
     --track-origins=yes --trace-children=yes "--log-file=${CMAKE_BINARY_DIR}/valgrind-%p.log")
-  foreach(name declarations asset mime json access_log_file source_file_test rest-runtime openapi xml-mapped
+  foreach(name declarations asset mime json access_log_file source_file_test rest-runtime openapi xml-mapped xml_stack kore_json_stack
       storage-filesystem webdav-runtime proxy_framing proxy_http proxy_ws_wire)
     set(program "${ROTMOS_BUILD}/rotmos_${name}")
     if(NOT EXISTS "${program}")
@@ -50,6 +50,14 @@ elseif(CHECK_KIND STREQUAL "qemu")
   endif()
   add_test(NAME qemu.core-http COMMAND ${runner} "${ROTMOS_BUILD}/rotmos_target_smoke")
   set_tests_properties(qemu.core-http PROPERTIES TIMEOUT 20 LABELS qemu)
+  foreach(case xml_stack kore_json_stack)
+    if(NOT EXISTS "${ROTMOS_BUILD}/rotmos_${case}")
+      message(FATAL_ERROR "Build rotmos_${case} before running QEMU")
+    endif()
+    string(REPLACE "_" "-" name "${case}")
+    add_test(NAME qemu.${name} COMMAND ${runner} "${ROTMOS_BUILD}/rotmos_${case}")
+    set_tests_properties(qemu.${name} PROPERTIES TIMEOUT 20 LABELS qemu)
+  endforeach()
   set(lua_cases target-smoke)
   set(lua_timeout 20)
 else()

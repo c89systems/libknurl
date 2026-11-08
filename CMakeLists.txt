@@ -462,6 +462,46 @@ if(BUILD_TESTING)
   rotmos_local_runtime(rotmos_kore_runtime)
   add_test(NAME rotmos.kore-runtime COMMAND rotmos_kore_runtime)
   set_tests_properties(rotmos.kore-runtime PROPERTIES TIMEOUT 20)
+  add_executable(rotmos_kore_json_stack tests/kore-json-stack.c)
+  add_dependencies(rotmos_kore_json_stack kore-source)
+  rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/kore-json-stack.c")
+  target_compile_definitions(rotmos_kore_json_stack PRIVATE
+    $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
+  target_include_directories(rotmos_kore_json_stack PRIVATE
+    "${kore_source_dir}/include/kore" "${kore_source_dir}/src")
+  target_link_libraries(rotmos_kore_json_stack PRIVATE rotmos::static
+    pslog::pslog_shared OpenSSL::SSL CURL::libcurl)
+  rotmos_c89(rotmos_kore_json_stack)
+  rotmos_local_runtime(rotmos_kore_json_stack)
+  add_test(NAME rotmos.kore-json-stack COMMAND rotmos_kore_json_stack)
+  set_tests_properties(rotmos.kore-json-stack PROPERTIES TIMEOUT 15)
+  add_executable(rotmos_xml_stack tests/xml-stack.c)
+  target_include_directories(rotmos_xml_stack PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_compile_definitions(rotmos_xml_stack PRIVATE _GNU_SOURCE=1 _FILE_OFFSET_BITS=64)
+  target_link_libraries(rotmos_xml_stack PRIVATE rotmos::static LibXml2::LibXml2)
+  rotmos_c89(rotmos_xml_stack)
+  rotmos_local_runtime(rotmos_xml_stack)
+  add_test(NAME rotmos.xml-stack COMMAND rotmos_xml_stack)
+  set_tests_properties(rotmos.xml-stack PROPERTIES TIMEOUT 15)
+  if(ROTMOS_TARGET MATCHES "-musl$")
+    target_compile_definitions(rotmos_xml_stack PRIVATE ROTMOS_MUSL_STACK_CHECK=1)
+    target_compile_definitions(rotmos_kore_json_stack PRIVATE ROTMOS_MUSL_STACK_CHECK=1)
+  endif()
+  add_executable(rotmos_traversal_benchmark tests/traversal-benchmark.c)
+  add_dependencies(rotmos_traversal_benchmark kore-source)
+  target_include_directories(rotmos_traversal_benchmark PRIVATE "${kore_source_dir}/include/kore")
+  target_compile_definitions(rotmos_traversal_benchmark PRIVATE
+    $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
+  target_link_libraries(rotmos_traversal_benchmark PRIVATE rotmos::static
+    pslog::pslog_shared OpenSSL::SSL CURL::libcurl)
+  rotmos_c89(rotmos_traversal_benchmark)
+  rotmos_local_runtime(rotmos_traversal_benchmark)
+  add_test(NAME rotmos.traversal-performance-contract COMMAND "${CMAKE_COMMAND}"
+    "-DBENCHMARK=$<TARGET_FILE:rotmos_traversal_benchmark>"
+    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/tests/traversal-performance-contract"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/TraversalPerformanceContract.cmake")
+  set_tests_properties(rotmos.traversal-performance-contract PROPERTIES TIMEOUT 5)
   add_executable(rotmos_kore_request_order tests/kore-request-order.c $<TARGET_OBJECTS:rotmos_kore>)
   add_dependencies(rotmos_kore_request_order kore-source)
   rotmos_kore_object_dependencies("${kore_source_dir}/.patched"

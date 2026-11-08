@@ -1,12 +1,17 @@
 # Musl worker-stack assessment (2026-11-08)
 
+This document records the historical diagnosis before the iterative mapper and
+Kore patch 0066. Both local corrections are now implemented; see
+[verification](verification.md) and the [XML manual](xml.md). The separate
+LoneJSON initialization and provisional Lua binding handoffs remain open.
+
 The scoped investigation at `c48fff7` confirms a local mapped-XML recursion
 failure and separate dependency traversal failures. This is an assessment of
 recorded stack frames, known recursive call paths and selected worker-thread
 behavior. It does not certify arbitrary callbacks or external library internals.
 No product implementation changed during the continuation.
 
-## Local XML result and required correction
+## Historical local XML result
 
 [`xml_mapping.c`](../src/xml_mapping.c) recursively alternates
 `rotmos_xml_stream_object` and `rotmos_xml_stream_field_value`. The default
@@ -22,11 +27,10 @@ AArch64 and ARM32. The retained x86_64 debugger trace identifies mapper depth
 stack. The failing mapper belongs to librotmos; this evidence does not identify
 a libxml2 defect.
 
-The next local correction should move mapping traversal state onto the heap,
-preserving incremental reads, configured depth semantics, field ordering,
-ownership and error cleanup. It must be verified on an unchanged musl worker
-stack. Increasing the worker stack would leave the accepted configuration
-dependent on available native recursion space.
+The delivered local correction uses an iterative reader-frame stack, preserving
+incremental reads, configured depth semantics, field ordering, ownership and
+error cleanup. Required regressions exercise unchanged default musl worker
+stacks rather than increasing their size.
 
 ## Retained compiler measurements
 
@@ -61,7 +65,7 @@ they are ranking evidence, not measured high-water marks or complete stack bound
 
 | Recorded cycle | Assessment |
 | --- | --- |
-| XML object/field mapping | Confirmed local failure with raised depth; correction pending. |
+| XML object/field mapping | Confirmed at this baseline; subsequently corrected with iterative reader frames. |
 | WebDAV finish/error | `finalized` is set before hooks/submission. An error callback cannot repeatedly re-enter finish. The existing WebDAV runtime check passes. |
 | Lua configuration `settings` / `settings_push` | Recursion enters the fixed deadline descriptor, which contains only scalar fields. Input cannot add recursively nested descriptor types. |
 | Kore logging/message send | The send-to-log edge requires `worker == NULL`; that log path does not send another worker message. The direct graph cycle does not imply repeated recursion. |
@@ -138,8 +142,8 @@ outputs are under `build/stack-continuation/`. Further failure reproductions
 were stopped after the production executive reported another platform notice;
 two drafted deeper ARM32 cases were removed without execution.
 
-This completes the scoped assessment of the recorded librotmos-owned frames
-and known direct cycles. The local XML correction and upstream remediations
-remain implementation work. External library internals, arbitrary callback
+This records the scoped assessment of the baseline frames and known direct
+cycles. Local XML mapping and Kore traversal have since been corrected;
+LoneJSON initialization and binding handoffs remain open. External library internals, arbitrary callback
 chains, physical ARM hardware, and the separately owned Lua runtime remain
 outside the established evidence. No release or complete product matrix was run.

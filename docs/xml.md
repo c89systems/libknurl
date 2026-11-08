@@ -76,6 +76,14 @@ whitespace, required fields and duplicate/noncontiguous-array rejection.
 are rejected per reader. Errors preserve dependency codes/locations and failed
 parses retire partial allocations.
 
+Mapped input uses an iterative stack of reader frames. Shallow documents use
+small bounded inline storage; deeper mapping grows heap storage geometrically.
+Traversal preserves incremental input, field order, inherited `xml:space` and
+configured depth checks without consuming a native call frame per XML level.
+Allocation failure returns NOMEM and retires partial mapped state. The separate
+LoneJSON schema/record initialization and cleanup operations still have their
+own dependency stack limits; the mapper change does not remove those limits.
+
 `rotmos_router_xml_route` and its route-group counterpart copy declarations and
 mapping option strings, borrowing maps/runtime/userdata through route destruction.
 The handler receives a request-owned public input record view and a general
