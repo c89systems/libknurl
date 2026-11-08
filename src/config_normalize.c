@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
+#define _FILE_OFFSET_BITS 64
 #include "server_internal.h"
+#include "file_internal.h"
 #include "acme_internal.h"
 
 #include <arpa/inet.h>
@@ -166,11 +168,22 @@ rotmos_status rotmos_config_normalize(rotmos_server_config *config,
     long cpus;
     size_t i;
     unsigned char address[16];
+    off_t log_limit;
     const char *proxy;
     if (config->name == NULL)
         config->name = "rotmos";
     if (config->http.server_header == NULL)
         config->http.server_header = "rotmos";
+    if (config->http.access_log_max_bytes.high == 0 &&
+        config->http.access_log_max_bytes.low == 0)
+        config->http.access_log_max_bytes.low = 10UL * 1024UL * 1024UL;
+    if (config->http.access_log_file_count == 0)
+        config->http.access_log_file_count = 3;
+    if (!rotmos_u64_valid(config->http.access_log_max_bytes) ||
+        !rotmos_file_offset(config->http.access_log_max_bytes, &log_limit))
+        return rotmos_fail(
+            error, ROTMOS_INVALID, "server_new",
+            "access_log_max_bytes must fit a positive file offset");
     if (!text(config->name) || !text(config->http.server_header) ||
         strlen(config->http.server_header) > 53 ||
         !optional_text(config->limits.body_spool_directory) ||

@@ -1,0 +1,78 @@
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -906,6 +906,8 @@
+ 		    int (*)(void *, int, int, const char *,
+ 		    const void *, size_t, int));
+ /* accesslog.c */
++#define KORE_ACCESSLOG_EXTERNAL (-2)
++void kore_accesslog_set_file_sink(void (*)(const void *, size_t, void *), void *);
+ void		kore_accesslog_init(u_int16_t);
+ void		kore_accesslog_worker_init(void);
+ void		kore_accesslog_cleanup(void);
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -54,6 +54,15 @@
+ static char		tbuf[128] = { '\0' };
+ 
+ static struct kore_buf	*logbuf = NULL;
++static void (*file_sink)(const void *, size_t, void *) = NULL;
++static void *file_sink_arg = NULL;
++
++void
++kore_accesslog_set_file_sink(void (*sink)(const void *, size_t, void *), void *arg)
++{
++	file_sink = sink;
++	file_sink_arg = arg;
++}
+ #if defined(KORE_USE_PSLOG)
+ static pslog_logger	*accesslog_logger = NULL;
+ static pslog_level	accesslog_success_level = PSLOG_LEVEL_TRACE;
+@@ -144,6 +153,8 @@
+ void
+ kore_accesslog_cleanup(void)
+ {
++	file_sink = NULL;
++	file_sink_arg = NULL;
+ 	if (logbuf != NULL) {
+ 		kore_buf_free(logbuf);
+ 		logbuf = NULL;
+@@ -458,16 +469,21 @@
+ 			if ((dom = kore_domain_byid(hdr->domain)) == NULL)
+ 				fatal("unknown domain id %u", hdr->domain);
+ 
+-			if (dom->logbuf == NULL)
+-				dom->logbuf = kore_buf_alloc(DOMAIN_LOGBUF_LEN);
+-
+-			kore_buf_append(dom->logbuf, &logbuf->data[off],
+-			    hdr->loglen);
++			if (file_sink != NULL) {
++				file_sink(&logbuf->data[off], hdr->loglen,
++				    file_sink_arg);
++			} else {
++				if (dom->logbuf == NULL)
++					dom->logbuf = kore_buf_alloc(DOMAIN_LOGBUF_LEN);
++				kore_buf_append(dom->logbuf, &logbuf->data[off],
++				    hdr->loglen);
++			}
+ 
+ 			off += hdr->loglen;
+ 			remain -= hdr->loglen;
+ 
+-			accesslog_flush(dom, now, force);
++			if (file_sink == NULL)
++				accesslog_flush(dom, now, force);
+ 		}
+ 
+ 		kore_buf_reset(logbuf);
+--- a/src/domain.c
++++ b/src/domain.c
+@@ -205,7 +205,8 @@
+ 	LIST_FOREACH(srv, &kore_servers, list) {
+ 		TAILQ_FOREACH(dom, &srv->domains, list) {
+ 			if (dom->accesslog != -1) {
+-				(void)close(dom->accesslog);
++				if (dom->accesslog >= 0)
++					(void)close(dom->accesslog);
+ 				/*
+ 				 * Turn into flag to indicate accesslogs
+ 				 * are active.

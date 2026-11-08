@@ -19,12 +19,17 @@ local closed=logger(fixture.workspace..'/closed.log');closed:close()
 invalid(rotmos.server{port=0,logger=closed})
 local too_many={};for code=200,232 do too_many[code]='info' end
 invalid(rotmos.server{port=0,access_log={status_levels=too_many}})
+local defaults=ok(rotmos.server{port=0,http={access_log_max_bytes=0,access_log_file_count=0}})
+local effective=ok(defaults:effective_config()).http
+assert(tostring(effective.access_log_max_bytes)=='10485760' and effective.access_log_file_count==3
+  and effective.access_log_rotation_disabled==false)
+ok(defaults:close())
 local coroutine_owner=coroutine.create(function()
   return ok(rotmos.server{port=0,logger=logger(fixture.workspace..'/coroutine.log')})
 end)
 local resumed,coroutine_server=coroutine.resume(coroutine_owner);assert(resumed)
 coroutine_owner=nil;collectgarbage('collect');ok(coroutine_server:close())
-for mode=0,3 do
+for mode=0,5 do
   local root_path=fixture.workspace..'/root'..mode..'.log'
   local access_path=fixture.workspace..'/access'..mode..'.log'
   local legacy_path=fixture.workspace..'/legacy'..mode..'.log'
@@ -33,10 +38,12 @@ for mode=0,3 do
   local retained=setmetatable({root,access},{__mode='v'})
   local policy={success_level='trace',client_error_level='warning',server_error_level='fatal',status_levels={['202']='info'}}
   if mode==1 then policy.logger=access
-  elseif mode==2 then policy=false
+  elseif mode==2 or mode>=4 then policy=false
   elseif mode==3 then policy={enabled=false} end
   local server=ok(rotmos.server{port=0,workers={count=1,affinity_disabled=true},
-    http={backend_quiet=true,access_log_path=legacy_path},logger=root,access_log=policy,
+    http={backend_quiet=true,access_log_path=legacy_path,
+      access_log_max_bytes=mode>=4 and 1 or 10485760,
+      access_log_file_count=3,access_log_rotation_disabled=mode==5},logger=root,access_log=policy,
     on_parent_ready=function(s)
       local value,err=s:set_pslog(nil);assert(value==nil and err.status==rotmos.status.STATE)
       ok(fixture.spawn_logging(ok(s:listener()).port))
@@ -72,7 +79,19 @@ for mode=0,3 do
     if mode==1 then assert(not read(root_path):find('"path":',1,true)) end
   else assert(not structured:find('"path":',1,true)) end
   local legacy=read(legacy_path)
-  for _,path in ipairs{'/ok','/bad','/fault','/stop'} do assert(legacy:find(path,1,true)) end
+  if mode==4 then
+    local one,two=read(legacy_path..'.1'),read(legacy_path..'.2')
+    assert(legacy:find('/stop',1,true) and one:find('/fault',1,true) and two:find('/bad',1,true))
+    assert(not (legacy..one..two):find('/ok',1,true))
+    assert(io.open(legacy_path..'.3','rb')==nil)
+  else
+    for _,path in ipairs{'/ok','/bad','/fault','/stop'} do assert(legacy:find(path,1,true)) end
+    if mode==5 then assert(io.open(legacy_path..'.1','rb')==nil) end
+  end
+end
+for _,http in ipairs{{access_log_max_bytes=-1},{access_log_file_count=-1},
+  {access_log_rotation_disabled=1},{access_log_max_bytes=rotmos.count('18446744073709551615')}} do
+  invalid(rotmos.server{port=0,http=http})
 end
 assert(callback_calls==0);callback_logger:close()
 collectgarbage('collect')

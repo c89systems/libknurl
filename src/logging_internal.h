@@ -13,4 +13,5 @@ struct rotmos_log_runtime;
 rotmos_status rotmos_kore_logging_start(struct rotmos_runtime *,
                                         rotmos_error *);
 void rotmos_kore_logging_finish(struct rotmos_runtime *);
+void rotmos_kore_logging_child(struct rotmos_runtime *);
 #endif

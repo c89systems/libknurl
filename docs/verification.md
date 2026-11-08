@@ -1,5 +1,37 @@
 # Extraction verification
 
+## Access-log retention and disk-failure recovery (2026-11-08)
+
+File logs now have one parent-owned writer with default 10 MiB thresholds and
+three total files. C and Lua expose size, retention count and explicit rotation
+disable. Eight affected GNU checks pass, including patch replay; the seven
+target-runtime/API checks also pass on selected x86_64 musl. Both toolchains pass
+four affected Lua configuration/logging checks. The two logging cases were then
+rerun after adding explicit zero-inheritance assertions; no library rebuild was
+needed for that fixture-only change.
+
+The new file fixture covers rotation boundaries, oversized records, restart
+append, permissions, truncate/disable options, interrupted/partial writes,
+ENOSPC, failed rotation/reopen recovery and nonregular paths. Its two-worker,
+two-listener HTTP case proves continued serving, diagnostics and recovery after
+startup and runtime ENOSPC, plus parent descriptor cleanup. The same fixture
+passes Valgrind with no errors or definite/indirect leaks. A basic ARM32 GNU
+Release QEMU check passes with a 4 GiB configured threshold, checking large-file
+normalization without a large workload. Darwin Release Core and the file fixture
+compile/link through selected osxcross; a missing Darwin declaration feature
+macro in the fixture was corrected before that final build. Formatting and
+whitespace checks pass.
+
+Logs are `build/access-log-gnu-core.log`, `build/access-log-musl-core.log`,
+`build/access-log-{gnu,musl}-lua.log`,
+`build/access-log-{gnu,musl}-lua-defaults.log`,
+`build/access-log-valgrind.log`, `build/access-log-armhf-qemu.log` and
+`build/access-log-darwin-final-build.log`. Startup diagnostic allocator misuse
+reproduced during development is corrected and recorded with the other findings
+in [KORE.md](../KORE.md#parent-owned-access-log-files). The full release, SDK,
+seven-target and fuzz matrices were not repeated; no release artifacts or refs
+were changed.
+
 ## MIME defaults, overrides and Content-Type validation (2026-11-08)
 
 Core has 125 built-in extension mappings, copied instance/route overrides and

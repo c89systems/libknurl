@@ -521,6 +521,16 @@ The [logging fixture](../tests/lua/logging.lua) covers retention, replacement,
 failed conversion, GC/coroutines, native-sink validation, severity overrides,
 derived and explicit loggers, and independent legacy file output.
 
+File access-log rotation uses the public C configuration through
+`http={access_log_path="access.log", access_log_max_bytes=10485760,
+access_log_file_count=3}`. The count includes the active file; backups are `.1`
+and `.2`. Zero size/count inherit those defaults. Set
+`access_log_rotation_disabled=true` for unbounded append. Whole records stay
+together, so one oversized record may exceed the threshold. File errors,
+including ENOSPC, are reported through the root logger while HTTP keeps serving;
+the failed record is dropped and later records retry. See the
+[file logging contract](logging.md) for startup failures, ownership and recovery.
+
 `rotmos.xml.document(bytes, options)` lifts Vectis's owned document facade.
 Options are `max_bytes` (16 MiB) and `max_xpath_nodes` (4096), with explicit
 positive limits no greater than 2147483647. Documents expose `root()`,

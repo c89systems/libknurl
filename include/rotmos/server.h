@@ -231,6 +231,16 @@ typedef struct rotmos_http_config {
      * disable.
      */
     const char *access_log_path;
+    /** File access-log rotation threshold; zero inherits 10 MiB. Complete
+     * records are preserved, so one oversized record may exceed this value.
+     */
+    rotmos_u64 access_log_max_bytes;
+    /** Total files including the active file; zero inherits three. One keeps
+     * only the active file, truncating it at rotation boundaries.
+     */
+    size_t access_log_file_count;
+    /** Nonzero explicitly disables size-based file access-log rotation. */
+    int access_log_rotation_disabled;
     /** Nonzero disables HTTP connection reuse. */
     int keepalive_disabled;
     /** Maximum requests per reusable connection. */

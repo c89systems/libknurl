@@ -106,6 +106,10 @@ void rotmos_server_config_init(rotmos_server_config *config)
     config->http.mime_type_count = 0;
     config->http.server_header = "rotmos";
     config->http.access_log_path = NULL;
+    config->http.access_log_max_bytes.high = 0;
+    config->http.access_log_max_bytes.low = 10UL * 1024UL * 1024UL;
+    config->http.access_log_file_count = 3;
+    config->http.access_log_rotation_disabled = 0;
     config->http.keepalive_disabled = 0;
     config->http.keepalive_max_requests = 100;
     config->http.socket_backlog = 5000;

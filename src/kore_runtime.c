@@ -213,6 +213,7 @@ static int child_start(void *userdata, struct kore_worker *child)
     rotmos_process_context *process;
     runtime = userdata;
     process = &runtime->server->process;
+    rotmos_kore_logging_child(runtime);
     wake_close(runtime);
     kore_platform_event_cleanup();
     kore_timer_cleanup();

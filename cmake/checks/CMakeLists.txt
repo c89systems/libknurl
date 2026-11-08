@@ -20,7 +20,7 @@ if(CHECK_KIND STREQUAL "memory")
   set(runner "${VALGRIND}" --error-exitcode=99 --leak-check=full
     --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect
     --track-origins=yes --trace-children=yes "--log-file=${CMAKE_BINARY_DIR}/valgrind-%p.log")
-  foreach(name declarations asset mime source_file_test rest-runtime openapi xml-mapped
+  foreach(name declarations asset mime access_log_file source_file_test rest-runtime openapi xml-mapped
       storage-filesystem webdav-runtime proxy_framing proxy_http proxy_ws_wire)
     set(program "${ROTMOS_BUILD}/rotmos_${name}")
     if(NOT EXISTS "${program}")

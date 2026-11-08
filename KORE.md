@@ -173,6 +173,20 @@ counts include relayed frame bytes but exclude the handshake, successful error
 categories are `"none"`, and standalone quotas must be positive after explicit
 configuration initialization. Their implemented baseline behavior is unchanged.
 
+## Parent-owned access-log files
+
+Size-based retention is a feature addition. External patch
+[0065](patches/kore/0065-parent-access-log-sink.patch) forwards complete worker
+records from Kore's parent drain to one Core-owned file sink. Its external-sink
+marker enables worker formatting without assigning a file descriptor to each
+domain. The pristine vendor snapshot is unchanged.
+
+| ID | Cause and correction | Evidence |
+| --- | --- | --- |
+| I25 | The adapter opened a parent access-log descriptor per listener/domain, but domain teardown did not close it; only worker copies were closed. Repeated embedded runs could leak parent descriptors. The new single parent-owned file is explicitly closed after the final drain; workers close their inherited copy before serving. | Source ownership trace through `kore_tls.c`, `kore_domain_free()` and worker-only `kore_domain_closelogs()`. `access-log-file.c` checks the actual writer descriptor is closed after a two-listener/two-worker run; `policy-logs-runtime.c` retains server reuse and startup-failure coverage. |
+| I26 | The first rotation adapter draft reported startup ENOSPC through `kore_log()` before `kore_library_init()`. Its buffer allocation entered uninitialized Kore pools and terminated instead of serving. The same dependency would be unsafe after allocator cleanup. Diagnostics now call the already-live public root logger directly, before owned logger destruction. | Injected startup ENOSPC reproduced `fatal("cannot map pool storage")`; the debugger traced it through `kore_log()` and pool allocation. `access-log-file.c` now verifies startup and live-write ENOSPC diagnostics, continued HTTP, recovery and normal shutdown. |
+| P12 | The initial external-sink patch draft retained native per-domain flushing after bypassing domain buffers. A non-forced drain could dereference NULL `dom->logbuf`. Source review caught this before build; patch 0065 skips that flush when the external sink handles the record. | `access-log-file.c` sends enough large complete records across two workers/listeners to exercise non-forced draining, and verifies whole-record file framing. Forced cleanup safely accepts absent native domain buffers. |
+
 ## SHA-1 Release diagnostics
 
 K22: The first selected GCC Release build diagnosed possible 64-byte reads from

@@ -56,7 +56,7 @@ add_library(rotmos_objects OBJECT src/common.c src/u64.c src/sse.c
   src/json.c src/json_buffer.c src/rest.c src/rest_reply.c src/openapi.c src/openapi_json.c src/openapi_yaml.c src/json_array.c src/json_route.c src/xml.c src/xml_sax.c src/xml_mapping.c src/xml_generator.c src/xml_route.c
   src/executor.c src/native_io.c src/source_native.c src/storage.c src/storage_assets.c src/storage_filesystem.c src/storage_fs_disk.c src/storage_fs_scope.c src/asset.c src/asset_filesystem.c src/static.c src/static_reply.c src/static_policy.c src/mime.c
   src/webdav.c src/webdav_http.c src/webdav_propfind.c src/upload.c src/upload_metadata.c src/upload_reader.c src/upload_file.c
-  src/autoblock.c src/logging.c src/kore_logging.c src/address.c src/policy.c src/kore_policy.c src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
+  src/autoblock.c src/logging.c src/access_log_file.c src/kore_logging.c src/address.c src/policy.c src/kore_policy.c src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
   src/config_normalize.c src/server.c src/router.c src/route_path.c
   src/request.c src/request_decode.c src/router_dispatch.c
   src/kore_runtime.c src/kore_http.c src/kore_loop.c src/kore_control.c
@@ -206,6 +206,14 @@ if(BUILD_TESTING)
   rotmos_local_runtime(rotmos_log_backend)
   add_test(NAME rotmos.log-backend COMMAND rotmos_log_backend)
   set_tests_properties(rotmos.log-backend PROPERTIES TIMEOUT 5)
+  add_executable(rotmos_access_log_file tests/access-log-file.c src/access_log_file.c)
+  target_compile_definitions(rotmos_access_log_file PRIVATE write=rotmos_test_write rename=rotmos_test_rename open=rotmos_test_open
+    $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  target_link_libraries(rotmos_access_log_file PRIVATE rotmos::static pslog::pslog_static Threads::Threads)
+  rotmos_c89(rotmos_access_log_file)
+  rotmos_local_runtime(rotmos_access_log_file)
+  add_test(NAME rotmos.access-log-file COMMAND rotmos_access_log_file)
+  set_tests_properties(rotmos.access-log-file PROPERTIES TIMEOUT 12)
   foreach(codec filesystem-failure vectis-filesystem materialized-output vectis-services-runtime vectis-request-reply vectis-response-head vectis-body-file vectis-route-runtime vectis-config json reply-spooled xml xml-mapped xml-runtime asset mime static-runtime storage-runtime storage-deadline storage-filesystem webdav-runtime source-runtime upload-runtime rest-runtime openapi policy-runtime policy-logs-runtime)
     add_executable(rotmos_${codec} "tests/${codec}.c")
     if(codec STREQUAL "xml-runtime")

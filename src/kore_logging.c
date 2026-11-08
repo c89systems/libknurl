@@ -1,10 +1,56 @@
 #include "kore_internal.h"
 #include "logging_internal.h"
+#include "access_log_file.h"
+#include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 struct rotmos_log_runtime {
     pslog_logger *root, *access;
     int owned_root, owned_access;
+    struct rotmos_access_file *file;
+    const rotmos_http_config *file_config;
+    int file_failed;
+    long file_error;
 };
+static void file_failure(struct rotmos_log_runtime *log,
+                         const rotmos_error *error, const char *action)
+{
+    pslog_field fields[5];
+    if (!log->file_failed || log->file_error != error->native_code) {
+        fields[0] = pslog_str("operation", error->operation);
+        fields[1] = pslog_str("error", error->message);
+        fields[2] =
+            pslog_str("detail", error->native_code != 0
+                                    ? strerror((int)error->native_code)
+                                    : rotmos_status_string(error->status));
+        fields[3] = pslog_str("action", action);
+        fields[4] = pslog_str("path", log->file_config != NULL
+                                          ? log->file_config->access_log_path
+                                          : "-");
+        /* Startup may precede Kore's allocator initialization, and shutdown
+         * follows its cleanup. The already-owned root logger is valid in both.
+         */
+        pslog_error(log->root, "access.log file output failed", fields, 5);
+    }
+    log->file_failed = 1;
+    log->file_error = error->native_code;
+}
+static void file_record(const void *bytes, size_t length, void *data)
+{
+    struct rotmos_log_runtime *log = data;
+    rotmos_error error;
+    rotmos_status status = ROTMOS_OK;
+    if (log->file_config == NULL || length == 0)
+        return;
+    if (log->file == NULL)
+        status = rotmos_access_file_open(log->file_config, &log->file, &error);
+    if (status == ROTMOS_OK)
+        status = rotmos_access_file_write(log->file, bytes, length, &error);
+    if (status != ROTMOS_OK)
+        file_failure(log, &error, "record dropped; will retry");
+    else
+        log->file_failed = 0;
+}
 static const char *effective(struct http_request *native, const char *peer,
                              char *buffer, size_t size)
 {
@@ -37,6 +83,7 @@ rotmos_status rotmos_kore_logging_start(struct rotmos_runtime *runtime,
         rules[ROTMOS_ACCESS_LOG_MAX_STATUS_LEVEL_RULES];
     pslog_config config;
     pslog_logger *base;
+    rotmos_status status;
     size_t i;
     log = calloc(1, sizeof(*log));
     if (log == NULL)
@@ -85,13 +132,51 @@ rotmos_status rotmos_kore_logging_start(struct rotmos_runtime *runtime,
                               access.status_level_rule_count);
     kore_accesslog_set_real_ip_resolver(effective);
     kore_accesslog_set_correlation_id_resolver(correlation);
+    if (runtime->server->config.http.access_log_path != NULL) {
+        log->file_config = &runtime->server->config.http;
+        status = rotmos_access_file_open(log->file_config, &log->file, error);
+        if (status == ROTMOS_IO && error != NULL &&
+            error->native_code == ENOSPC) {
+            file_failure(log, error,
+                         "will retry; HTTP service remains available");
+            status = ROTMOS_OK;
+            rotmos_error_clear(error);
+        }
+        if (status == ROTMOS_IO) {
+            if (error != NULL)
+                error->status = ROTMOS_BACKEND;
+            return ROTMOS_BACKEND;
+        }
+        if (status != ROTMOS_OK)
+            return status;
+        kore_accesslog_set_file_sink(file_record, log);
+    }
     return ROTMOS_OK;
+}
+void rotmos_kore_logging_child(struct rotmos_runtime *runtime)
+{
+    if (runtime->logging != NULL) {
+        (void)rotmos_access_file_close(runtime->logging->file);
+        runtime->logging->file = NULL;
+        runtime->logging->file_config = NULL;
+    }
 }
 void rotmos_kore_logging_finish(struct rotmos_runtime *runtime)
 {
     struct rotmos_log_runtime *log = runtime->logging;
+    rotmos_error error;
+    int code;
     if (log == NULL)
         return;
+    kore_accesslog_set_file_sink(NULL, NULL);
+    code = rotmos_access_file_close(log->file);
+    if (code != 0) {
+        rotmos_fail(&error, ROTMOS_IO, "access_log_close",
+                    "cannot close access.log");
+        error.native_code = code;
+        error.source = ROTMOS_ERROR_SYSTEM;
+        file_failure(log, &error, "file output closed");
+    }
     kore_accesslog_set_logger(NULL);
     kore_accesslog_set_real_ip_resolver(NULL);
     kore_accesslog_set_correlation_id_resolver(NULL);

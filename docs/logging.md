@@ -39,13 +39,47 @@ snapshots separately disclose commitment, abort, duration and detailed counts.
 The formatter uses the retained TCP address after a downstream disconnect;
 it never dereferences a released native connection to reconstruct identity.
 
-`config.http.access_log_path` independently enables the existing file sink.
-The parent opens it only during startup, workers queue bounded records, and the
-parent drains through Kore's timer and flushes before worker mappings disappear.
-An open failure is a returned startup failure. File records continue when
-structured access or an individual structured status is disabled. The parent
-skips contended worker buffers instead of waiting on an unfinished record; a
-worker killed while holding that buffer can lose its unfinished records.
+`config.http.access_log_path` independently enables combined-format file access
+logs. One parent-owned writer handles all listeners and workers. Workers queue
+bounded records; the parent drains them through Kore's timer and once more before
+worker mappings disappear. File records continue when structured access or an
+individual structured status is disabled. The parent skips contended worker
+buffers instead of waiting on an unfinished record; a worker killed while holding
+that buffer can lose its unfinished records.
+
+File rotation is enabled by default, with these `config.http` settings (also
+available under Lua's `http` table):
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `access_log_max_bytes` | 10485760 (10 MiB) | Rotate before appending a record that would exceed this threshold to a nonempty file. Zero inherits the default. |
+| `access_log_file_count` | 3 | Total files, including the active file. Zero inherits three; one truncates the active file at rotation boundaries. |
+| `access_log_rotation_disabled` | false / 0 | Explicitly select unbounded append without rotation. |
+
+With three files, rotation removes `access.log.2`, moves `.1` to `.2`, moves
+`access.log` to `.1` and opens a fresh active file. Records are never split across
+files: an oversized record is accepted into an empty file, which rotates before
+the next record. Existing logs are appended across runs, with their size counted
+toward the threshold. New files use mode 0644; rotation retains the active file's
+permission bits, subject to the process umask. The threshold must fit a positive
+64-bit signed file offset, including on 32-bit targets.
+
+Each instance must exclusively own its configured regular-file path and numbered
+backups. Final-component symlinks and nonregular files are rejected without
+waiting on a FIFO. External writers or external rotation while the instance runs
+are unsupported. Lowering the retention count does not remove backups outside the
+newly configured range.
+
+Rotation and append failures, including ENOSPC, leave HTTP serving. The parent
+reports an error through the root logger, drops the file record it cannot accept
+and retries on the next record. A repeated identical error is suppressed until
+output succeeds or the error changes. A failed rename chain resumes at its failed
+step, without repeatedly evicting history; it does not bypass rotation to grow the
+active file. A partial failed append is rolled back when the filesystem permits.
+There is no replay queue or durability/fsync guarantee. Startup ENOSPC is also
+reported and retried when records arrive; other startup open failures remain
+returned errors. Diagnostics require a functioning root log sink, so an independent
+sink is useful when the access-log filesystem is full.
 
 Worker-to-parent runtime messages retain initialized padding and explicit
 lengths. Messages are capped at an 8192-byte prefix and malformed/oversized
@@ -62,3 +96,8 @@ response connection, and runs against relocated static/shared SDKs. The
 oversized IPC records and a locked unfinished access buffer without delaying
 shutdown. The [policy API](policy.md) supplies admission and observations;
 application loggers and metrics aggregation remain application-owned.
+The [file fixture](../tests/access-log-file.c) checks retention, exact thresholds,
+oversized records, restart append, permissions, truncate/disable options, failed
+rotation recovery, partial writes, ENOSPC and nonregular paths. Its two-worker,
+two-listener wire case verifies continued HTTP delivery, error diagnostics,
+recovery and parent descriptor cleanup, including startup ENOSPC.

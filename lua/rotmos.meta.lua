@@ -477,6 +477,9 @@
 ---@field server_header? string # Copied Server response-header value; default "rotmos", independent of instance name (valid HTTP header value, 1..53 bytes).
 ---@field mime_types? table<string,string> # Copied instance-wide static extension overrides. Route mappings win; duplicate normalized keys and invalid extensions/types fail.
 ---@field access_log_path? string # Independent file access-log path; unaffected by structured logger disable.
+---@field access_log_max_bytes? rotmos.UnsignedInput # Whole-record file rotation threshold; default 10 MiB, one oversized record may exceed it.
+---@field access_log_file_count? rotmos.IntegerInput # Total files including active; default 3 (access.log, .1, .2). One truncates active at rotation.
+---@field access_log_rotation_disabled? boolean # Explicitly disable file access-log rotation; default false.
 ---@field hsts_max_age_seconds? rotmos.IntegerInput # Strict-Transport-Security max-age in seconds.
 ---@field backend_curl_timeout_seconds? rotmos.IntegerInput # Kore backend curl timeout, distinct from reverse-proxy deadlines.
 ---@field backend_curl_recv_max_bytes? rotmos.UnsignedInput # Kore backend curl receive ceiling, distinct from live proxy queues.

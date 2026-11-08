@@ -119,6 +119,9 @@ int main(void)
     config.listener_count = config.workers.count = 1;
     config.workers.affinity_disabled = config.http.backend_quiet = 1;
     config.http.server_header = "rotmos-smoke";
+    /* Rotation declarations retain large-file offsets on 32-bit targets. */
+    config.http.access_log_max_bytes.high = 1;
+    config.http.access_log_max_bytes.low = 0;
     config.limits.hard_body_bytes.low = 1024;
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
     config.callbacks.on_parent_ready = ready;
