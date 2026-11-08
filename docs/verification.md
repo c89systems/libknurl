@@ -1,5 +1,39 @@
 # Extraction verification
 
+## WebDAV fallback and LoneJSON 0.47.0 (2026-11-08)
+
+The WebDAV after-hook regression reproduced EOF before response headers. The
+fallback now uses a valid Content-Type; asynchronous GET/HEAD and synchronous
+OPTIONS deliver complete empty 500 responses, subsequent requests succeed, and
+provider resources close. The GNU fixture failed before the fix and passed
+afterward; see `build/dav-fallback-{red,green}.log` and I27 in [KORE.md](../KORE.md).
+
+Core and Lua now require checksum-pinned LoneJSON 0.47.0, including all seven
+SDKs and the matching public Lua provider source. Its ABI 27 requires rebuilding
+consumers. Selected-array iteration uses public per-stream record reuse instead
+of changing runtime clearing configuration. The fixed-capacity tests cover owned
+runtimes and supplied runtimes with either clearing policy, repeated/absent
+fields, overflow, cancellation and malformed-input cleanup. This resolves the
+0.46.0 limitation recorded under I22.
+
+All seven selected toolchains build Core, fixtures and installed-SDK Lua bindings:
+x86_64 GNU/musl Debug and the five cross-target Release builds. Eleven affected
+Core checks pass on each native target; all 36 GNU / 35 musl Lua checks pass.
+Each of the four ARM Linux targets passes its three basic Core/Lua QEMU checks.
+Darwin has compile/link evidence through osxcross. Its compiler caught an
+ambiguous concatenated JSON fixture string; explicit parentheses corrected that
+warning without suppressing diagnostics. Only affected fixture targets were
+rebuilt afterward. Four focused Valgrind cases (JSON, WebDAV and both Lua typed
+modes) and the relocated static/shared C SDK consumers pass. Formatting and
+whitespace checks pass.
+
+Evidence is in `build/lonejson047-*-build.log`,
+`build/lonejson047-{gnu,musl}-focused.log`,
+`build/lonejson047-{gnu,musl}-lua.log`, `build/lonejson047-*-qemu.log`,
+`build/lonejson047-valgrind.log` and `build/lonejson047-installed.log`.
+The signed release, final-artifact and fuzz gates were not rerun; no release,
+tagging or push was performed.
+
 ## Access-log retention and disk-failure recovery (2026-11-08)
 
 File logs now have one parent-owned writer with default 10 MiB thresholds and
@@ -70,11 +104,12 @@ partial input, grace, pause exclusion, independent idle enforcement and disabled
 protections. Mapped-array cases cover caller-owned capacity limits, repeated
 reuse, omitted fields and cleanup on parse/callback failures.
 
-These array checks use NULL schema runtimes or supplied runtimes configured
-with `clear_destination_by_default = 0`. A separate GNU probe using supplied
-default clearing still fails: LoneJSON 0.46.0 initializes its first stream item
-and loses configured backing. The public API has no per-stream override; that
-dependency limitation remains open, with no sibling repository changes. See
+These original 0.46.0 array checks used NULL schema runtimes or supplied runtimes
+configured with `clear_destination_by_default = 0`. A separate GNU probe using
+supplied default clearing failed: LoneJSON 0.46.0 initialized its first stream
+item and lost configured backing. Its public API had no per-stream override; that
+dependency limitation was open at that point, with no sibling repository changes.
+The 0.47.0 follow-up above resolves it through the released public stream API. See
 [I21/I22](../KORE.md#upload-rate-and-mapped-item-storage). The full release matrix
 and existing rehearsal artifacts were not rebuilt for these changes.
 Repository formatting and whitespace checks pass.

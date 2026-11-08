@@ -15,8 +15,11 @@ normalized. Static archives and Linux shared libraries omit debug sections;
 Darwin debug-map object names are relative at link time; the packager does not
 post-mutate installed dylibs.
 
-Dependency SDKs are external: cpkt 0.6.1, LoneJSON 0.46.0 and pslog 0.13.0. The
+Dependency SDKs are external: cpkt 0.6.1, LoneJSON 0.47.0 and pslog 0.13.0. The
 selected SDK hashes and linked cpkt component versions appear in `DEPENDENCIES`.
+LoneJSON 0.47.0 uses shared-library ABI 27. Rebuild Core, its Lua provider and
+downstream consumers together against these headers; 0.46.0 binaries are not a
+compatible runtime substitute.
 Provider libraries are not copied into this archive. Static consumers need their
 archive closure; shared consumers need the matching runtime libraries. The
 pkg-config metadata declares that closure so selected-target linking resolves it

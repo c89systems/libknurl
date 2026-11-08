@@ -53,8 +53,8 @@ static rotmos_status fixed_item(size_t index, const lonejson_record_view *view,
 static int fixed_items(void)
 {
     static const char *documents[] = {
-        "[{\"nums\":[1],\"message\":\"one\"},"
-        "{\"nums\":[2],\"message\":\"two\"},{}]",
+        ("[{\"nums\":[1],\"message\":\"one\"},"
+         "{\"nums\":[2],\"message\":\"two\"},{}]"),
         "[{\"message\":\"allocated\",\"nums\":[1,2]}]",
         "[{\"nums\":[1],\"message\":\"one\"}]",
         "[{\"message\":\"allocated\",\"nums\":[1,"};
@@ -71,9 +71,9 @@ static int fixed_items(void)
     rotmos_bytes bytes;
     rotmos_error error;
     int supplied, scenario;
-    for (supplied = 0; supplied < 2; ++supplied) {
+    for (supplied = 0; supplied < 3; ++supplied) {
         config = lonejson_default_config();
-        config.clear_destination_by_default = 0;
+        config.clear_destination_by_default = supplied != 2;
         runtime = supplied ? lonejson_new(&config, &native) : NULL;
         CHECK(!supplied || runtime != NULL);
         CHECK(rotmos_json_schema_from_map(runtime, &fixed_map, &schema,
