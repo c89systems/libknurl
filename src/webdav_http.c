@@ -63,7 +63,8 @@ void rotmos_dav_error(struct dav_request *s, int code, rotmos_status cause)
         }
     }
     if (rotmos_response_replace_uncommitted(response, NULL) == ROTMOS_OK &&
-        rotmos_response_bytes(response, code, NULL, empty, NULL) == ROTMOS_OK)
+        rotmos_response_bytes(response, code, "text/plain", empty, NULL) ==
+            ROTMOS_OK)
         return;
     (void)rotmos_response_abort(response, cause, NULL);
 }

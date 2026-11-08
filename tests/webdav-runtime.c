@@ -30,7 +30,7 @@ struct fixture {
     pid_t child;
     char root[4096], cache[4096];
     int stopped, failed, opened, closed, checks, mapped, overwritten, hidden,
-        after, aborted;
+        after, aborted, after_failed;
 };
 static char *wire_body;
 static int write_all(int fd, const void *bytes, size_t count)
@@ -232,6 +232,12 @@ static rotmos_status after(rotmos_request *request, rotmos_reply *reply,
         return ROTMOS_STATE;
     }
     ++f->after;
+    if (request_header(request, "X-After-Fail") != NULL) {
+        if (rotmos_response_is_committed(rotmos_request_response(request)))
+            f->failed = 1;
+        ++f->after_failed;
+        return ROTMOS_STATE;
+    }
     return rotmos_reply_header_set(reply, "X-After", "yes", error);
 }
 static rotmos_status ping(rotmos_request *request, rotmos_reply *reply,
@@ -479,6 +485,14 @@ static int client(unsigned short port, const char *root)
     wire_body = malloc(32768);
     CHECK(wire_body != NULL);
     CHECK(concurrent_puts(port, root) == 0);
+    /* Async GET and synchronous OPTIONS must replace staged replies when the
+     * after hook fails, without sending the selected body or aborting HTTP. */
+    CHECK(exchange(port, "GET", "/dav/file", "X-After-Fail: yes\r\n", "", 500,
+                   "", "content-length: 0", NULL) == 0);
+    CHECK(exchange(port, "HEAD", "/dav/file", "X-After-Fail: yes\r\n", "", 500,
+                   "", "content-length: 0", NULL) == 0);
+    CHECK(exchange(port, "OPTIONS", "/dav", "X-After-Fail: yes\r\n", "", 500,
+                   "", "content-length: 0", NULL) == 0);
     CHECK(exchange(port, "PROPFIND", "/dav/listing", "Depth: 1\r\n", "", 207,
                    NULL, NULL, NULL) == 0 &&
           valid_xml() == 0 &&
@@ -653,7 +667,7 @@ static int worker_exit(rotmos_server *server,
     (void)rotmos_asset_provider_close(f->assets, NULL);
     return f->failed || !f->stopped || f->mapped == 0 || f->overwritten == 0 ||
            f->hidden == 0 || f->after == 0 || f->aborted == 0 ||
-           f->opened != f->closed;
+           f->opened != f->closed || f->after_failed != 3;
 }
 static rotmos_status
 unsupported_invoke(rotmos_storage_operation *op,

@@ -173,6 +173,17 @@ counts include relayed frame bytes but exclude the handshake, successful error
 categories are `"none"`, and standalone quotas must be positive after explicit
 configuration initialization. Their implemented baseline behavior is unchanged.
 
+## WebDAV after-hook error replies
+
+I27: WebDAV's uncommitted-error fallback passed NULL as the Content-Type to
+`rotmos_response_bytes()`, which rejects that declaration. An asynchronous
+after-hook failure therefore aborted the connection before headers instead of
+delivering HTTP 500. The fallback now supplies `text/plain` with its empty body.
+`webdav-runtime.c` reproduces the original EOF with a failing after hook, then
+checks complete empty 500 replies for asynchronous GET/HEAD and synchronous
+OPTIONS, subsequent normal delivery, and balanced provider-resource closure.
+This is a Core adapter defect, not a pristine Kore defect.
+
 ## Parent-owned access-log files
 
 Size-based retention is a feature addition. External patch
