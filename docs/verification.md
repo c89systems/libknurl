@@ -1,5 +1,17 @@
 # Extraction verification
 
+## Scoped musl worker-stack assessment (2026-11-08)
+
+The [assessment](musl-stack-assessment.md) records retained O0/O3 Core/Kore frame
+measurements for three musl architectures and fresh focused default-worker-stack
+observations. Six existing x86_64 musl XML/filesystem/WebDAV checks pass. The
+diagnostic probes confirm unresolved XML mapping and LoneJSON initialization
+failures on all three targets; Kore tree traversal differs on ARM32 at the tested
+depths. Expected-failure diagnostic cases are not product correctness gates.
+No product implementation changed, no complete product matrix was repeated,
+and Lua runtime work remains with cpkt. See the assessment for ownership,
+architecture limits, upstream CR drafts and the preserved local evidence.
+
 ## Response timeout clock ordering (2026-11-08)
 
 The response sweep now samples time after body/channel timeout callbacks for each

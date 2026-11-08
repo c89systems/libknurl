@@ -239,6 +239,29 @@ and unknown types. `static-runtime.c` checks directory GET/HEAD, an extensionles
 single-file route and an explicit override on the wire. `kore-runtime.c` checks
 the native registry and its emitted response type across backend restart.
 
+## JSON tree traversal on musl workers
+
+**Status: upstream recursion present in the pristine pin; correction pending.**
+`kore_json_item_tobuf` and `kore_json_item_free` recursively visit children with
+native call frames. Programmatically constructed trees can exceed a default musl
+worker's stack budget. This is separate from librotmos's local XML mapper.
+
+The focused continuation reproduces serialization failure at depth 2,048 and
+destruction failure at depth 16,384 on x86_64 Debug and AArch64 Release under
+QEMU. ARM32 Release under QEMU completes those same cases, so these depths are
+not universal failure thresholds. A depth-10 control completes on all three.
+The executions use the patched Core artifacts; the recursive implementation
+is also present in pristine `vendor/kore/src/json.c`. A pristine-only executable
+and HTTP reachability of equivalent tree depths have not been tested.
+
+No fix is claimed. Iterative traversal must preserve serialization order and
+make destruction possible for an already constructed tree, including creation
+paths that do not populate parent pointers. The upstream CR draft is retained
+locally as `stash/CR-kore-json-tree-musl-stack.md`. See the
+[stack assessment](docs/musl-stack-assessment.md) for exact scope and evidence.
+The diagnostic probes characterize failures; they are not passing product
+regressions for a correction.
+
 ## Portability and features are not automatically bugs
 
 Strict C89 conversion, platform integer/queue declarations and independent SDK
