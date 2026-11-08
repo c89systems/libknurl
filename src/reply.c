@@ -69,10 +69,10 @@ static rotmos_status prepare_type(rotmos_reply *reply, int status,
     if (result != ROTMOS_OK)
         return result;
     if (status < 100 || status > 599 ||
-        !rotmos_header_value_valid(content_type) || content_type[0] == '\0')
+        !rotmos_content_type_valid(content_type))
         return rotmos_fail(
             error, ROTMOS_INVALID, "reply",
-            "provide status 100..599 and a nonempty content type");
+            "provide status 100..599 and a valid Content-Type media type");
     *copy = rotmos_copy_text(content_type);
     if (*copy == NULL)
         return rotmos_fail(error, ROTMOS_NOMEM, "reply",
@@ -207,10 +207,12 @@ static rotmos_status header_store(rotmos_reply *reply, const char *name,
     status = mutable(reply, error);
     if (status != ROTMOS_OK)
         return status;
-    if (!rotmos_header_name_valid(name) || !rotmos_header_value_valid(value))
+    if (!rotmos_header_name_valid(name) || !rotmos_header_value_valid(value) ||
+        (rotmos_text_equal_case(name, "content-type") &&
+         !rotmos_content_type_valid(value)))
         return rotmos_fail(error, ROTMOS_INVALID, "reply_header",
-                           "provide a token header name and a value without "
-                           "control characters");
+                           "provide a token header name, no value controls, "
+                           "and valid media-type syntax for Content-Type");
     if (reply->header_count >= (size_t)-1 / sizeof(*headers))
         return rotmos_fail(error, ROTMOS_OVERFLOW, "reply_header",
                            "header count overflow");

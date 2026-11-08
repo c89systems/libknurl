@@ -24,6 +24,19 @@ extern "C" {
  * inactive.
  */
 typedef struct rotmos_server rotmos_server;
+/** One extension-to-Content-Type override, copied with its configuration.
+ * Extension is ASCII letters/digits or +, -, _ with an optional leading dot;
+ * matching is case-insensitive against the filename's final extension.
+ * Duplicate normalized extensions in one declaration are INVALID.
+ */
+typedef struct rotmos_mime_type {
+    /** Extension such as "mp3" or ".MP3"; not a path or compound suffix. */
+    const char *extension;
+    /** RFC 9110 media-type with token or quoted parameters; malformed values,
+     * wildcards, header controls/folding and unquoted non-ASCII are INVALID.
+     */
+    const char *content_type;
+} rotmos_mime_type;
 /** Process role snapshot borrowed during host callbacks; worker_index is zero-
  * based.
  */

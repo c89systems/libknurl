@@ -1,5 +1,34 @@
 # Extraction verification
 
+## MIME defaults, overrides and Content-Type validation (2026-11-08)
+
+Core has 125 built-in extension mappings, copied instance/route overrides and
+one public instance resolver, shared with the Lua facade. Nine affected Core
+checks pass on both selected x86_64 GNU and musl Debug toolchains: MIME, assets,
+static serving, replies, DAV, REST, direct responses, request/reply forwarding
+and the public symbol boundary. The MIME fixture checks constructor defaults
+from nonzero-filled storage, copied mapping ownership, normalized keys, invalid
+declarations and all 255 non-NUL byte values in six Content-Type syntax contexts.
+Wire tests cover ranged MP3/HEAD MP4 delivery, override precedence and quoted
+parameters without changing payload delivery.
+
+All 36 GNU Lua checks and the six affected musl config/routes/provider checks
+pass, including installed preload/dynamic modules and the GNU source consumer.
+The new MIME Valgrind check passes. Relocated static/shared SDK consumers pass
+with the same public headers and Core implementations. Their prepared SDK was
+reused after replacing an invalid Content-Type placeholder in a forwarding
+fixture; only that fixture was rebuilt before resuming the consumer gates.
+Repository formatting and whitespace checks pass.
+
+Final evidence is in `build/mime-validation-final-build.log`,
+`build/mime-validation-musl-final-build.log`, `build/mime-gnu-lua-final.log`,
+`build/mime-musl-lua-final.log`, `build/mime-valgrind-final.log`,
+`build/mime-installed-final.log` and `build/mime-installed-final-resume.log`.
+Earlier byte-check results following a fixture compile failure are superseded;
+the final gates stop on build failure and use rebuilt fixtures. No dependencies,
+upstream Kore sources or release artifacts changed. The seven-target release,
+QEMU and fuzz matrices were not repeated for this feature.
+
 ## Upload rate and selected-array corrections (2026-11-07)
 
 The five affected Core checks (`json`, `json-runtime`, `body-runtime`,

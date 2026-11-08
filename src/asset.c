@@ -125,7 +125,7 @@ rotmos_status rotmos_asset_info_copy(const rotmos_asset_info *input,
           input->last_modified[0] == 0)) ||
         !tag(input->etag) ||
         (input->content_type != NULL &&
-         !rotmos_header_value_valid(input->content_type)))
+         !rotmos_content_type_valid(input->content_type)))
         return failure(error, ROTMOS_INVALID,
                        "invalid asset kind, size, ETag, content type or date");
     *out = *input;

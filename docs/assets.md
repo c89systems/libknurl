@@ -90,11 +90,91 @@ once and preserves the raw query. Files with an added slash return 404. Indexes
 are resolved under the same confined root. No directory listing is exposed by a
 static route.
 
-Content type uses an extension mapping, including `.md` and `.markdown` as
-`text/markdown; charset=utf-8` (case-insensitive), with explicit overrides for
-filesystem routes. Packed entries retain manifest content types before their
-configured fallback, defaulting to application/octet-stream without an inferred
-extension type. Assets default to no-cache and a `not found\n` 404 with
+Content type uses the same extension resolver for filesystem and provider mounts.
+Defaults cover audio/video (MP3, MP4/M4A, FLAC, AAC, Ogg/Opus, WebM, QuickTime),
+HLS/DASH playlists and segments, subtitles, modern images, fonts, archives,
+office documents, ebooks and web/data formats. `.md`/`.markdown` remain
+`text/markdown; charset=utf-8`; `.mp3` is `audio/mpeg` and `.mp4` is `video/mp4`.
+The checked-in [catalogue](../src/mime.c) uses registered
+[media types](https://www.iana.org/assignments/media-types/) where available and
+conventional types otherwise. Extension inference never reads or sniffs content.
+Compression suffixes do not set Content-Encoding or decompress the payload.
+
+Resolution precedence, for GET/HEAD and ranged responses alike:
+
+1. Explicit route `content_type`, which forces one type for the entire mount.
+2. Route `mime_types` extension overrides.
+3. Instance `http.mime_types` extension overrides.
+4. Nonempty asset/provider metadata (including explicit application/octet-stream).
+5. Built-in filename-extension inference, then application/octet-stream.
+
+Untyped packed entries now receive extension inference; explicit manifest types
+remain authoritative unless configuration overrides them. Previously a packed
+entry's type took precedence over the route's `content_type`; that field is now
+an explicit override consistently for all static mounts.
+
+C declarations use arrays of `rotmos_mime_type`:
+
+```c
+static const rotmos_mime_type instance_types[] = {
+    {"custom", "application/vnd.example.resource"}
+};
+static const rotmos_mime_type route_types[] = {
+    {"ts", "text/plain; charset=utf-8"}
+};
+/* After the ordinary configuration initializers: */
+server_config.http.mime_types = instance_types;
+server_config.http.mime_type_count = 1;
+static_config.mime_types = route_types;
+static_config.mime_type_count = 1;
+```
+
+`rotmos_server_content_type(server, filename)` resolves instance mappings and
+built-ins without filesystem access; its result is borrowed until destruction.
+`rotmos_static_content_type(filename)` remains the built-in-only helper.
+The latter, and a NULL-server lookup, return strings with static lifetime.
+
+Lua uses dictionaries, forwarded to those same public C declarations:
+
+```lua
+local server = assert(rotmos.server{
+  port = 8080,
+  http = {mime_types = {custom = 'application/vnd.example.resource'}},
+})
+assert(server:static_directory{
+  path = '/files', root_dir = './public',
+  mime_types = {ts = 'text/plain; charset=utf-8'},
+})
+assert(server:content_type('item.custom') == 'application/vnd.example.resource')
+```
+
+Strings and mapping arrays are copied at server creation or route registration;
+there is no process-global registry or live mutation. Zero entries inherit the
+next layer. Extensions are ASCII letters/digits or `+`, `-`, `_`, optionally
+prefixed by one dot; matching is case-insensitive against the final filename
+extension. `.MP3` and `mp3` are the same key. Duplicates within one declaration,
+paths/compound suffixes, empty types and header controls fail with INVALID.
+Lookups take filenames, not URLs with query/fragment components. Ambiguous
+extensions use one default: `.ts` means MPEG transport stream; a source-code
+mount can override it as above. Directory/group mounts support the same options.
+
+Content-Type values follow [RFC 9110 media-type syntax](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.3.1),
+including its token and quoted-string parameter rules. The complete value is
+validated: malformed/missing parameters, unclosed quotes, whitespace around
+`=`, bare non-ASCII tokens, control characters, CR/LF/folding and comma-separated
+type lists fail before registration or reply replacement. Wildcard media ranges
+are rejected as representation types. Valid values are copied unchanged;
+rejection does not attempt to repair malformed input by stripping characters.
+Empty parameter separators are allowed by HTTP's grammar; a nonempty parameter
+must contain both a token name and a token or quoted value with no whitespace
+around `=`. Validation checks syntax, not whether a vendor type is registered.
+Quoted parameter values allow escaped quotes/backslashes, delimiters and the
+legacy opaque bytes permitted by HTTP; HTAB is accepted only in allowed whitespace
+or quoted positions. C strings are NUL-terminated; Lua also rejects embedded NUL
+using the string's explicit length. The same Core validator protects mappings,
+explicit static/404 types, asset metadata, DAV types and staged reply/header types.
+
+Assets default to no-cache and a `not found\n` 404 with
 no-store; filesystem 404 replies are empty unless configured otherwise. Cache
 and not-found policies are explicit. ETag/If-Match/If-None-Match checks validate
 complete lists, including malformed tails, and distinguish weak/strong comparison.

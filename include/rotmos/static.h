@@ -25,10 +25,17 @@ typedef struct rotmos_static_config {
      * destruction.
      */
     rotmos_asset_provider *provider;
-    /** Representation MIME type; NULL selects the operation's default when
-     * allowed.
+    /** Explicit RFC 9110 Content-Type override, including valid parameters;
+     * NULL selects extension/provider inference. Malformed syntax is INVALID.
      */
     const char *content_type;
+    /** Copied extension overrides, ahead of instance mappings, asset metadata
+     * and built-ins. An explicit content_type overrides all extension mappings.
+     */
+    const rotmos_mime_type *mime_types;
+    /** Number of entries in mime_types; zero inherits instance/default types.
+     */
+    size_t mime_type_count;
     /** Copied Cache-Control header value. */
     const char *cache_control;
     /** Directory index filename; only used when indexing is enabled. */
@@ -93,8 +100,9 @@ ROTMOS_API rotmos_status rotmos_route_group_static_directory(
 ROTMOS_API rotmos_status rotmos_route_group_static_assets(
     rotmos_route_group *, const rotmos_static_config *, rotmos_route **,
     rotmos_error *);
-/** Return a static MIME type inferred from a path extension; never free the
- * returned string.
+/** Return a built-in MIME type inferred case-insensitively from the filename's
+ * final extension, or application/octet-stream. No file access or sniffing;
+ * never free the result. Instance overrides use rotmos_server_content_type.
  */
 ROTMOS_API const char *rotmos_static_content_type(const char *);
 #ifdef __cplusplus

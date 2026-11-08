@@ -105,6 +105,9 @@ int rl_field_size(lua_State *, int, const char *, size_t *);
 int rl_field_string(lua_State *, int, const char *, const char **);
 void rl_field(lua_State *, int, const char *);
 int rl_fields(lua_State *, int, const char *const *, size_t, rotmos_error *);
+int rl_mime_types(lua_State *, int, const rotmos_mime_type **, size_t *,
+                  rotmos_error *);
+void rl_mime_push(lua_State *, const rotmos_mime_type *, size_t);
 int rl_config_parse(lua_State *, int, int, rotmos_server_config *,
                     rotmos_error *);
 int rl_material_config(lua_State *, int, int, rotmos_tls_material *,

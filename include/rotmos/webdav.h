@@ -48,8 +48,7 @@ typedef struct rotmos_webdav_auth_response {
     const char *location;
     /** Challenge header value, copied before callback return. */
     const char *www_authenticate;
-    /** Representation MIME type; NULL selects the operation's default when
-     * allowed.
+    /** Optional RFC 9110 Content-Type; malformed parameter syntax is INVALID.
      */
     const char *content_type;
     /** Request body policy, or payload bytes in a response/result declaration.
@@ -77,8 +76,7 @@ typedef struct rotmos_webdav_config {
      * supplied.
      */
     rotmos_storage_filesystem_config storage;
-    /** Representation MIME type; NULL selects the operation's default when
-     * allowed.
+    /** Optional RFC 9110 Content-Type; malformed parameter syntax is INVALID.
      */
     const char *content_type;
     /** Copied Cache-Control header value. */

@@ -34,7 +34,9 @@ local opts={
   }},
   timeouts={request_header=1234,keepalive={disabled=true},response_write_idle={milliseconds=5000}},
   client_ip={trusted_proxies={'127.0.0.1'}},proxy={active_exchanges=3,idle_connections=2},
-  http={backend_quiet=true,server_header='lua-fixture',hsts_max_age_seconds=60},
+  http={backend_quiet=true,server_header='lua-fixture',hsts_max_age_seconds=60,
+    mime_types={['.MP3']='audio/x-fixture',custom='application/x-fixture',
+      quoted='application/x-fixture; name="a;b,c"; charset="utf-8"'}},
   autoblock={max_entries=16,event_rules={{name='policy.test',threshold=2}}},
 }
 -- Constructor allocation failures own no sockets, TLS inputs or orphan arrays.
@@ -52,10 +54,22 @@ opts.on_parent_ready=function(s)
 end
 opts.on_worker_exit=function() assert(allowed==2 and denied==0) end
 server=ok(rotmos.server(opts))
+opts.http.mime_types['.MP3']='audio/x-mutated'
+collectgarbage('collect')
 assert(server:state()=='declared')
 local config=ok(server:effective_config())
 assert(config.workers.death_policy=='terminate' and config.requested_worker_count==1)
 assert(config.proxy.active_exchanges==3 and config.http.server_header=='lua-fixture')
+assert(config.http.mime_types.mp3=='audio/x-fixture' and config.http.mime_types.custom=='application/x-fixture')
+assert(server:content_type('music/song.Mp3')=='audio/x-fixture')
+assert(server:content_type('movie.mp4')=='video/mp4')
+assert(server:content_type('file.custom')=='application/x-fixture')
+assert(server:content_type('file.quoted')=='application/x-fixture; name="a;b,c"; charset="utf-8"')
+assert(server:content_type('unknown')=='application/octet-stream')
+for _,path in ipairs{false,123,'file\0.mp3'} do
+  local value,why=server:content_type(path)
+  assert(value==nil and why.status==rotmos.status.INVALID)
+end
 assert(config.timeouts.request_header.milliseconds>=1234)
 assert(config.timeouts.deferred_response.disabled)
 assert(config.requested_timeouts.request_header.milliseconds==1234 and config.timeouts.keepalive.disabled)
@@ -121,6 +135,22 @@ for _,bad in ipairs{
   assert(value==nil and why.status)
 end
 assert(host_marker=='preserved')
+for _,bad in ipairs{false,123,'not-a-table',{[1]='audio/mpeg'},
+  {mp3=false},{mp3={}},{['a\0b']='text/plain'},{txt='text/plain\0evil'},
+  {['.']='text/plain'},{['tar.gz']='application/gzip'},
+  {mp3='invalid'},{mp3='audio/mpeg\r\nInjected: yes'},
+  {txt='text/plain; charset =utf-8'},{txt='text/plain; charset= utf-8'},
+  {txt='text/plain; name="unterminated'},{txt='text/plain; name=bad,value'},
+  {txt='text/plain; name="value"tail'},{txt='text/plain; name="bad\\\n"'},
+  {mp3='audio/mpeg',['.MP3']='audio/mp4'}} do
+  local value,why=rotmos.server{port=0,http={mime_types=bad}}
+  assert(value==nil and why.status==rotmos.status.INVALID)
+end
+local isolated=ok(rotmos.server{port=0})
+assert(isolated:content_type('song.mp3')=='audio/mpeg')
+ok(isolated:close())
+local value,why=isolated:content_type('song.mp3')
+assert(value==nil and why.status==rotmos.status.STATE)
 for _,deadline in ipairs{5,{milliseconds=7},{disabled=true}} do
   local owner=ok(rotmos.server{port=0,timeouts={deferred_response=deadline}})
   local effective=ok(owner:effective_config()).timeouts.deferred_response

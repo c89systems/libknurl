@@ -16,7 +16,7 @@ foreach(surface foundation reply declarations vectis-config vectis-typed
     vectis-filesystem vectis-xml-runtime vectis-host-runtime vectis-route-runtime
     vectis-body-file vectis-request-reply vectis-services-runtime tls-runtime
     materialized-output vectis-response-head server-runtime proxy-runtime
-    proxy-websocket json xml xml-mapped xml-runtime asset static-runtime
+    proxy-websocket json xml xml-mapped xml-runtime asset mime static-runtime
     storage-filesystem webdav-runtime source-runtime upload-runtime rest-runtime
     openapi policy-runtime policy-logs-runtime json-runtime)
   run("${surface}")

@@ -228,6 +228,7 @@ static void release_route(void *data)
     free(r->prefix);
     free(r->file);
     free((void *)r->config.content_type);
+    rotmos_mime_free(r->config.mime_types, r->config.mime_type_count);
     free((void *)r->config.cache_control);
     free((void *)r->config.index_file);
     free((void *)r->config.not_found_body);
@@ -275,13 +276,11 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
     if ((config->methods &
          ~(ROTMOS_HTTP_METHODS_GET | ROTMOS_HTTP_METHODS_HEAD)) != 0 ||
         (config->content_type != NULL &&
-         (!rotmos_header_value_valid(config->content_type) ||
-          config->content_type[0] == 0)) ||
+         !rotmos_content_type_valid(config->content_type)) ||
         (config->cache_control != NULL &&
          !rotmos_header_value_valid(config->cache_control)) ||
         (config->not_found_content_type != NULL &&
-         (!rotmos_header_value_valid(config->not_found_content_type) ||
-          config->not_found_content_type[0] == 0)))
+         !rotmos_content_type_valid(config->not_found_content_type)))
         return rotmos_fail(
             error, ROTMOS_INVALID, "static_route",
             "static routes accept GET/HEAD and valid content/cache headers");
@@ -328,6 +327,14 @@ static rotmos_status add_route(rotmos_router *router, rotmos_route_group *group,
         config->methods ? config->methods
                         : ROTMOS_HTTP_METHODS_GET | ROTMOS_HTTP_METHODS_HEAD;
     r->config.index_enabled = config->index_enabled;
+    status = rotmos_mime_copy(config->mime_types, config->mime_type_count,
+                              &r->config.mime_types, error);
+    if (status != ROTMOS_OK) {
+        free(path);
+        release_route(r);
+        return status;
+    }
+    r->config.mime_type_count = config->mime_type_count;
     r->prefix = malloc(group_length + n + 1);
     if (r->prefix != NULL) {
         if (group_length)

@@ -217,6 +217,12 @@ typedef struct rotmos_timeout_config {
  * applying overrides.
  */
 typedef struct rotmos_http_config {
+    /** Copied extension overrides for every static file/directory/asset mount;
+     * route overrides win. Zero count inherits built-in MIME inference.
+     */
+    const rotmos_mime_type *mime_types;
+    /** Number of entries in mime_types; nonzero requires a non-NULL array. */
+    size_t mime_type_count;
     /** Copied Server response-header value; defaults to "rotmos", independently
      * of the instance name. Must be a valid HTTP header value of 1..53 bytes.
      */
@@ -244,6 +250,14 @@ typedef struct rotmos_http_config {
     /** Nonzero selects formatted backend error pages. */
     int pretty_error_pages;
 } rotmos_http_config;
+
+/** Infer a filename's Content-Type using this instance's overrides, then
+ * built-ins, then application/octet-stream. NULL server uses only built-ins.
+ * No filesystem access. Result is borrowed until server destruction (or has
+ * static lifetime for built-ins); path is a filename/path, not a URL.
+ */
+ROTMOS_API const char *rotmos_server_content_type(const rotmos_server *,
+                                                  const char *path);
 
 /** Configuration for io. Use the owning operation's initializer before applying
  * overrides.

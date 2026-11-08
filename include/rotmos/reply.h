@@ -1,9 +1,10 @@
 #ifndef ROTMOS_REPLY_H
 #define ROTMOS_REPLY_H
-
 /** @file reply.h Public reply API. Expected failures return rotmos_status and
  * optional bounded rotmos_error diagnostics. Take operations transfer
  * ownership only on success; views remain borrowed for their documented scope.
+ * Content-Type arguments/headers require RFC 9110 media-type syntax, including
+ * complete token/quoted parameters. Invalid values fail before replacement.
  */
 
 #include <rotmos/io.h>

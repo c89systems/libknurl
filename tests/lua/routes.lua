@@ -7,12 +7,14 @@ local function write(path,bytes)
   local file=ok(io.open(path,'wb'));ok(file:write(bytes));ok(file:close())
 end
 write(root..'/static/asset','A\0B');write(root..'/static/index.html','index\n')
+write(root..'/static/song.MP3','A\0B');write(root..'/static/movie.mp4','A\0B')
 for n=0,28,4 do
   for _,name in ipairs{'static_file','static_directory','upload_file','webdav'} do
     local owner=ok(native.server{listeners={{port=0}}})
     local spec=name=='webdav' and {path_prefix='/allocation',cache_dir=root..'/cache',site_id='allocation',auth_required=false}
       or name=='static_directory' and {path='/allocation',root_dir=root..'/static'}
       or {path='/allocation',file_path=root..'/static/asset'}
+    if name~='webdav' then spec.mime_types={mp3='audio/mpeg'} end
     fixture.fail_call(n,function() return owner[name](owner,spec) end)
     assert(owner:route_count()<=1);ok(owner:close())
   end
@@ -20,7 +22,7 @@ end
 collectgarbage('collect')
 local retained,after_error,after_oom,group_reply,group_checks,uploads= nil,nil,nil,nil,0,0
 local server=ok(rotmos.server{
-  port=0,workers={count=1,affinity_disabled=true},http={backend_quiet=true},
+  port=0,workers={count=1,affinity_disabled=true},http={backend_quiet=true,mime_types={mp4='video/x-instance'}},
   limits={default_body_bytes=2,hard_body_bytes=16},
   on_parent_ready=function(s) ok(fixture.spawn_routes(ok(s:listener()).port)) end,
 })
@@ -32,6 +34,26 @@ local spec={path='/file',file=root..'/static/asset',cache_control='public,max-ag
   end}
 ok(server:static_file(spec));spec.file='/absent'
 ok(server:static_directory{prefix='/files',dir=root..'/static',index=true})
+local mimes={['.MP3']='audio/x-mount; note="a;b,c"',mp4='video/x-mount'}
+ok(server:static_directory{prefix='/mime-route',dir=root..'/static',mime_types=mimes})
+ok(server:static_directory{prefix='/mime-explicit',dir=root..'/static',mime_types=mimes,content_type='application/x-explicit'})
+mimes['.MP3']='audio/x-mutated';mimes.mp4=nil;collectgarbage('collect')
+for _,bad in ipairs{false,{mp3=false},{mp3='no-slash'},
+  {mp3='audio/mpeg',['.MP3']='audio/mp4'},{txt='text/plain\0bad'},
+  {txt='text/plain; charset =utf-8'},{txt='text/plain; name="bad'}} do
+  local count=server:route_count()
+  local value,why=server:static_directory{prefix='/invalid-mime',dir=root..'/static',mime_types=bad}
+  assert(value==nil and why.status==rotmos.status.INVALID and server:route_count()==count)
+end
+for _,bad in ipairs{'invalid','text/plain; charset= utf-8','text/plain; name="bad',
+  'text/plain,application/json','text/plain; name="bad\\\r"'} do
+  for _,field in ipairs{'content_type','not_found_content_type'} do
+    local declaration={prefix='/invalid-type',dir=root..'/static',[field]=bad}
+    local count=server:route_count()
+    local value,why=server:static_directory(declaration)
+    assert(value==nil and why.status==rotmos.status.INVALID and server:route_count()==count)
+  end
+end
 ok(server:static_directory{prefix='/no-directory-index',dir=root..'/static'})
 local group=ok(server:group('/group',{after=function(_,reply)
   group_checks=group_checks+1;state(group_reply:snapshot());assert(ok(reply:snapshot()).status_code==200);return true

@@ -166,7 +166,7 @@ static reference_status handler(struct reference_app *app,
         FIELD("Upgrade", "fixture");
         FIELD("Content-Length", "ignored");
         FIELD("Transfer-Encoding", "ignored");
-        FIELD("Content-Type", "overridden");
+        FIELD("Content-Type", "application/x-overridden");
         bytes.data = "A\0B";
         bytes.length = 3;
         return reference_response_bytes(

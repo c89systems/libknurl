@@ -10,7 +10,8 @@ enum field_kind {
     TEXT_FIELD,
     ULONG_FIELD,
     DEADLINE_FIELD,
-    DEATH_FIELD
+    DEATH_FIELD,
+    MIME_FIELD
 };
 struct setting {
     const char *name;
@@ -42,6 +43,7 @@ static const struct setting limits[] = {
     F(rotmos_limit_config, body_spool_directory, TEXT),
     F(rotmos_limit_config, body_min_rate_disabled, BOOL)};
 static const struct setting http[] = {
+    F(rotmos_http_config, mime_types, MIME),
     F(rotmos_http_config, keepalive_disabled, BOOL),
     F(rotmos_http_config, keepalive_max_requests, UINT),
     F(rotmos_http_config, socket_backlog, UINT),
@@ -82,7 +84,7 @@ static const struct setting event_rule[] = {
     F(rotmos_autoblock_event_rule, name, TEXT),
     F(rotmos_autoblock_event_rule, threshold, UINT)};
 static int settings(lua_State *L, int index, void *config,
-                    const struct setting *fields, size_t count,
+                    const struct setting *fields, size_t count, int anchor,
                     rotmos_error *error)
 {
     size_t i, n;
@@ -114,6 +116,13 @@ static int settings(lua_State *L, int index, void *config,
         }
         ok = 1;
         switch (fields[i].kind) {
+        case MIME_FIELD:
+            ok = rl_mime_types(L, -1, (const rotmos_mime_type **)out,
+                               &((rotmos_http_config *)config)->mime_type_count,
+                               error);
+            if (ok)
+                lua_setfield(L, anchor, fields[i].name);
+            break;
         case WIDE_FIELD:
             ok = rl_u64(L, -1, out);
             break;
@@ -137,7 +146,7 @@ static int settings(lua_State *L, int index, void *config,
         case DEADLINE_FIELD:
             ((rotmos_deadline *)out)->disabled = 0;
             if (lua_istable(L, -1))
-                ok = settings(L, -1, out, deadline, N(deadline), error);
+                ok = settings(L, -1, out, deadline, N(deadline), anchor, error);
             else {
                 ok = rl_size(L, -1, &n) && n <= (size_t)LONG_MAX;
                 if (ok)
@@ -349,7 +358,7 @@ static int tls(lua_State *L, int owner, int index, rotmos_tls_config *c,
             return 0;
         lua_pushnil(L);
         lua_setfield(L, snapshot, "state");
-        if (!settings(L, snapshot, &c->acme, acme_fields, N(acme_fields),
+        if (!settings(L, snapshot, &c->acme, acme_fields, N(acme_fields), 0,
                       error))
             return 0;
         lua_pop(L, 1);
@@ -439,7 +448,7 @@ static int autoblock(lua_State *L, int index, rotmos_autoblock_config *c,
     lua_setfield(L, copy, "status_rules");
     lua_pushnil(L);
     lua_setfield(L, copy, "event_rules");
-    if (!settings(L, copy, c, blocking, N(blocking), error))
+    if (!settings(L, copy, c, blocking, N(blocking), 0, error))
         return 0;
     lua_pop(L, 1);
     rl_field(L, index, "status_rules");
@@ -456,7 +465,7 @@ static int autoblock(lua_State *L, int index, rotmos_autoblock_config *c,
             record = lua_absindex(L, -1);
             if (!lua_istable(L, record) ||
                 !settings(L, record, &statuses[i], status_rule, N(status_rule),
-                          error))
+                          0, error))
                 return 0;
             lua_pop(L, 1);
         }
@@ -477,7 +486,7 @@ static int autoblock(lua_State *L, int index, rotmos_autoblock_config *c,
             lua_rawgeti(L, list, (lua_Integer)i + 1);
             record = lua_absindex(L, -1);
             if (!lua_istable(L, record) ||
-                !settings(L, record, &events[i], event_rule, N(event_rule),
+                !settings(L, record, &events[i], event_rule, N(event_rule), 0,
                           error))
                 return 0;
             lua_pop(L, 1);
@@ -551,7 +560,7 @@ int rl_config_parse(lua_State *L, int options, int owner,
         rl_field(L, options, key);                                             \
         if (!lua_isnil(L, -1) &&                                               \
             (!lua_istable(L, -1) ||                                            \
-             !settings(L, -1, &c->member, fields, N(fields), error)))          \
+             !settings(L, -1, &c->member, fields, N(fields), a.table, error))) \
             goto invalid;                                                      \
         lua_pop(L, 1);                                                         \
     } while (0)
@@ -690,6 +699,10 @@ static void settings_push(lua_State *L, const void *config,
             break;
         case TEXT_FIELD:
             lua_pushstring(L, *(const char *const *)value);
+            break;
+        case MIME_FIELD:
+            rl_mime_push(L, *(const rotmos_mime_type *const *)value,
+                         ((const rotmos_http_config *)config)->mime_type_count);
             break;
         case DEADLINE_FIELD:
             settings_push(L, value, deadline, N(deadline));

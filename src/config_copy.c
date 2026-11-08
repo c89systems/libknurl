@@ -1,4 +1,5 @@
 #include "server_internal.h"
+#include "mime_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -107,6 +108,7 @@ void rotmos_config_cleanup(rotmos_server_config *config)
     free((void *)config->limits.body_spool_directory);
     free((void *)config->http.server_header);
     free((void *)config->http.access_log_path);
+    rotmos_mime_free(config->http.mime_types, config->http.mime_type_count);
     if (config->listeners != NULL) {
         for (i = 0; i < config->listener_count; ++i) {
             free((void *)config->listeners[i].name);
@@ -149,6 +151,7 @@ rotmos_status rotmos_config_copy(const rotmos_server_config *input,
     out->listeners = NULL;
     out->limits.body_spool_directory = NULL;
     out->http.server_header = out->http.access_log_path = NULL;
+    out->http.mime_types = NULL;
     out->tls.identities = NULL;
     out->tls.cipher_list = NULL;
     out->tls.acme.email = out->tls.acme.directory_url = NULL;
@@ -175,6 +178,11 @@ rotmos_status rotmos_config_copy(const rotmos_server_config *input,
     COPY_TEXT(tls.acme.ca_file);
     COPY_TEXT(tls.acme.ca_directory);
 #undef COPY_TEXT
+    status =
+        rotmos_mime_copy(input->http.mime_types, input->http.mime_type_count,
+                         &out->http.mime_types, error);
+    if (status != ROTMOS_OK)
+        goto failed;
     status = copy_list(input->client_ip.trusted_proxies,
                        input->client_ip.trusted_proxy_count,
                        &out->client_ip.trusted_proxies, error);

@@ -45,6 +45,68 @@ int rotmos_header_value_valid(const char *text)
     return 1;
 }
 
+static const unsigned char *mime_token(const unsigned char *p)
+{
+    while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+           (*p >= '0' && *p <= '9') ||
+           (*p != 0 && strchr("!#$%&'*+-.^_`|~", *p) != NULL))
+        ++p;
+    return p;
+}
+
+/* RFC 9110 sections 5.6.2, 5.6.4, 5.6.6 and 8.3.1. Validate the complete
+ * singleton value, not just its type/subtype prefix. Quoted obs-text is legal;
+ * controls, DEL, field folding and comma-separated media-type lists are not. */
+int rotmos_content_type_valid(const char *text)
+{
+    const unsigned char *p = (const unsigned char *)text, *end;
+    if (p == NULL)
+        return 0;
+    while (*p == ' ' || *p == '\t')
+        ++p;
+    end = mime_token(p);
+    if (end == p || (*p == '*' && end == p + 1) || *end != '/')
+        return 0;
+    p = end + 1;
+    end = mime_token(p);
+    if (end == p || (*p == '*' && end == p + 1))
+        return 0;
+    p = end;
+    for (;;) {
+        while (*p == ' ' || *p == '\t')
+            ++p;
+        if (*p == 0)
+            return 1;
+        if (*p++ != ';')
+            return 0;
+        while (*p == ' ' || *p == '\t')
+            ++p;
+        /* The parameters ABNF explicitly permits an empty parameter. */
+        if (*p == 0 || *p == ';')
+            continue;
+        end = mime_token(p);
+        if (end == p || *end != '=')
+            return 0;
+        p = end + 1;
+        if (*p == '"') {
+            ++p;
+            while (*p != '"') {
+                if (*p == '\\')
+                    ++p;
+                if (*p != '\t' && (*p < 32 || *p == 127))
+                    return 0;
+                ++p;
+            }
+            ++p;
+        } else {
+            end = mime_token(p);
+            if (end == p)
+                return 0;
+            p = end;
+        }
+    }
+}
+
 int rotmos_text_equal_case(const char *left, const char *right)
 {
     unsigned char a;

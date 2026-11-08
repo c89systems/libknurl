@@ -262,6 +262,8 @@ function Server:close() return self._native:close() end
 function Server:validate() return self._native:validate() end
 ---Copied normalized settings; snapshot includes configured TLS memory bytes.
 function Server:effective_config() return self._native:effective_config() end
+---Infer a filename's Content-Type using copied instance overrides and Core defaults.
+function Server:content_type(path) return self._native:content_type(path) end
 ---Inactive-server registration; failures preserve prior logger owners.
 function Server:set_pslog(logger,access_log) return self._native:set_pslog(logger,access_log) end
 ---Change active readiness serving gate.

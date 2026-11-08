@@ -1,4 +1,69 @@
 #include "binding.h"
+
+/* A Lua-owned declaration array stays anchored until Core copies its strings.
+ * Validation of extensions/media types belongs to the public C configuration.
+ */
+int rl_mime_types(lua_State *L, int index, const rotmos_mime_type **out,
+                  size_t *count, rotmos_error *error)
+{
+    rotmos_mime_type *items;
+    size_t n = 0, length, i = 0;
+    const char *text;
+    index = lua_absindex(L, index);
+    *out = NULL;
+    *count = 0;
+    if (lua_isnil(L, index)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    if (!lua_istable(L, index))
+        goto invalid;
+    lua_pushnil(L);
+    while (lua_next(L, index)) {
+        if (lua_type(L, -2) != LUA_TSTRING || lua_type(L, -1) != LUA_TSTRING) {
+            lua_pop(L, 2);
+            goto invalid;
+        }
+        text = lua_tolstring(L, -2, &length);
+        if (memchr(text, 0, length) != NULL) {
+            lua_pop(L, 2);
+            goto invalid;
+        }
+        text = lua_tolstring(L, -1, &length);
+        if (memchr(text, 0, length) != NULL) {
+            lua_pop(L, 2);
+            goto invalid;
+        }
+        ++n;
+        lua_pop(L, 1);
+    }
+    if (n > (size_t)-1 / sizeof(*items))
+        goto invalid;
+    items = lua_newuserdatauv(L, n * sizeof(*items), 0);
+    lua_pushnil(L);
+    while (lua_next(L, index)) {
+        items[i].extension = lua_tostring(L, -2);
+        items[i++].content_type = lua_tostring(L, -1);
+        lua_pop(L, 1);
+    }
+    *out = items;
+    *count = n;
+    return 1;
+invalid:
+    rl_fail(error, ROTMOS_INVALID,
+            "mime_types must map extension strings to Content-Type strings");
+    return 0;
+}
+
+void rl_mime_push(lua_State *L, const rotmos_mime_type *types, size_t count)
+{
+    size_t i;
+    lua_newtable(L);
+    for (i = 0; i < count; ++i) {
+        lua_pushstring(L, types[i].content_type);
+        lua_setfield(L, -2, types[i].extension);
+    }
+}
 static char again_key, eof_key;
 rotmos_status rl_fail(rotmos_error *error, rotmos_status status,
                       const char *message)

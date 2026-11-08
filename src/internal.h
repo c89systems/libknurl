@@ -9,6 +9,7 @@ int rotmos_u64_valid(rotmos_u64 value);
 char *rotmos_copy_text(const char *text);
 int rotmos_header_name_valid(const char *text);
 int rotmos_header_value_valid(const char *text);
+int rotmos_content_type_valid(const char *text);
 int rotmos_text_equal_case(const char *left, const char *right);
 
 #endif

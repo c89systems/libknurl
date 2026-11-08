@@ -834,6 +834,19 @@ static int drive_routes(unsigned short port)
     if (!failed)                                                               \
     failed = rotmos_lua_test_exchange(port, method, path, body, length,        \
                                       status, expected, size)
+    required_header = "content-type: audio/mpeg\r\n";
+    R("GET", "/files/song.MP3", "", 0, 200, "A\0B", 3);
+    required_header = "content-type: video/x-instance\r\n";
+    R("HEAD", "/files/movie.mp4", "", 0, 200, "", 0);
+    required_header = "content-type: audio/x-mount; note=\"a;b,c\"\r\n";
+    request_headers = "Range: bytes=1-2\r\n";
+    R("GET", "/mime-route/song.MP3", "", 0, 206, "\0B", 2);
+    request_headers = "";
+    required_header = "content-type: video/x-mount\r\n";
+    R("GET", "/mime-route/movie.mp4", "", 0, 200, "A\0B", 3);
+    required_header = "content-type: application/x-explicit\r\n";
+    R("GET", "/mime-explicit/song.MP3", "", 0, 200, "A\0B", 3);
+    required_header = NULL;
     R("GET", "/file", "", 0, 200, "A\0B", 3);
     required_header = "content-length: 3\r\n";
     R("HEAD", "/file", "", 0, 200, "", 0);

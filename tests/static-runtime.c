@@ -104,13 +104,16 @@ static rotmos_status packed_open(const char *path, rotmos_asset **out,
         c.info.size.low = 16;
         c.read = virtual_read;
         status = rotmos_asset_new(&c, out, error);
-    } else if (strcmp(path, "/data") == 0 || strcmp(path, "/index.html") == 0 ||
+    } else if (strcmp(path, "/picture.png") == 0 ||
+               strcmp(path, "/data") == 0 || strcmp(path, "/index.html") == 0 ||
                strcmp(path, "/untyped.html") == 0) {
         bytes.data = strcmp(path, "/data") == 0 ? "abcdef" : "packed-index";
         bytes.length = strlen(bytes.data);
         rotmos_u64_from_size(bytes.length, &c.info.size, NULL);
         if (strcmp(path, "/index.html") == 0)
             c.info.content_type = "text/html";
+        if (strcmp(path, "/picture.png") == 0)
+            c.info.content_type = "image/png";
         status = rotmos_asset_memory(&c.info, bytes, closed, f, out, error);
     } else
         return ROTMOS_EOF;
@@ -245,6 +248,20 @@ static int exchange(unsigned short port, const char *method, const char *path,
 static int client(unsigned short port)
 {
     char etag[256], headers[1024];
+    CHECK(exchange(port, "GET", "/files/song.MP3", "Range: bytes=2-4\r\n", "",
+                   206, "cde", "content-type: audio/mpeg", NULL) == 0);
+    CHECK(exchange(port, "HEAD", "/files/movie.mp4", NULL, "", 200, "",
+                   "content-type: video/mp4", NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.global", NULL, "", 200, "abcdef",
+                   "content-type: application/x-instance", NULL) == 0);
+    CHECK(exchange(
+              port, "GET", "/mime-route/data.global", NULL, "", 200, "abcdef",
+              "content-type: application/x-route; note=\"a;b,c\"", NULL) == 0);
+    CHECK(exchange(port, "GET", "/mime-route/song.MP3", NULL, "", 200, "abcdef",
+                   "content-type: audio/mpeg", NULL) == 0);
+    CHECK(exchange(port, "GET", "/mime-explicit/data.global", NULL, "", 200,
+                   "abcdef", "content-type: application/x-explicit",
+                   NULL) == 0);
     CHECK(exchange(port, "GET", "/files/data.txt", NULL, "", 200, "abcdef",
                    "content-type: text/plain; charset=utf-8", etag) == 0);
     CHECK(exchange(port, "GET", "/files/README.MD", NULL, "", 200, "# Readme\n",
@@ -343,8 +360,15 @@ static int client(unsigned short port)
                    "If-None-Match: W/\"packed\"\r\n", "", 304, "", NULL,
                    NULL) == 0);
     CHECK(exchange(port, "GET", "/packed-raw/untyped.html", NULL, "", 200,
-                   "packed-index", "content-type: application/octet-stream",
+                   "packed-index", "content-type: text/html; charset=utf-8",
                    NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed-raw/index.html", NULL, "", 200,
+                   "packed-index", "content-type: text/html", NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed-raw/picture.png", NULL, "", 200,
+                   "packed-index", "content-type: image/x-instance",
+                   NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed-mime/picture.png", NULL, "", 200,
+                   "packed-index", "content-type: image/x-route", NULL) == 0);
     CHECK(exchange(port, "GET", "/packed/virtual",
                    "Range: bytes=4294967296-4294967296\r\n", "", 206, "v",
                    "content-range: bytes 4294967296-4294967296/4294967312",
@@ -352,7 +376,7 @@ static int client(unsigned short port)
     CHECK(exchange(port, "GET", "/packed", NULL, "", 308, "",
                    "location: /packed/", NULL) == 0);
     CHECK(exchange(port, "GET", "/packed/", NULL, "", 200, "packed-index",
-                   "content-type: text/html", NULL) == 0);
+                   "content-type: text/plain", NULL) == 0);
     CHECK(exchange(port, "GET", "/packed/missing", NULL, "", 404, "not found\n",
                    "cache-control: no-store", NULL) == 0);
     CHECK(exchange(port, "GET", "/g/assets/data", NULL, "", 200, "abcdef",
@@ -410,6 +434,10 @@ static int put(const char *path, const char *text)
 }
 int main(void)
 {
+    static const rotmos_mime_type instance_types[] = {
+        {".GLOBAL", "application/x-instance"}, {"png", "image/x-instance"}};
+    rotmos_mime_type route_types[2];
+    char copied_type[] = "application/x-route; note=\"a;b,c\"";
     struct fixture fixture;
     rotmos_server_config config;
     rotmos_listener_config listener;
@@ -438,6 +466,12 @@ int main(void)
     CHECK(put(markdown, "# Readme\n"));
     snprintf(path, sizeof(path), "%s/guide.MarkDown", root);
     CHECK(put(path, "# Guide\n"));
+    snprintf(path, sizeof(path), "%s/song.MP3", root);
+    CHECK(put(path, "abcdef"));
+    snprintf(path, sizeof(path), "%s/movie.mp4", root);
+    CHECK(put(path, "abcdef"));
+    snprintf(path, sizeof(path), "%s/data.global", root);
+    CHECK(put(path, "abcdef"));
     snprintf(path, sizeof(path), "%s/index.html", root);
     CHECK(put(path, "index"));
     snprintf(sub, sizeof(sub), "%s/sub", root);
@@ -464,6 +498,8 @@ int main(void)
     config.signals.mode = ROTMOS_SIGNALS_LIBRARY;
     config.io.output_queue_bytes = 4096;
     config.io.chunk_bytes = 128;
+    config.http.mime_types = instance_types;
+    config.http.mime_type_count = 2;
     config.callbacks.on_parent_ready = ready;
     config.callbacks.on_worker_exit = worker_exit;
     config.callbacks.userdata = &fixture;
@@ -479,6 +515,28 @@ int main(void)
     CHECK(rotmos_router_route(rotmos_server_router(server), &route, NULL,
                               &error) == ROTMOS_OK);
     rotmos_static_config_init(&statics);
+    route_types[0].extension = ".gLoBaL";
+    route_types[0].content_type = copied_type;
+    route_types[1].extension = "PNG";
+    route_types[1].content_type = "image/x-route";
+    statics.path = "/mime-route";
+    statics.root_dir = root;
+    statics.mime_types = route_types;
+    statics.mime_type_count = 2;
+    CHECK(rotmos_router_static_directory(rotmos_server_router(server), &statics,
+                                         NULL, &error) == ROTMOS_OK);
+    statics.path = "/mime-explicit";
+    statics.content_type = "application/x-explicit";
+    CHECK(rotmos_router_static_directory(rotmos_server_router(server), &statics,
+                                         NULL, &error) == ROTMOS_OK);
+    statics.path = "/packed-mime";
+    statics.provider = provider;
+    statics.content_type = NULL;
+    CHECK(rotmos_router_static_assets(rotmos_server_router(server), &statics,
+                                      NULL, &error) == ROTMOS_OK);
+    copied_type[0] = 'X';
+    statics.mime_types = NULL;
+    statics.mime_type_count = 0;
     statics.path = "/ordinary";
     statics.root_dir = root;
     statics.index_enabled = 1;
@@ -560,6 +618,12 @@ int main(void)
           rotmos_asset_provider_close(provider, &error) == ROTMOS_OK);
     CHECK(unlink(file) == 0);
     CHECK(unlink(markdown) == 0);
+    snprintf(path, sizeof(path), "%s/song.MP3", root);
+    CHECK(unlink(path) == 0);
+    snprintf(path, sizeof(path), "%s/movie.mp4", root);
+    CHECK(unlink(path) == 0);
+    snprintf(path, sizeof(path), "%s/data.global", root);
+    CHECK(unlink(path) == 0);
     snprintf(path, sizeof(path), "%s/guide.MarkDown", root);
     CHECK(unlink(path) == 0);
     snprintf(path, sizeof(path), "%s/index.html", root);

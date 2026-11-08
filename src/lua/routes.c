@@ -7,7 +7,8 @@ static int static_route(lua_State *L, int kind)
         "content_type",  "cache_control",  "index_file",
         "index_enabled", "not_found_body", "not_found_content_type",
         "method",        "methods",        "auth",
-        "before",        "after",          "provider"};
+        "before",        "after",          "provider",
+        "mime_types"};
     struct rl_rule *rule;
     rotmos_static_config config;
     rotmos_error error;
@@ -41,6 +42,11 @@ static int static_route(lua_State *L, int kind)
         return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
                                     "invalid static declaration value"),
                             &error));
+    rl_field(L, 2, "mime_types");
+    if (!rl_mime_types(L, -1, &config.mime_types, &config.mime_type_count,
+                       &error))
+        return rl_error(L, &error);
+    lua_remove(L, -2);
     rule = rl_rule_new(L, &error);
     if (rule == NULL)
         return rl_error(L, &error);

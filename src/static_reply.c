@@ -26,13 +26,8 @@ rotmos_status rotmos_static_reply_asset(const rotmos_static_config *config,
     rotmos_source *source;
     rotmos_status status = ROTMOS_OK;
     int match, code = 200;
-    type = custom && info->content_type != NULL ? info->content_type
-                                                : config->content_type;
-    if (custom && (type == NULL || type[0] == 0))
-        type = "application/octet-stream";
-    else if (type == NULL)
-        type = info->content_type != NULL ? info->content_type
-                                          : rotmos_static_content_type(path);
+    type = rotmos_mime_resolve(rotmos_request_server(request), config, path,
+                               info->content_type);
     if (config->cache_control != NULL || custom)
         status = rotmos_reply_header_set(
             reply, "cache-control",

@@ -176,6 +176,15 @@ configuration. File opens, confinement, range/conditional handling and slash
 redirects remain in the existing C asset engine. Registration copies declarations
 and performs no file lookup. Ordinary auth and route hooks apply.
 
+`http.mime_types={mp3='audio/mpeg',custom='application/vnd.example.resource'}`
+sets instance-wide static extension overrides; each static declaration accepts
+its own `mime_types` dictionary. Explicit route `content_type` wins, followed by
+route mappings, instance mappings, provider metadata and built-in inference.
+Keys are ASCII case-insensitive with an optional leading dot; duplicate normalized
+keys fail. Mappings are copied, so later Lua mutations do not affect serving.
+`server:content_type(filename)` uses the public Core instance resolver without
+opening a file. See [MIME resolution and examples](assets.md).
+
 `webdav{path_prefix=..., cache_dir=..., site_id=..., root_dir=..., auth=...}` uses
 the public filesystem WebDAV mount, also on a group. `prefix` aliases the mount
 path, default `/`. File/total/resource quotas, body limit, content/cache policy

@@ -38,8 +38,8 @@ typedef struct rotmos_asset_info {
      * storage contract.
      */
     const char *etag;
-    /** Representation MIME type; NULL selects the operation's default when
-     * allowed.
+    /** Optional RFC 9110 Content-Type, including valid parameters. Malformed
+     * syntax is INVALID; NULL permits static extension inference.
      */
     const char *content_type;
     /** HTTP Last-Modified timestamp text, when available. */

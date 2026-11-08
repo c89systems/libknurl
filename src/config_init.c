@@ -102,6 +102,8 @@ void rotmos_server_config_init(rotmos_server_config *config)
     rotmos_deadline_init(&config->timeouts.keepalive);
     rotmos_deadline_init(&config->timeouts.websocket_idle);
     rotmos_deadline_init(&config->timeouts.deferred_response);
+    config->http.mime_types = NULL;
+    config->http.mime_type_count = 0;
     config->http.server_header = "rotmos";
     config->http.access_log_path = NULL;
     config->http.keepalive_disabled = 0;

@@ -61,7 +61,8 @@
 ---@field path_prefix? string # Directory/WebDAV mount prefix; defaults to /.
 ---@field index_enabled? boolean # Directory default false; static_assets facade default true.
 ---@field index_file? string # Directory index name.
----@field content_type? string # Representation MIME type override.
+---@field content_type? string # RFC 9110 media-type override, with valid token/quoted parameters. Malformed syntax, wildcards, controls and header injection fail.
+---@field mime_types? table<string,string> # Copied extension overrides for static routes; optional leading dot, ASCII case-insensitive. Explicit content_type wins, then route mappings, then instance mappings, then asset metadata/default inference.
 ---@field cache_control? string # Copied Cache-Control value.
 ---@field status? rotmos.IntegerInput # Fixed reply/SSE status; status_code takes precedence except zero aliases.
 ---@field status_code? rotmos.IntegerInput # HTTP response status, 100..599.
@@ -184,6 +185,7 @@
 ---@field close fun(self:rotmos.Server): boolean?, rotmos.Error? # Destroy inactive server and release retained Lua owners.
 ---@field validate fun(self:rotmos.Server): boolean?, rotmos.Error? # Checks declarations/materials; may call TLS openers, never binds/forks.
 ---@field effective_config fun(self:rotmos.Server): table?, rotmos.Error? # Copied normalized settings; snapshot includes configured TLS memory bytes.
+---@field content_type fun(self:rotmos.Server, path:string): string?, rotmos.Error? # Infer from filename using instance overrides and Core defaults; no file access.
 ---@field set_pslog fun(self:rotmos.Server, logger:userdata?, access_log?:boolean|table): boolean?, rotmos.Error? # Inactive-server registration; failures preserve prior logger owners.
 ---@field set_serving fun(self:rotmos.Server, serving:boolean): boolean?, rotmos.Error? # Change active readiness serving gate.
 ---@field state fun(self:rotmos.Server): string # Current declared/starting/ready_paused/serving/stopping/stopped/failed state, or closed.
@@ -473,6 +475,7 @@
 ---@field request_process_budget_ms? rotmos.IntegerInput # Owner-loop request-processing budget in milliseconds.
 ---@field backend_quiet? boolean # Nonzero selects quiet backend logging.
 ---@field server_header? string # Copied Server response-header value; default "rotmos", independent of instance name (valid HTTP header value, 1..53 bytes).
+---@field mime_types? table<string,string> # Copied instance-wide static extension overrides. Route mappings win; duplicate normalized keys and invalid extensions/types fail.
 ---@field access_log_path? string # Independent file access-log path; unaffected by structured logger disable.
 ---@field hsts_max_age_seconds? rotmos.IntegerInput # Strict-Transport-Security max-age in seconds.
 ---@field backend_curl_timeout_seconds? rotmos.IntegerInput # Kore backend curl timeout, distinct from reverse-proxy deadlines.

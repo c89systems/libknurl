@@ -78,8 +78,7 @@ static rotmos_status add(rotmos_router *router, rotmos_route_group *group,
         config->operation_timeout_ms < 0 ||
         !rotmos_u64_valid(config->max_body_bytes) ||
         (config->content_type != NULL &&
-         (!rotmos_header_value_valid(config->content_type) ||
-          config->content_type[0] == 0)) ||
+         !rotmos_content_type_valid(config->content_type)) ||
         (config->cache_control != NULL &&
          !rotmos_header_value_valid(config->cache_control)))
         return rotmos_fail(error, ROTMOS_INVALID, "webdav",

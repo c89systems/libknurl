@@ -2,6 +2,7 @@
 #define ROTMOS_STATIC_INTERNAL_H
 #include "asset_internal.h"
 #include <rotmos/static.h>
+#include "mime_internal.h"
 rotmos_status rotmos_static_reply_asset(const rotmos_static_config *, int,
                                         rotmos_request *, rotmos_reply *,
                                         rotmos_asset *, const char *,

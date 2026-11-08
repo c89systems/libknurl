@@ -306,6 +306,24 @@ static int l_validate(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+static int l_content_type(lua_State *L)
+{
+    struct rl_server *s = rl_server(L, 1);
+    const char *path = NULL;
+    size_t length = 0;
+    rotmos_error error;
+    if (s == NULL || s->native == NULL)
+        return rl_error(
+            L, (rl_fail(&error, ROTMOS_STATE, "server is closed"), &error));
+    if (lua_type(L, 2) == LUA_TSTRING)
+        path = lua_tolstring(L, 2, &length);
+    if (path == NULL || memchr(path, 0, length) != NULL)
+        return rl_error(L, (rl_fail(&error, ROTMOS_INVALID,
+                                    "content_type needs a filename string"),
+                            &error));
+    lua_pushstring(L, rotmos_server_content_type(s->native, path));
+    return 1;
+}
 static int l_effective(lua_State *L)
 {
     struct rl_server *s = rl_server(L, 1);
@@ -759,6 +777,7 @@ void rl_servers_open(lua_State *L)
         {"close", l_close},
         {"validate", l_validate},
         {"effective_config", l_effective},
+        {"content_type", l_content_type},
         {"set_serving", l_serving},
         {"state", l_state},
         {"listener", l_listener},
