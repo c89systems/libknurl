@@ -173,6 +173,19 @@ counts include relayed frame bytes but exclude the handshake, successful error
 categories are `"none"`, and standalone quotas must be positive after explicit
 configuration initialization. Their implemented baseline behavior is unchanged.
 
+## Response timeout clock ordering
+
+I28: The response sweep sampled time before checking body/channel deadlines.
+An expired body deadline could queue HTTP 408 and refresh delivery progress
+across a millisecond tick. Subtracting that newer timestamp from the old sample
+underflowed, falsely expired the write-idle timer and replaced 408 with HTTP 500.
+The sweep now samples time for each delivery after those callbacks. A controlled
+clock in `response-timeout.c` reproduces the failure without sleeps, using the
+production scheduling/sweep code. It checks body/channel callback progress,
+exact write-idle/deferred boundaries, disabled timers and incomplete input;
+`body-runtime.c` retains the wire checks for 408 and worker recovery. This is a
+Core adapter defect, not a pristine Kore defect.
+
 ## WebDAV after-hook error replies
 
 I27: WebDAV's uncommitted-error fallback passed NULL as the Content-Type to

@@ -1,5 +1,21 @@
 # Extraction verification
 
+## Response timeout clock ordering (2026-11-08)
+
+The response sweep now samples time after body/channel timeout callbacks for each
+delivery, preserving a newly queued 408 when scheduling crosses a millisecond
+tick. The controlled-clock `response-timeout.c` regression failed before the fix
+and passes afterward. It checks callback progress, exact write-idle/deferred
+deadline boundaries, disabled timers and incomplete input without sleeps.
+
+GNU and musl each pass that regression and seven affected body/response/channel
+wire checks, including `body-rate`. The corrected Core and regression fixture
+compile/link on all seven selected toolchains; formatting and whitespace checks
+pass. Logs are `build/response-clock-{red,green}.log`,
+`build/response-clock-{gnu,musl}-tests.log` and
+`build/response-clock-*-build.log`. See I28 in [KORE.md](../KORE.md). The full
+release, Lua, QEMU, memory and fuzz gates were not repeated for this focused fix.
+
 ## WebDAV fallback and LoneJSON 0.47.0 (2026-11-08)
 
 The WebDAV after-hook regression reproduced EOF before response headers. The

@@ -424,11 +424,12 @@ void rotmos_kore_responses_turn(struct rotmos_runtime *runtime)
     size_t budget;
     u_int64_t now;
     rotmos_deadline timeout;
-    now = kore_time_ms();
     for (delivery = runtime->responses; delivery != NULL;
          delivery = delivery->next) {
         rotmos_kore_body_timeout(delivery->response->request);
         rotmos_channel_check_timeout(delivery->response->request->channel);
+        /* Timeout callbacks can queue output and refresh last_progress. */
+        now = kore_time_ms();
         timeout = pending_output(delivery)
                       ? runtime->server->config.timeouts.response_write_idle
                       : runtime->server->config.timeouts.deferred_response;

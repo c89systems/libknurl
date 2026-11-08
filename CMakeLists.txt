@@ -419,6 +419,18 @@ if(BUILD_TESTING)
   add_test(NAME rotmos.body-unlimited COMMAND rotmos_body_runtime unlimited)
   set_tests_properties(rotmos.body-runtime rotmos.body-rate rotmos.body-unlimited
     PROPERTIES TIMEOUT 12)
+  add_executable(rotmos_response_timeout tests/response-timeout.c)
+  add_dependencies(rotmos_response_timeout kore-source)
+  target_include_directories(rotmos_response_timeout PRIVATE "${kore_source_dir}/include/kore")
+  target_compile_definitions(rotmos_response_timeout PRIVATE $<TARGET_PROPERTY:rotmos_kore,COMPILE_DEFINITIONS>)
+  rotmos_kore_object_dependencies("${kore_source_dir}/.patched"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/response-timeout.c")
+  target_link_libraries(rotmos_response_timeout PRIVATE rotmos::static Threads::Threads
+    OpenSSL::SSL CURL::libcurl lonejson::lonejson_static pslog::pslog_static)
+  rotmos_c89(rotmos_response_timeout)
+  rotmos_local_runtime(rotmos_response_timeout)
+  add_test(NAME rotmos.response-timeout COMMAND rotmos_response_timeout)
+  set_tests_properties(rotmos.response-timeout PROPERTIES TIMEOUT 5)
   add_executable(rotmos_response_runtime tests/response-runtime.c)
   target_link_libraries(rotmos_response_runtime PRIVATE rotmos::shared)
   rotmos_c89(rotmos_response_runtime)
