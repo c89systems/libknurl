@@ -31,8 +31,8 @@ struct fixture {
     rotmos_asset_provider *packed;
     pthread_t owner;
     char directory[96], cache[128], file[128];
-    int origin, progress[2], failed, opened, finished, closed, ws_opened,
-        ws_closed;
+    int origin, progress[2], first_response[2], failed, opened, finished,
+        closed, ws_opened, ws_closed;
     unsigned int native_done, cancelled;
     int acquired, released, owner_read;
     int packed_opened, packed_closed, provider_closed;
@@ -611,6 +611,7 @@ static int client(struct fixture *f, unsigned short port)
     char head[512];
     int fd;
     CHECK(!exchange(port, "GET", "/proxy/deny", "", "", 403, "denied", NULL));
+    CHECK(!write_all(f->first_response[1], "r", 1));
     CHECK(!exchange(port, "GET", "/proxy/yes?raw=%2f", "", "", 202, "proxied",
                     "X-Adapter: yes"));
     CHECK(!exchange(port, "GET", "/dead", "", "", 529, "gateway", NULL));
@@ -704,9 +705,13 @@ static rotmos_status ready(rotmos_server *server,
 {
     struct fixture *f = data;
     rotmos_bound_listener listener;
+    rotmos_status status;
     (void)process;
     if (rotmos_server_listener_at(server, 0, &listener, error) != ROTMOS_OK)
         return ROTMOS_STATE;
+    status = rotmos_server_set_serving(server, 1, error);
+    if (status != ROTMOS_OK)
+        return status;
     if (f->admission) {
         f->child = fork();
         if (!f->child) {
@@ -722,7 +727,18 @@ static rotmos_status ready(rotmos_server *server,
     f->child = fork();
     if (!f->child)
         _exit(client(f, listener.port));
-    return f->upstream > 0 && f->child > 0 ? ROTMOS_OK : ROTMOS_IO;
+    if (f->upstream <= 0 || f->child <= 0)
+        return ROTMOS_IO;
+    /* Require a successful response while the ready callback is still active.
+     * This makes premature client startup fail independently of scheduling. */
+    if (progress(f->first_response[0])) {
+        (void)kill(f->child, SIGKILL);
+        (void)kill(f->upstream, SIGKILL);
+        (void)waitpid(f->child, NULL, 0);
+        (void)waitpid(f->upstream, NULL, 0);
+        return ROTMOS_IO;
+    }
+    return ROTMOS_OK;
 }
 static int admission_case(int hard)
 {
@@ -806,7 +822,7 @@ int main(void)
     (void)snprintf(f->cache, sizeof(f->cache), "%s/%s", cwd, f->directory);
     free(cwd);
     (void)snprintf(f->file, sizeof(f->file), "%s/uploaded", f->cache);
-    CHECK(!pipe(f->progress));
+    CHECK(!pipe(f->progress) && !pipe(f->first_response));
     f->origin = socket(AF_INET, SOCK_STREAM, 0);
     CHECK(f->origin >= 0);
     memset(&a, 0, sizeof(a));
@@ -975,8 +991,10 @@ int main(void)
           f->provider_closed == 1);
     reference_route_cleanup(&f->app);
     close(f->origin);
-    for (i = 0; i < 2; ++i)
+    for (i = 0; i < 2; ++i) {
         close(f->progress[i]);
+        close(f->first_response[i]);
+    }
     unlink(f->file);
     CHECK(!remove_tree(f->directory));
     free(f);

@@ -1,6 +1,6 @@
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
-find_dependency(CpktCore 0.6.1 EXACT CONFIG REQUIRED)
+find_dependency(CpktCore 0.7.0 EXACT CONFIG REQUIRED)
 find_dependency(Threads REQUIRED)
 find_dependency(OpenSSL CONFIG REQUIRED)
 find_dependency(CURL CONFIG REQUIRED)

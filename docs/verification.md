@@ -1,5 +1,43 @@
 # Extraction verification
 
+## cpkt 0.7.0 SDK upgrade (2026-11-09)
+
+All seven cpkt archive pins now select the published
+[0.7.0 release](https://github.com/c89systems/cpkt/releases/tag/v0.7.0), with
+the release assets' SHA-256 digests. Both build-time and exported Core CMake
+metadata require that exact version. Current SDK/specification/Lua prerequisite
+documentation agrees with the pins. LoneJSON and pslog selections are unchanged.
+
+Core and Lua compile/link against the new SDKs on all seven targets: Debug on
+native GNU/musl and Release on the five cross targets. All 122 GNU Core and 36
+GNU Lua checks pass. Musl passes its 105 Core checks and all 35 Lua checks;
+common host lifecycle/Kore checks are reused from the GNU run. The 25-check GNU
+Valgrind gate reports no memory errors or definite/indirect leaks. Each of the
+four ARM Linux targets passes five HTTP/traversal/Lua QEMU checks, including
+ARMHF musl within the existing timeouts. All seven Core SDK binary rehearsals
+verify their final archive bytes and four relocated CMake/pkg-config consumers.
+Darwin proof is cross-build/link/package only, with no native execution claim.
+
+The initial GNU suite exposed a pre-existing services-fixture startup race: its
+client could run inside `on_parent_ready` before the default serving gate opened.
+The fixture now explicitly opens serving before launching clients. A dedicated
+pipe acknowledgment requires the first successful response before that callback
+returns, deterministically reproducing 503 before the fix and passing afterward.
+No library lifecycle behavior changed. The corrected full GNU suite and native
+musl suite pass; the red/green logs are retained with the upgrade evidence.
+
+This upgrade adopts cpkt's Lua native-stack guards and heap-backed CRC scratch
+storage through its released binaries. Lua remains 5.5.1, and existing provider
+ABI majors are unchanged. Core's own public API/ABI is unchanged. The separate
+LoneJSON initialization and provisional binding handoffs remain open.
+Readback verifies all seven pins against published asset hashes, cached archive
+bytes, selected SDK identity and generated dependency records. Formatting and
+whitespace checks pass. Ordinary `.clangd` discovery parses a Core implementation,
+public header and Lua binding with zero errors using `--tweaks=none`, retaining
+the already documented code-action limitation.
+Logs and release metadata are under `build/cpkt-upgrade/`. No release, tag or
+push is part of this upgrade.
+
 ## Constrained glibc Debug test stacks (2026-11-09)
 
 GNU Linux Debug processes under test now select 128 KiB default pthread stacks
