@@ -39,7 +39,7 @@ target_sources(rotmos_lua PRIVATE ../src/lua/providers.c)
 # install_name_tool may be unavailable. Embedding/test hosts resolve the shared
 # SDK closure; the module does not retain workstation paths.
 set_target_properties(rotmos_lua PROPERTIES OUTPUT_NAME native PREFIX "" SUFFIX ".so" EXPORT_NAME lua C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden BUILD_WITH_INSTALL_RPATH TRUE)
-target_compile_options(rotmos_lua PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes)
+target_compile_options(rotmos_lua PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -Wvla -Walloca)
 target_compile_definitions(rotmos_lua PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
 target_include_directories(rotmos_lua PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rotmos_lua PUBLIC rotmos::shared cpkt::lua_shared PRIVATE lonejson_lua::module pslog_lua::module)
@@ -56,6 +56,7 @@ write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/rotmos_luaConfigVe
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/rotmos_luaConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/rotmos_luaConfigVersion.cmake" DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/rotmos_lua")
 
 if(BUILD_TESTING)
+  include("${rotmos_root}/cmake/DebugTestStacks.cmake")
   if(ROTMOS_TARGET STREQUAL "x86_64-linux-gnu")
     add_test(NAME rotmos.lua-package COMMAND "${CMAKE_COMMAND}"
       "-DROTMOS_CANDIDATE_VERSION=${ROTMOS_CANDIDATE_VERSION}"
@@ -66,19 +67,19 @@ if(BUILD_TESTING)
   add_library(rotmos_provider_fixture MODULE ../tests/lua/providers.c)
   set_target_properties(rotmos_provider_fixture PROPERTIES PREFIX "" SUFFIX ".so"
     C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden)
-  target_compile_options(rotmos_provider_fixture PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -UNDEBUG)
+  target_compile_options(rotmos_provider_fixture PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -Wvla -Walloca -UNDEBUG)
   target_compile_definitions(rotmos_provider_fixture PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   target_link_libraries(rotmos_provider_fixture PRIVATE rotmos::lua)
   add_library(rotmos_acme_fixture MODULE ../tests/lua/acme.c ../tests/acme-ca.c)
   set_target_properties(rotmos_acme_fixture PROPERTIES PREFIX "" SUFFIX ".so"
     C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden)
-  target_compile_options(rotmos_acme_fixture PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -UNDEBUG)
+  target_compile_options(rotmos_acme_fixture PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -Wvla -Walloca -UNDEBUG)
   target_compile_definitions(rotmos_acme_fixture PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   target_link_libraries(rotmos_acme_fixture PRIVATE rotmos::lua cpkt::openssl_ssl_shared lonejson::lonejson)
   foreach(mode preload dynamic)
     add_executable(rotmos_lua_${mode}_host ../tests/lua/host.c ../tests/lua/events.c)
     set_target_properties(rotmos_lua_${mode}_host PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
-    target_compile_options(rotmos_lua_${mode}_host PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -UNDEBUG)
+    target_compile_options(rotmos_lua_${mode}_host PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -Wvla -Walloca -UNDEBUG)
     target_compile_definitions(rotmos_lua_${mode}_host PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
     target_compile_definitions(rotmos_lua_${mode}_host PRIVATE "ROTMOS_LONEJSON_LUA_PREFIX=\"${ROTMOS_SDK_ROOT}/lonejson-lua\"")
     target_compile_definitions(rotmos_lua_${mode}_host PRIVATE "ROTMOS_PSLOG_LUA_PREFIX=\"${ROTMOS_SDK_ROOT}/pslog-lua\"")

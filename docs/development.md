@@ -242,6 +242,38 @@ source tree; installed consumers add their `share/lua/5.5` prefix to the languag
 server's workspace library. Metadata contains no runtime implementation and
 requires no extra module at runtime. CMake and LuaRocks both install it.
 
+## Debug test thread stacks
+
+GNU Linux Debug test executables set the process's default pthread stack size to
+128 KiB before `main`. This includes the Lua test hosts, installed-consumer
+fixtures and SDK example applications launched by the tests. The setting belongs
+to these test applications; Core/Lua libraries and exported SDK targets do not
+install it. Main-thread stack limits and build-tool worker defaults are unchanged.
+Explicitly requested pthread stack sizes remain effective, and pthread-owned
+stacks retain nonzero guard regions.
+
+CTest disables glibc's pthread stack cache at process startup by appending
+`glibc.pthread.stack_cache_size=0` to `GLIBC_TUNABLES`, preserving unrelated
+tunables and passing the setting to child applications. This prevents reuse of
+a larger cached stack from masking the 128 KiB constraint. To run a Debug test
+executable directly, supply the same startup environment, for example:
+
+```sh
+GLIBC_TUNABLES="${GLIBC_TUNABLES:+${GLIBC_TUNABLES}:}glibc.pthread.stack_cache_size=0" \
+  build/debug/rotmos_xml_stack
+```
+
+An instrumented test application rejects startup without that cache setting.
+The policy tests check actual default/nested worker sizes, a larger explicit
+stack, guard faults and child-process behavior. Native musl checks independently
+exercise musl's natural worker defaults; Release tests keep their normal defaults.
+
+Owned C sources compile with `-Werror -Wvla -Walloca`. Use the project's heap
+allocator for dynamic or large temporary storage, with explicit allocation-failure
+handling and cleanup. Small fixed chunk buffers still need to fit the worker's
+stack budget. A compiler-policy check accepts a bounded fixed buffer and requires
+VLA and `alloca` fixtures to fail compilation.
+
 ## Traversal performance checks
 
 The normal `rotmos.xml-stack` and `rotmos.kore-json-stack` checks assert

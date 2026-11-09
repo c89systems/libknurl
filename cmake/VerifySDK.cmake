@@ -186,6 +186,8 @@ foreach(discovery cmake pkgconfig)
     run("${CMAKE_COMMAND}" -E env "PKG_CONFIG_PATH=${pc_path}" "PKG_CONFIG_LIBDIR=${pc_path}"
       "${CMAKE_COMMAND}" -S "${prefix}/share/rotmos/examples" -B "${consumer}" -G Ninja
       "-DCMAKE_TOOLCHAIN_FILE=${SDK_TOOLCHAIN}" "-DROTMOS_TARGET=${SDK_TARGET}"
+      "-DCMAKE_BUILD_TYPE=${SDK_CONFIGURATION}"
+      "-DCMAKE_PROJECT_INCLUDE=${root}/cmake/DebugTestStacks.cmake"
       "-DROTMOS_PREFIX=${prefix}" "-DROTMOS_SDK_ROOT=${SDK_PROVIDERS}"
       "-DROTMOS_VARIANT=${variant}" "-DROTMOS_DISCOVERY=${discovery}"
       "-DROTMOS_VERSION=${SDK_VERSION}"

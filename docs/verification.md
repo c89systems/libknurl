@@ -1,5 +1,33 @@
 # Extraction verification
 
+## Constrained glibc Debug test stacks (2026-11-09)
+
+GNU Linux Debug processes under test now select 128 KiB default pthread stacks
+before `main`, including child consumer/example applications and both Lua hosts.
+CTest disables the pthread stack cache at loader startup through
+`GLIBC_TUNABLES=glibc.pthread.stack_cache_size=0`; unrelated inherited tunables
+are retained. Direct test execution without that setting exits with a diagnostic.
+The bootstrap is linked only into test applications, with no SDK/library runtime
+default changes, main-thread limit changes or build-tool worker changes.
+
+All 122 GNU Debug Core checks and all 36 GNU Debug Lua checks pass. The policy
+fixtures measure actual default/nested worker stacks after joining a larger
+explicit worker, preserve an explicit 1 MiB stack and two-page guard, and prove
+guards fault in subprocesses. An uninstrumented parent confirms its defaults and
+main-thread limits survive launching the constrained child; a child missing the
+cache setting fails as required. The XML and Kore JSON traversal regressions
+also assert their actual GNU Debug worker stack is exactly 128 KiB.
+The focused policy check also passes with an inherited nonzero cache setting
+and an unrelated allocator tunable. Compilation databases contain the bootstrap
+only for GNU Debug test executables, with none in GNU Release or musl Debug.
+
+Owned C compilation now rejects VLAs and `alloca` under `-Werror`. A compiler
+fixture checks the actual Core compile flags, accepts a small fixed array, and
+requires both prohibited forms to fail for the corresponding warning. This
+fixture and both traversal regressions also pass on native musl Debug without
+the glibc bootstrap. Formatting and whitespace checks pass. Logs use
+`build/debug-stack-policy-*`.
+
 ## Iterative XML mapping and Kore JSON traversal (2026-11-09)
 
 Mapped XML now suspends reader state in an iterative frame stack, with bounded

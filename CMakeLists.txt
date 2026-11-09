@@ -21,7 +21,7 @@ function(rotmos_c89 target)
   set_target_properties(${target} PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED YES
     C_EXTENSIONS NO POSITION_INDEPENDENT_CODE YES C_VISIBILITY_PRESET hidden)
   target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror
-    "$<$<COMPILE_LANGUAGE:C>:-std=c89;-Wstrict-prototypes;-Wmissing-prototypes>"
+    "$<$<COMPILE_LANGUAGE:C>:-std=c89;-Wstrict-prototypes;-Wmissing-prototypes;-Wvla;-Walloca>"
     "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
     "-ffile-prefix-map=${CMAKE_BINARY_DIR}=build")
   get_target_property(kind ${target} TYPE)
@@ -150,6 +150,27 @@ endif()
 include(cmake/SDK.cmake)
 
 if(BUILD_TESTING)
+  include(cmake/DebugTestStacks.cmake)
+  add_test(NAME lifecycle.stack-allocation-policy COMMAND "${CMAKE_COMMAND}"
+    "-DCOMPILER=${CMAKE_C_COMPILER}" "-DBUILD=${CMAKE_CURRENT_BINARY_DIR}"
+    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/tests/stack-allocation-policy"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/StackAllocationPolicy.cmake")
+  set_tests_properties(lifecycle.stack-allocation-policy PROPERTIES TIMEOUT 15)
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND ROTMOS_TARGET MATCHES "-linux-gnu$")
+    foreach(kind constrained control)
+      add_executable(rotmos_thread_stacks_${kind} tests/thread-stacks.c)
+      target_compile_definitions(rotmos_thread_stacks_${kind} PRIVATE _GNU_SOURCE=1)
+      target_link_libraries(rotmos_thread_stacks_${kind} PRIVATE Threads::Threads)
+      rotmos_c89(rotmos_thread_stacks_${kind})
+      rotmos_local_runtime(rotmos_thread_stacks_${kind})
+    endforeach()
+    set_property(TARGET rotmos_thread_stacks_control PROPERTY ROTMOS_STACK_CONTROL TRUE)
+    target_compile_definitions(rotmos_thread_stacks_control PRIVATE ROTMOS_STACK_CONTROL=1)
+    add_test(NAME rotmos.thread-stacks COMMAND rotmos_thread_stacks_constrained)
+    add_test(NAME rotmos.thread-stacks-child COMMAND rotmos_thread_stacks_control
+      $<TARGET_FILE:rotmos_thread_stacks_constrained>)
+    set_tests_properties(rotmos.thread-stacks rotmos.thread-stacks-child PROPERTIES TIMEOUT 10)
+  endif()
   add_executable(rotmos_target_smoke tests/target-smoke.c)
   target_link_libraries(rotmos_target_smoke PRIVATE rotmos::shared)
   rotmos_c89(rotmos_target_smoke)
@@ -586,6 +607,7 @@ if(BUILD_TESTING)
     "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/consumer"
     "-DTOOLCHAIN=${rotmos_toolchain}" "-DROTMOS_TARGET=${ROTMOS_TARGET}"
     "-DROTMOS_SDK_ROOT=${ROTMOS_SDK_ROOT}"
+    "-DROTMOS_TEST_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/InstalledConsumer.cmake")
   set_tests_properties(rotmos.installed-consumer PROPERTIES TIMEOUT 60 FIXTURES_SETUP installed-sdk)
   foreach(variant static shared)

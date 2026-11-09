@@ -233,7 +233,7 @@ static void inherited_space(void)
 }
 static void *worker(void *unused)
 {
-#ifdef ROTMOS_MUSL_STACK_CHECK
+#if defined(ROTMOS_MUSL_STACK_CHECK) || defined(ROTMOS_DEBUG_TEST_THREADS)
     pthread_attr_t attributes;
     size_t stack_size;
 #endif
@@ -241,10 +241,13 @@ static void *worker(void *unused)
     rotmos_error error;
     size_t failures[34], count, i;
     (void)unused;
-#ifdef ROTMOS_MUSL_STACK_CHECK
+#if defined(ROTMOS_MUSL_STACK_CHECK) || defined(ROTMOS_DEBUG_TEST_THREADS)
     CHECK(pthread_getattr_np(pthread_self(), &attributes) == 0);
     CHECK(pthread_attr_getstacksize(&attributes, &stack_size) == 0 &&
           stack_size > 0 && stack_size < 256u * 1024u);
+#ifdef ROTMOS_DEBUG_TEST_THREADS
+    CHECK(stack_size == 128u * 1024u);
+#endif
     CHECK(pthread_attr_destroy(&attributes) == 0);
 #endif
     nested_arrays();

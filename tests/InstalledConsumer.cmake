@@ -57,6 +57,8 @@ file(RENAME "${TEST_ROOT}/installed" "${TEST_ROOT}/unavailable")
 foreach(variant static shared)
   run("${CMAKE_COMMAND}" -S "${TEST_ROOT}/source" -B "${TEST_ROOT}/${variant}" -G Ninja
     "-DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN}" "-DROTMOS_TARGET=${ROTMOS_TARGET}"
+    "-DCMAKE_BUILD_TYPE=${ROTMOS_TEST_BUILD_TYPE}"
+    "-DCMAKE_PROJECT_INCLUDE=${ROTMOS_ROOT}/cmake/DebugTestStacks.cmake"
     "-DROTMOS_PREFIX=${TEST_ROOT}/relocated SDK" "-DROTMOS_VARIANT=${variant}"
     "-DROTMOS_VERSION=${version}")
   run("${CMAKE_COMMAND}" --build "${TEST_ROOT}/${variant}" --parallel 1)
