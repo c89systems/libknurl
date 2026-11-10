@@ -6,12 +6,16 @@
 #include "body_internal.h"
 #include "autoblock_internal.h"
 #include "logging_internal.h"
+#include "access_log_file.h"
+#include "file_internal.h"
 
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include <netinet/tcp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -361,7 +365,8 @@ static int worker_pending(void *userdata)
            knurl_loop_pending(runtime->server->loop);
 }
 
-static knurl_status validate_config(knurl_server *server, knurl_error *error)
+static knurl_status validate_config(knurl_server *server, int *spool,
+                                    knurl_error *error)
 {
     size_t i;
     knurl_status status;
@@ -405,20 +410,23 @@ static knurl_status validate_config(knurl_server *server, knurl_error *error)
             &policy, server->config.limits.body_spool_directory, &body, error);
         if (status != KNURL_OK)
             return status;
+        if (spool != NULL && !policy.disk_spool_disabled) {
+            size_t size;
+            if (knurl_u64_to_size(limit, &size, NULL) != KNURL_OK ||
+                size > body->memory_limit)
+                *spool = 1;
+        }
         knurl_body_release(body);
     }
     knurl_error_clear(error);
     return KNURL_OK;
 }
 
-knurl_status knurl_server_validate(knurl_server *server, knurl_error *error)
+static knurl_status validate_material(knurl_server *server, knurl_error *error)
 {
     struct knurl_tls_prepared tls;
     struct knurl_runtime preparation;
     knurl_status status;
-    status = validate_config(server, error);
-    if (status != KNURL_OK)
-        return status;
     status = knurl_tls_prepare(&server->config.tls, KORE_DEFAULT_CIPHER_LIST,
                                &tls, error);
     knurl_tls_prepared_clear(&tls);
@@ -427,6 +435,167 @@ knurl_status knurl_server_validate(knurl_server *server, knurl_error *error)
         preparation.server = server;
         status = knurl_kore_acme_prepare(&preparation, error);
         knurl_kore_acme_clear(&preparation);
+    }
+    return status;
+}
+
+knurl_status knurl_server_validate(knurl_server *server, knurl_error *error)
+{
+    knurl_status status = validate_config(server, NULL, error);
+    return status == KNURL_OK ? validate_material(server, error) : status;
+}
+
+static knurl_status resource_error(knurl_error *error, knurl_status status,
+                                   const char *operation, const char *message,
+                                   knurl_error_source source, int code)
+{
+    knurl_fail(error, status, operation, message);
+    if (error != NULL) {
+        error->source = source;
+        error->native_code = code;
+    }
+    return status;
+}
+
+static knurl_status listener_error(const knurl_listener_config *config,
+                                   const char *operation,
+                                   knurl_error_source source, int code,
+                                   knurl_error *error)
+{
+    resource_error(error, KNURL_BACKEND, operation,
+                   source == KNURL_ERROR_SYSTEM ? strerror(code)
+                                                : gai_strerror(code),
+                   source, code);
+    if (error != NULL)
+        (void)snprintf(error->detail, sizeof(error->detail), "port %u at %s",
+                       (unsigned int)config->port, config->bind);
+    return KNURL_BACKEND;
+}
+
+/* Open the same TCP listener for preflight and for adoption by Kore at run. */
+static knurl_status open_listener(const knurl_listener_config *config,
+                                  unsigned int backlog, int *out, int *family,
+                                  knurl_error *error)
+{
+    struct addrinfo hints, *address;
+    const char *operation;
+    char port[8];
+    int fd, code, enabled = 1;
+
+    *out = -1;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    (void)snprintf(port, sizeof(port), "%u", (unsigned int)config->port);
+    code = getaddrinfo(config->bind, port, &hints, &address);
+    if (code != 0)
+        return listener_error(config, "listener_resolve",
+                              code == EAI_SYSTEM ? KNURL_ERROR_SYSTEM
+                                                 : KNURL_ERROR_BACKEND,
+                              code == EAI_SYSTEM ? errno : code, error);
+
+    operation = "listener_socket";
+    fd = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
+    if (fd == -1)
+        goto failed;
+    operation = "listener_configure";
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1 ||
+        !kore_connection_nonblock(fd, 0) ||
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled)) ==
+            -1)
+        goto failed;
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof(enabled));
+    operation = "listener_bind";
+    if (bind(fd, address->ai_addr, address->ai_addrlen) == -1)
+        goto failed;
+    operation = "listener_listen";
+    if (listen(fd, (int)backlog) == -1)
+        goto failed;
+    if (family != NULL)
+        *family = address->ai_family;
+    freeaddrinfo(address);
+    *out = fd;
+    return KNURL_OK;
+
+failed:
+    code = errno;
+    if (fd != -1)
+        (void)close(fd);
+    freeaddrinfo(address);
+    return listener_error(config, operation, KNURL_ERROR_SYSTEM, code, error);
+}
+
+static knurl_status probe_spool(const char *directory, knurl_error *error)
+{
+    knurl_status status;
+    int fd, code;
+    char *path;
+
+    status = knurl_private_file(directory, "knurl-body", &fd, &path, error);
+    if (status == KNURL_OK) {
+        status = knurl_file_write(fd, "\0", 1, error);
+        code = unlink(path) == -1 ? errno : 0;
+        if (close(fd) == -1 && code == 0)
+            code = errno;
+        free(path);
+        if (status == KNURL_OK && code != 0)
+            status = resource_error(error, KNURL_IO, "body_spool",
+                                    strerror(code), KNURL_ERROR_SYSTEM, code);
+    }
+    if (status != KNURL_OK && error != NULL) {
+        (void)snprintf(error->operation, sizeof(error->operation),
+                       "body_spool");
+        (void)snprintf(error->detail, sizeof(error->detail), "%s", directory);
+    }
+    return status;
+}
+
+knurl_status knurl_server_preflight(knurl_server *server, knurl_error *error)
+{
+    const knurl_server_config *config;
+    struct knurl_access_file *log;
+    knurl_status status;
+    int spool = 0, code, *listeners;
+    size_t opened = 0;
+
+    status = validate_config(server, &spool, error);
+    if (status == KNURL_OK)
+        status = validate_material(server, error);
+    if (status != KNURL_OK)
+        return status;
+    config = &server->config;
+    listeners = calloc(config->listener_count, sizeof(*listeners));
+    if (listeners == NULL)
+        return knurl_fail(error, KNURL_NOMEM, "server_preflight",
+                          "cannot allocate listener probes");
+    /* Hold all sockets until the last bind to catch conflicting declarations.
+     */
+    while (opened < config->listener_count && status == KNURL_OK) {
+        status = open_listener(&config->listeners[opened],
+                               config->http.socket_backlog, &listeners[opened],
+                               NULL, error);
+        if (status == KNURL_OK)
+            ++opened;
+    }
+    while (opened != 0)
+        (void)close(listeners[--opened]);
+    free(listeners);
+    if (status == KNURL_OK && spool &&
+        config->limits.body_spool_directory != NULL)
+        status = probe_spool(config->limits.body_spool_directory, error);
+    if (status == KNURL_OK && config->http.access_log_path != NULL) {
+        status = knurl_access_file_open(&config->http, &log, error);
+        if (status == KNURL_OK) {
+            code = knurl_access_file_close(log);
+            if (code != 0)
+                status =
+                    resource_error(error, KNURL_IO, "access_log_close",
+                                   strerror(code), KNURL_ERROR_SYSTEM, code);
+        }
+        if (status != KNURL_OK && error != NULL)
+            (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                           config->http.access_log_path);
     }
     return status;
 }
@@ -496,7 +665,7 @@ static void configure(struct knurl_runtime *runtime)
             config->http.backend_curl_recv_max_bytes.low;
 }
 
-static void bind_listeners(struct knurl_runtime *runtime)
+static knurl_status bind_listeners(struct knurl_runtime *runtime)
 {
     const knurl_listener_config *config;
     struct kore_server *server;
@@ -509,13 +678,15 @@ static void bind_listeners(struct knurl_runtime *runtime)
     char port[8];
     size_t i;
     size_t count;
+    knurl_status status;
     count = runtime->server->config.listener_count;
     runtime->bound = calloc(count, sizeof(*runtime->bound));
     runtime->addresses = calloc(count, sizeof(*runtime->addresses));
     runtime->native_servers = calloc(count, sizeof(*runtime->native_servers));
     if (runtime->bound == NULL || runtime->addresses == NULL ||
         runtime->native_servers == NULL)
-        fatal("cannot allocate bound listener registry");
+        return knurl_fail(&runtime->error, KNURL_NOMEM, "listener_bind",
+                          "cannot allocate bound listener registry");
     for (i = 0; i < count; ++i) {
         config = &runtime->server->config.listeners[i];
         (void)snprintf(name, sizeof(name), "knurl-%lu", (unsigned long)i);
@@ -523,12 +694,18 @@ static void bind_listeners(struct knurl_runtime *runtime)
         server = kore_server_create(name);
         runtime->native_servers[i] = server;
         server->tls = config->kind == KNURL_LISTENER_HTTPS;
-        if (!kore_server_bind(server, config->bind, port, NULL))
-            fatal("cannot bind listener %s", name);
-        listener = LIST_FIRST(&server->listeners);
+        listener = kore_listener_create(server);
+        listener->host = kore_strdup(config->bind);
+        listener->port = kore_strdup(port);
+        status =
+            open_listener(config, runtime->server->config.http.socket_backlog,
+                          &listener->fd, &listener->family, &runtime->error);
+        if (status != KNURL_OK)
+            return status;
         size = sizeof(address);
         if (getsockname(listener->fd, (struct sockaddr *)&address, &size) != 0)
-            fatal("cannot inspect bound listener %s", name);
+            return listener_error(config, "listener_inspect",
+                                  KNURL_ERROR_SYSTEM, errno, &runtime->error);
         if (address.ss_family == AF_INET) {
             ipv4 = (struct sockaddr_in *)&address;
             (void)inet_ntop(AF_INET, &ipv4->sin_addr, runtime->addresses[i],
@@ -546,6 +723,7 @@ static void bind_listeners(struct knurl_runtime *runtime)
         ++runtime->bound_count;
         knurl_kore_listener_domains(runtime, server, config);
     }
+    return KNURL_OK;
 }
 
 knurl_status knurl_server_listener_at(const knurl_server *server, size_t index,
@@ -603,7 +781,7 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
         out->reason = KNURL_RUN_STARTUP_FAILURE;
         out->signal_number = out->escalated = 0;
     }
-    status = validate_config(server, error);
+    status = validate_config(server, NULL, error);
     if (status != KNURL_OK)
         return status;
     runtime = calloc(1, sizeof(*runtime));
@@ -724,8 +902,8 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
             knurl_kore_acme_configure(runtime);
             runtime->callbacks.http_request = knurl_kore_dispatch;
             runtime->callbacks.http_request_free = knurl_kore_request_free;
-            bind_listeners(runtime);
-            if (!kore_library_parent_start()) {
+            runtime->status = bind_listeners(runtime);
+            if (runtime->status == KNURL_OK && !kore_library_parent_start()) {
                 runtime->cancelled = startup_cancel(runtime);
                 if (!runtime->cancelled)
                     if (runtime->status == KNURL_OK)

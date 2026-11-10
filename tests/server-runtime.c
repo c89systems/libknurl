@@ -561,6 +561,7 @@ int main(void)
     route.userdata = "chain";
     CHECK(knurl_route_group_route(group, &route, NULL, &error) == KNURL_OK);
     CHECK(knurl_server_validate(server, &error) == KNURL_OK);
+    CHECK(knurl_server_preflight(server, &error) == KNURL_OK);
     CHECK(sigaction(SIGTERM, NULL, &before_signal) == 0);
     for (iteration = 0; iteration < 6; ++iteration) {
         fixture.phase = fixture.worker_phase = 0;

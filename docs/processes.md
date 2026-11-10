@@ -15,6 +15,23 @@ bounded error snapshot. Expected means the parent was stopping; inspect the
 error separately. These observations run on the parent thread, including child
 startup observations before the parent-ready callback.
 
+## Startup preflight
+
+Call `knurl_server_preflight` on an inactive server to catch startup resource
+errors in the original process before forking a runtime parent. It validates
+declarations and TLS/ACME material, probes HTTP, HTTPS and redirect listeners
+together, opens the configured access log, and tests an explicit body spool
+directory when an ordinary route's declared policy can spill. Create that
+directory before calling preflight. A headers callback can choose a different
+body policy at request time. The access-log probe can create an empty file and
+reports open errors, including ENOSPC. Resource errors carry the failed
+operation, native cause and resource context when available.
+
+Use `knurl_server_validate` for declaration and material validation alone.
+Preflight closes its listeners and removes its spool probe before returning.
+`knurl_server_run` still binds and opens its own resources, since availability
+can change after preflight.
+
 ## Readiness and serving
 
 The serving gate is closed when `on_parent_ready` starts; readiness and serving

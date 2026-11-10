@@ -10,6 +10,7 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -714,6 +715,7 @@ static int invalid(const knurl_server_config *config, knurl_status expected)
     knurl_error error;
     CHECK(knurl_server_new(config, &server, &error) == KNURL_OK);
     CHECK(knurl_server_validate(server, &error) == expected);
+    CHECK(knurl_server_preflight(server, &error) == expected);
     CHECK(knurl_server_destroy(server, NULL) == KNURL_OK);
     return 0;
 }
@@ -730,6 +732,53 @@ static int file_bound(const knurl_server_config *config)
     limited.tls.max_material_bytes = 128;
     limited.listener_count = 1;
     return invalid(&limited, KNURL_LIMIT);
+}
+
+static int preflight_listeners(const knurl_server_config *config,
+                               knurl_listener_config *listeners)
+{
+    struct sockaddr_in address;
+    socklen_t size = sizeof(address);
+    const size_t indices[] = {1, 4};
+    knurl_server *server;
+    knurl_error error;
+    size_t i;
+    int fd;
+
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(fd >= 0);
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    CHECK(bind(fd, (struct sockaddr *)&address, sizeof(address)) == 0);
+    CHECK(listen(fd, 1) == 0);
+    CHECK(getsockname(fd, (struct sockaddr *)&address, &size) == 0);
+    for (i = 0; i < sizeof(indices) / sizeof(indices[0]); ++i) {
+        listeners[indices[i]].port = ntohs(address.sin_port);
+        CHECK(knurl_server_new(config, &server, &error) == KNURL_OK);
+        listeners[indices[i]].port = 0;
+        CHECK(knurl_server_validate(server, &error) == KNURL_OK);
+        CHECK(knurl_server_preflight(server, &error) == KNURL_BACKEND);
+        CHECK(error.source == KNURL_ERROR_SYSTEM &&
+              error.native_code == EADDRINUSE &&
+              strcmp(error.operation, "listener_bind") == 0);
+        CHECK(knurl_server_get_state(server) == KNURL_SERVER_DECLARED);
+        CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    }
+    CHECK(close(fd) == 0);
+
+    listeners[0].port = listeners[4].port = ntohs(address.sin_port);
+    CHECK(knurl_server_new(config, &server, &error) == KNURL_OK);
+    listeners[0].port = listeners[4].port = 0;
+    CHECK(knurl_server_preflight(server, &error) == KNURL_BACKEND);
+    CHECK(error.native_code == EADDRINUSE &&
+          strcmp(error.operation, "listener_bind") == 0);
+    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(fd >= 0 &&
+          bind(fd, (struct sockaddr *)&address, sizeof(address)) == 0);
+    CHECK(close(fd) == 0);
+    return 0;
 }
 
 static int run(struct fixture *fixture)
@@ -855,6 +904,7 @@ static int run(struct fixture *fixture)
         CHECK(invalid(&config, KNURL_STATE) == 0);
         fixture->material_again = 0;
         fixture->material_outcome = KNURL_OK;
+        CHECK(preflight_listeners(&config, listeners) == 0);
         CHECK(fixture->opens == fixture->closes && !fixture->failure);
     }
     memset(&baseline, 0, sizeof(baseline));

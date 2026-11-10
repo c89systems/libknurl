@@ -833,6 +833,16 @@ KNURL_API knurl_status knurl_server_destroy(knurl_server *server,
  */
 KNURL_API knurl_status knurl_server_validate(knurl_server *server,
                                              knurl_error *error);
+/** Validate an inactive server and probe its startup resources in the caller.
+ * Opens all configured listeners together, then closes them. Probes an explicit
+ * body spool directory when a declared ordinary handler can spill and opens the
+ * configured access log with the runtime's file rules. The log may be created.
+ * TLS material callbacks may run. Request-time header callbacks choose their
+ * body policy at dispatch. The call leaves the server inactive and releases
+ * probe resources. Resource availability may change before the subsequent run.
+ */
+KNURL_API knurl_status knurl_server_preflight(knurl_server *server,
+                                              knurl_error *error);
 /** Run the server lifecycle until stop/failure; return the run outcome after
  * worker/native cleanup.
  */
