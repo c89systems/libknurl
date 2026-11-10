@@ -565,7 +565,7 @@ knurl_status knurl_server_preflight(knurl_server *server, knurl_error *error)
     const knurl_server_config *config;
     struct knurl_access_file *log;
     knurl_status status;
-    int spool = 0, code, *listeners;
+    int spool = 0, dispatches_routes = 0, code, *listeners;
     size_t opened = 0;
 
     status = validate_config(server, &spool, error);
@@ -581,6 +581,8 @@ knurl_status knurl_server_preflight(knurl_server *server, knurl_error *error)
     /* Hold all sockets until the last bind to catch conflicting declarations.
      */
     while (opened < config->listener_count && status == KNURL_OK) {
+        if (config->listeners[opened].kind != KNURL_LISTENER_REDIRECT)
+            dispatches_routes = 1;
         status = open_listener(&config->listeners[opened],
                                config->http.socket_backlog, &listeners[opened],
                                NULL, error);
@@ -590,7 +592,7 @@ knurl_status knurl_server_preflight(knurl_server *server, knurl_error *error)
     while (opened != 0)
         (void)close(listeners[--opened]);
     free(listeners);
-    if (status == KNURL_OK && spool &&
+    if (status == KNURL_OK && spool && dispatches_routes &&
         config->limits.body_spool_directory != NULL)
         status = probe_spool(config->limits.body_spool_directory, error);
     if (status == KNURL_OK && config->http.access_log_path != NULL) {

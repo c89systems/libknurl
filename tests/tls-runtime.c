@@ -781,6 +781,65 @@ static int preflight_listeners(const knurl_server_config *config,
     return 0;
 }
 
+static knurl_status stop_ready(knurl_server *server,
+                               const knurl_process_context *process,
+                               void *userdata, knurl_error *error)
+{
+    (void)process;
+    ++*(int *)userdata;
+    return knurl_server_request_stop(server, error);
+}
+
+static int preflight_redirect_spool(const knurl_server_config *baseline)
+{
+    char directory[] = "knurl-redirect-XXXXXX";
+    char spool[64];
+    knurl_server_config config = *baseline;
+    knurl_listener_config listeners[2];
+    knurl_route_config route;
+    knurl_server *server;
+    knurl_error error;
+    int ready_calls = 0;
+
+    CHECK(mkdtemp(directory) != NULL);
+    (void)snprintf(spool, sizeof(spool), "%s/missing", directory);
+    config.limits.body_spool_directory = spool;
+    listeners[0] = baseline->listeners[4];
+    listeners[1] = baseline->listeners[0];
+    config.listeners = listeners;
+    memset(&config.callbacks, 0, sizeof(config.callbacks));
+    config.callbacks.on_parent_ready = stop_ready;
+    config.callbacks.userdata = &ready_calls;
+    knurl_route_config_init(&route);
+    route.path = "/upload";
+    route.method = KNURL_HTTP_POST;
+    route.handler = handler;
+    route.body.mode = KNURL_BODY_BUFFERED;
+    route.body.max_bytes.low = 32;
+    route.body.memory_buffer_limit_bytes = 16;
+
+    config.listener_count = 1;
+    CHECK(knurl_server_new(&config, &server, &error) == KNURL_OK);
+    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
+                             &error) == KNURL_OK);
+    CHECK(knurl_server_preflight(server, &error) == KNURL_OK);
+    CHECK(knurl_server_run(server, NULL, &error) == KNURL_OK &&
+          ready_calls == 1);
+    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+
+    config.listener_count = 2;
+    CHECK(knurl_server_new(&config, &server, &error) == KNURL_OK);
+    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
+                             &error) == KNURL_OK);
+    CHECK(knurl_server_preflight(server, &error) == KNURL_IO);
+    CHECK(error.native_code == ENOENT &&
+          strcmp(error.operation, "body_spool") == 0 &&
+          strcmp(error.detail, spool) == 0);
+    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(rmdir(directory) == 0);
+    return 0;
+}
+
 static int run(struct fixture *fixture)
 {
     knurl_server_config config;
@@ -905,6 +964,7 @@ static int run(struct fixture *fixture)
         fixture->material_again = 0;
         fixture->material_outcome = KNURL_OK;
         CHECK(preflight_listeners(&config, listeners) == 0);
+        CHECK(preflight_redirect_spool(&config) == 0);
         CHECK(fixture->opens == fixture->closes && !fixture->failure);
     }
     memset(&baseline, 0, sizeof(baseline));

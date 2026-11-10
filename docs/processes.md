@@ -21,11 +21,12 @@ Call `knurl_server_preflight` on an inactive server to catch startup resource
 errors in the original process before forking a runtime parent. It validates
 declarations and TLS/ACME material, probes HTTP, HTTPS and redirect listeners
 together, opens the configured access log, and tests an explicit body spool
-directory when an ordinary route's declared policy can spill. Create that
-directory before calling preflight. A headers callback can choose a different
-body policy at request time. The access-log probe can create an empty file and
-reports open errors, including ENOSPC. Resource errors carry the failed
-operation, native cause and resource context when available.
+directory when an ordinary route's declared policy can spill and an HTTP or
+HTTPS listener can dispatch to it. Create that directory before calling
+preflight. A headers callback can choose a different body policy at request
+time. The access-log probe can create an empty file and reports open errors,
+including ENOSPC. Resource errors carry the failed operation, native cause and
+resource context when available.
 
 Use `knurl_server_validate` for declaration and material validation alone.
 Preflight closes its listeners and removes its spool probe before returning.
