@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(knurl @PROJECT_VERSION@ EXACT CONFIG REQUIRED COMPONENTS shared)
+find_dependency(Lua 5.5.1 EXACT CONFIG REQUIRED)
+find_dependency(lonejson_lua 0.47.0 EXACT CONFIG REQUIRED)
+find_dependency(pslog_lua 0.13.0 EXACT CONFIG REQUIRED)
+include("${CMAKE_CURRENT_LIST_DIR}/knurlLuaTargets.cmake")
+check_required_components(knurl_lua)

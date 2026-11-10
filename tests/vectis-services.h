@@ -1,0 +1,314 @@
+#ifndef KNURL_REFERENCE_VECTIS_SERVICES_H
+#define KNURL_REFERENCE_VECTIS_SERVICES_H
+#include "vectis-route.h"
+
+struct reference_static_file_config {
+    const char *path, *file_path, *content_type;
+    unsigned int methods;
+};
+struct reference_static_directory_config {
+    const char *path_prefix, *root_dir, *content_type, *index_file;
+    int index_enabled;
+    unsigned int methods;
+};
+/* Host-owned packed lookup is registered as a public asset provider. */
+struct reference_embedded_fs {
+    knurl_asset_provider *provider;
+};
+struct reference_static_embedded_config {
+    const char *path_prefix;
+    const struct reference_embedded_fs *fs;
+    const char *content_type, *cache_control, *not_found_body,
+        *not_found_content_type;
+    unsigned int methods;
+};
+reference_status
+reference_static_file(struct reference_app *,
+                      const struct reference_static_file_config *,
+                      reference_error *);
+reference_status
+reference_static_directory(struct reference_app *,
+                           const struct reference_static_directory_config *,
+                           reference_error *);
+reference_status
+reference_static_embedded(struct reference_app *,
+                          const struct reference_static_embedded_config *,
+                          reference_error *);
+
+/* These public value layouts/builders match Vectis exactly. */
+typedef knurl_openapi_schema reference_openapi_schema;
+typedef knurl_openapi_route_doc reference_openapi_route_doc;
+#define reference_openapi_route_doc_init knurl_openapi_route_doc_init
+#define reference_openapi_route_doc_cleanup knurl_openapi_route_doc_cleanup
+#define reference_openapi_lonejson_schema knurl_openapi_lonejson_schema
+struct reference_openapi_document {
+    const char *title, *version;
+};
+void reference_openapi_document_init(struct reference_openapi_document *);
+reference_status reference_openapi_request_json(reference_openapi_route_doc *,
+                                                reference_openapi_schema,
+                                                reference_error *);
+reference_status reference_openapi_response_json(reference_openapi_route_doc *,
+                                                 int, const char *,
+                                                 reference_openapi_schema,
+                                                 reference_error *);
+reference_status reference_openapi_attach(struct reference_app *, unsigned int,
+                                          const char *,
+                                          const reference_openapi_route_doc *,
+                                          reference_error *);
+reference_status
+reference_openapi_generate(struct reference_app *,
+                           const struct reference_openapi_document *, int,
+                           struct reference_mutable_bytes *, reference_error *);
+
+/* Consumer-side value/callback translation of Vectis 6b1e263. Opaque outbound
+ * proxy and WebSocket handles alias the public library handles. Contexts are
+ * owned by the host and retained until server destruction; no server machinery
+ * is implemented here. */
+typedef struct reference_proxy_inbound {
+    const knurl_proxy_inbound *native;
+    void *strings;
+} reference_proxy_inbound;
+typedef knurl_proxy_outbound reference_proxy_outbound;
+typedef knurl_proxy_response reference_proxy_response;
+typedef knurl_proxy_local_response reference_proxy_local_response;
+typedef reference_status (*reference_proxy_rewrite_fn)(
+    const reference_proxy_inbound *, reference_proxy_outbound *, void *,
+    reference_error *);
+typedef reference_status (*reference_proxy_preflight_fn)(
+    const reference_proxy_inbound *, reference_proxy_local_response *, void *,
+    reference_error *);
+typedef reference_status (*reference_proxy_response_fn)(
+    reference_proxy_response *, void *, reference_error *);
+typedef reference_status (*reference_proxy_error_fn)(
+    const reference_error *, int, reference_proxy_local_response *, void *,
+    reference_error *);
+struct reference_proxy_config {
+    const char *path;
+    unsigned int methods;
+    int path_kind;
+    const char *target, *const *alternate_targets;
+    size_t alternate_target_count;
+    int upstream_http_version;
+    long connect_timeout_ms, idle_timeout_ms, total_timeout_ms;
+    size_t buffer_limit_bytes;
+    const char *tls_ca_pem, *tls_client_cert_pem, *tls_client_key_pem;
+    reference_proxy_rewrite_fn rewrite;
+    void *rewrite_userdata;
+    reference_proxy_preflight_fn preflight;
+    void *preflight_userdata;
+    reference_proxy_response_fn modify_response;
+    void *modify_response_userdata;
+    reference_proxy_error_fn on_error;
+    void *on_error_userdata;
+    void (*on_exchange)(struct reference_request *,
+                        const knurl_proxy_exchange *, void *);
+    void *on_exchange_userdata;
+};
+struct reference_proxy_binding {
+    struct reference_proxy_config callbacks;
+};
+reference_status reference_proxy_register(struct reference_app *,
+                                          const struct reference_proxy_config *,
+                                          struct reference_proxy_binding *,
+                                          reference_error *);
+knurl_http_method
+reference_proxy_inbound_method(const reference_proxy_inbound *);
+const char *reference_proxy_inbound_path(const reference_proxy_inbound *);
+const char *reference_proxy_inbound_query(const reference_proxy_inbound *);
+const char *reference_proxy_inbound_host(const reference_proxy_inbound *);
+int reference_proxy_inbound_websocket(const reference_proxy_inbound *);
+const char *reference_proxy_inbound_path_param(const reference_proxy_inbound *,
+                                               const char *);
+size_t reference_proxy_inbound_header_count(const reference_proxy_inbound *);
+#define reference_proxy_response_status knurl_proxy_response_status
+#define reference_proxy_response_header_count knurl_proxy_response_header_count
+reference_status
+reference_proxy_inbound_header_at(const reference_proxy_inbound *, size_t,
+                                  const char **, const char **);
+reference_status
+reference_proxy_response_header_at(const reference_proxy_response *, size_t,
+                                   const char **, const char **);
+reference_status reference_proxy_local_respond(reference_proxy_local_response *,
+                                               int, const void *, size_t,
+                                               reference_error *);
+reference_status
+reference_proxy_local_add_header(reference_proxy_local_response *, const char *,
+                                 const char *, reference_error *);
+reference_status
+reference_proxy_outbound_select_target(reference_proxy_outbound *, size_t,
+                                       reference_error *);
+reference_status reference_proxy_outbound_set_method(reference_proxy_outbound *,
+                                                     knurl_http_method,
+                                                     reference_error *);
+reference_status reference_proxy_outbound_set_path(reference_proxy_outbound *,
+                                                   const char *,
+                                                   reference_error *);
+reference_status reference_proxy_outbound_set_query(reference_proxy_outbound *,
+                                                    const char *,
+                                                    reference_error *);
+reference_status reference_proxy_outbound_set_host(reference_proxy_outbound *,
+                                                   const char *,
+                                                   reference_error *);
+reference_status reference_proxy_outbound_add_header(reference_proxy_outbound *,
+                                                     const char *, const char *,
+                                                     reference_error *);
+reference_status reference_proxy_outbound_set_header(reference_proxy_outbound *,
+                                                     const char *, const char *,
+                                                     reference_error *);
+reference_status
+reference_proxy_outbound_remove_header(reference_proxy_outbound *, const char *,
+                                       reference_error *);
+reference_status reference_proxy_response_set_status(reference_proxy_response *,
+                                                     int, reference_error *);
+reference_status reference_proxy_response_add_header(reference_proxy_response *,
+                                                     const char *, const char *,
+                                                     reference_error *);
+reference_status reference_proxy_response_set_header(reference_proxy_response *,
+                                                     const char *, const char *,
+                                                     reference_error *);
+reference_status
+reference_proxy_response_remove_header(reference_proxy_response *, const char *,
+                                       reference_error *);
+
+typedef reference_status (*reference_upload_open_fn)(struct reference_app *,
+                                                     struct reference_request *,
+                                                     void *, void **,
+                                                     reference_error *);
+typedef reference_status (*reference_upload_write_fn)(
+    struct reference_app *, struct reference_request *, const void *, size_t,
+    void *, void *, reference_error *);
+typedef reference_status (*reference_upload_finish_fn)(
+    struct reference_app *, struct reference_request *,
+    struct reference_response *, void *, void *, reference_error *);
+typedef void (*reference_upload_close_fn)(struct reference_app *,
+                                          struct reference_request *, void *,
+                                          void *);
+typedef reference_status (*reference_upload_reader_fn)(
+    struct reference_app *, struct reference_request *,
+    struct reference_source *, struct reference_response *, void *,
+    reference_error *);
+struct reference_upload_config {
+    struct reference_route_config route;
+    size_t buffer_bytes;
+    reference_upload_open_fn open;
+    reference_upload_write_fn write;
+    reference_upload_finish_fn finish;
+    reference_upload_close_fn close;
+    reference_upload_reader_fn reader;
+    void *userdata;
+};
+struct reference_upload_binding {
+    struct reference_app *app;
+    struct reference_upload_config config;
+};
+reference_status
+reference_upload_register(struct reference_app *,
+                          const struct reference_upload_config *,
+                          struct reference_upload_binding *, reference_error *);
+reference_status
+reference_upload_file_register(struct reference_app *,
+                               const struct reference_route_config *,
+                               const char *, reference_error *);
+
+typedef knurl_websocket reference_websocket;
+typedef void (*reference_websocket_connect_fn)(struct reference_app *,
+                                               reference_websocket *, void *);
+typedef void (*reference_websocket_message_fn)(struct reference_app *,
+                                               reference_websocket *, int,
+                                               const void *, size_t, void *);
+typedef void (*reference_websocket_disconnect_fn)(struct reference_app *,
+                                                  reference_websocket *,
+                                                  void *);
+struct reference_websocket_config {
+    const char *path;
+    int path_kind;
+    reference_websocket_connect_fn connect;
+    reference_websocket_message_fn message;
+    reference_websocket_disconnect_fn disconnect;
+    void *userdata;
+};
+struct reference_websocket_binding {
+    struct reference_app *app;
+    struct reference_websocket_config config;
+};
+reference_status reference_websocket_register(
+    struct reference_app *, const struct reference_websocket_config *,
+    struct reference_websocket_binding *, reference_error *);
+reference_status reference_websocket_send(reference_websocket *, int,
+                                          const void *, size_t,
+                                          reference_error *);
+reference_status reference_websocket_close(reference_websocket *,
+                                           reference_error *);
+
+struct reference_webdav_auth_request {
+    struct reference_request *request;
+    int method;
+    const char *mount_path_prefix, *resource_path;
+};
+struct reference_webdav_auth_response {
+    int action, status_code;
+    const char *location, *www_authenticate, *content_type;
+    const void *body;
+    size_t body_size;
+    char www_authenticate_value[256], principal[255], redirect_location[8192];
+};
+typedef reference_status (*reference_webdav_auth_fn)(
+    const struct reference_webdav_auth_request *,
+    struct reference_webdav_auth_response *, void *, reference_error *);
+struct reference_webdav_config {
+    const char *path_prefix;
+    knurl_storage_filesystem_config storage;
+    int auth_required, conceal_unauthorized;
+    reference_webdav_auth_fn auth;
+    void *auth_userdata;
+};
+/* Allocate on the heap: the host's redirect storage is 8 KiB. */
+struct reference_webdav_binding {
+    struct reference_webdav_config config;
+    struct reference_webdav_auth_response response;
+};
+reference_status
+reference_webdav_register(struct reference_app *,
+                          const struct reference_webdav_config *,
+                          struct reference_webdav_binding *,
+                          knurl_storage_provider *, reference_error *);
+
+/* Vectis resolves app paths and selects its durable-storage client. */
+typedef reference_status (*reference_acme_state_fn)(
+    const char *runtime_directory, const char *const *domains,
+    size_t domain_count, void *userdata, reference_error *);
+typedef void (*reference_acme_error_fn)(const reference_error *,
+                                        void *userdata);
+struct reference_acme_provider {
+    reference_acme_state_fn hydrate, persist;
+    reference_acme_error_fn error;
+    void *userdata;
+};
+struct reference_tls_config {
+    int mode, version;
+    const char *cipher_list, *bind, *domain, *const *domains;
+    size_t domain_count;
+    unsigned short port, http_redirect_port, presented_https_port,
+        presented_http_port;
+    int http_redirect_enabled, require_client_certificate;
+    const char *http_redirect_bind, *acme_email, *acme_directory_url,
+        *acme_state_dir;
+    struct reference_input_source bundle, certificate, private_key, ca_bundle,
+        client_ca_bundle;
+    struct reference_acme_provider state;
+    long persist_timeout_ms;
+};
+struct reference_tls_binding {
+    knurl_tls_identity identity;
+    knurl_listener_config listeners[2];
+    const char *manual_domain;
+    struct reference_acme_provider state;
+    const char *const *domains;
+    size_t domain_count;
+};
+reference_status reference_tls_translate(const struct reference_tls_config *,
+                                         knurl_server_config *,
+                                         struct reference_tls_binding *,
+                                         reference_error *);
+#endif

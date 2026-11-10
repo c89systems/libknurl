@@ -1,0 +1,78 @@
+diff --git a/include/kore/kore.h b/include/kore/kore.h
+index 4f8364c..d7bd90f 100644
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -103,6 +103,15 @@ typedef void		KORE_PRIVATE_KEY;
+ 
+ #define KORE_LOG_TRACE		-1
+ 
++#if defined(KORE_VECTIS_STATIC_RUNTIME)
++struct kore_vectis_runtime_symbol {
++	const char	*name;
++	void		*addr;
++};
++extern const struct kore_vectis_runtime_symbol kore_vectis_runtime_symbols[];
++extern const size_t kore_vectis_runtime_symbol_count;
++#endif
++
+ #define KORE_TLS_VERSION_1_3	0
+ #define KORE_TLS_VERSION_1_2	1
+ #define KORE_TLS_VERSION_BOTH	2
+diff --git a/src/module.c b/src/module.c
+index d7baa1f..87c58bb 100644
+--- a/src/module.c
++++ b/src/module.c
+@@ -224,29 +224,53 @@ kore_module_getsym(const char *symbol, struct kore_runtime **runtime)
+ static void *
+ native_getsym(struct kore_module *module, const char *symbol)
+ {
++#if defined(KORE_VECTIS_STATIC_RUNTIME)
++	size_t	i;
++
++	(void)module;
++
++	for (i = 0; i < kore_vectis_runtime_symbol_count; i++) {
++		if (!strcmp(kore_vectis_runtime_symbols[i].name, symbol))
++			return (kore_vectis_runtime_symbols[i].addr);
++	}
++
++	return (NULL);
++#else
+ 	return (dlsym(module->handle, symbol));
++#endif
+ }
+ 
+ static void
+ native_free(struct kore_module *module)
+ {
+ 	kore_free(module->path);
++#if !defined(KORE_VECTIS_STATIC_RUNTIME)
+ 	(void)dlclose(module->handle);
++#endif
+ 	kore_free(module);
+ }
+ 
+ static void
+ native_reload(struct kore_module *module)
+ {
++#if defined(KORE_VECTIS_STATIC_RUNTIME)
++	(void)module;
++	fatal("native reload is unavailable for Vectis static runtime");
++#else
+ 	if (dlclose(module->handle))
+ 		fatal("cannot close existing module: %s", dlerror());
+ 	module->fun->load(module);
++#endif
+ }
+ 
+ static void
+ native_load(struct kore_module *module)
+ {
++#if defined(KORE_VECTIS_STATIC_RUNTIME)
++	module->handle = NULL;
++#else
+ 	module->handle = dlopen(module->path, RTLD_NOW | RTLD_GLOBAL);
+ 	if (module->handle == NULL)
+ 		fatal("%s: %s", module->path, dlerror());
++#endif
+ }

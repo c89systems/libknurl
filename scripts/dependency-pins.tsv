@@ -1,0 +1,24 @@
+# kind	name	version	target	sha256	url
+sdk	cpkt	0.7.0	x86_64-linux-gnu	e898960071bc5f30a00f5308d559b60c7495fce442f9d9e1fce54d112a959d84	https://github.com/c89systems/cpkt/releases/download/v0.7.0/cpkt-0.7.0-x86_64-linux-gnu.tar.gz
+sdk	cpkt	0.7.0	x86_64-linux-musl	8c5de2f414c1c99147e22d9651de600b047299c7d547c53830c3c8fe15d34dbc	https://github.com/c89systems/cpkt/releases/download/v0.7.0/cpkt-0.7.0-x86_64-linux-musl.tar.gz
+sdk	cpkt	0.7.0	aarch64-linux-gnu	0ba48a8ca621ec9a1045bb2081ec440970695bfcc34aa75683dec8bdaff64e1c	https://github.com/c89systems/cpkt/releases/download/v0.7.0/cpkt-0.7.0-aarch64-linux-gnu.tar.gz
+sdk	cpkt	0.7.0	aarch64-linux-musl	7146f274e3fbff74b7e1e4c3b3b8276c1c62843f2517f1940a65a17683a17230	https://github.com/c89systems/cpkt/releases/download/v0.7.0/cpkt-0.7.0-aarch64-linux-musl.tar.gz
+sdk	cpkt	0.7.0	armhf-linux-gnu	8eb105e3d19328619c8274a64dcfe39df8d00861d0d31ca3dd3b692f21b25734	https://github.com/c89systems/cpkt/releases/download/v0.7.0/cpkt-0.7.0-armhf-linux-gnu.tar.gz
+sdk	cpkt	0.7.0	armhf-linux-musl	7dbdeaa6b4c8180e14fbd3cc9388c81b88015a306ae268cc12468eb775969f15	https://github.com/c89systems/cpkt/releases/download/v0.7.0/cpkt-0.7.0-armhf-linux-musl.tar.gz
+sdk	cpkt	0.7.0	arm64-apple-darwin	b1c0d9eee975a1e30f7395db0bcc42fddcca45cbae6919a2d49b4e42ebbb88d3	https://github.com/c89systems/cpkt/releases/download/v0.7.0/cpkt-0.7.0-arm64-apple-darwin.tar.gz
+sdk	lonejson	0.47.0	x86_64-linux-gnu	a2dbc1db962f8dcdf8398435043a85031c4f195d7e3d4ec9ee27b985a2f7c353	https://github.com/c89systems/lonejson/releases/download/v0.47.0/liblonejson-0.47.0-x86_64-linux-gnu.tar.gz
+sdk	lonejson	0.47.0	x86_64-linux-musl	4f91b5d601f7264487ff6f3b103d15d8a954a94eb79cf515aea2dd16971b9784	https://github.com/c89systems/lonejson/releases/download/v0.47.0/liblonejson-0.47.0-x86_64-linux-musl.tar.gz
+sdk	lonejson	0.47.0	aarch64-linux-gnu	d6d6c98ec9e86a7f57bbf1f748976048bb8f99a069eb3ffed7e0f16e3223eae7	https://github.com/c89systems/lonejson/releases/download/v0.47.0/liblonejson-0.47.0-aarch64-linux-gnu.tar.gz
+sdk	lonejson	0.47.0	aarch64-linux-musl	dc6ec6c4e694ede21f54a0b7fb8197df122f5b052441b9c4862dde10842d13ef	https://github.com/c89systems/lonejson/releases/download/v0.47.0/liblonejson-0.47.0-aarch64-linux-musl.tar.gz
+sdk	lonejson	0.47.0	armhf-linux-gnu	90bd654dda6461be943ebb9e198d43af489b2501502f02a421589968d78d7eaf	https://github.com/c89systems/lonejson/releases/download/v0.47.0/liblonejson-0.47.0-armhf-linux-gnu.tar.gz
+sdk	lonejson	0.47.0	armhf-linux-musl	fb4ac6dfaff38cdc229feb074e594b4eb1b5e30a5448906e0c91cf31d9d8924c	https://github.com/c89systems/lonejson/releases/download/v0.47.0/liblonejson-0.47.0-armhf-linux-musl.tar.gz
+sdk	lonejson	0.47.0	arm64-apple-darwin	35d4fa113896fbcc3f8d5095a3e859fecf6b14423460541b8326aa32d9dcaeb8	https://github.com/c89systems/lonejson/releases/download/v0.47.0/liblonejson-0.47.0-arm64-apple-darwin.tar.gz
+lua	lonejson	0.47.0	all	af2c2843737590567b3ddb16c73b8704d84ca7e460110eefd0acea2059b0622a	https://github.com/c89systems/lonejson/releases/download/v0.47.0/lonejson-lua-0.47.0.tar.gz
+sdk	pslog	0.13.0	x86_64-linux-gnu	3fa68da666c70470f0f09041b05561f807cd241fae30421410033932d2b8c1c4	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-x86_64-linux-gnu.tar.gz
+sdk	pslog	0.13.0	x86_64-linux-musl	c195881181b1cbe08acb705ab91a8cd0e8cabe470c9fdb391b40820529836f80	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-x86_64-linux-musl.tar.gz
+sdk	pslog	0.13.0	aarch64-linux-gnu	d15b172c076324c05d7596cb7b01ba036c2d1aeb0eb7264bd4e77cc6c103c71f	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-aarch64-linux-gnu.tar.gz
+sdk	pslog	0.13.0	aarch64-linux-musl	44c295a5ade15ce30dcbca6ba7775b6ea521560941306312e33bbbfade2f8059	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-aarch64-linux-musl.tar.gz
+sdk	pslog	0.13.0	armhf-linux-gnu	55bfb03089697d01abfad14bb631c6cc69bfc361f09e8e0064bba1f48c086290	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-armhf-linux-gnu.tar.gz
+sdk	pslog	0.13.0	armhf-linux-musl	5ba1d3c16f864a3c6010ece642b6ecaa85273c2ba282d72856c9e7af6ac6320e	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-armhf-linux-musl.tar.gz
+sdk	pslog	0.13.0	arm64-apple-darwin	7f3b8e89f7f1a3ac27d47cb92aa68c4989ed4c8cdb51c80c81692412ba75cacb	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-arm64-apple-darwin.tar.gz
+lua	pslog	0.13.0	all	d492e71ccb5b9f979e4cfbfd73c0ba87fc143698825167a5473edddc74e7248f	https://github.com/c89systems/libpslog/releases/download/v0.13.0/lua-pslog-0.13.0.tar.gz

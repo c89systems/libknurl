@@ -1,0 +1,280 @@
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -1010,6 +1010,10 @@
+ void		kore_log(int, const char *, ...)
+ 		    __attribute__((format (printf, 2, 3)));
+ u_int64_t	kore_strtonum64(const char *, int, int *);
++char *kore_u64_text(u_int64_t, char *);
++char *kore_i64_text(int64_t, char *);
++#define KORE_INT64_MAX ((int64_t)(((u_int64_t)~(u_int64_t)0) >> 1))
++#define KORE_INT64_MIN (-KORE_INT64_MAX - 1)
+ size_t		kore_strlcpy(char *, const char *, const size_t);
+ void		kore_server_disconnect(struct connection *);
+ int		kore_split_string(char *, const char *, char **, size_t);
+--- a/src/utils.c
++++ b/src/utils.c
+@@ -26,6 +26,14 @@
+ #include <limits.h>
+ 
+ #include "kore.h"
++
++#if ULONG_MAX > 0xffffffffUL
++#define KORE_STRTO_I64 strtol
++#define KORE_STRTO_U64 strtoul
++#else
++#define KORE_STRTO_I64 strtoll
++#define KORE_STRTO_U64 strtoull
++#endif
+ #include "library.h"
+ 
+ static struct {
+@@ -120,7 +128,7 @@
+ 	}
+ 
+ 	errno = 0;
+-	l = strtoll(str, &ep, base);
++	l = KORE_STRTO_I64(str, &ep, base);
+ 	if (errno != 0 || str == ep || *ep != '\0') {
+ 		*err = KORE_RESULT_ERROR;
+ 		return (0);
+@@ -146,42 +154,29 @@
+ 	u_int64_t	l;
+ 	int64_t	ll;
+ 	char		*ep;
+-	int		check;
+-
+-	l = 0;
+-	check = 1;
+-
+-	ll = strtoll(str, &ep, 10);
+-	if ((errno == EINVAL || errno == ERANGE) &&
+-	    (ll == INT64_MIN || ll == INT64_MAX)) {
+-		if (sign) {
+-			*err = KORE_RESULT_ERROR;
+-			return (0);
+-		}
+-
+-		check = 0;
+-	}
+-
+-	if (!sign) {
+-		l = strtoull(str, &ep, 10);
+-		if ((errno == EINVAL || errno == ERANGE) && l == ULONG_MAX) {
+-			*err = KORE_RESULT_ERROR;
+-			return (0);
+-		}
+-
+-		if (check && ll < 0) {
+-			*err = KORE_RESULT_ERROR;
+-			return (0);
+-		}
+-	}
+-
+-	if (str == ep || *ep != '\0') {
+-		*err = KORE_RESULT_ERROR;
+-		return (0);
+-	}
+-
++	const char *prefix;
++	int negative;
++	if (str == NULL) {
++		*err = KORE_RESULT_ERROR;
++		return (0);
++	}
++	prefix = str;
++	while (isspace((unsigned char)*prefix))
++		prefix++;
++	negative = *prefix == '-';
++	errno = 0;
++	if (sign) {
++		ll = KORE_STRTO_I64(str, &ep, 10);
++		l = (u_int64_t)ll;
++	} else {
++		l = KORE_STRTO_U64(str, &ep, 10);
++	}
++	if (errno != 0 || str == ep || *ep != '\0' || (!sign && negative && l != 0)) {
++		*err = KORE_RESULT_ERROR;
++		return (0);
++	}
+ 	*err = KORE_RESULT_OK;
+-	return ((sign) ? (u_int64_t)ll : l);
++	return (l);
+ }
+ 
+ double
+@@ -745,3 +740,33 @@
+ 
+ 	return (KORE_RESULT_OK);
+ }
++
++/* Decimal conversion without C99 printf length modifiers on 32-bit targets.
++ * Callers supply 21 bytes for unsigned, 22 bytes for signed values.
++ */
++char *
++kore_u64_text(u_int64_t value, char *output)
++{
++    char reverse[20];
++    size_t used, index;
++    used = 0;
++    do {
++        reverse[used++] = (char)('0' + value % 10);
++        value /= 10;
++    } while (value != 0);
++    for (index = 0; index < used; index++)
++        output[index] = reverse[used - index - 1];
++    output[used] = '\0';
++    return (output);
++}
++
++char *
++kore_i64_text(int64_t value, char *output)
++{
++    if (value < 0) {
++        output[0] = '-';
++        (void)kore_u64_text((u_int64_t)(-(value + 1)) + 1, output + 1);
++        return (output);
++    }
++    return (kore_u64_text((u_int64_t)value, output));
++}
+--- a/src/json.c
++++ b/src/json.c
+@@ -233,6 +233,7 @@
+ kore_json_item_tobuf(struct kore_json_item *item, struct kore_buf *buf)
+ {
+ 	struct kore_json_item	*nitem;
++	char number[22];
+ 
+ 	if (item->name)
+ 		kore_buf_appendf(buf, "\"%s\":", item->name);
+@@ -265,10 +266,10 @@
+ 		kore_buf_appendf(buf, "%f", item->data.number);
+ 		break;
+ 	case KORE_JSON_TYPE_INTEGER:
+-		kore_buf_appendf(buf, "%" PRId64, item->data.integer);
++		kore_buf_appendf(buf, "%s", kore_i64_text(item->data.integer, number));
+ 		break;
+ 	case KORE_JSON_TYPE_INTEGER_U64:
+-		kore_buf_appendf(buf, "%" PRIu64, item->data.u64);
++		kore_buf_appendf(buf, "%s", kore_u64_text(item->data.u64, number));
+ 		break;
+ 	case KORE_JSON_TYPE_LITERAL:
+ 		switch (item->data.literal) {
+@@ -822,7 +823,7 @@
+ 		break;
+ 	case KORE_JSON_TYPE_INTEGER_U64:
+ 		number->data.u64 = kore_strtonum64(str, 0, &ret);
+-		if (number->data.u64 <= INT64_MAX) {
++		if (number->data.u64 <= (u_int64_t)KORE_INT64_MAX) {
+ 			type = KORE_JSON_TYPE_INTEGER;
+ 			number->data.integer = number->data.u64;
+ 		}
+--- a/src/http.c
++++ b/src/http.c
+@@ -2620,6 +2620,7 @@
+ 	struct http_cookie	*ck;
+ 	struct http_header	*hdr;
+ 	char			version;
++	char hsts[21];
+ 	const char		*conn, *text;
+ 	int			connection_close, send_body;
+ 
+@@ -2687,8 +2688,8 @@
+ 	if (c->tls && http_hsts_enable) {
+ 		kore_buf_appendf(header_buf, "strict-transport-security: ");
+ 		kore_buf_appendf(header_buf,
+-		    "max-age=%" PRIu64 "; includeSubDomains\r\n",
+-		    http_hsts_enable);
++		    "max-age=%s; includeSubDomains\r\n",
++		    kore_u64_text(http_hsts_enable, hsts));
+ 	}
+ 
+ 	if (http_pretty_error && d == NULL && status >= 400) {
+--- a/src/curl.c
++++ b/src/curl.c
+@@ -261,6 +261,7 @@
+ size_t
+ kore_curl_tobuf(char *ptr, size_t size, size_t nmemb, void *udata)
+ {
++	char maximum[21];
+ 	size_t			len;
+ 	struct kore_buf		**buf, *b;
+ 
+@@ -280,7 +281,7 @@
+ 
+ 	if ((b->offset + len) > kore_curl_recv_max) {
+ 		kore_log(LOG_ERR,
+-		    "received too large transfer (%lu > %" PRIu64 ")", (unsigned long)(b->offset + len), kore_curl_recv_max);
++		    "received too large transfer (%lu > %s)", (unsigned long)(b->offset + len), kore_u64_text(kore_curl_recv_max, maximum));
+ 		return (0);
+ 	}
+ 
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -156,6 +156,7 @@
+ void
+ kore_accesslog(struct http_request *req)
+ {
++	char content_length[21];
+ 	struct timespec		ts;
+ 	struct tm		*tm;
+ 	u_int64_t		now;
+@@ -300,9 +301,9 @@
+ 		worker->lb.offset += sizeof(*hdr);
+ 
+ 		len = snprintf(worker->lb.buf + worker->lb.offset, avail,
+-		    "%s - %s [%s] \"%s %s %s\" %d %" PRIu64" \"%s\" \"%s\"\n",
++		    "%s - %s [%s] \"%s %s %s\" %d %s \"%s\" \"%s\"\n",
+ 		    addr, cn, tbuf, method, req->path, http_version,
+-		    req->status, req->content_length, referer, req->agent);
++		    req->status, kore_u64_text(req->content_length, content_length), referer, req->agent);
+ 		if (len == -1)
+ 			fatal("failed to create log entry");
+ 
+--- a/src/net.c
++++ b/src/net.c
+@@ -18,16 +18,6 @@
+ #include <sys/socket.h>
+ #include <sys/types.h>
+ 
+-#if defined(__linux__)
+-#include <endian.h>
+-#elif defined(__MACH__)
+-#include <libkern/OSByteOrder.h>
+-#define htobe64(x)	OSSwapHostToBigInt64(x)
+-#define be64toh(x)	OSSwapBigToHostInt64(x)
+-#else
+-#include <sys/endian.h>
+-#endif
+-
+ #include "kore.h"
+ #if !defined(KORE_NO_HTTP)
+ #include "http.h"
+@@ -444,16 +434,20 @@
+ net_read64(u_int8_t *b)
+ {
+ 	u_int64_t	r;
+-
+-	r = *(u_int64_t *)b;
+-	return (be64toh(r));
++	size_t index;
++
++	r = 0;
++	for (index = 0; index < 8; index++)
++		r = (r << 8) | b[index];
++	return (r);
+ }
+ 
+ void
+ net_write64(u_int8_t *p, u_int64_t n)
+ {
+-	u_int64_t	r;
+-
+-	r = htobe64(n);
+-	memcpy(p, &r, sizeof(r));
+-}
++	size_t index;
++	for (index = 8; index != 0; index--) {
++		p[index - 1] = (u_int8_t)(n & 255U);
++		n >>= 8;
++	}
++}

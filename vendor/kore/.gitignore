@@ -1,0 +1,13 @@
+kore
+*.o
+*.swp
+*.swo
+*.module
+*.DSYM
+cert
+obj
+.lvimrc
+kodev/kodev
+kore.features
+src/version.c
+src/platform.h

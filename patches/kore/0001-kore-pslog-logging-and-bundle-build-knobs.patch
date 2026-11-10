@@ -1,0 +1,262 @@
+diff --git a/Makefile b/Makefile
+index b8c96d5a3941668a05f6bea8a7a67c25e7ebbb21..6ae15898412a3d604432e8910bcf1c65918ecd61 100644
+--- a/Makefile
++++ b/Makefile
+@@ -36,6 +36,14 @@ CFLAGS+=-Wsign-compare -Iinclude/kore -I$(OBJDIR) -std=c99 -pedantic
+ CFLAGS+=-Wtype-limits -fno-common
+ CFLAGS+=-DPREFIX='"$(PREFIX)"' -fstack-protector-all
+ 
++ifneq ("$(KORE_BUNDLE_ROOT)", "")
++	OPENSSL_PATH?=$(KORE_BUNDLE_ROOT)
++	PSLOG_PATH?=$(KORE_BUNDLE_ROOT)
++	LONEJSON_PATH?=$(KORE_BUNDLE_ROOT)
++	KORE_CURL_INC?=-I$(KORE_BUNDLE_ROOT)/include
++	KORE_CURL_LIB?=-L$(KORE_BUNDLE_ROOT)/lib -lcurl -lnghttp2 -lssl -lcrypto
++endif
++
+ LDFLAGS+=-rdynamic
+ 
+ ifeq ("$(TLS_BACKEND)", "openssl")
+@@ -65,6 +73,27 @@ ifneq ("$(DEBUG)", "")
+ 	FEATURES+=-DKORE_DEBUG
+ endif
+ 
++ifneq ("$(PSLOG)", "")
++	S_SRC+=src/vectis_pslog_impl.c
++	CFLAGS+=-DKORE_USE_PSLOG
++	FEATURES+=-DKORE_USE_PSLOG
++	ifneq ("$(PSLOG_PATH)", "")
++		CFLAGS+=-I$(PSLOG_PATH)/include
++		LDFLAGS+=-L$(PSLOG_PATH)/lib -lpslog
++		FEATURES_INC+=-I$(PSLOG_PATH)/include
++	endif
++endif
++ifneq ("$(LONEJSON)", "")
++	S_SRC+=src/ljson.c
++	CFLAGS+=-DKORE_USE_LONEJSON
++	FEATURES+=-DKORE_USE_LONEJSON
++	ifneq ("$(LONEJSON_PATH)", "")
++		CFLAGS+=-I$(LONEJSON_PATH)/include
++		LDFLAGS+=-L$(LONEJSON_PATH)/lib -llonejson
++		FEATURES_INC+=-I$(LONEJSON_PATH)/include
++	endif
++endif
++
+ ifneq ("$(NOOPT)", "")
+ 	CFLAGS+=-O0
+ else
+diff --git a/include/kore/kore.h b/include/kore/kore.h
+index ca607e34fe0d68030e285ff6c30d958088a266ff..0ff8d5edcf275cd20f770426f341007bc95b0d60 100644
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -51,6 +51,10 @@
+ #include <unistd.h>
+ #include <stdarg.h>
+ 
++#if defined(KORE_USE_PSLOG)
++#include <pslog.h>
++#endif
++
+ #if defined(__cplusplus)
+ extern "C" {
+ #endif
+@@ -98,6 +102,8 @@ typedef void		KORE_PRIVATE_KEY;
+ #define KORE_RESULT_OK		1
+ #define KORE_RESULT_RETRY	2
+ 
++#define KORE_LOG_TRACE		-1
++
+ #define KORE_TLS_VERSION_1_3	0
+ #define KORE_TLS_VERSION_1_2	1
+ #define KORE_TLS_VERSION_BOTH	2
+@@ -906,6 +912,9 @@ const char		*kore_connection_ip(struct connection *);
+ 
+ void		kore_log_init(void);
+ void		kore_log_file(const char *);
++#if defined(KORE_USE_PSLOG)
++void		kore_log_set_logger(pslog_logger *);
++#endif
+ 
+ /* config.c */
+ void		kore_parse_config(void);
+diff --git a/src/log.c b/src/log.c
+index fb51ada..0362c16 100644
+--- a/src/log.c
++++ b/src/log.c
+@@ -21,6 +21,10 @@
+ 
+ #include "kore.h"
+ 
++#if defined(KORE_USE_PSLOG)
++#include <string.h>
++#endif
++
+ struct kore_wlog {
+ 	int		prio;
+ 	u_int16_t	wid;
+@@ -33,6 +37,48 @@ static void	log_print(int, const char *, ...)
+ static void	log_from_worker(struct kore_msg *, const void *);
+ 
+ static FILE	*fp = NULL;
++#if defined(KORE_USE_PSLOG)
++static pslog_logger	*kore_pslog_logger = NULL;
++static int		kore_pslog_logger_owned = 0;
++#endif
++
++#if defined(KORE_USE_PSLOG)
++static pslog_level
++kore_pslog_level(int prio)
++{
++	switch (prio) {
++	case KORE_LOG_TRACE:
++		return (PSLOG_LEVEL_TRACE);
++	case LOG_DEBUG:
++		return (PSLOG_LEVEL_DEBUG);
++	case LOG_INFO:
++		return (PSLOG_LEVEL_INFO);
++	case LOG_NOTICE:
++		return (PSLOG_LEVEL_INFO);
++	case LOG_WARNING:
++		return (PSLOG_LEVEL_WARN);
++	case LOG_ERR:
++	case LOG_CRIT:
++	case LOG_ALERT:
++	case LOG_EMERG:
++		return (PSLOG_LEVEL_ERROR);
++	default:
++		return (PSLOG_LEVEL_INFO);
++	}
++}
++
++static void
++kore_pslog_emit(int prio, const char *proc, const char *msg)
++{
++	pslog_level	level;
++
++	if (kore_pslog_logger == NULL)
++		return;
++
++	level = kore_pslog_level(prio);
++	pslog(kore_pslog_logger, level, msg, "proc=%s prio=%d", proc, prio);
++}
++#endif
+ 
+ void
+ kore_log_init(void)
+@@ -46,6 +92,26 @@ kore_log_init(void)
+ 
+ 	fp = stdout;
+ 
++#if defined(KORE_USE_PSLOG)
++	if (kore_pslog_logger == NULL) {
++		pslog_config	psconf;
++		pslog_logger	*root;
++
++		pslog_default_config(&psconf);
++		psconf.mode = PSLOG_MODE_JSON;
++		psconf.min_level = PSLOG_LEVEL_INFO;
++		psconf.output = pslog_output_from_fp(stdout, 0);
++		root = pslog_new(&psconf);
++		if (root != NULL) {
++			kore_pslog_logger = pslog_withf(root,
++			    "service=%s component=%s", "kore", "http");
++			root->destroy(root);
++			if (kore_pslog_logger != NULL)
++				kore_pslog_logger_owned = 1;
++		}
++	}
++#endif
++
+ 	if (!kore_foreground)
+ 		openlog(name, LOG_NDELAY | LOG_PID, LOG_DAEMON);
+ 
+@@ -59,7 +125,49 @@ kore_log_file(const char *path)
+ 		fp = stdout;
+ 		fatal("fopen(%s): %s", path, errno_s);
+ 	}
++
++#if defined(KORE_USE_PSLOG)
++	if (kore_pslog_logger != NULL) {
++		if (kore_pslog_logger_owned)
++			kore_pslog_logger->destroy(kore_pslog_logger);
++		kore_pslog_logger = NULL;
++		kore_pslog_logger_owned = 0;
++	}
++
++	{
++		pslog_config	psconf;
++		pslog_output	output;
++		pslog_logger	*root;
++
++		pslog_default_config(&psconf);
++		psconf.mode = PSLOG_MODE_JSON;
++		psconf.min_level = PSLOG_LEVEL_INFO;
++		if (pslog_output_init_file(&output, path, "a") != 0)
++			fatal("pslog_output_init_file(%s): failed", path);
++		psconf.output = output;
++		root = pslog_new(&psconf);
++		if (root != NULL) {
++			kore_pslog_logger = pslog_withf(root,
++			    "service=%s component=%s", "kore", "http");
++			root->destroy(root);
++			if (kore_pslog_logger != NULL)
++				kore_pslog_logger_owned = 1;
++		}
++	}
++#endif
++}
++
++#if defined(KORE_USE_PSLOG)
++void
++kore_log_set_logger(pslog_logger *logger)
++{
++	if (kore_pslog_logger != NULL && kore_pslog_logger_owned &&
++	    kore_pslog_logger != logger)
++		kore_pslog_logger->destroy(kore_pslog_logger);
++	kore_pslog_logger = logger;
++	kore_pslog_logger_owned = 0;
+ }
++#endif
+ 
+ void
+ kore_log(int prio, const char *fmt, ...)
+@@ -94,7 +202,9 @@ kore_log(int prio, const char *fmt, ...)
+ 	} else {
+ 		str = kore_buf_stringify(&buf, NULL);
+ 
+-		if (kore_foreground || fp != stdout)
++		if (kore_pslog_logger != NULL) {
++			kore_pslog_emit(prio, "parent", str);
++		} else if (kore_foreground || fp != stdout)
+ 			log_print(prio, "proc=[parent] log=[%s]\n", str);
+ 		else
+ 			syslog(prio, "proc=[parent] log=[%s]", str);
+@@ -119,7 +229,9 @@ log_from_worker(struct kore_msg *msg, const void *data)
+ 	wlog = data;
+ 	name = kore_worker_name(wlog->wid);
+ 
+-	if (kore_foreground || fp != stdout) {
++	if (kore_pslog_logger != NULL) {
++		kore_pslog_emit(wlog->prio, name, wlog->logmsg);
++	} else if (kore_foreground || fp != stdout) {
+ 		log_print(wlog->prio, "proc=%s log=[%.*s]\n",
+ 		    name, (int)wlog->loglen, wlog->logmsg);
+ 	} else {
+diff --git a/src/vectis_pslog_impl.c b/src/vectis_pslog_impl.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..43fadae3d91135020247e29a793578ca5987a86c
+--- /dev/null
++++ b/src/vectis_pslog_impl.c
+@@ -0,0 +1,12 @@
++#if defined(__GNUC__) || defined(__clang__)
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wcast-qual"
++#pragma GCC diagnostic ignored "-Wshadow"
++#endif
++
++#define PSLOG_IMPLEMENTATION
++#include <pslog.h>
++
++#if defined(__GNUC__) || defined(__clang__)
++#pragma GCC diagnostic pop
++#endif

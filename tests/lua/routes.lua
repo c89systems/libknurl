@@ -1,0 +1,119 @@
+local knurl=require('knurl')
+local native=require('knurl.native')
+local function ok(value,err) assert(value,err and (err.message..' '..err.detail));return value end
+local function state(value,err) assert(value==nil and err.status==knurl.status.STATE) end
+local root=fixture.workspace
+local function write(path,bytes)
+  local file=ok(io.open(path,'wb'));ok(file:write(bytes));ok(file:close())
+end
+write(root..'/static/asset','A\0B');write(root..'/static/index.html','index\n')
+write(root..'/static/song.MP3','A\0B');write(root..'/static/movie.mp4','A\0B')
+for n=0,28,4 do
+  for _,name in ipairs{'static_file','static_directory','upload_file','webdav'} do
+    local owner=ok(native.server{listeners={{port=0}}})
+    local spec=name=='webdav' and {path_prefix='/allocation',cache_dir=root..'/cache',site_id='allocation',auth_required=false}
+      or name=='static_directory' and {path='/allocation',root_dir=root..'/static'}
+      or {path='/allocation',file_path=root..'/static/asset'}
+    if name~='webdav' then spec.mime_types={mp3='audio/mpeg'} end
+    fixture.fail_call(n,function() return owner[name](owner,spec) end)
+    assert(owner:route_count()<=1);ok(owner:close())
+  end
+end
+collectgarbage('collect')
+local retained,after_error,after_oom,group_reply,group_checks,uploads= nil,nil,nil,nil,0,0
+local server=ok(knurl.server{
+  port=0,workers={count=1,affinity_disabled=true},http={backend_quiet=true,mime_types={mp4='video/x-instance'}},
+  limits={default_body_bytes=2,hard_body_bytes=16},
+  on_parent_ready=function(s) ok(fixture.spawn_routes(ok(s:listener()).port)) end,
+})
+local spec={path='/file',file=root..'/static/asset',cache_control='public,max-age=1',
+  after=function(_,reply)
+    local snapshot=ok(reply:snapshot())
+    assert(snapshot.kind=='source' or snapshot.status_code==304)
+    retained=reply;ok(reply:header_set('x-native','kept'));return reply
+  end}
+ok(server:static_file(spec));spec.file='/absent'
+ok(server:static_directory{prefix='/files',dir=root..'/static',index=true})
+local mimes={['.MP3']='audio/x-mount; note="a;b,c"',mp4='video/x-mount'}
+ok(server:static_directory{prefix='/mime-route',dir=root..'/static',mime_types=mimes})
+ok(server:static_directory{prefix='/mime-explicit',dir=root..'/static',mime_types=mimes,content_type='application/x-explicit'})
+mimes['.MP3']='audio/x-mutated';mimes.mp4=nil;collectgarbage('collect')
+for _,bad in ipairs{false,{mp3=false},{mp3='no-slash'},
+  {mp3='audio/mpeg',['.MP3']='audio/mp4'},{txt='text/plain\0bad'},
+  {txt='text/plain; charset =utf-8'},{txt='text/plain; name="bad'}} do
+  local count=server:route_count()
+  local value,why=server:static_directory{prefix='/invalid-mime',dir=root..'/static',mime_types=bad}
+  assert(value==nil and why.status==knurl.status.INVALID and server:route_count()==count)
+end
+for _,bad in ipairs{'invalid','text/plain; charset= utf-8','text/plain; name="bad',
+  'text/plain,application/json','text/plain; name="bad\\\r"'} do
+  for _,field in ipairs{'content_type','not_found_content_type'} do
+    local declaration={prefix='/invalid-type',dir=root..'/static',[field]=bad}
+    local count=server:route_count()
+    local value,why=server:static_directory(declaration)
+    assert(value==nil and why.status==knurl.status.INVALID and server:route_count()==count)
+  end
+end
+ok(server:static_directory{prefix='/no-directory-index',dir=root..'/static'})
+local group=ok(server:group('/group',{after=function(_,reply)
+  group_checks=group_checks+1;state(group_reply:snapshot());assert(ok(reply:snapshot()).status_code==200);return true
+end}))
+ok(group:static_file{path='/file',file_path=root..'/static/asset',after=function(_,reply)
+  group_reply=reply;state(retained:snapshot());ok(reply:header_add('x-group','present'))
+end})
+ok(server:static_file{path='/replace',file_path=root..'/static/asset',after=function(_,reply)
+  assert(ok(reply:snapshot()).status_code==200);return {status=202,body='replaced'}
+end})
+ok(server:static_file{path='/direct',file_path=root..'/static/asset',after=function(_,reply)
+  ok(reply:replace{status=201,body='direct'})
+end})
+ok(server:static_file{path='/after-error',file_path=root..'/static/asset',after=function(_,reply)
+  after_error=reply;error('expected native after failure')
+end})
+ok(server:static_file{path='/after-oom',file_path=root..'/static/asset',after=function(_,reply)
+  after_oom=reply;fixture.fail_next();reply:snapshot()
+end})
+ok(server:upload_file{path='/upload-file',file=root..'/uploaded',max_body_bytes=10,
+  before=function(req) assert(req.body==nil and req.body_streaming_upload) end,
+  after=function(_,reply)
+    uploads=uploads+1
+    local snapshot=ok(reply:snapshot());assert(snapshot.status_code==200 and snapshot.body=='3')
+    local file=ok(io.open(root..'/uploaded','rb'));assert(file:read('a')=='A\0B');file:close()
+  end})
+ok(server:upload_file{path='/upload-limit',file=root..'/never-created',max_body_bytes=2})
+local principal=string.rep('p',200)
+local observed={}
+ok(server:webdav{prefix='/davhard',cache_dir=root..'/cache',site_id='hard',max_file_bytes=32,auth_required=false})
+ok(server:webdav{prefix='/davzero',cache_dir=root..'/cache',site_id='zero',max_file_bytes=0,auth_required=false})
+ok(server:webdav{prefix='/davoverride',cache_dir=root..'/cache',site_id='override',max_file_bytes=32,max_body_bytes=1,auth_required=false})
+ok(server:webdav{prefix='/dav',cache_dir=root..'/cache',site_id='fixture',max_file_bytes=3,
+  before=function(req) assert(req.principal==nil);req.marker=true end,
+  auth={kind='callback',callback=function(req)
+    assert(req.authorization=='Bearer fixture-token' and req.purpose=='webdav' and req.resource:sub(1,1)=='/')
+    observed[req.resource]=(observed[req.resource] or 0)+1
+    if req.resource=='/secret' then return {action='deny',body=''} end
+    if req.resource=='/challenge' then return {action='required',body='auth',www_authenticate='Basic realm="routes"'} end
+    if req.resource=='/redirect' then return {action='redirect',location='/login',body=''} end
+    if req.resource=='/error' then error('expected WebDAV auth failure') end
+    if req.resource=='/oom' then fixture.fail_next();return string.rep('x',30000) end
+    return setmetatable({},{__index=function(_,name)
+      if name=='action' then return 'allow' end
+      if name=='principal' then return principal end
+    end})
+  end},after=function(req,reply)
+    assert(req.marker)
+    local snapshot=ok(reply:snapshot())
+    if req.path=='/dav/file' and snapshot.status_code==200 then assert(req.principal==principal) end
+  end})
+local invalid,why=server:webdav{prefix='/noauth',cache_dir=root..'/cache',site_id='noauth'}
+assert(invalid==nil and why.status==knurl.status.INVALID)
+invalid,why=server:static_file{path='/invalid',file_path='nul\0path'}
+assert(invalid==nil and why.status==knurl.status.INVALID)
+ok(server:get('/stop',function()
+  assert(group_checks==1 and uploads==1 and observed['/file']>=3 and observed['/']==1)
+  assert(io.open(root..'/never-created','rb')==nil)
+  state(after_error:snapshot());state(after_oom:snapshot());state(retained:snapshot())
+  state(after_error:replace('late'));state(retained:header_set('x-late','late'))
+  ok(server:stop());return 'ok'
+end))
+ok(server:validate());ok(server:run());ok(fixture.join());ok(server:close())

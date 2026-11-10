@@ -1,0 +1,117 @@
+diff --git a/src/kore.c b/src/kore.c
+index 802f7d8..cadf77c 100644
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -879,6 +879,13 @@ kore_server_start(int argc, char *argv[])
+ #endif
+ 
+ 	/* Check if keymgr will be active. */
++#if defined(KORE_VECTIS_DIRECT_TLS)
++#if defined(KORE_USE_ACME)
++	kore_keymgr_active = acme_domains > 0 ? 1 : 0;
++#else
++	kore_keymgr_active = 0;
++#endif
++#else
+ 	if (kore_tls_supported()) {
+ 		LIST_FOREACH(srv, &kore_servers, list) {
+ 			if (srv->tls) {
+@@ -889,6 +896,7 @@ kore_server_start(int argc, char *argv[])
+ 	} else {
+ 		kore_keymgr_active = 0;
+ 	}
++#endif
+ 
+ 	kore_platform_proctitle("[parent]");
+ 
+diff --git a/src/tls_openssl.c b/src/tls_openssl.c
+index c06137a..3a24701 100644
+--- a/src/tls_openssl.c
++++ b/src/tls_openssl.c
+@@ -1124,6 +1124,15 @@ tls_privsep_private_key(EVP_PKEY *pub, struct kore_domain *dom)
+ 	const BIGNUM		*e_cur, *n_cur;
+ 	BIGNUM			*e_new, *n_new;
+ 
++#if defined(KORE_VECTIS_DIRECT_TLS)
++	if (kore_keymgr_active == 0) {
++		if ((pkey = kore_tls_rsakey_load(dom->certkey)) == NULL)
++			fatalx("failed to load private key for '%s' from '%s'",
++			    dom->domain, dom->certkey);
++		return (pkey);
++	}
++#endif
++
+ 	if ((pkey = EVP_PKEY_new()) == NULL)
+ 		fatalx("failed to create new EVP_PKEY data structure");
+ 
+diff --git a/src/worker.c b/src/worker.c
+index 895c0ae..f130a0d 100644
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -76,6 +76,9 @@ static void	worker_reaper(pid_t, int);
+ static void	worker_runtime_teardown(void);
+ static void	worker_runtime_configure(void);
+ static void	worker_domain_check(struct kore_domain *);
++#if defined(KORE_VECTIS_DIRECT_TLS)
++static void	worker_domain_direct_tls(struct kore_domain *);
++#endif
+ 
+ static struct kore_runtime_call	*worker_runtime_signal(void);
+ 
+@@ -538,6 +541,10 @@ kore_worker_entry(struct kore_worker *kw)
+ 
+ 	kore_module_onload();
+ 	kore_domain_callback(worker_domain_check);
++#if defined(KORE_VECTIS_DIRECT_TLS)
++	if (kore_keymgr_active == 0)
++		kore_domain_callback(worker_domain_direct_tls);
++#endif
+ 
+ 	kore_worker_started();
+ 	worker->restarted = 0;
+@@ -861,6 +868,45 @@ worker_domain_check(struct kore_domain *dom)
+ 	}
+ }
+ 
++#if defined(KORE_VECTIS_DIRECT_TLS)
++static void
++worker_domain_direct_tls(struct kore_domain *dom)
++{
++	int		fd;
++	ssize_t		ret;
++	struct stat	st;
++	u_int8_t	*pem;
++	size_t		off;
++
++	if (dom->server->tls == 0 || dom->tls_ctx != NULL)
++		return;
++
++	if (dom->certfile == NULL)
++		fatalx("missing certfile for '%s'", dom->domain);
++	if (stat(dom->certfile, &st) == -1)
++		fatalx("'%s': %s", dom->certfile, errno_s);
++	if (st.st_size <= 0)
++		fatalx("'%s': empty certificate file", dom->certfile);
++	if ((fd = open(dom->certfile, O_RDONLY)) == -1)
++		fatalx("open(%s): %s", dom->certfile, errno_s);
++
++	pem = kore_malloc(st.st_size);
++	off = 0;
++	while (off < (size_t)st.st_size) {
++		ret = read(fd, pem + off, (size_t)st.st_size - off);
++		if (ret == -1 && errno == EINTR)
++			continue;
++		if (ret <= 0)
++			fatalx("read(%s): %s", dom->certfile, errno_s);
++		off += ret;
++	}
++	(void)close(fd);
++
++	kore_tls_domain_setup(dom, KORE_PEM_CERT_CHAIN, pem, off);
++	kore_free(pem);
++}
++#endif
++
+ static void
+ worker_reaper(pid_t pid, int status)
+ {

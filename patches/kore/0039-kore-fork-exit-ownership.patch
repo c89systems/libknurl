@@ -1,0 +1,15 @@
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -743,6 +743,12 @@
+ #endif
+ 
+ 	kore_mem_cleanup();
++#if defined(KORE_VECTIS_EMBEDDED_RUNTIME)
++	{
++		extern int vectis_kore_worker_exit(void);
++		exit(vectis_kore_worker_exit());
++	}
++#endif
+ 	exit(0);
+ }
+ 

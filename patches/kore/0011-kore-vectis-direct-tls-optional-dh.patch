@@ -1,0 +1,20 @@
+diff --git a/src/tls_openssl.c b/src/tls_openssl.c
+index c707ad1..be57bc8 100644
+--- a/src/tls_openssl.c
++++ b/src/tls_openssl.c
+@@ -303,11 +303,10 @@ kore_tls_domain_setup(struct kore_domain *dom, int type,
+ 		    dom->domain, ssl_errno_s);
+ 	}
+ 
+-	if (dh_params == NULL)
+-		fatal("no DH parameters specified");
+-
+-	SSL_CTX_set_tmp_dh(dom->tls_ctx, dh_params);
+-	SSL_CTX_set_options(dom->tls_ctx, SSL_OP_SINGLE_DH_USE);
++	if (dh_params != NULL) {
++		SSL_CTX_set_tmp_dh(dom->tls_ctx, dh_params);
++		SSL_CTX_set_options(dom->tls_ctx, SSL_OP_SINGLE_DH_USE);
++	}
+ 
+ 	if (!SSL_CTX_set_ecdh_auto(dom->tls_ctx, 1))
+ 		fatalx("SSL_CTX_set_ecdh_auto: %s", ssl_errno_s);

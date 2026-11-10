@@ -1,0 +1,130 @@
+diff --git a/src/kore.c b/src/kore.c
+index 9bf7f63..b4edac3 100644
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -825,7 +825,7 @@ kore_server_start(int argc, char *argv[])
+ 		kore_log(LOG_INFO, "memory pool protections: %s",
+ 		    kore_mem_guard ? "enabled" : "disabled");
+ 		kore_log(LOG_INFO, "built-ins:"
+-#if defined(__linux__)
++#if defined(__linux__) && !defined(KORE_VECTIS_NO_SECCOMP)
+ 		    " seccomp"
+ #endif
+ #if defined(KORE_USE_PGSQL)
+diff --git a/src/seccomp.c b/src/seccomp.c
+index c3b355e..fae64b3 100644
+--- a/src/seccomp.c
++++ b/src/seccomp.c
+@@ -45,6 +45,7 @@
+ #define SECCOMP_KILL_POLICY		SECCOMP_RET_KILL
+ #endif
+ 
++#if !defined(KORE_VECTIS_NO_SECCOMP)
+ /*
+  * The bare minimum to be able to run kore. These are added last and can
+  * be overwritten by a filter program that is added before hand.
+@@ -205,12 +206,15 @@ static struct sock_filter filter_epilogue[] = {
+ 	/* Return hit if no system calls matched our list. */
+ 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_KILL_POLICY)
+ };
++#endif
+ 
+ static struct sock_filter	*seccomp_filter_update(struct sock_filter *,
+ 				    const char *, size_t);
+ 
++#if !defined(KORE_VECTIS_NO_SECCOMP)
+ #define filter_prologue_len	KORE_FILTER_LEN(filter_prologue)
+ #define filter_epilogue_len	KORE_FILTER_LEN(filter_epilogue)
++#endif
+ 
+ static void	seccomp_register_violation(pid_t);
+ 
+@@ -257,6 +261,9 @@ kore_seccomp_drop(void)
+ void
+ kore_seccomp_enable(void)
+ {
++#if defined(KORE_VECTIS_NO_SECCOMP)
++	return;
++#else
+ 	struct sock_filter		*sf;
+ 	struct sock_fprog		prog;
+ 	struct kore_runtime_call	*rcall;
+@@ -331,6 +338,7 @@ kore_seccomp_enable(void)
+ #if defined(KORE_USE_PYTHON)
+ 	kore_python_seccomp_cleanup();
+ #endif
++#endif
+ }
+ 
+ int
+diff --git a/src/curl.c b/src/curl.c
+--- a/src/curl.c
++++ b/src/curl.c
+@@ -22,7 +22,7 @@
+ #include "http.h"
+ #include "curl.h"
+ 
+-#if defined(__linux__)
++#if defined(__linux__) && !defined(KORE_VECTIS_NO_SECCOMP)
+ #include "seccomp.h"
+ 
+ static struct sock_filter filter_curl[] = {
+@@ -139,7 +139,7 @@ kore_curl_sysinit(void)
+ 	if (len == -1 || (size_t)len >= sizeof(user_agent))
+ 		fatal("user-agent string too long");
+ 
+-#if defined(__linux__)
++#if defined(__linux__) && !defined(KORE_VECTIS_NO_SECCOMP)
+ 	kore_seccomp_filter("curl", filter_curl, KORE_FILTER_LEN(filter_curl));
+ #endif
+ #if defined(KORE_USE_PLATFORM_PLEDGE)
+diff --git a/src/acme.c b/src/acme.c
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -55,10 +55,10 @@
+ /*
+  * The default provider is letsencrypt, can be overwritten via the config
+  * file its acme_provider setting.
+  */
+ #define ACME_DEFAULT_PROVIDER	"https://acme-v02.api.letsencrypt.org/directory"
+ 
+-#if defined(__linux__)
++#if defined(__linux__) && !defined(KORE_VECTIS_NO_SECCOMP)
+ #include "seccomp.h"
+ 
+ /*
+@@ -429,12 +429,12 @@ kore_acme_init(void)
+ 	kore_msg_register(KORE_ACME_RSAKEY_E, acme_rsakey_exp);
+ 	kore_msg_register(KORE_ACME_RSAKEY_N, acme_rsakey_mod);
+ 	kore_msg_register(KORE_ACME_SIGN_RESULT, acme_sign_result);
+ 	kore_msg_register(KORE_ACME_ORDER_CREATE, acme_order_create);
+ 	kore_msg_register(KORE_ACME_ACCOUNT_CREATE, acme_account_create);
+ 	kore_msg_register(KORE_ACME_ACCOUNT_RESOLVE, acme_account_resolve);
+ 	kore_msg_register(KORE_ACME_CSR_RESPONSE, acme_order_csr_response);
+ 
+-#if defined(__linux__)
++#if defined(__linux__) && !defined(KORE_VECTIS_NO_SECCOMP)
+ 	/* Drop all enabled seccomp filters, and add only ours. */
+ 	kore_seccomp_drop();
+ 	kore_seccomp_filter("acme", filter_acme, KORE_FILTER_LEN(filter_acme));
+diff --git a/src/keymgr_openssl.c b/src/keymgr_openssl.c
+--- a/src/keymgr_openssl.c
++++ b/src/keymgr_openssl.c
+@@ -77,7 +77,7 @@
+ #define RAND_POLL_INTERVAL	(1800 * 1000)
+ #define RAND_FILE_SIZE		1024
+ 
+-#if defined(__linux__)
++#if defined(__linux__) && !defined(KORE_VECTIS_NO_SECCOMP)
+ #include "seccomp.h"
+ 
+ /* The syscalls our keymgr is allowed to perform, only. */
+@@ -320,7 +320,7 @@ kore_keymgr_init(void)
+ 	kore_msg_register(KORE_MSG_ENTROPY_REQ, keymgr_entropy_request);
+ 	kore_msg_register(KORE_MSG_CERTIFICATE_REQ, keymgr_certificate_request);
+ 
+-#if defined(__linux__)
++#if defined(__linux__) && !defined(KORE_VECTIS_NO_SECCOMP)
+ 	/* Drop all enabled seccomp filters, and add only ours. */
+ 	kore_seccomp_drop();
+ 	kore_seccomp_filter("keymgr", filter_keymgr,

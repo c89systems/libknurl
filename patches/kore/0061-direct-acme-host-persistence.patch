@@ -1,0 +1,46 @@
+--- a/src/keymgr_openssl.c
++++ b/src/keymgr_openssl.c
+@@ -469,11 +469,6 @@
+ 
+ 	kore_domain_callback(keymgr_load_domain_privatekey);
+ 
+-	/* Complete account/domain keys must be acknowledged before distribution. */
+-	if (kore_library_hooks.acme_persist != NULL &&
+-	    !kore_library_hooks.acme_persist(kore_library_hooks.arg, NULL))
+-		fatalx("failed to persist initial ACME state");
+-
+ 	/* can't use kore_domain_callback() due to dst parameter. */
+ 	LIST_FOREACH(srv, &kore_servers, list) {
+ 		if (srv->tls == 0)
+@@ -1122,13 +1117,6 @@
+ 	int		fd;
+ 	ssize_t		ret;
+ 
+-	if (kore_library_hooks.acme_install != NULL) {
+-		if (!kore_library_hooks.acme_install(kore_library_hooks.arg,
+-		    key->dom, data, len))
+-			fatalx("failed to persist ACME candidate state");
+-		goto distribute;
+-	}
+-
+ 	fd = open(key->dom->certfile, O_CREAT | O_TRUNC | O_WRONLY, 0700);
+ 	if (fd == -1)
+ 		fatalx("open(%s): %s", key->dom->certfile, errno_s);
+@@ -1160,7 +1148,6 @@
+ 	    !kore_library_hooks.acme_persist(kore_library_hooks.arg, key->dom->domain))
+ 		fatalx("failed to persist ACME candidate state");
+ 
+-distribute:
+ 	keymgr_acme_order_done(key->dom->domain);
+ 	keymgr_submit_certificates(key->dom, KORE_MSG_WORKER_ALL);
+ 
+--- a/include/kore/library.h
++++ b/include/kore/library.h
+@@ -32,7 +32,6 @@
+     void (*tls_failure)(void *, struct connection *);
+     int (*keymgr_prepare)(void *);
+     int (*acme_persist)(void *, const char *);
+-    int (*acme_install)(void *, struct kore_domain *, const void *, size_t);
+     int (*acme_request)(void *, struct kore_curl *);
+     void (*tls_updated)(void *, struct kore_domain *, int);
+ };

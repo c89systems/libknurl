@@ -1,0 +1,598 @@
+---@meta
+-- Editor metadata for the public facade and C userdata. This file contains no
+-- runtime implementation. See docs/lua.md for defaults and callback sequencing.
+
+---Portable failure copied from Core; ordinary operations return nil, error.
+---@class knurl.Error
+---@field status integer # Public status code; distinct from HTTP response status.
+---@field kind string # Human-readable category, or the REST error category.
+---@field source integer # Core/system/backend/LoneJSON/pslog/XML diagnostic source.
+---@field native_code integer # Original dependency/system code.
+---@field operation string # Bounded operation name.
+---@field message string # Bounded primary diagnostic.
+---@field detail string # Bounded supplemental diagnostic.
+
+---Unsigned 64-bit value exceeding Lua's signed range; immutable, comparable,
+---and printable as decimal. Smaller counts are returned as Lua integers.
+---@class knurl.Count
+---@field high integer # High unsigned 32-bit word.
+---@field low integer # Low unsigned 32-bit word.
+---@alias knurl.Unsigned integer|knurl.Count
+---@alias knurl.Headers table<string,string>|{name:string,value:string}[]
+---@alias knurl.Handler fun(request:knurl.Request): knurl.Response|string|number|nil
+---@alias knurl.Hook fun(request:knurl.Request, result:any): knurl.Response|knurl.Reply|true|nil
+---@alias knurl.Registration fun(self:knurl.Routes, options:knurl.RouteOptions): boolean?, knurl.Error?
+---@alias knurl.Verb fun(self:knurl.Routes, path:string, handler:knurl.Handler, options?:knurl.RouteOptions): boolean?, knurl.Error?
+
+---Deadline zero inherits Core's default; disabled explicitly turns it off.
+---@class knurl.Deadline
+---@field milliseconds? knurl.IntegerInput # Nonnegative duration in milliseconds.
+---@field disabled? boolean # Disables this deadline independently of its duration.
+
+---Request admission/storage selection; streaming modes never collect the body.
+---@class knurl.BodyPolicy
+---@field mode? 'none'|'buffered'|'materialized'|'streaming_upload'|'stream'|integer
+---@field max_bytes? knurl.UnsignedInput # Route limit subject to the server hard ceiling.
+---@field memory_buffer_limit_bytes? knurl.IntegerInput # Memory threshold before permitted transport spooling.
+---@field disk_spool_disabled? boolean # Reject instead of transport spooling.
+
+---Route declarations are copied at registration; callback/schema/provider owners
+---are retained through server close. See the feature guides for helper fields.
+---@class knurl.RouteOptions
+---@field path? string # Literal/parameter path, or regex inferred from leading ^.
+---@field path_kind? 'literal'|'params'|'regex'
+---@field method? string|integer # Ordinary routes default GET; typed/upload routes POST.
+---@field methods? string[]|integer # Explicit method set overrides method.
+---@field body? boolean|string|knurl.BodyPolicy # Ordinary routes default none.
+---@field handler? knurl.Handler|function # Typed handlers receive additional mapped records.
+---@field auth? table # Host callback authorization; credentials stay with the host.
+---@field before? knurl.Hook # May short-circuit before handler/body decoding.
+---@field after? knurl.Hook # Runs before submission; native helpers receive a scoped reply view.
+---@field openapi? table # Annotation attached to the same C route registry.
+---@field input_schema? userdata # Public LoneJSON schema retained by the route.
+---@field output_schema? userdata # Ordinary JSON output schema, serialized before after-hooks.
+---@field max_output_bytes? knurl.IntegerInput # Zero adds no ordinary JSON output ceiling.
+---@field xml? knurl.CodecOptions # Mapped XML settings; XML input uses a live bounded reader.
+---@field buffer_bytes? knurl.IntegerInput # Bounded upload/parser queue or Lua chunk size, by helper.
+---@field max_body_bytes? knurl.UnsignedInput # Upload/mount body admission override.
+---@field file_path? string # Explicit static source/upload destination; copied, opened later.
+---@field root_dir? string # Filesystem static or WebDAV root.
+---@field provider? userdata # Host-wrapped public asset/storage provider; borrowed, never closed by Lua.
+---@field path_prefix? string # Directory/WebDAV mount prefix; defaults to /.
+---@field index_enabled? boolean # Directory default false; static_assets facade default true.
+---@field index_file? string # Directory index name.
+---@field content_type? string # RFC 9110 media-type override, with valid token/quoted parameters. Malformed syntax, wildcards, controls and header injection fail.
+---@field mime_types? table<string,string> # Copied extension overrides for static routes; optional leading dot, ASCII case-insensitive. Explicit content_type wins, then route mappings, then instance mappings, then asset metadata/default inference.
+---@field cache_control? string # Copied Cache-Control value.
+---@field status? knurl.IntegerInput # Fixed reply/SSE status; status_code takes precedence except zero aliases.
+---@field status_code? knurl.IntegerInput # HTTP response status, 100..599.
+---@field location? string # Required fixed-redirect target.
+---@field file? string # Alias for file_path on static_file/upload_file.
+---@field prefix? string # Alias for mount/group path prefix.
+---@field root? string # Alias for static_directory root_dir.
+---@field dir? string # Alias for static_directory root_dir.
+---@field index? boolean # Alias for index_enabled; explicit false is preserved.
+---@field not_found_body? string # Copied custom static 404 body.
+---@field not_found_content_type? string # Custom static 404 MIME type.
+---@field on_open? function # Upload alias for open.
+---@field chunk? function # Upload alias for on_chunk.
+---@field write? function # Upload alias for on_chunk.
+---@field complete? function # Upload alias for on_complete.
+---@field finish? function # Upload alias for on_complete.
+---@field on_close? function # Upload alias for close.
+---@field open? function # Upload/SSE opener; see docs/lua.md for callback arguments.
+---@field on_chunk? fun(request:knurl.Request, bytes:string, state:any): integer|boolean|nil, any # Prefix, nil/true consumption, or nil, AGAIN pause.
+---@field on_complete? fun(request:knurl.Request, state:any): knurl.Response|nil # Staged upload result; nil selects 204.
+---@field close? function # Upload/SSE state cleanup after successful open/selection.
+---@field read? fun(state:any, capacity:integer): string|table|nil|false, any # SSE events; nil/false EOF, nil, AGAIN pauses.
+---@field target? string # Configured HTTP(S) upstream URL for a proxy route.
+---@field alternate_targets? string[] # Up to 15 additional allowed upstreams.
+---@field upstream_http_version? 'auto'|'http1' # Auto negotiates HTTPS H2, cleartext H1.1.
+---@field connect_timeout_ms? knurl.IntegerInput # Proxy zero selects 10 seconds.
+---@field idle_timeout_ms? knurl.IntegerInput # Proxy zero selects 60 seconds without progress.
+---@field total_timeout_ms? knurl.IntegerInput # Proxy zero disables total duration limit.
+---@field buffer_limit_bytes? knurl.IntegerInput # Proxy per-direction transport chunk limit, 8 KiB..1 MiB.
+---@field tls_ca_pem? string # Copied upstream CA bundle; verification remains enabled.
+---@field tls_client_cert_pem? string # Copied upstream client chain, paired with the key.
+---@field tls_client_key_pem? string # Copied client key, cleansed on release.
+---@field preflight? fun(inbound:knurl.ProxyInbound): knurl.Response|boolean|nil # Local reply before connect, or continue.
+---@field rewrite? fun(inbound:knurl.ProxyInbound, outbound:knurl.ProxyOutbound): boolean|nil # Metadata-only, callback-scoped editors.
+---@field modify_response? fun(response:knurl.ProxyResponse): boolean|nil # Before downstream commitment, no body access.
+---@field on_error? fun(cause:table): knurl.Response|nil # Uncommitted proxy gateway-error response.
+---@field on_exchange? fun(exchange:knurl.ProxyExchange) # Exactly once per admitted proxy exchange; copied terminal accounting.
+---@field connect? fun(ws:knurl.WebSocket) # WebSocket opened; original HTTP request has expired.
+---@field message? fun(ws:knurl.WebSocket, opcode:integer, payload:string): boolean|nil, any # nil, AGAIN holds this whole frame.
+---@field disconnect? fun(ws:knurl.WebSocket, outcome:table) # Last callback; handle expires on return.
+---@field writable? fun(ws:knurl.WebSocket) # Retry an atomic frame after capacity returns.
+---@field protocol? string # Selected WebSocket subprotocol.
+---@field headers? knurl.Headers # Ordered pairs preserve repeated fields.
+---@field max_frame_bytes? knurl.IntegerInput # WebSocket receive payload ceiling.
+---@field output_queue_bytes? knurl.IntegerInput # Zero preserves Kore send behavior; positive selects a budget.
+---@field close_timeout_ms? knurl.IntegerInput # WebSocket closing-handshake deadline.
+---@field cache_dir? string # Explicit absolute managed WebDAV cache base; no XDG selection.
+---@field site_id? string # Managed WebDAV site name.
+---@field max_file_bytes? knurl.IntegerInput # WebDAV zero selects 16 MiB/file and feeds default mount admission.
+---@field max_total_bytes? knurl.IntegerInput # WebDAV zero selects 128 MiB total.
+---@field max_resources? knurl.IntegerInput # WebDAV zero selects 4096 resources.
+---@field operation_timeout_ms? knurl.IntegerInput # Explicitly enables the extra storage-operation deadline.
+---@field operation_timeout_disabled? boolean # Default true for facade WebDAV mounts.
+---@field auth_required? boolean # WebDAV default true; host supplies decisions.
+---@field conceal_unauthorized? boolean # WebDAV default true, including child visibility.
+
+---Shared server/group registration surface; operations register without starting I/O.
+---@class knurl.Routes
+---@field route fun(self:knurl.Routes, path:string|knurl.RouteOptions, handler?:knurl.Handler, options?:knurl.RouteOptions): boolean?, knurl.Error? # Ordinary staged route; methods default GET.
+---@field get knurl.Verb # Register GET through the same route registry.
+---@field post knurl.Verb # Register POST through the same route registry.
+---@field put knurl.Verb # Register PUT through the same route registry.
+---@field patch knurl.Verb # Register PATCH through the same route registry.
+---@field delete knurl.Verb # Register DELETE through the same route registry.
+---@field head knurl.Verb # Register HEAD through the same route registry.
+---@field options knurl.Verb # Register OPTIONS through the same route registry.
+---@field propfind knurl.Verb # Register PROPFIND through the same route registry.
+---@field mkcol knurl.Verb # Register MKCOL through the same route registry.
+---@field copy knurl.Verb # Register COPY through the same route registry.
+---@field move knurl.Verb # Register MOVE through the same route registry.
+---@field any knurl.Verb # Register all supported methods through the same registry.
+---@field text knurl.Registration # Copied fixed text; default body "ok\n".
+---@field json knurl.Registration # Copied already-encoded JSON bytes; never encode/reparse.
+---@field redirect knurl.Registration # Fixed redirect; default empty 302, requires location.
+---@field auth_json knurl.Registration # Fixed JSON with required callback auth; ignores cache_control.
+---@field json_route knurl.Registration # Public mapped input/output records; serialize ordinary output before after-hooks.
+---@field json_typed_route knurl.Registration # Mapped input, ordinary staged response selection with per-response schemas.
+---@field xml_route knurl.Registration # Live bounded native XML parse into a public mapped record.
+---@field upload knurl.Registration # Live owner-thread chunks; explicit prefix/AGAIN backpressure.
+---@field upload_file knurl.Registration # Native incremental writes; destination and partial files are caller artifacts.
+---@field static_file knurl.Registration # File source, conditional/range replies and delayed open.
+---@field static_directory knurl.Registration # Confined directory mount; indexes default disabled.
+---@field static_assets knurl.Registration # Borrowed provider mount; indexes default enabled by facade.
+---@field webdav knurl.Registration # Native incremental DAV using filesystem or host storage provider.
+---@field sse knurl.Registration # Live event source; buffers at most one bounded encoded event.
+
+---Server-owned group wrapper; invalid after its server closes.
+---@class knurl.Group: knurl.Routes
+
+---Host lifecycle callbacks receive copied process/event snapshots and this facade.
+---@class knurl.ServerOptions: knurl.ServerCallbacks
+---@field port? knurl.IntegerInput # Shorthand HTTP listener port; zero selects an ephemeral port.
+---@field bind? string # Shorthand listener bind address; default 127.0.0.1.
+---@field profile? 'production_webserver' # Apply Core production defaults before overrides.
+---@field name? string # Server declaration name.
+---@field workers? knurl.IntegerInput|knurl.Workers # Count shorthand, or public worker fields.
+---@field listeners? table[] # Explicit HTTP/HTTPS/redirect declarations; identity indexes are one-based.
+---@field limits? knurl.Limits # Public Core admission limits; exact counts accept knurl.Count.
+---@field timeouts? knurl.Timeouts # Zero inherits, explicit disabled turns off.
+---@field http? knurl.HTTP # HTTP/backend settings, including independent file access logging.
+---@field io? knurl.IO # Chunk/input/output byte capacities.
+---@field proxy? knurl.ProxyResources # Shared active/idle upstream connection capacities.
+---@field signals? {mode:'host'|'library'} # Facade defaults library; embedding hosts may own delivery.
+---@field tls? table # Identity/material/ACME declarations; see docs/tls.md.
+---@field callbacks? knurl.ServerCallbacks # Lifecycle/request/observation callbacks; owner VM only.
+---@field start_paused? boolean # Hold the serving gate until set_serving(true).
+---@field client_ip? table # Trusted proxy CIDRs and optional bounded address resolver.
+---@field correlation_id? table # Optional bounded identifier resolver.
+---@field admission? table # Pre-TLS connection and pre-body request admission callbacks.
+---@field autoblock? knurl.Autoblock # Shared status/event counting policy.
+---@field supervision? table # Host control FD, interests and on_event(server, events).
+---@field logger? userdata # Public pslog logger with native sinks; retained through close/replacement.
+---@field access_log? boolean|table # Structured access policy independent of file access logs.
+
+---Owned facade; close after run returns. All callbacks use the host's existing VM.
+---@class knurl.Server: knurl.Routes
+---@field group fun(self:knurl.Server, prefix:string|table, options?:table): knurl.Group|boolean|nil, knurl.Error? # Prefix wrapper or bulk route declarations, preserving existing order.
+---@field run fun(self:knurl.Server): table?, knurl.Error? # Run lifecycle to terminal result; do not reenter.
+---@field stop fun(self:knurl.Server): boolean?, knurl.Error? # Request graceful stop.
+---@field close fun(self:knurl.Server): boolean?, knurl.Error? # Destroy inactive server and release retained Lua owners.
+---@field validate fun(self:knurl.Server): boolean?, knurl.Error? # Checks declarations/materials; may call TLS openers, never binds/forks.
+---@field effective_config fun(self:knurl.Server): table?, knurl.Error? # Copied normalized settings; snapshot includes configured TLS memory bytes.
+---@field content_type fun(self:knurl.Server, path:string): string?, knurl.Error? # Infer from filename using instance overrides and Core defaults; no file access.
+---@field set_pslog fun(self:knurl.Server, logger:userdata?, access_log?:boolean|table): boolean?, knurl.Error? # Inactive-server registration; failures preserve prior logger owners.
+---@field set_serving fun(self:knurl.Server, serving:boolean): boolean?, knurl.Error? # Change active readiness serving gate.
+---@field state fun(self:knurl.Server): string # Current declared/starting/ready_paused/serving/stopping/stopped/failed state, or closed.
+---@field listener fun(self:knurl.Server, index:integer): table?, knurl.Error? # One-based active-run bound address/port snapshot.
+---@field route_count fun(self:knurl.Server): integer # Size of the existing dispatch/OpenAPI registry.
+---@field openapi_doc fun(self:knurl.Server, options:table): boolean?, knurl.Error? # Attach annotations with retained immutable public maps.
+---@field openapi fun(self:knurl.Server, options?:table): string?, knurl.Error? # Materialized OpenAPI JSON/YAML, without running handlers.
+---@field control_interest fun(self:knurl.Server, interest:integer): boolean?, knurl.Error? # Change host-control readiness mask.
+---@field supervision_take fun(self:knurl.Server, options:table): boolean?, knurl.Error? # Successful control FD transfer owns close; failure retains caller FD.
+---@field tls_identity_state fun(self:knurl.Server, index:integer): string?, knurl.Error? # One-based active identity availability.
+---@field proxy knurl.Registration # Native live HTTP/HTTPS/H2/SSE and opaque WS/WSS proxy transport.
+---@field websocket knurl.Registration # Application WebSocket route; no implicit ordinary route middleware.
+---@field defer fun(self:knurl.Server, options:knurl.LoopOptions|function): knurl.LoopToken?, knurl.Error? # Schedule one later owner-loop callback.
+---@field timer fun(self:knurl.Server, options:knurl.LoopOptions): knurl.LoopToken?, knurl.Error? # Owner-loop timer; repeat_ms zero is one-shot.
+---@field watch fun(self:knurl.Server, options:knurl.LoopOptions): knurl.LoopToken?, knurl.Error? # Borrow FD; cancel before caller closes/reuses it.
+---@field waker fun(self:knurl.Server, options:knurl.LoopOptions|function): knurl.LoopToken?, knurl.Error? # Coalesced owner-loop notification.
+---@field now fun(self:knurl.Server): knurl.Unsigned?, knurl.Error? # Exact monotonic milliseconds from the active owner loop.
+
+---Scoped request table. Copied scalar values survive, helpers fail after close.
+---@class knurl.Request
+---@field method string # Parsed method name.
+---@field path string # Routed request path.
+---@field raw_path string # Original undecoded path.
+---@field target string # Original target including raw query.
+---@field version string # HTTP version token.
+---@field ip string # Resolved effective address; peer endpoint remains separate.
+---@field correlation_id string # Empty without a configured resolver.
+---@field principal? string # Host auth principal, refreshed after WebDAV mount authorization.
+---@field headers {name:string,value:string}[] # Ordered copied headers, including repeats.
+---@field queries {name:string,value:string}[] # Ordered decoded query pairs, including empty values.
+---@field body? string # Completed memory body; nil for live/file-backed input.
+---@field body_path? string # Request-scoped spool path, removed at request close.
+---@field query_string string # Original raw query, separate from the query lookup helper.
+---@field authority string # Original inbound Host/authority.
+---@field peer {address:string,port:integer} # Real TCP peer, unaffected by forwarded-address policy.
+---@field local_endpoint {address:string,port:integer} # Accepted local TCP endpoint.
+---@field tls boolean # Downstream TLS flag.
+---@field listener_index integer # One-based configured listener index.
+---@field body_size knurl.Unsigned # Exact completed/admitted body size.
+---@field body_spooled boolean # Input was explicitly transport-spooled.
+---@field body_streaming_upload boolean # Live upload input; body is not collected.
+---@field header fun(name:string): string?, knurl.Error? # First field lookup; nil absence, empty query values remain distinct.
+---@field query fun(name:string): string?, knurl.Error? # First decoded query value.
+---@field param fun(name:string): string?, knurl.Error? # Decoded named route capture.
+---@field body_bytes fun(): string?, knurl.Error? # Completed memory bytes only; never reads a spool into memory.
+---@field body_reader fun(): knurl.Source?, knurl.Error? # Bounded reader expires with the request, even if retained in Lua.
+---@field body_materialize fun(options?:table): knurl.BodyResult?, knurl.Error? # Explicit independent completed-body copy; may block.
+---@field body_copy fun(capacity:integer): knurl.BodyResult?, knurl.Error? # Copy completed input into a Lua-owned bounded buffer.
+---@field body_spill fun(options?:table): knurl.BodyResult?, knurl.Error? # Explicit independent file artifact; caller later removes it.
+---@field body_resume fun(): boolean?, knurl.Error? # Schedule later input delivery after AGAIN, without recursion.
+---@field producer_resume fun(): boolean?, knurl.Error? # Schedule another live output pull after AGAIN.
+---@field json_record fun(schema:userdata): userdata?, knurl.Error? # Independent public LoneJSON record from completed input; rewind before/after.
+---@field json_array_each fun(options:knurl.ArrayOptions): boolean?, integer|knurl.Error # Selected-array callbacks receive converted item tables and zero-based indexes; no whole array is collected.
+---@field xml_record fun(options:knurl.CodecOptions): userdata?, knurl.Error? # Independent mapped XML record from completed input.
+---@field event fun(name:string): boolean?, knurl.Error? # Named application event; observer callbacks cannot recursively emit.
+
+---Staged reply selection; bytes/files/live/materialized forms are explicit.
+---@class knurl.Response
+---@field status? integer # Default 200, status_code alias takes precedence except zero.
+---@field status_code? integer # HTTP status 100..599.
+---@field content_type? string # Representation MIME type.
+---@field headers? knurl.Headers # Repeated fields use ordered name/value entries.
+---@field body? string|number # Binary payload copied during final conversion.
+---@field file_path? string # File opens on submission after hooks; file aliases this field.
+---@field file? string # Alias for file_path.
+---@field stream_source? knurl.Source|table # Real bounded pull output, not collected or spooled.
+---@field spooled_source? knurl.Source|table # Explicit synchronous private-file materialization; can block.
+---@field json? knurl.CodecOptions # Explicit live mapped JSON source with privately assigned input.
+---@field xml? knurl.CodecOptions # Explicit live mapped XML source with privately assigned input.
+---@field json_materialized? knurl.CodecOptions # Synchronous JSON bytes; external records are permitted.
+---@field xml_materialized? knurl.CodecOptions # Synchronous XML bytes; external records are permitted.
+
+---Borrowed native-helper reply view, valid only for its individual after-hook.
+---@class knurl.Reply
+---@field snapshot fun(self:knurl.Reply): table?, knurl.Error? # Copy metadata/byte payload without reading file/source payloads.
+---@field replace fun(self:knurl.Reply, declaration:knurl.Response|string|nil): boolean?, knurl.Error? # Replace through the ordinary public response converter.
+---@field header_add fun(self:knurl.Reply, name:string, value:string): boolean?, knurl.Error? # Append a copied repeated header.
+---@field header_set fun(self:knurl.Reply, name:string, value:string): boolean?, knurl.Error? # Replace all case-insensitive matching fields.
+
+---Owned source unless transferred; request readers expire with their request.
+---@class knurl.Source
+---@field read fun(self:knurl.Source, capacity:integer): string?, any # Bytes or nil, EOF/AGAIN; never an implicit whole-value read.
+---@field reset fun(self:knurl.Source): boolean?, knurl.Error? # Optional rewind; unsupported for live mapped generators.
+---@field resume fun(self:knurl.Source): boolean?, knurl.Error? # Owner-loop notification after runtime transfer; coalesces later pulls.
+---@field close fun(self:knurl.Source): boolean?, knurl.Error? # Release untransferred source once; fails while owned by runtime.
+
+---Independent completed-body copy; close metadata but remove file artifacts explicitly.
+---@class knurl.BodyResult
+---@field snapshot fun(self:knurl.BodyResult): table?, knurl.Error? # Kind, exact length and copied memory/path metadata.
+---@field reader fun(self:knurl.BodyResult): knurl.Source?, knurl.Error? # Reader pins result until reader close.
+---@field close fun(self:knurl.BodyResult): boolean?, knurl.Error? # Fails while readers remain; leaves returned files as caller artifacts.
+
+---Loop registration options; all Lua callbacks run on their owner VM/thread.
+---@class knurl.LoopOptions
+---@field callback function # Receives token; watches additionally receive readiness flags.
+---@field retired? fun(token:knurl.LoopToken, error:knurl.Error?) # Actual native retirement, after cancellation acknowledgement.
+---@field delay_ms? knurl.IntegerInput # Initial timer delay.
+---@field repeat_ms? knurl.IntegerInput # Zero selects a one-shot timer.
+---@field fd? knurl.IntegerInput # Borrowed descriptor for a watch, never closed or made nonblocking.
+---@field interest? knurl.IntegerInput # Read/write event mask, zero suspends.
+
+---Run/process-bound registration; callbacks/owners remain rooted through retirement.
+---@class knurl.LoopToken
+---@field close fun(self:knurl.LoopToken): boolean?, knurl.Error? # Cancel/retire this registration, preserving its first callback failure.
+---@field cancel fun(self:knurl.LoopToken): boolean?, knurl.Error? # Alias for close.
+---@field update fun(self:knurl.LoopToken, interest:integer): boolean?, knurl.Error? # Watch-only readiness update.
+---@field signal fun(self:knurl.LoopToken): boolean?, knurl.Error? # Waker-only coalesced signal.
+
+---Scoped proxy metadata; copied scalar fields cannot edit native state.
+---@class knurl.ProxyInbound
+---@field method string # Inbound method token.
+---@field path string # Validated raw origin-form path.
+---@field query? string # Raw query or nil when absent.
+---@field host string # Original Host value.
+---@field websocket boolean # Validated opening-handshake request.
+---@field headers {name:string,value:string}[] # Ordered copied inbound fields.
+---@field param fun(name:string): string?, knurl.Error? # Callback-scoped decoded capture; dot/colon forms accepted.
+
+---Scoped sticky-failure request editor; helpers expire immediately after callback.
+---@class knurl.ProxyOutbound
+---@field select_target fun(index:integer): boolean?, knurl.Error? # One-based configured target, primary is 1.
+---@field set_method fun(method:string): boolean?, knurl.Error? # WebSocket must retain GET.
+---@field set_path fun(raw_path:string): boolean?, knurl.Error? # Copy validated raw origin-form path.
+---@field set_query fun(raw_query:string?): boolean?, knurl.Error? # nil removes query.
+---@field set_host fun(host:string?): boolean?, knurl.Error? # nil restores configured target authority.
+---@field add_header fun(name:string, value:string): boolean?, knurl.Error? # Append a copied end-to-end header.
+---@field set_header fun(name:string, value:string): boolean?, knurl.Error? # Replace matching end-to-end fields.
+---@field remove_header fun(name:string): boolean?, knurl.Error? # Remove end-to-end fields; transport/forwarding fields stay Core-owned.
+
+---Final upstream metadata before downstream commitment; no body access.
+---@class knurl.ProxyResponse
+---@field status integer # Current final HTTP status.
+---@field headers {name:string,value:string}[] # Sanitized copied headers.
+---@field set_status fun(status:integer): boolean?, knurl.Error? # Non-101 final status; body-suppression rules still apply.
+---@field add_header fun(name:string, value:string): boolean?, knurl.Error? # Append copied end-to-end field.
+---@field set_header fun(name:string, value:string): boolean?, knurl.Error? # Replace matching fields.
+---@field remove_header fun(name:string): boolean?, knurl.Error? # Remove permitted fields; failed edits remain sticky.
+
+---Copied terminal exchange accounting; excludes HTTP heads/framing or WS handshake.
+---@class knurl.ProxyExchange
+---@field request_id knurl.Unsigned # Exact exchange identifier.
+---@field upstream_bytes knurl.Unsigned # HTTP upload payload consumed by curl, or opaque WS bytes including frames; excludes HTTP framing/WS handshake.
+---@field downstream_bytes knurl.Unsigned # HTTP payload or opaque WS bytes including frames accepted downstream; excludes HTTP framing/WS handshake.
+---@field duration_ms knurl.Unsigned # Monotonic exchange duration.
+---@field route string # Configured route.
+---@field upstream string # Selected configured upstream.
+---@field kind string # HTTP/SSE/WebSocket exchange kind.
+---@field disconnect_side string # Upstream/downstream/host/unknown attribution.
+---@field error_category string # Terminal classification, "none" on success.
+---@field status integer # Final HTTP status, zero when unknown.
+---@field cause integer # Portable terminal status.
+
+---Connection handle valid through disconnect; all operations use the owner loop.
+---@class knurl.WebSocket
+---@field send fun(self:knurl.WebSocket, opcode:integer, payload:string): boolean?, any # Atomic frame copy; nil, AGAIN queues nothing.
+---@field send_text fun(self:knurl.WebSocket, payload:string): boolean?, any # Kore text-byte behavior, no new encoder.
+---@field send_binary fun(self:knurl.WebSocket, payload:string): boolean?, any # Binary-safe atomic frame send.
+---@field resume fun(self:knurl.WebSocket): boolean?, knurl.Error? # Redeliver the held whole frame later.
+---@field close fun(self:knurl.WebSocket, code?:integer, reason?:string): boolean?, knurl.Error? # No args sends empty close; explicit reason at most 123 UTF-8 bytes.
+---@field state fun(self:knurl.WebSocket): string # connecting/open/closing/closed.
+---@field queued_bytes fun(self:knurl.WebSocket): integer # Complete wire allocations still retained by transport.
+
+---Mapped codec declaration. Writer/source forms privately assign table input;
+---materialized serialize accepts an external mutable public LoneJSON record.
+---@class knurl.CodecOptions
+---@field schema userdata # Public LoneJSON schema retained for the operation.
+---@field value? table # Table input, privately assigned before live output starts.
+---@field table? table # Alias for value.
+---@field record? userdata # External record for materialized serialization only.
+---@field max_bytes? knurl.IntegerInput # Explicit materialized output ceiling; zero adds no ceiling.
+---@field data? string # Parse input; takes precedence over file input.
+---@field json? string # JSON parse-input alias.
+---@field xml? string # XML parse-input alias.
+---@field path? string # Explicit file parse input, read in bounded chunks.
+---@field root_element? string # Mapped XML root name.
+---@field text_key? string # Mapped XML text field.
+---@field attribute_prefix? string # Mapped XML attribute field prefix.
+---@field trim_text? boolean # Trim mapped XML text.
+---@field skip_unknown? boolean # Default true; strict_unknown takes precedence.
+---@field strict_unknown? boolean # Reject unknown XML fields.
+---@field max_depth? knurl.IntegerInput # Mapped XML nesting bound.
+---@field max_text_bytes? knurl.IntegerInput # Mapped XML text/spill bound.
+
+---Public mapped JSON operations; parsing materializes a typed record, not a stream facade.
+---@class knurl.JSON
+---@field parse fun(options:knurl.CodecOptions): table?, knurl.Error? # Parse through a public mapped record, then convert to a table.
+---@field parse_record fun(options:knurl.CodecOptions): userdata?, knurl.Error? # Independent LoneJSON record, including captured/spooled fields.
+---@field serialize fun(options:knurl.CodecOptions): string?, knurl.Error? # Explicit synchronous materialized bytes.
+---@field source fun(options:knurl.CodecOptions): knurl.Source?, knurl.Error? # True bounded pull generation; no full document buffer/file.
+---@field write fun(options:knurl.CodecOptions, sink:function|table): boolean?, knurl.Unsigned|knurl.Error # Synchronous <=4096-byte chunks, borrows and never closes sink.
+---@field array_each fun(options:knurl.ArrayOptions): boolean?, integer|knurl.Error # Selected-array mapped iteration using one binding-owned record; callback receives a converted table and zero-based index.
+
+---Mapped XML plus explicitly owned DOM and incremental SAX products.
+---@class knurl.XML
+---@field parse fun(options:knurl.CodecOptions): table?, knurl.Error? # Parse mapped record, then convert to a table.
+---@field parse_record fun(options:knurl.CodecOptions): userdata?, knurl.Error? # Return independent mapped record directly.
+---@field serialize fun(options:knurl.CodecOptions): string?, knurl.Error? # Explicit materialized XML output.
+---@field source fun(options:knurl.CodecOptions): knurl.Source?, knurl.Error? # Bounded pull output retaining its private input owner.
+---@field write fun(options:knurl.CodecOptions, sink:function|table): boolean?, knurl.Unsigned|knurl.Error # Bounded synchronous chunks, no whole-output staging.
+---@field document fun(bytes:string, options?:table): knurl.Document?, knurl.Error? # Owned DOM; default 16 MiB input /4096 XPath nodes.
+---@field sax fun(callbacks:table, options?:table): knurl.SAX?, knurl.Error? # Incremental callbacks, no DOM or cumulative full-input buffer.
+
+---Owned DOM; every mutation invalidates prior element views, including its receiver.
+---@class knurl.Document
+---@field root fun(self:knurl.Document): knurl.Node?, knurl.Error? # Owned element view retaining document state.
+---@field xpath fun(self:knurl.Document, expression:string, namespaces?:table<string,string>): any, knurl.Error? # Scalar or array of owned element views.
+---@field serialize_materialized fun(self:knurl.Document, formatted?:boolean): string?, knurl.Error? # Explicit owned serialization copy.
+---@field close fun(self:knurl.Document): boolean?, knurl.Error? # Invalidate views and release the document owner.
+
+---Owned element view; close or use <close> even after mutation invalidates it.
+---@class knurl.Node
+---@field name fun(self:knurl.Node): string?, string|knurl.Error|nil, string? # Local name, namespace URI, prefix.
+---@field text fun(self:knurl.Node): string?, knurl.Error? # Copied element text.
+---@field attribute fun(self:knurl.Node, name:string, namespace_uri?:string): string?, knurl.Error? # nil absence, empty string for a present empty attribute.
+---@field set_text fun(self:knurl.Node, bytes:string): boolean?, knurl.Error? # Mutation invalidates existing views.
+---@field set_attribute fun(self:knurl.Node, name:string, bytes:string, options?:table): boolean?, knurl.Error? # Optional namespace/prefix; invalidates existing views.
+---@field append_child fun(self:knurl.Node, name:string, options?:table): knurl.Node?, knurl.Error? # Fresh child view, old views invalidated.
+---@field remove fun(self:knurl.Node): boolean?, knurl.Error? # Remove element and invalidate views.
+---@field close fun(self:knurl.Node): boolean?, knurl.Error? # Release this view without mutating the DOM.
+
+---Incremental synchronous SAX parser; callback failures latch, close invokes none.
+---@class knurl.SAX
+---@field feed fun(self:knurl.SAX, bytes:string): boolean?, any # At most 65536 bytes per feed; callback metadata is copied before Lua runs.
+---@field finish fun(self:knurl.SAX): boolean?, any # Validate EOF; idempotent after success.
+---@field close fun(self:knurl.SAX): boolean?, knurl.Error? # Release callback owners without delivering events.
+
+---Buffered server REST conveniences; outbound REST clients stay with the host.
+---@class knurl.REST
+---@field JSON_CONTENT_TYPE string # application/json; charset=utf-8.
+---@field json fun(value:any, options?:table): knurl.Response?, knurl.Error? # Encode once through LoneJSON, never encode/parse/serialize again.
+---@field error_response fun(error:any, options?:table): knurl.Response # Staged JSON error envelope with bounded fallback policy.
+---@field route fun(server:knurl.Server|knurl.Group, options:table): boolean?, knurl.Error? # Bind public C REST decode/validate/handler phases.
+---@field group fun(server:knurl.Server, options:table): boolean?, knurl.Error? # Copy shared defaults into ordered REST registrations.
+
+---Public module loaded into an existing Lua 5.5 VM; owns neither VM nor interpreter.
+---@class knurl.Module
+---@field AGAIN integer # Producer/consumer would block; explicit resume/readiness required.
+---@field EOF integer # End of input/output, distinct from ordinary errors.
+---@field status knurl.Status # Portable Core status constants, including OK and all failures.
+---@field control knurl.ControlFlags # READ/WRITE/EOF/ERROR host control FD bits.
+---@field loop knurl.LoopFlags # READABLE/WRITABLE/READ_CLOSED/ERROR readiness flags.
+---@field websocket knurl.WebSocketOpcodes # CONTINUATION/TEXT/BINARY/CLOSE/PING/PONG opcodes.
+---@field count fun(high_or_decimal:knurl.IntegerInput, low?:knurl.IntegerInput): knurl.Unsigned?, knurl.Error? # Exact checked unsigned 64-bit construction, never rounded.
+---@field server fun(options?:knurl.ServerOptions): knurl.Server?, knurl.Error? # Inert copied declaration; no listeners/forks/callbacks on construction.
+---@field source fun(options:table): knurl.Source?, knurl.Error? # Explicit read(capacity), optional reset, close(cause); nil, EOF/AGAIN convention.
+---@field sse_encode fun(event:string|number|table, capacity:integer): string?, knurl.Error? # One bounded event; CR/LF/CRLF split field lines. Preformatted frame wins, oversize fails without splitting.
+---@field json knurl.JSON # Public LoneJSON-backed mapped operations.
+---@field xml knurl.XML # Public mapped XML, DOM/XPath and incremental SAX.
+---@field rest knurl.REST # Server-side REST route/response convenience facade.
+
+---@alias knurl.IntegerInput number|string # Checked exact integer conversion; fractions/nonfinite/out-of-range values fail.
+---@alias knurl.UnsignedInput number|string|knurl.Count # Checked unsigned count input, preserving exact 64-bit values.
+
+---Workers settings copied into the public Core declaration.
+---@class knurl.Workers
+---@field count? knurl.IntegerInput # Number of elements or requested worker processes, according to the containing type.
+---@field accept_threshold? knurl.IntegerInput # Worker accept distribution threshold.
+---@field rlimit_nofiles? knurl.IntegerInput # Requested worker open-file limit.
+---@field shutdown_timeout_ms? knurl.IntegerInput # Grace period in milliseconds before shutdown escalation.
+---@field affinity_disabled? boolean # Nonzero disables worker CPU affinity.
+---@field death_policy? 'restart'|'terminate' # Restart a failed worker or terminate the server run.
+
+---Io settings copied into the public Core declaration.
+---@class knurl.IO
+---@field chunk_bytes? knurl.IntegerInput # Bounded transport/generation chunk size in bytes.
+---@field input_queue_bytes? knurl.IntegerInput # Bounded downstream input queue capacity in bytes.
+---@field output_queue_bytes? knurl.IntegerInput # HTTP queue bytes; zero inherits 256 KiB. Must resolve to at least 33 and hold chunk_bytes.
+
+---Limits settings copied into the public Core declaration.
+---@class knurl.Limits
+---@field max_connections? knurl.IntegerInput # Maximum concurrent downstream connections.
+---@field request_limit? knurl.IntegerInput # Backend HTTP request capacity.
+---@field max_request_header_bytes? knurl.IntegerInput # Maximum accepted downstream request-head bytes.
+---@field max_response_header_bytes? knurl.IntegerInput # Optional final-response-head ceiling; zero adds no ceiling.
+---@field websocket_max_frame_bytes? knurl.IntegerInput # Maximum accepted WebSocket frame payload bytes.
+---@field default_body_bytes? knurl.UnsignedInput # Default route body admission ceiling; resolved by the server initializer.
+---@field hard_body_bytes? knurl.UnsignedInput # Server-wide body ceiling, including route-specific overrides.
+---@field body_min_rate_bytes_per_second? knurl.UnsignedInput # Minimum admitted request-body delivery rate in bytes/second.
+---@field body_spool_directory? string # Transport spool directory; copied declaration, files remain request- scoped.
+---@field body_min_rate_disabled? boolean # Nonzero disables minimum request-body rate enforcement.
+
+---Http settings copied into the public Core declaration.
+---@class knurl.HTTP
+---@field keepalive_disabled? boolean # Nonzero disables HTTP connection reuse.
+---@field keepalive_max_requests? knurl.IntegerInput # Maximum requests per reusable connection.
+---@field socket_backlog? knurl.IntegerInput # Listener accept backlog.
+---@field request_process_budget_ms? knurl.IntegerInput # Owner-loop request-processing budget in milliseconds.
+---@field backend_quiet? boolean # Nonzero selects quiet backend logging.
+---@field server_header? string # Copied Server response-header value; default "knurl", independent of instance name (valid HTTP header value, 1..53 bytes).
+---@field mime_types? table<string,string> # Copied instance-wide static extension overrides. Route mappings win; duplicate normalized keys and invalid extensions/types fail.
+---@field access_log_path? string # Independent file access-log path; unaffected by structured logger disable.
+---@field access_log_max_bytes? knurl.UnsignedInput # Whole-record file rotation threshold; default 10 MiB, one oversized record may exceed it.
+---@field access_log_file_count? knurl.IntegerInput # Total files including active; default 3 (access.log, .1, .2). One truncates active at rotation.
+---@field access_log_rotation_disabled? boolean # Explicitly disable file access-log rotation; default false.
+---@field hsts_max_age_seconds? knurl.IntegerInput # Strict-Transport-Security max-age in seconds.
+---@field backend_curl_timeout_seconds? knurl.IntegerInput # Kore backend curl timeout, distinct from reverse-proxy deadlines.
+---@field backend_curl_recv_max_bytes? knurl.UnsignedInput # Kore backend curl receive ceiling, distinct from live proxy queues.
+---@field pretty_error_pages? boolean # Nonzero selects formatted backend error pages.
+
+---Timeouts settings copied into the public Core declaration.
+---@class knurl.Timeouts
+---@field startup? knurl.IntegerInput|knurl.Deadline # Server startup/readiness deadline.
+---@field request_header? knurl.IntegerInput|knurl.Deadline # Downstream request-head receive deadline.
+---@field request_body_idle? knurl.IntegerInput|knurl.Deadline # Request-body no-progress deadline.
+---@field response_write_idle? knurl.IntegerInput|knurl.Deadline # Downstream output no-progress deadline.
+---@field body_min_rate_grace? knurl.IntegerInput|knurl.Deadline # Grace period before minimum-body-rate enforcement.
+---@field connection_idle? knurl.IntegerInput|knurl.Deadline # Idle downstream connection deadline.
+---@field keepalive? knurl.IntegerInput|knurl.Deadline # HTTP keepalive idle deadline.
+---@field websocket_idle? knurl.IntegerInput|knurl.Deadline # Application WebSocket idle deadline.
+---@field deferred_response? knurl.IntegerInput|knurl.Deadline # Deferred application response deadline; Vectis adapters and the Lua facade explicitly disable the extra deadline by default.
+
+---Proxy settings copied into the public Core declaration.
+---@class knurl.ProxyResources
+---@field active_exchanges? knurl.IntegerInput # Zero inherits 16 active exchanges and four idle connections per pool.
+---@field idle_connections? knurl.IntegerInput # Per-upstream idle connection capacity; zero selects four.
+
+---Shared autoblock rules; event/status vectors are copied by Core.
+---@class knurl.Autoblock
+---@field enabled? boolean # Nonzero enables this optional facility.
+---@field window_seconds? knurl.IntegerInput # Autoblock event counting window in seconds.
+---@field block_seconds? knurl.IntegerInput # Autoblock ban duration in seconds.
+---@field max_entries? knurl.IntegerInput # Maximum shared autoblock address entries.
+---@field tcp_stall_threshold? knurl.IntegerInput # TCP-stall event threshold; zero disables this rule.
+---@field tls_failure_threshold? knurl.IntegerInput # TLS-failure event threshold; zero disables this rule.
+---@field status_rules? knurl.StatusRule[] # Per-status event thresholds.
+---@field event_rules? knurl.EventRule[] # Named application event thresholds.
+
+---Status_rule settings copied into the public Core declaration.
+---@class knurl.StatusRule
+---@field status? knurl.IntegerInput # HTTP status or operation status according to the containing type.
+---@field threshold? knurl.IntegerInput # Number of matching events within the configured window before blocking.
+
+---Event_rule settings copied into the public Core declaration.
+---@class knurl.EventRule
+---@field name? string # Name of this declaration, field or listed resource.
+---@field threshold? knurl.IntegerInput # Number of matching events within the configured window before blocking.
+
+---Public Status constants from Core.
+---@class knurl.Status
+---@field OK integer # Operation completed successfully.
+---@field AGAIN integer # No progress is currently possible; retry only under the operation's readiness/resume contract.
+---@field EOF integer # End of input/listing, or absent lookup value as documented by the operation.
+---@field INVALID integer # Invalid argument, declaration or input representation.
+---@field NOMEM integer # Allocation failed.
+---@field STATE integer # Operation is invalid in the current phase, owner or lifetime.
+---@field CONFLICT integer # Registration/resource state conflicts with the requested operation.
+---@field LIMIT integer # Configured capacity or admission bound was exceeded.
+---@field OVERFLOW integer # Exact value cannot be represented in the destination range.
+---@field TIMEOUT integer # Configured deadline expired.
+---@field IO integer # System or transport I/O failed.
+---@field NOT_SUPPORTED integer # Requested operation/capability is unavailable.
+---@field CANCELLED integer # Operation was cancelled or replaced before successful completion.
+---@field BACKEND integer # Private backend failure reported through the portable API.
+
+---Public ControlFlags constants from Core.
+---@class knurl.ControlFlags
+---@field READ integer # Host control-FD read readiness bit.
+---@field WRITE integer # Host control-FD write readiness bit.
+---@field EOF integer # Host control-FD end-of-input bit.
+---@field ERROR integer # Host control-FD error bit.
+
+---Public LoopFlags constants from Core.
+---@class knurl.LoopFlags
+---@field READABLE integer # Read readiness event/interest bit.
+---@field WRITABLE integer # Write readiness event/interest bit.
+---@field READ_CLOSED integer # Read-half closure notification bit.
+---@field ERROR integer # Descriptor error notification bit.
+
+---Public WebSocketOpcodes constants from Core.
+---@class knurl.WebSocketOpcodes
+---@field CONTINUATION integer # WebSocket opcode/connection phase: continuation.
+---@field TEXT integer # WebSocket opcode/connection phase: text.
+---@field BINARY integer # WebSocket opcode/connection phase: binary.
+---@field CLOSE integer # WebSocket opcode/connection phase: close.
+---@field PING integer # WebSocket opcode/connection phase: ping.
+---@field PONG integer # WebSocket opcode/connection phase: pong.
+
+---Process snapshots retain the public C worker index convention.
+---@class knurl.Process
+---@field role 'parent'|'http'|'key_manager'|'acme' # Process role, not a backend structure.
+---@field process_id integer # OS PID of this process.
+---@field worker_index integer # Zero-based HTTP worker index where applicable.
+---@field restarted boolean # This child replaces an earlier process.
+
+---Lifecycle callbacks, also accepted at the top level of server options.
+---Return errors through the existing callback result contract; never yield.
+---@class knurl.ServerCallbacks
+---@field on_process_start? fun(server:knurl.Server, process:knurl.Process) # First callback in each process; discard inherited host registrations here.
+---@field on_parent_prepare? fun(server:knurl.Server, process:knurl.Process) # Parent preparation before TLS material consumption/child startup.
+---@field on_parent_ready? fun(server:knurl.Server, process:knurl.Process) # Startup readiness; serving can remain paused.
+---@field on_parent_stopping? fun(server:knurl.Server, process:knurl.Process) # Graceful shutdown begins.
+---@field on_parent_stopped? fun(server:knurl.Server, process:knurl.Process) # Children/native resources have stopped.
+---@field on_worker_start? fun(server:knurl.Server, process:knurl.Process) # Active HTTP worker owner loop is available.
+---@field on_worker_stopping? fun(server:knurl.Server, process:knurl.Process) # Worker shutdown begins.
+---@field on_worker_exit? fun(server:knurl.Server, process:knurl.Process) # Terminal fork-only callback after native teardown; may reclaim that fork's host/server state.
+---@field on_worker_event? fun(server:knurl.Server, event:table) # Copied child start/exit/restart/escalation snapshot in parent.
+---@field on_tls_identity? fun(server:knurl.Server, event:table) # Parent identity availability/failure observation.
+---@field on_request_start? fun(server:knurl.Server, request:knurl.Request) # Metadata-only callback after identity resolution; cannot begin I/O.
+---@field on_request_close? fun(server:knurl.Server, request:knurl.Request, outcome:table) # Terminal managed request metadata/accounting after plan/response cleanup.
+---@field on_observe? fun(server:knurl.Server, event:table) # Copied observation; transport events have no request. Cannot perform request I/O or recursively emit.
+
+---Exactly one source/data/path for standalone iteration; request iteration uses
+---only schema/selector/callback. The binding owns its reused mapped item record.
+---@class knurl.ArrayOptions
+---@field schema userdata # Public LoneJSON schema for each selected item.
+---@field selector? string # Empty/root array, or one direct object key.
+---@field callback fun(value:table, index:integer): any, any # Independent converted item table and zero-based index; non-nil second return stops with error.
+---@field source? knurl.Source # Borrow current cursor, never reset/close; synchronous AGAIN fails.
+---@field data? string # Explicit in-memory parse input.
+---@field path? string # File input through the public bounded source reader.

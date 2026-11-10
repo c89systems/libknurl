@@ -1,0 +1,136 @@
+diff --git a/include/kore/http.h b/include/kore/http.h
+--- a/include/kore/http.h
++++ b/include/kore/http.h
+@@ -236,10 +236,15 @@ struct http_file {
+ #define HTTP_METHOD_HEAD	0x0020
+ #define HTTP_METHOD_OPTIONS	0x0040
+ #define HTTP_METHOD_PATCH	0x0080
++#define HTTP_METHOD_PROPFIND	0x0100
++#define HTTP_METHOD_MKCOL		0x0200
++#define HTTP_METHOD_COPY		0x0400
++#define HTTP_METHOD_MOVE		0x0800
+ 
+ #define HTTP_METHOD_ALL		(HTTP_METHOD_GET | HTTP_METHOD_POST | \
+     HTTP_METHOD_PUT | HTTP_METHOD_DELETE | HTTP_METHOD_HEAD | \
+-    HTTP_METHOD_OPTIONS | HTTP_METHOD_PATCH)
++    HTTP_METHOD_OPTIONS | HTTP_METHOD_PATCH | HTTP_METHOD_PROPFIND | \
++    HTTP_METHOD_MKCOL | HTTP_METHOD_COPY | HTTP_METHOD_MOVE)
+ 
+ #define HTTP_REQUEST_COMPLETE		0x0001
+ #define HTTP_REQUEST_DELETE		0x0002
+@@ -283,4 +288,4 @@ struct http_request {
+-	u_int8_t			method;
++	u_int16_t			method;
+ 	u_int8_t			fsm_state;
+ 	u_int16_t			flags;
+ 	u_int16_t			status;
+diff --git a/include/kore/kore.h b/include/kore/kore.h
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -337,6 +337,6 @@ struct kore_route_params {
+ 	char			*name;
+ 	int			flags;
+-	u_int8_t		method;
++	u_int16_t		method;
+ 	struct kore_validator	*validator;
+ 
+ 	TAILQ_ENTRY(kore_route_params)	list;
+diff --git a/src/accesslog.c b/src/accesslog.c
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -122,9 +122,24 @@ kore_accesslog(struct http_request *req)
+ 	case HTTP_METHOD_HEAD:
+ 		method = "HEAD";
+ 		break;
++	case HTTP_METHOD_OPTIONS:
++		method = "OPTIONS";
++		break;
+ 	case HTTP_METHOD_PATCH:
+ 		method = "PATCH";
+ 		break;
++	case HTTP_METHOD_PROPFIND:
++		method = "PROPFIND";
++		break;
++	case HTTP_METHOD_MKCOL:
++		method = "MKCOL";
++		break;
++	case HTTP_METHOD_COPY:
++		method = "COPY";
++		break;
++	case HTTP_METHOD_MOVE:
++		method = "MOVE";
++		break;
+ 	default:
+ 		method = "UNKNOWN";
+ 		break;
+diff --git a/src/http.c b/src/http.c
+--- a/src/http.c
++++ b/src/http.c
+@@ -947,7 +947,9 @@ http_header_recv(struct netbuf *nb)
+ 
+ 		if (!http_request_header_uint64(req, "content-length",
+ 		    &req->content_length)) {
+-			if (req->method == HTTP_METHOD_DELETE) {
++			if (req->method == HTTP_METHOD_DELETE ||
++			    req->method == HTTP_METHOD_PROPFIND ||
++			    req->method == HTTP_METHOD_MKCOL) {
+ 				req->flags |= HTTP_REQUEST_COMPLETE;
+ 				return (KORE_RESULT_OK);
+ 			}
+@@ -1744,6 +1744,18 @@ http_method_text(int method)
+ 	case HTTP_METHOD_PATCH:
+ 		r = "PATCH";
+ 		break;
++	case HTTP_METHOD_PROPFIND:
++		r = "PROPFIND";
++		break;
++	case HTTP_METHOD_MKCOL:
++		r = "MKCOL";
++		break;
++	case HTTP_METHOD_COPY:
++		r = "COPY";
++		break;
++	case HTTP_METHOD_MOVE:
++		r = "MOVE";
++		break;
+ 	default:
+ 		r = "";
+ 		break;
+@@ -1776,6 +1788,18 @@ http_method_value(const char *method)
+ 	if (!strcasecmp(method, "PATCH"))
+ 		return (HTTP_METHOD_PATCH);
+ 
++	if (!strcasecmp(method, "PROPFIND"))
++		return (HTTP_METHOD_PROPFIND);
++
++	if (!strcasecmp(method, "MKCOL"))
++		return (HTTP_METHOD_MKCOL);
++
++	if (!strcasecmp(method, "COPY"))
++		return (HTTP_METHOD_COPY);
++
++	if (!strcasecmp(method, "MOVE"))
++		return (HTTP_METHOD_MOVE);
++
+ 	return (0);
+ }
+ 
+@@ -2031,6 +2055,18 @@ http_request_new(struct connection *c, const char *method, const char *path,
+ 	} else if (!strcasecmp(method, "patch")) {
+ 		m = HTTP_METHOD_PATCH;
+ 		flags |= HTTP_REQUEST_EXPECT_BODY;
++	} else if (!strcasecmp(method, "propfind")) {
++		m = HTTP_METHOD_PROPFIND;
++		flags |= HTTP_REQUEST_EXPECT_BODY;
++	} else if (!strcasecmp(method, "mkcol")) {
++		m = HTTP_METHOD_MKCOL;
++		flags |= HTTP_REQUEST_EXPECT_BODY;
++	} else if (!strcasecmp(method, "copy")) {
++		m = HTTP_METHOD_COPY;
++		flags |= HTTP_REQUEST_COMPLETE;
++	} else if (!strcasecmp(method, "move")) {
++		m = HTTP_METHOD_MOVE;
++		flags |= HTTP_REQUEST_COMPLETE;
+ 	} else {
+ 		http_error_response(c, HTTP_STATUS_BAD_REQUEST);
+ 		return (NULL);

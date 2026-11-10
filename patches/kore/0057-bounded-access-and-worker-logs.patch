@@ -1,0 +1,78 @@
+diff --git a/src/accesslog.c b/src/accesslog.c
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -299,11 +299,12 @@
+ 		hdr = (struct kore_alog_header *)
+ 		    (worker->lb.buf + worker->lb.offset);
+ 		worker->lb.offset += sizeof(*hdr);
++		avail -= sizeof(*hdr);
+ 
+ 		len = snprintf(worker->lb.buf + worker->lb.offset, avail,
+ 		    "%s - %s [%s] \"%s %s %s\" %d %s \"%s\" \"%s\"\n",
+ 		    addr, cn, tbuf, method, req->path, http_version,
+-		    req->status, kore_u64_text(req->content_length, content_length), referer, req->agent);
++		    req->status, kore_u64_text(req->content_length, content_length), referer, req->agent != NULL ? req->agent : "-");
+ 		if (len == -1)
+ 			fatal("failed to create log entry");
+ 
+@@ -392,13 +393,24 @@
+ 	struct kore_domain		*dom;
+ 	size_t				off, remain;
+ 
+-	if (logbuf == NULL)
++	if (logbuf == NULL) {
++		if (force) {
++			for (id = KORE_WORKER_BASE; id < worker_count; id++)
++				if (kore_worker_data(id)->lb.offset != 0)
++					break;
++			if (id == worker_count)
++				return;
++		}
+ 		logbuf = kore_buf_alloc(LOGBUF_SIZE);
++	}
+ 
+ 	for (id = KORE_WORKER_BASE; id < worker_count; id++) {
+ 		kw = kore_worker_data(id);
+ 
+-		accesslog_lock(kw);
++		/* Parent drain never waits for a live or dead worker holding its
++		 * buffer. A worker killed mid-record can leave the lock set. */
++		if (!__sync_bool_compare_and_swap(&kw->lb.lock, 0, 1))
++			continue;
+ 
+ 		if (force || kw->lb.offset >= KORE_ACCESSLOG_SYNC) {
+ 			kore_buf_append(logbuf, kw->lb.buf, kw->lb.offset);
+diff --git a/src/log.c b/src/log.c
+--- a/src/log.c
++++ b/src/log.c
+@@ -179,6 +179,8 @@
+ 	va_end(args);
+ 
+ 	if (worker != NULL) {
++		if (buf.offset > 8192U)
++			buf.offset = 8192U;
+ 		kore_buf_init(&pkt, offsetof(struct kore_wlog, logmsg) + buf.offset);
+ 
+ 		memset(&wlog, 0, sizeof(wlog));
+@@ -224,6 +226,10 @@
+ 
+ 	wlog = data;
+ 	name = kore_worker_name(wlog->wid);
++	if (wlog->loglen > 8192U) {
++		kore_log(LOG_NOTICE, "oversize worker log received");
++		return;
++	}
+ 	if (wlog->loglen != msg->length - offsetof(struct kore_wlog, logmsg)) {
+ 		kore_log(LOG_NOTICE, "invalid worker log length");
+ 		return;
+diff --git a/src/worker.c b/src/worker.c
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -443,6 +443,7 @@
+ 	u_int16_t index;
+ 	struct kore_worker *kw;
+ 	if (kore_workers != NULL) {
++		kore_accesslog_gather(NULL, kore_time_ms(), 1);
+ 		for (index = 0; index < worker_count; index++) {
+ 			kw = WORKER(index);
+ 			if (kw->msg[0] == NULL && kw->pipe[0] >= 0)

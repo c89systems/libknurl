@@ -1,0 +1,12 @@
+diff --git a/src/http.c b/src/http.c
+--- a/src/http.c
++++ b/src/http.c
+@@ -62,6 +62,8 @@ static struct {
+ 	{ "js",		"application/javascript" },
+ 	{ "htm",	"text/html" },
+ 	{ "txt",	"text/plain" },
++	{ "md",		"text/markdown; charset=utf-8" },
++	{ "markdown",	"text/markdown; charset=utf-8" },
+ 	{ "css",	"text/css" },
+ 	{ "html",	"text/html" },
+ 	{ NULL,		NULL },

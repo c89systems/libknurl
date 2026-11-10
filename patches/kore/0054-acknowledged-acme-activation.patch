@@ -1,0 +1,236 @@
+--- a/include/kore/library.h
++++ b/include/kore/library.h
+@@ -2,6 +2,8 @@
+ #define KORE_LIBRARY_H
+ 
+ #include "kore.h"
++
++struct kore_curl;
+ 
+ /* Private adapter interface: not installed as part of the ordinary C API. */
+ struct kore_library_hooks {
+@@ -28,7 +30,11 @@
+     void (*http_status)(void *, struct http_request *, int);
+     void (*connection_status)(void *, struct connection *, int);
+     void (*tls_failure)(void *, struct connection *);
++    int (*keymgr_prepare)(void *);
+     int (*acme_persist)(void *, const char *);
++    int (*acme_install)(void *, struct kore_domain *, const void *, size_t);
++    int (*acme_request)(void *, struct kore_curl *);
++    void (*tls_updated)(void *, struct kore_domain *, int);
+ };
+ 
+ extern struct kore_library_hooks kore_library_hooks;
+--- a/src/keymgr_openssl.c
++++ b/src/keymgr_openssl.c
+@@ -340,6 +340,9 @@
+ 	last_seed = 0;
+ 
+ 	initialized = 1;
++	if (kore_library_hooks.keymgr_prepare != NULL &&
++	    !kore_library_hooks.keymgr_prepare(kore_library_hooks.arg))
++		fatalx("key-manager preparation failed");
+ 	keymgr_reload();
+ 
+ #if defined(__OpenBSD__)
+@@ -456,6 +459,11 @@
+ 
+ 	kore_domain_callback(keymgr_load_domain_privatekey);
+ 
++	/* Complete account/domain keys must be acknowledged before distribution. */
++	if (kore_library_hooks.acme_persist != NULL &&
++	    !kore_library_hooks.acme_persist(kore_library_hooks.arg, NULL))
++		fatalx("failed to persist initial ACME state");
++
+ 	/* can't use kore_domain_callback() due to dst parameter. */
+ 	LIST_FOREACH(srv, &kore_servers, list) {
+ 		if (srv->tls == 0)
+@@ -468,6 +476,9 @@
+ static void
+ keymgr_submit_certificates(struct kore_domain *dom, u_int16_t dst)
+ {
++	/* Library-owned manual identities already have in-memory contexts. */
++	if (dom->certfile == NULL)
++		return;
+ 	if (access(dom->certfile, R_OK) == -1) {
+ #if defined(KORE_USE_ACME)
+ 		if (dom->acme && errno == ENOENT)
+@@ -616,7 +627,7 @@
+ {
+ 	struct key	*key;
+ 
+-	if (dom->server->tls == 0)
++	if (dom->server->tls == 0 || dom->certkey == NULL)
+ 		return;
+ 
+ 	key = keymgr_load_privatekey(dom->certkey);
+@@ -1058,6 +1069,13 @@
+ 	int		fd;
+ 	ssize_t		ret;
+ 
++	if (kore_library_hooks.acme_install != NULL) {
++		if (!kore_library_hooks.acme_install(kore_library_hooks.arg,
++		    key->dom, data, len))
++			fatalx("failed to persist ACME candidate state");
++		goto distribute;
++	}
++
+ 	fd = open(key->dom->certfile, O_CREAT | O_TRUNC | O_WRONLY, 0700);
+ 	if (fd == -1)
+ 		fatalx("open(%s): %s", key->dom->certfile, errno_s);
+@@ -1089,6 +1107,7 @@
+ 	    !kore_library_hooks.acme_persist(kore_library_hooks.arg, key->dom->domain))
+ 		fatalx("failed to persist ACME candidate state");
+ 
++distribute:
+ 	keymgr_submit_certificates(key->dom, KORE_MSG_WORKER_ALL);
+ 
+ 	keymgr_x509_msg(key->dom->domain, NULL, 0,
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -95,6 +95,8 @@
+ 
+ static void	worker_entropy_recv(struct kore_msg *, const void *);
+ static void	worker_keymgr_response(struct kore_msg *, const void *);
++static void worker_keymgr_domain_response(struct kore_domain *,
++    struct kore_msg *, const struct kore_x509_msg *);
+ 
+ static pid_t				worker_pgrp;
+ static int				accept_avail;
+@@ -768,7 +770,10 @@
+ 					quit = 1;
+ 					if (worker->has_lock)
+ 						worker_acceptlock_release();
+-					kore_platform_disable_accept();
++					if (had_lock) {
++						kore_platform_disable_accept();
++						had_lock = 0;
++					}
+ 					worker_runtime_teardown();
+ 				}
+ 				break;
+@@ -1277,18 +1282,35 @@
+ static void
+ worker_keymgr_response(struct kore_msg *msg, const void *data)
+ {
+-	struct kore_domain		*dom;
+-	const struct kore_x509_msg	*req;
+-
+-	if (!kore_worker_keymgr_response_verify(msg, data, &dom))
++	struct kore_server *server;
++	struct kore_domain *dom;
++	const struct kore_x509_msg *req;
++
++	if (!kore_worker_keymgr_response_verify(msg, data, NULL))
+ 		return;
+-
+ 	req = (const struct kore_x509_msg *)data;
+-
++	/* The same identity can serve several listeners. Update each context. */
++	LIST_FOREACH(server, &kore_servers, list) {
++		if (!server->tls)
++			continue;
++		TAILQ_FOREACH(dom, &server->domains, list) {
++			if (!strcmp(dom->domain, req->domain) &&
++			    (dom->acme || kore_library_hooks.tls_updated == NULL))
++				worker_keymgr_domain_response(dom, msg, req);
++		}
++	}
++}
++
++static void
++worker_keymgr_domain_response(struct kore_domain *dom, struct kore_msg *msg,
++    const struct kore_x509_msg *req)
++{
+ 	switch (msg->id) {
+ 	case KORE_MSG_CERTIFICATE:
+ 		kore_tls_domain_setup(dom, KORE_PEM_CERT_CHAIN,
+ 		    req->data, req->data_len);
++		if (dom->tls_ctx != NULL && kore_library_hooks.tls_updated != NULL)
++			kore_library_hooks.tls_updated(kore_library_hooks.arg, dom, 1);
+ 		break;
+ 	case KORE_MSG_CRL:
+ 		kore_tls_domain_crl(dom, req->data, req->data_len);
+@@ -1298,6 +1320,8 @@
+ 		if (dom->tls_ctx == NULL) {
+ 			kore_tls_domain_setup(dom, KORE_DER_CERT_DATA,
+ 			    req->data, req->data_len);
++			if (dom->tls_ctx != NULL && kore_library_hooks.tls_updated != NULL)
++				kore_library_hooks.tls_updated(kore_library_hooks.arg, dom, 0);
+ 		}
+ 
+ 		kore_free(dom->acme_cert);
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -407,6 +407,8 @@
+ void
+ kore_acme_init(void)
+ {
++	acme_domains = 0;
++	acme_email = NULL;
+ 	acme_provider = kore_strdup(ACME_DEFAULT_PROVIDER);
+ }
+ 
+@@ -1809,7 +1811,12 @@
+ 	    CURLOPT_TIMEOUT, (long)acme_request_timeout);
+ 
+ 	kore_curl_http_setup(&req->curl, method, data, len);
+-	acme_curl_set_ca(req->curl.handle);
++	if (kore_library_hooks.acme_request != NULL) {
++		if (!kore_library_hooks.acme_request(kore_library_hooks.arg, &req->curl))
++			fatalx("failed to apply prepared ACME transport policy");
++	} else {
++		acme_curl_set_ca(req->curl.handle);
++	}
+ 	kore_curl_http_set_header(&req->curl, "content-type",
+ 	    "application/jose+json");
+ }
+--- a/src/tls_openssl.c
++++ b/src/tls_openssl.c
+@@ -37,6 +37,9 @@
+ #include "http.h"
+ 
+ #include "library.h"
++#if defined(KORE_USE_ACME)
++#include "acme.h"
++#endif
+ 
+ /*
+  * Disable deprecated declaration warnings if we're building against
+@@ -127,6 +130,12 @@
+ void
+ kore_tls_cleanup(void)
+ {
++#if defined(KORE_USE_ACME)
++	kore_free(acme_provider);
++	kore_free(acme_email);
++	acme_provider = acme_email = NULL;
++	acme_domains = 0;
++#endif
+ 	RSA_meth_free(keymgr_rsa_meth);
+ 	keymgr_rsa_meth = NULL;
+ }
+@@ -1139,6 +1148,7 @@
+ 		return (NULL);
+ 
+ 	BIO_free(in);
++	ERR_clear_error();
+ 
+ 	return (x);
+ }
+@@ -1183,6 +1193,7 @@
+ 	RSA_set0_key(rsa_new, n_new, e_new, NULL);
+ 
+ 	EVP_PKEY_set1_RSA(pkey, rsa_new);
++	RSA_free(rsa_new);
+ 
+ 	return (pkey);
+ }
+@@ -1252,6 +1263,7 @@
+ 	if (SSL_use_certificate(ssl, x509) == 0)
+ 		fatal("SSL_use_certificate: %s", ssl_errno_s);
+ 
++	X509_free(x509);
+ 	SSL_clear_chain_certs(ssl);
+ 	SSL_set_verify(ssl, SSL_VERIFY_NONE, NULL);
+ 

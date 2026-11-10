@@ -1,0 +1,102 @@
+diff --git a/src/worker.c b/src/worker.c
+index 895c0ae..c2e952f 100644
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -102,6 +102,7 @@ u_int8_t			worker_set_affinity = 1;
+ u_int64_t			worker_idle_timeout = KORE_IDLE_TIMER_MAX;
+ u_int32_t			worker_accept_threshold = 16;
+ u_int32_t			worker_rlimit_nofiles = 768;
+ u_int32_t			worker_max_connections = 512;
++u_int32_t			worker_shutdown_timeout_ms = 5000;
+ u_int32_t			worker_active_connections = 0;
+ u_int8_t			worker_no_accept[KORE_WORKER_MAX];
+@@ -296,12 +296,17 @@ kore_worker_shutdown(void)
+ 	pid_t			pid;
+ 	int			status;
+ 	u_int16_t		idx, done;
++	u_int64_t		deadline;
++	int			escalated;
+ 
+ 	if (!kore_quiet) {
+ 		kore_log(LOG_NOTICE,
+ 		    "waiting for workers to drain and shutdown");
+ 	}
+ 
++	escalated = 0;
++	deadline = kore_time_ms() + worker_shutdown_timeout_ms;
++
+ 	for (;;) {
+ 		for (idx = 0; idx < worker_count; idx++) {
+ 			kw = WORKER(idx);
+@@ -309,24 +314,36 @@ kore_worker_shutdown(void)
+ 				continue;
+ 
+ 			if (kw->pid != 0) {
+-				pid = waitpid(kw->pid, &status, 0);
+-				if (pid == -1 && errno != ECHILD)
++				pid = waitpid(kw->pid, &status, WNOHANG);
++				if (pid == 0)
+ 					continue;
++				if (pid == -1 && errno != ECHILD) {
++					if (errno != EINTR) {
++						kore_log(LOG_NOTICE,
++						    "waitpid(%d): %s",
++						    kw->pid, errno_s);
++					}
++					continue;
++				}
+ 
+ #if defined(__linux__)
+-				kore_seccomp_trace(kw->pid, status);
++				if (pid != -1)
++					kore_seccomp_trace(kw->pid, status);
+ #endif
+ 
+ 				kw->pid = 0;
+ 				kw->running = 0;
+ 
+-				kw->msg[0]->evt.flags |= KORE_EVENT_READ;
+-				net_recv_flush(kw->msg[0]);
++				if (pid != -1) {
++					kw->msg[0]->evt.flags |= KORE_EVENT_READ;
++					net_recv_flush(kw->msg[0]);
+ 
+-				if (!kore_quiet) {
+-					kore_log(LOG_NOTICE,
+-					    "worker %s exited (%d)",
+-					    kore_worker_name(kw->id), status);
++					if (!kore_quiet) {
++						kore_log(LOG_NOTICE,
++						    "worker %s exited (%d)",
++						    kore_worker_name(kw->id),
++						    status);
++					}
+ 				}
+ 			}
+ 		}
+@@ -342,6 +359,25 @@ kore_worker_shutdown(void)
+ 
+ 		if (done == worker_count)
+ 			break;
++
++		if (escalated == 0 && kore_time_ms() >= deadline) {
++			escalated = 1;
++			for (idx = 0; idx < worker_count; idx++) {
++				kw = WORKER(idx);
++				if (kw->running == 0 || kw->pid == 0)
++					continue;
++				kore_log(LOG_WARNING,
++				    "worker %s (%d) did not exit, killing",
++				    kore_worker_name(kw->id), kw->pid);
++				if (kill(kw->pid, SIGKILL) == -1 &&
++				    errno == ESRCH) {
++					kw->pid = 0;
++					kw->running = 0;
++				}
++			}
++		}
++
++		usleep(10000);
+ 	}
+ 
+ 	if (shmctl(shm_accept_key, IPC_RMID, NULL) == -1) {

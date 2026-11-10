@@ -1,0 +1,64 @@
+diff --git a/src/curl.c b/src/curl.c
+--- a/src/curl.c
++++ b/src/curl.c
+@@ -150,6 +150,8 @@ int
+ kore_curl_init(struct kore_curl *client, const char *url, int flags)
+ {
+ 	CURL		*handle;
++	const char	*ca_file;
++	const char	*ca_path;
+ 
+ 	if ((flags & KORE_CURL_ASYNC) && (flags & KORE_CURL_SYNC)) {
+ 		(void)kore_strlcpy(client->errbuf, "invalid flags",
+@@ -175,6 +177,14 @@ kore_curl_init(struct kore_curl *client, const char *url, int flags)
+ 	curl_easy_setopt(handle, CURLOPT_TIMEOUT, (long)kore_curl_timeout);
+ 	curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, client->errbuf);
+ 
++	ca_file = getenv("SSL_CERT_FILE");
++	if (ca_file != NULL && *ca_file != '\0')
++		curl_easy_setopt(handle, CURLOPT_CAINFO, ca_file);
++
++	ca_path = getenv("SSL_CERT_DIR");
++	if (ca_path != NULL && *ca_path != '\0')
++		curl_easy_setopt(handle, CURLOPT_CAPATH, ca_path);
++
+ 	client->flags = flags;
+ 	client->handle = handle;
+ 	client->url = kore_strdup(url);
+
+diff --git a/src/acme.c b/src/acme.c
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -1737,6 +1737,25 @@ cleanup:
+ 	acme_request_cleanup(&req);
+ }
+ 
++static void
++acme_curl_set_ca(CURL *handle)
++{
++	const char	*ca_file;
++	const char	*ca_path;
++
++	ca_file = getenv("SSL_CERT_FILE");
++	if (ca_file != NULL && *ca_file != '\0') {
++		if (curl_easy_setopt(handle, CURLOPT_CAINFO, ca_file) != CURLE_OK)
++			kore_log(LOG_ERR, "failed to configure ACME CA file");
++	}
++
++	ca_path = getenv("SSL_CERT_DIR");
++	if (ca_path != NULL && *ca_path != '\0') {
++		if (curl_easy_setopt(handle, CURLOPT_CAPATH, ca_path) != CURLE_OK)
++			kore_log(LOG_ERR, "failed to configure ACME CA path");
++	}
++}
++
+ static void
+ acme_request_prepare(struct acme_request *req, int method,
+     const char *url, const void *data, size_t len)
+@@ -1753,5 +1772,6 @@ acme_request_prepare(struct acme_request *req, int method,
+ 
+ 	kore_curl_http_setup(&req->curl, method, data, len);
++	acme_curl_set_ca(req->curl.handle);
+ 	kore_curl_http_set_header(&req->curl, "content-type",
+ 	    "application/jose+json");
+ }

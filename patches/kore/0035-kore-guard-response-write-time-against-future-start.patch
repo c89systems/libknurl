@@ -1,0 +1,11 @@
+diff --git a/src/connection.c b/src/connection.c
+--- a/src/connection.c
++++ b/src/connection.c
+@@ -209,6 +209,7 @@ kore_connection_check_timeout(u_int64_t now)
+ 			if (!TAILQ_EMPTY(&c->send_queue)) {
+ 				if (http_response_write_timeout > 0 &&
+ 				    c->http_send_start > 0 &&
++				    now >= c->http_send_start &&
+ 				    now - c->http_send_start >=
+ 				    http_response_write_timeout) {
+ 					kore_connection_disconnect(c);

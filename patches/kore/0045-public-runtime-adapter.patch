@@ -1,0 +1,185 @@
+--- a/src/http.c
++++ b/src/http.c
+@@ -508,6 +508,9 @@
+ 		kore_curl_cleanup(client);
+ 	}
+ #endif
++	kore_free(req->raw_target);
++	req->raw_target = NULL;
++	req->raw_method = NULL;
+ 	kore_free(req->headers);
+ 
+ 	req->host = NULL;
+@@ -947,9 +950,10 @@
+ 
+ 	for (i = 1; i < h; i++) {
+ 		if (i == skip)
+-			continue;
+-
+-		if ((value = http_validate_header(headers[i])) == NULL) {
++			value = host;
++		else
++			value = http_validate_header(headers[i]);
++		if (value == NULL) {
+ 			req->flags |= HTTP_REQUEST_DELETE;
+ 			http_error_response(c, HTTP_STATUS_BAD_REQUEST);
+ 			return (KORE_RESULT_OK);
+@@ -2204,6 +2208,8 @@
+ 
+ 	req->host = host;
+ 	req->path = path;
++	req->raw_target = kore_strdup(path);
++	req->raw_method = method;
+ 
+ #if defined(KORE_USE_PYTHON)
+ 	req->py_req = NULL;
+--- a/include/kore/http.h
++++ b/include/kore/http.h
+@@ -289,6 +289,8 @@
+ 	u_int64_t			end;
+ 	u_int64_t			total;
+ 	const char			*path;
++	char				*raw_target;
++	const char			*raw_method;
+ 	const char			*host;
+ 	const char			*agent;
+ 	const char			*referer;
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -77,6 +77,9 @@
+ struct kore_privsep	worker_privsep;
+ 
+ struct kore_library_hooks kore_library_hooks = {0};
++u_int32_t kore_library_startup_timeout_ms = 30000;
++u_int64_t kore_library_startup_deadline;
++int kore_library_escalated;
+ 
+ #define LIB_MEMORY 1U
+ #define LIB_MESSAGES 2U
+@@ -95,6 +98,8 @@
+     library_initialized = 0;
+     kore_pid = getpid();
+     kore_quit = KORE_QUIT_NONE;
++    kore_library_escalated = 0;
++    kore_library_startup_deadline = 0;
+     sig_recv = 0;
+     worker = NULL;
+     nlisteners = 0;
+@@ -135,8 +140,11 @@
+     u_int32_t maximum;
+     int started;
+     kore_keymgr_active = acme_domains != 0;
++    if (kore_library_startup_timeout_ms != 0)
++        kore_library_startup_deadline = kore_time_ms() + kore_library_startup_timeout_ms;
+     library_initialized |= LIB_WORKERS;
+     started = kore_worker_init();
++    kore_library_startup_deadline = 0;
+     maximum = worker_max_connections;
+     worker_max_connections = worker_count;
+     library_initialized |= LIB_NETWORK;
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -201,10 +201,9 @@
+ kore_worker_spawn(u_int16_t idx, u_int16_t id, u_int16_t cpu)
+ {
+ 	struct kore_worker	*kw;
+-	int			cnt, maxcnt;
+-#if defined(__linux__)
+ 	int			status;
+-#endif
++	pid_t pid;
++	u_int64_t deadline;
+ 
+ 	if (idx >= KORE_WORKER_MAX)
+ 		fatal("%u > KORE_WORKER_MAX", idx);
+@@ -231,13 +230,12 @@
+ 		fatal("could not set pipe fds to nonblocking: %s", errno_s);
+ 	}
+ 
+-	maxcnt = 50;
++	deadline = kore_library_startup_deadline;
++	if (deadline == 0 && kore_library_startup_timeout_ms != 0)
++		deadline = kore_time_ms() + kore_library_startup_timeout_ms;
+ 
+ 	switch (id) {
+ 	case KORE_WORKER_KEYMGR:
+-#if defined(KORE_USE_ACME)
+-		maxcnt = 600;
+-#endif
+ 		kw->ps = &keymgr_privsep;
+ 		break;
+ #if defined(KORE_USE_ACME)
+@@ -250,7 +248,11 @@
+ 		break;
+ 	}
+ 
++	if (kore_library_hooks.fork_prepare != NULL)
++		kore_library_hooks.fork_prepare(kore_library_hooks.arg);
+ 	kw->pid = fork();
++	if (kore_library_hooks.fork_complete != NULL)
++		kore_library_hooks.fork_complete(kore_library_hooks.arg);
+ 	if (kw->pid == -1) {
+ 		kw->pid = 0;
+ 		kw->running = 0;
+@@ -262,20 +264,20 @@
+ 		kore_worker_entry(kw);
+ 		_exit(1);
+ 	} else {
+-		for (cnt = 0; cnt < maxcnt; cnt++) {
++		for (;;) {
+ 			if (kw->ready == 1)
+ 				break;
+-			usleep(100000);
+-#if defined(__linux__)
+-			/*
+-			 * If seccomp_tracing is enabled, make sure we
+-			 * handle the SIGSTOP from the child processes.
+-			 */
+-			if (kore_seccomp_tracing) {
+-				if (waitpid(kw->pid, &status, WNOHANG) > 0)
+-					kore_seccomp_trace(kw->pid, status);
++			pid = waitpid(kw->pid, &status, WNOHANG);
++			if (pid == kw->pid || (pid == -1 && errno == ECHILD)) {
++				kw->pid = 0;
++				kw->running = 0;
++				return (KORE_RESULT_ERROR);
+ 			}
+-#endif
++			if ((deadline != 0 && kore_time_ms() >= deadline) ||
++			    (kore_library_hooks.startup_cancel != NULL &&
++			    kore_library_hooks.startup_cancel(kore_library_hooks.arg)))
++				break;
++			usleep(10000);
+ 		}
+ 
+ 		if (kw->ready == 0) {
+@@ -389,6 +391,7 @@
+ 
+ 		if (escalated == 0 && kore_time_ms() >= deadline) {
+ 			escalated = 1;
++			kore_library_escalated = 1;
+ 			for (idx = 0; idx < worker_count; idx++) {
+ 				kw = WORKER(idx);
+ 				if (kw->running == 0 || kw->pid == 0)
+--- a/include/kore/library.h
++++ b/include/kore/library.h
+@@ -7,6 +7,9 @@
+ struct kore_library_hooks {
+     void *arg;
+     void (*fatal)(void *, const char *);
++    int (*startup_cancel)(void *);
++    void (*fork_prepare)(void *);
++    void (*fork_complete)(void *);
+     int (*process_start)(void *, struct kore_worker *);
+     int (*worker_start)(void *);
+     void (*worker_stopping)(void *);
+@@ -22,6 +25,9 @@
+ 
+ extern struct kore_library_hooks kore_library_hooks;
+ extern u_int32_t worker_shutdown_timeout_ms;
++extern u_int32_t kore_library_startup_timeout_ms;
++extern u_int64_t kore_library_startup_deadline;
++extern int kore_library_escalated;
+ void kore_library_init(const struct kore_library_hooks *);
+ int kore_library_parent_start(void);
+ int kore_worker_available(void);

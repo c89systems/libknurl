@@ -1,0 +1,517 @@
+--- a/include/kore/library.h
++++ b/include/kore/library.h
+@@ -17,6 +17,7 @@
+     void (*worker_cleanup)(void *);
+     int (*request_release)(void *, struct http_request *);
+     void (*net_progress)(void *, struct netbuf *, size_t, int);
++    void (*worker_event)(void *, const struct kore_worker *, int, int, int, int);
+     int (*process_start)(void *, struct kore_worker *);
+     int (*worker_start)(void *);
+     void (*worker_stopping)(void *);
+@@ -34,7 +35,17 @@
+ extern u_int32_t worker_shutdown_timeout_ms;
+ extern u_int32_t kore_library_startup_timeout_ms;
+ extern u_int64_t kore_library_startup_deadline;
++#define KORE_LIBRARY_WORKER_STARTED 0
++#define KORE_LIBRARY_WORKER_EXITED 1
++#define KORE_LIBRARY_WORKER_RESTARTED 2
++#define KORE_LIBRARY_WORKER_ESCALATED 3
++#define KORE_LIBRARY_WORKER_SPAWNING 4
+ extern int kore_library_escalated;
++extern int kore_library_startup_timed_out;
++/* Dedicated child operation budget. Called after child IPC initialization.
++ * Zero clears it. Positive budgets must be <= 0x7fffffff milliseconds. */
++void kore_library_worker_deadline(u_int32_t);
++u_int64_t kore_library_workers_wait(u_int64_t);
+ void kore_library_init(const struct kore_library_hooks *);
+ int kore_library_parent_start(void);
+ int kore_worker_available(void);
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -508,6 +508,10 @@
+ };
+ 
+ struct kore_worker {
++	u_int32_t library_deadline;
++	int library_deadline_active;
++	int library_timed_out;
++	int library_clean;
+ 	u_int16_t			id;
+ 	u_int16_t			cpu;
+ 	int				ready;
+@@ -723,6 +727,7 @@
+ #define KORE_PYTHON_SEND_OBJ		11
+ #define KORE_MSG_WORKER_LOG		12
+ #define KORE_MSG_FATALX			13
++#define KORE_MSG_LIBRARY_DEADLINE	14
+ #define KORE_MSG_ACME_BASE		100
+ 
+ /* messages for applications should start at 201. */
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -80,6 +80,7 @@
+ u_int32_t kore_library_startup_timeout_ms = 30000;
+ u_int64_t kore_library_startup_deadline;
+ int kore_library_escalated;
++int kore_library_startup_timed_out;
+ 
+ #define LIB_MEMORY 1U
+ #define LIB_MESSAGES 2U
+@@ -99,6 +100,7 @@
+     kore_pid = getpid();
+     kore_quit = KORE_QUIT_NONE;
+     kore_library_escalated = 0;
++    kore_library_startup_timed_out = 0;
+     kore_library_startup_deadline = 0;
+     sig_recv = 0;
+     worker = NULL;
+@@ -162,6 +164,7 @@
+ void
+ kore_library_parent_step(u_int64_t maximum_wait)
+ {
++    maximum_wait = kore_library_workers_wait(maximum_wait);
+     kore_library_parent_drain(maximum_wait);
+     kore_worker_reap();
+ }
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -76,6 +76,10 @@
+ static void	worker_unlock(void);
+ static void	worker_reaper(pid_t, int);
+ static void	worker_runtime_teardown(void);
++static void worker_library_event(struct kore_worker *, int, int, int, int);
++static int worker_deadline_check(struct kore_worker *, u_int32_t);
++static void worker_deadline_note(struct kore_msg *, const void *);
++static void worker_http_cleanup(void) __attribute__((noreturn));
+ static int	worker_output_pending(void);
+ static void	worker_runtime_configure(void);
+ static void	worker_domain_check(struct kore_domain *);
+@@ -194,6 +198,7 @@
+ 	if (!kore_quiet)
+ 		kore_log(LOG_INFO, "all worker processes started");
+ 
++	kore_msg_register(KORE_MSG_LIBRARY_DEADLINE, worker_deadline_note);
+ 	return (KORE_RESULT_OK);
+ }
+ 
+@@ -214,10 +219,13 @@
+ 	kw->running = 1;
+ 	kw->pid = 0;
+ 
+-	kw->ready = 0;
++	__atomic_store_n(&kw->ready, 0, __ATOMIC_RELEASE);
++	__atomic_store_n(&kw->library_deadline_active, 0, __ATOMIC_RELEASE);
++	kw->library_timed_out = 0;
++	__atomic_store_n(&kw->library_clean, 0, __ATOMIC_RELEASE);
+ 	kw->has_lock = 0;
+ 	kw->active_route = NULL;
+-	kw->no_accept = worker_no_accept[id];
++	kw->no_accept = id < KORE_WORKER_MAX ? worker_no_accept[id] : 1;
+ 
+ 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, kw->pipe) == -1) {
+ 		kw->running = 0;
+@@ -248,6 +256,7 @@
+ 		break;
+ 	}
+ 
++	worker_library_event(kw, KORE_LIBRARY_WORKER_SPAWNING, 0, 0, 0);
+ 	if (kore_library_hooks.fork_prepare != NULL)
+ 		kore_library_hooks.fork_prepare(kore_library_hooks.arg);
+ 	kw->pid = fork();
+@@ -265,14 +274,20 @@
+ 		_exit(1);
+ 	} else {
+ 		for (;;) {
+-			if (kw->ready == 1)
++			if (__atomic_load_n(&kw->ready, __ATOMIC_ACQUIRE) == 1)
+ 				break;
+ 			pid = waitpid(kw->pid, &status, WNOHANG);
+ 			if (pid == kw->pid || (pid == -1 && errno == ECHILD)) {
++				worker_library_event(kw, KORE_LIBRARY_WORKER_EXITED,
++				    pid == -1 ? 0 : status, 0,
++				    !__atomic_load_n(&kw->library_clean, __ATOMIC_ACQUIRE));
+ 				kw->pid = 0;
+ 				kw->running = 0;
+ 				return (KORE_RESULT_ERROR);
+ 			}
++			(void)worker_deadline_check(kw, (u_int32_t)kore_time_ms());
++			if (deadline != 0 && kore_time_ms() >= deadline)
++				kore_library_startup_timed_out = 1;
+ 			if ((deadline != 0 && kore_time_ms() >= deadline) ||
+ 			    (kore_library_hooks.startup_cancel != NULL &&
+ 			    kore_library_hooks.startup_cancel(kore_library_hooks.arg)))
+@@ -288,6 +303,8 @@
+ 			return (KORE_RESULT_ERROR);
+ 		}
+ 	}
++	worker_library_event(kw, kw->restarted ? KORE_LIBRARY_WORKER_RESTARTED :
++	    KORE_LIBRARY_WORKER_STARTED, 0, 0, 0);
+ 
+ 	return (KORE_RESULT_OK);
+ }
+@@ -341,6 +358,7 @@
+ 				continue;
+ 
+ 			if (kw->pid != 0) {
++				(void)worker_deadline_check(kw, (u_int32_t)kore_time_ms());
+ 				pid = waitpid(kw->pid, &status, WNOHANG);
+ 				if (pid == 0)
+ 					continue;
+@@ -358,6 +376,9 @@
+ 					kore_seccomp_trace(kw->pid, status);
+ #endif
+ 
++				worker_library_event(kw, KORE_LIBRARY_WORKER_EXITED,
++				    pid == -1 ? 0 : status, 1,
++				    !__atomic_load_n(&kw->library_clean, __ATOMIC_ACQUIRE));
+ 				kw->pid = 0;
+ 				kw->running = 0;
+ 
+@@ -399,11 +420,10 @@
+ 				kore_log(LOG_WARNING,
+ 				    "worker %s (%d) did not exit, killing",
+ 				    kore_worker_name(kw->id), kw->pid);
+-				if (kill(kw->pid, SIGKILL) == -1 &&
+-				    errno == ESRCH) {
+-					kw->pid = 0;
+-					kw->running = 0;
+-				}
++				kw->library_timed_out = 2;
++				worker_library_event(kw, KORE_LIBRARY_WORKER_ESCALATED,
++				    0, 1, 1);
++				(void)kill(kw->pid, SIGKILL);
+ 			}
+ 		}
+ 
+@@ -558,8 +578,27 @@
+ 	}
+ 	worker = kw;
+ 	if (kore_library_hooks.process_start != NULL &&
+-	    !kore_library_hooks.process_start(kore_library_hooks.arg, kw))
++	    !kore_library_hooks.process_start(kore_library_hooks.arg, kw)) {
++		if (kore_library_hooks.worker_stopping != NULL)
++			kore_library_hooks.worker_stopping(kore_library_hooks.arg);
++		if (kore_library_hooks.worker_cleanup != NULL)
++			kore_library_hooks.worker_cleanup(kore_library_hooks.arg);
++		kore_server_cleanup();
++		kore_domain_cleanup();
++		kore_tls_cleanup();
++		kore_module_cleanup();
++		kore_curl_syscleanup();
++		kore_platform_event_cleanup();
++		kore_timer_cleanup();
++		kore_msg_cleanup();
++		http_parent_cleanup();
++		kore_log_set_logger(NULL);
++		kore_mem_cleanup();
++		if (kore_library_hooks.worker_exit != NULL)
++			_exit(kore_library_hooks.worker_exit(kore_library_hooks.arg));
++		__atomic_store_n(&worker->library_clean, 1, __ATOMIC_RELEASE);
+ 		_exit(1);
++	}
+ 
+ 	if (!kore_foreground)
+ 		closelog();
+@@ -644,8 +683,10 @@
+ 		kore_domain_callback(worker_domain_direct_tls);
+ #endif
+ 
+-	kore_worker_started();
+-	worker->restarted = 0;
++	if (kore_quit == KORE_QUIT_FATAL)
++		quit = 1;
++	else
++		kore_worker_started();
+ 
+ 	sigcall = worker_runtime_signal();
+ 
+@@ -772,6 +813,12 @@
+ 			kore_library_hooks.loop_turn(kore_library_hooks.arg);
+ 	}
+ 
++	worker_http_cleanup();
++}
++
++static void
++worker_http_cleanup(void)
++{
+ 	/* A clean worker exit must release intake before closing its IPC link. */
+ 	if (worker->no_accept == 0)
+ 		kore_worker_make_busy();
+@@ -916,7 +963,7 @@
+ 		    worker->ps->skip_runas ? "" : worker->ps->runas);
+ 	}
+ 
+-	worker->ready = 1;
++	__atomic_store_n(&worker->ready, 1, __ATOMIC_RELEASE);
+ }
+ 
+ static int
+@@ -938,8 +985,10 @@
+ worker_runtime_configure(void)
+ {
+ 	if (kore_library_hooks.worker_start != NULL &&
+-	    !kore_library_hooks.worker_start(kore_library_hooks.arg))
+-		fatalx("HTTP worker initialization failed");
++	    !kore_library_hooks.worker_start(kore_library_hooks.arg)) {
++		worker_runtime_teardown();
++		kore_quit = KORE_QUIT_FATAL;
++	}
+ }
+ 
+ static struct kore_runtime_call *
+@@ -1024,8 +1073,10 @@
+ 		if (kw->pid != pid)
+ 			continue;
+ 
+-		kw->msg[0]->evt.flags |= KORE_EVENT_READ;
+-		net_recv_flush(kw->msg[0]);
++		if (kw->msg[0] != NULL) {
++			kw->msg[0]->evt.flags |= KORE_EVENT_READ;
++			net_recv_flush(kw->msg[0]);
++		}
+ 
+ 		if (!kore_quiet) {
+ 			kore_log(LOG_NOTICE,
+@@ -1034,8 +1085,11 @@
+ 		}
+ 
+ 		kw->running = 0;
+-
+-		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
++		worker_library_event(kw, KORE_LIBRARY_WORKER_EXITED, status,
++		    kore_quit != KORE_QUIT_NONE,
++		    !__atomic_load_n(&kw->library_clean, __ATOMIC_ACQUIRE));
++
++		if (kore_quit != KORE_QUIT_NONE) {
+ 			kw->pid = 0;
+ 			break;
+ 		}
+@@ -1055,15 +1109,6 @@
+ 			    "worker %d died from sandbox violation", kw->id);
+ 		}
+ #endif
+-
+-		if (kw->id == KORE_WORKER_KEYMGR ||
+-		    kw->id == KORE_WORKER_ACME) {
+-			kore_log(LOG_CRIT,
+-			    "keymgr or acme process gone, stopping");
+-			kw->pid = 0;
+-			kore_quit = KORE_QUIT_FATAL;
+-			break;
+-		}
+ 
+ 		if (kw->pid == accept_lock->current &&
+ 		    worker_no_lock == 0)
+@@ -1090,7 +1135,8 @@
+ 		if (kore_quit == KORE_QUIT_NONE) {
+ 			kore_log(LOG_NOTICE, "restarting worker %d", kw->id);
+ 			kw->restarted = 1;
+-			kore_msg_parent_remove(kw);
++			if (kw->msg[0] != NULL)
++				kore_msg_parent_remove(kw);
+ 
+ 			if (!kore_worker_spawn(idx, kw->id, kw->cpu)) {
+ 				kore_quit = KORE_QUIT_FATAL;
+@@ -1285,3 +1331,77 @@
+ {
+ 	return (kore_workers != NULL);
+ }
++
++static void
++worker_library_event(struct kore_worker *kw, int kind, int status,
++    int expected, int abandoned)
++{
++	if (kore_library_hooks.worker_event != NULL)
++		kore_library_hooks.worker_event(kore_library_hooks.arg, kw,
++		    kind, status, expected, abandoned);
++}
++
++static void
++worker_deadline_note(struct kore_msg *msg, const void *data)
++{
++	(void)msg;
++	(void)data;
++}
++
++void
++kore_library_worker_deadline(u_int32_t milliseconds)
++{
++	if (worker == NULL || milliseconds > 0x7fffffffUL)
++		fatal("invalid dedicated child operation deadline");
++	__atomic_store_n(&worker->library_deadline_active, 0, __ATOMIC_RELEASE);
++	__atomic_store_n(&worker->library_deadline,
++	    (u_int32_t)kore_time_ms() + milliseconds, __ATOMIC_RELEASE);
++	__atomic_store_n(&worker->library_deadline_active,
++	    milliseconds != 0, __ATOMIC_RELEASE);
++	if (worker->msg[1] != NULL)
++		kore_msg_send(KORE_MSG_PARENT, KORE_MSG_LIBRARY_DEADLINE, NULL, 0);
++}
++
++static int
++worker_deadline_check(struct kore_worker *kw, u_int32_t now)
++{
++	u_int32_t left;
++	if (!__atomic_load_n(&kw->library_deadline_active, __ATOMIC_ACQUIRE) ||
++	    kw->pid <= 0 || !kw->running || kw->library_timed_out)
++		return (0);
++	left = __atomic_load_n(&kw->library_deadline, __ATOMIC_ACQUIRE) - now;
++	if (left != 0 && left <= 0x7fffffffUL)
++		return (0);
++	kw->library_timed_out = 1;
++	kore_library_escalated = 1;
++	__atomic_store_n(&kw->library_deadline_active, 0, __ATOMIC_RELEASE);
++	worker_library_event(kw, KORE_LIBRARY_WORKER_ESCALATED, 0,
++	    kore_quit != KORE_QUIT_NONE, 1);
++	(void)kill(kw->pid, SIGKILL);
++	return (1);
++}
++
++u_int64_t
++kore_library_workers_wait(u_int64_t maximum)
++{
++	u_int16_t index;
++	u_int32_t now, left;
++	struct kore_worker *kw;
++	if (kore_workers == NULL)
++		return (maximum);
++	now = (u_int32_t)kore_time_ms();
++	for (index = 0; index < worker_count; index++) {
++		kw = WORKER(index);
++		if (worker_deadline_check(kw, now))
++			return (0);
++		if (!__atomic_load_n(&kw->library_deadline_active, __ATOMIC_ACQUIRE) ||
++		    kw->pid <= 0 || !kw->running)
++			continue;
++		left = __atomic_load_n(&kw->library_deadline, __ATOMIC_ACQUIRE) - now;
++		if (left > 0x7fffffffUL)
++			left = 0;
++		if (left < maximum)
++			maximum = left;
++	}
++	return (maximum);
++}
+--- a/src/keymgr_openssl.c
++++ b/src/keymgr_openssl.c
+@@ -354,7 +354,11 @@
+ 	}
+ #endif
+ 
+-	kore_worker_started();
++	if (kore_library_hooks.worker_start != NULL &&
++	    !kore_library_hooks.worker_start(kore_library_hooks.arg))
++		quit = 1;
++	if (!quit)
++		kore_worker_started();
+ 
+ 	while (quit != 1) {
+ 		now = kore_time_ms();
+@@ -364,6 +368,8 @@
+ 		}
+ 
+ 		netwait = kore_timer_next_run(now);
++		if (kore_library_hooks.loop_wait != NULL)
++			netwait = kore_library_hooks.loop_wait(kore_library_hooks.arg, netwait);
+ 		kore_platform_event_wait(netwait);
+ 
+ 		if (sig_recv != 0) {
+@@ -388,12 +394,31 @@
+ 		now = kore_time_ms();
+ 		kore_timer_run(now);
+ 		kore_connection_prune(KORE_CONNECTION_PRUNE_DISCONNECT);
+-	}
+-
++		if (kore_library_hooks.loop_turn != NULL)
++			kore_library_hooks.loop_turn(kore_library_hooks.arg);
++		if (kore_quit == KORE_QUIT_FATAL)
++			quit = 1;
++	}
++
++	if (kore_library_hooks.worker_stopping != NULL)
++		kore_library_hooks.worker_stopping(kore_library_hooks.arg);
++	if (kore_library_hooks.worker_cleanup != NULL)
++		kore_library_hooks.worker_cleanup(kore_library_hooks.arg);
+ 	kore_keymgr_cleanup(1);
+ 	kore_platform_event_cleanup();
+ 	kore_connection_cleanup();
+ 	net_cleanup();
++	kore_server_cleanup();
++	kore_domain_cleanup();
++	kore_tls_cleanup();
++	kore_curl_syscleanup();
++	kore_timer_cleanup();
++	kore_log_set_logger(NULL);
++	kore_mem_cleanup();
++	if (kore_library_hooks.worker_exit != NULL)
++		_exit(kore_library_hooks.worker_exit(kore_library_hooks.arg));
++	__atomic_store_n(&worker->library_clean, 1, __ATOMIC_RELEASE);
++	_exit(0);
+ }
+ 
+ void
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -34,6 +34,7 @@
+ #include <stdlib.h>
+ 
+ #include "kore.h"
++#include "library.h"
+ #include "acme.h"
+ #include "curl.h"
+ 
+@@ -456,12 +457,19 @@
+ 	LIST_INIT(&orders);
+ 	LIST_INIT(&signops);
+ 
+-	kore_worker_started();
+-	acme_parse_directory();
++	if (kore_library_hooks.worker_start != NULL &&
++	    !kore_library_hooks.worker_start(kore_library_hooks.arg))
++		quit = 1;
++	if (!quit)
++		kore_worker_started();
++	if (!quit)
++		acme_parse_directory();
+ 
+ 	while (quit != 1) {
+ 		now = kore_time_ms();
+ 		netwait = kore_timer_next_run(now);
++		if (kore_library_hooks.loop_wait != NULL)
++			netwait = kore_library_hooks.loop_wait(kore_library_hooks.arg, netwait);
+ 		kore_platform_event_wait(netwait);
+ 
+ 		if (sig_recv != 0) {
+@@ -483,11 +491,31 @@
+ 		now = kore_time_ms();
+ 		kore_timer_run(now);
+ 		kore_connection_prune(KORE_CONNECTION_PRUNE_DISCONNECT);
+-	}
+-
++		if (kore_library_hooks.loop_turn != NULL)
++			kore_library_hooks.loop_turn(kore_library_hooks.arg);
++		if (kore_quit == KORE_QUIT_FATAL)
++			quit = 1;
++	}
++
++	if (kore_library_hooks.worker_stopping != NULL)
++		kore_library_hooks.worker_stopping(kore_library_hooks.arg);
++	if (kore_library_hooks.worker_cleanup != NULL)
++		kore_library_hooks.worker_cleanup(kore_library_hooks.arg);
+ 	kore_platform_event_cleanup();
+ 	kore_connection_cleanup();
+ 	net_cleanup();
++	http_cleanup();
++	kore_server_cleanup();
++	kore_domain_cleanup();
++	kore_tls_cleanup();
++	kore_curl_syscleanup();
++	kore_timer_cleanup();
++	kore_log_set_logger(NULL);
++	kore_mem_cleanup();
++	if (kore_library_hooks.worker_exit != NULL)
++		_exit(kore_library_hooks.worker_exit(kore_library_hooks.arg));
++	__atomic_store_n(&worker->library_clean, 1, __ATOMIC_RELEASE);
++	_exit(0);
+ }
+ 
+ void

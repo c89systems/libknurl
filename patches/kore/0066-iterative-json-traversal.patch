@@ -1,0 +1,140 @@
+--- a/src/json.c
++++ b/src/json.c
+@@ -233,31 +233,43 @@
+ kore_json_item_tobuf(struct kore_json_item *item, struct kore_buf *buf)
+ {
+ 	struct kore_json_item	*nitem;
++	struct kore_json_item	*local[16], **parents, **next;
++	size_t			depth, capacity;
+ 	char number[22];
+ 
++	parents = local;
++	depth = 0;
++	capacity = sizeof(local) / sizeof(local[0]);
++
++next_item:
+ 	if (item->name)
+ 		kore_buf_appendf(buf, "\"%s\":", item->name);
+ 
+ 	switch (item->type) {
+ 	case KORE_JSON_TYPE_OBJECT:
+-		kore_buf_appendf(buf, "{");
+-		TAILQ_FOREACH(nitem, &item->data.items, list) {
+-			kore_json_item_tobuf(nitem, buf);
+-
+-			if (TAILQ_NEXT(nitem, list))
+-				kore_buf_appendf(buf, ",");
+-		}
+-		kore_buf_appendf(buf, "}");
+-		break;
+ 	case KORE_JSON_TYPE_ARRAY:
+-		kore_buf_appendf(buf, "[");
+-		TAILQ_FOREACH(nitem, &item->data.items, list) {
+-			kore_json_item_tobuf(nitem, buf);
+-
+-			if (TAILQ_NEXT(nitem, list))
+-				kore_buf_appendf(buf, ",");
++		kore_buf_append(buf,
++		    item->type == KORE_JSON_TYPE_OBJECT ? "{" : "[", 1);
++		if ((nitem = TAILQ_FIRST(&item->data.items)) != NULL) {
++			if (depth == capacity) {
++				if (capacity > (size_t)-1 / sizeof(*parents) / 2)
++					fatal("JSON traversal size overflow");
++				if (parents == local) {
++					next = kore_malloc(capacity * 2 * sizeof(*parents));
++					memcpy(next, parents, depth * sizeof(*parents));
++				} else {
++					next = kore_realloc(parents,
++					    capacity * 2 * sizeof(*parents));
++				}
++				parents = next;
++				capacity *= 2;
++			}
++			parents[depth++] = item;
++			item = nitem;
++			goto next_item;
+ 		}
+-		kore_buf_appendf(buf, "]");
++		kore_buf_append(buf,
++		    item->type == KORE_JSON_TYPE_OBJECT ? "}" : "]", 1);
+ 		break;
+ 	case KORE_JSON_TYPE_STRING:
+ 		kore_buf_appendf(buf, "\"%s\"", item->data.string);
+@@ -293,6 +305,19 @@
+ 	default:
+ 		fatal("%s: unknown type %d", "kore_json_item_tobuf", item->type);
+ 	}
++	/* Stop at the requested subtree, independently of parent metadata. */
++	while (depth != 0) {
++		if ((nitem = TAILQ_NEXT(item, list)) != NULL) {
++			kore_buf_append(buf, ",", 1);
++			item = nitem;
++			goto next_item;
++		}
++		item = parents[--depth];
++		kore_buf_append(buf,
++		    item->type == KORE_JSON_TYPE_OBJECT ? "}" : "]", 1);
++	}
++	if (parents != local)
++		kore_free(parents);
+ }
+ 
+ void
+@@ -406,33 +431,36 @@
+ void
+ kore_json_item_free(struct kore_json_item *item)
+ {
+-	struct kore_json_item	*node;
++	TAILQ_HEAD(json_pending, kore_json_item) pending;
+ 
+ 	if (item == NULL)
+ 		return;
+ 
+-	switch (item->type) {
+-	case KORE_JSON_TYPE_OBJECT:
+-	case KORE_JSON_TYPE_ARRAY:
+-		while ((node = TAILQ_FIRST(&item->data.items)) != NULL) {
+-			TAILQ_REMOVE(&item->data.items, node, list);
+-			kore_json_item_free(node);
++	/* Transfer child lists before freeing their owner. The intrusive worklist
++	 * visits each node once without allocating or following parent pointers. */
++	TAILQ_INIT(&pending);
++	TAILQ_INSERT_TAIL(&pending, item, list);
++	while ((item = TAILQ_FIRST(&pending)) != NULL) {
++		TAILQ_REMOVE(&pending, item, list);
++		switch (item->type) {
++		case KORE_JSON_TYPE_OBJECT:
++		case KORE_JSON_TYPE_ARRAY:
++			TAILQ_CONCAT(&pending, &item->data.items, list);
++			break;
++		case KORE_JSON_TYPE_STRING:
++			kore_free(item->data.string);
++			break;
++		case KORE_JSON_TYPE_NUMBER:
++		case KORE_JSON_TYPE_LITERAL:
++		case KORE_JSON_TYPE_INTEGER:
++		case KORE_JSON_TYPE_INTEGER_U64:
++			break;
++		default:
++			fatal("%s: unknown type %d", "kore_json_item_free", item->type);
+ 		}
+-		break;
+-	case KORE_JSON_TYPE_STRING:
+-		kore_free(item->data.string);
+-		break;
+-	case KORE_JSON_TYPE_NUMBER:
+-	case KORE_JSON_TYPE_LITERAL:
+-	case KORE_JSON_TYPE_INTEGER:
+-	case KORE_JSON_TYPE_INTEGER_U64:
+-		break;
+-	default:
+-		fatal("%s: unknown type %d", "kore_json_item_free", item->type);
++		kore_free(item->name);
++		kore_free(item);
+ 	}
+-
+-	kore_free(item->name);
+-	kore_free(item);
+ }
+ 
+ static struct kore_json_item *

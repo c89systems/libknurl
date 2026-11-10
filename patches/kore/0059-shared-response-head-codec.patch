@@ -1,0 +1,297 @@
+diff --git a/src/http.c b/src/http.c
+--- a/src/http.c
++++ b/src/http.c
+@@ -132,7 +132,7 @@
+ static int	http_release_buffer(struct netbuf *);
+ static void	http_error_response(struct connection *, int);
+ static int	http_data_convert(void *, void **, void *, int);
+-static void	http_write_response_cookie(struct http_cookie *);
++static void	http_write_response_cookie(struct http_cookie *, struct kore_buf *);
+ static int	http_body_update(struct http_request *, const void *, size_t);
+ static void	http_pipeline_save(struct connection *, const void *, size_t);
+ static void	http_argument_add(struct http_request *, char *, char *,
+@@ -2653,140 +2653,142 @@
+ 		kore_connection_disconnect(c);
+ }
+ 
++int
++http_response_error_body(int status, struct kore_buf *out)
++{
++	const char *text;
++
++	if (!http_pretty_error || status < 400)
++		return (0);
++	text = http_status_text(status);
++	kore_buf_appendf(out, pretty_error_fmt, status, text, status, text);
++	return (1);
++}
++
++/* One codec serves normal Kore responses and the library's bounded sender.
++ * It builds bytes only; the caller owns queueing and connection teardown. */
++int
++http_response_head_build(struct http_request *req, struct connection *c,
++    int status, int flags, u_int64_t len,
++    const struct http_response_field *extra, size_t count, struct kore_buf *out)
++{
++	struct http_cookie *ck;
++	struct http_header *hdr;
++	size_t i;
++	char version, number[21];
++	const char *conn;
++	int connection_close, skip;
++
++	kore_buf_reset(out);
++	version = req != NULL && (req->flags & HTTP_VERSION_1_0) ? '0' : '1';
++	kore_buf_appendf(out, "HTTP/1.%c %d %s\r\n", version, status,
++	    http_status_text(status));
++	if (status == 100) {
++		kore_buf_append(out, "\r\n", 2);
++		if (!(flags & HTTP_RESPONSE_HEAD_COUNTED))
++			return ((flags & HTTP_RESPONSE_HEAD_CLOSE) != 0);
++	}
++	if (status != 100)
++		kore_buf_append(out, http_version, http_version_len);
++	connection_close = (flags & HTTP_RESPONSE_HEAD_CLOSE) ||
++	    (c->flags & CONN_CLOSE_EMPTY) || version == '0';
++	if (req != NULL && !(flags & HTTP_RESPONSE_HEAD_COUNTED))
++		c->http_response_count++;
++	if (!connection_close && req != NULL &&
++	    http_request_header(req, "connection", &conn) &&
++	    (*conn == 'c' || *conn == 'C') && !strcasecmp(conn, "close"))
++		connection_close = 1;
++	if (c->proto != CONN_PROTO_WEBSOCKET &&
++	    !(flags & HTTP_RESPONSE_HEAD_UPGRADE)) {
++		if (req != NULL && http_keepalive_max_requests > 0 &&
++		    c->http_response_count >= http_keepalive_max_requests)
++			connection_close = 1;
++		if (http_keepalive_time && !connection_close) {
++			if (status != 100) {
++				kore_buf_appendf(out, "connection: keep-alive\r\n");
++				kore_buf_appendf(out, "keep-alive: timeout=%d\r\n",
++				    http_keepalive_time);
++			}
++		} else {
++			connection_close = 1;
++			if (status != 100)
++				kore_buf_appendf(out, "connection: close\r\n");
++		}
++	} else {
++		connection_close = 0;
++	}
++	if (status == 100)
++		return (connection_close);
++	if (c->tls && http_hsts_enable)
++		kore_buf_appendf(out, "strict-transport-security: "
++		    "max-age=%s; includeSubDomains\r\n",
++		    kore_u64_text(http_hsts_enable, number));
++	if (req != NULL) {
++		TAILQ_FOREACH(ck, &req->resp_cookies, list)
++			http_write_response_cookie(ck, out);
++		TAILQ_FOREACH(hdr, &req->resp_headers, list) {
++			skip = 0;
++			for (i = 0; i < count; i++) {
++				if (strcasecmp(extra[i].name, "set-cookie") &&
++				    !strcasecmp(extra[i].name, hdr->header)) {
++					skip = 1;
++					break;
++				}
++			}
++			if (!skip)
++				kore_buf_appendf(out, "%s: %s\r\n",
++				    hdr->header, hdr->value);
++		}
++	}
++	for (i = 0; i < count; i++)
++		kore_buf_appendf(out, "%s: %s\r\n", extra[i].name, extra[i].value);
++	if (req != NULL && req->rt != NULL && req->rt->dom != NULL) {
++		TAILQ_FOREACH(hdr, &req->rt->dom->headers, list)
++			kore_buf_appendf(out, "%s: %s\r\n", hdr->header, hdr->value);
++	}
++	if (status >= 200 && status != 204 &&
++	    !(flags & HTTP_RESPONSE_HEAD_NO_LENGTH))
++		kore_buf_appendf(out, "content-length: %s\r\n",
++		    kore_u64_text(len, number));
++	kore_buf_append(out, "\r\n", 2);
++	return (connection_close);
++}
++
+ static void
+ http_response_normal(struct http_request *req, struct connection *c,
+     int status, const void *d, size_t len)
+ {
+-	struct kore_buf		buf;
+-	struct http_cookie	*ck;
+-	struct http_header	*hdr;
+-	char			version;
+-	char hsts[21];
+-	const char		*conn, *text;
+-	int			connection_close, send_body;
+-
+-	send_body = 1;
+-	text = http_status_text(status);
+-
+-	kore_buf_reset(header_buf);
+-
+-	if (req != NULL) {
+-		if (req->flags & HTTP_VERSION_1_0)
+-			version = '0';
+-		else
+-			version = '1';
+-	} else {
+-		version = '1';
+-	}
+-
+-	kore_buf_appendf(header_buf, "HTTP/1.%c %d %s\r\n",
+-	    version, status, text);
++	struct kore_buf buf;
++	int flags;
+ 
+ 	if (status == 100) {
+-		kore_buf_append(header_buf, "\r\n", 2);
++		(void)http_response_head_build(req, c, status, 0, 0,
++		    NULL, 0, header_buf);
+ 		net_send_queue(c, header_buf->data, header_buf->offset);
+ 		return;
+ 	}
+-
+-	kore_buf_append(header_buf, http_version, http_version_len);
+-
+-	if ((c->flags & CONN_CLOSE_EMPTY) ||
+-	    (req != NULL && (req->flags & HTTP_VERSION_1_0))) {
+-		connection_close = 1;
+-	} else {
+-		connection_close = 0;
+-	}
+-	if (req != NULL)
+-		req->owner->http_response_count++;
+-
+-	if (connection_close == 0 && req != NULL) {
+-		if (http_request_header(req, "connection", &conn)) {
+-			if ((*conn == 'c' || *conn == 'C') &&
+-			    !strcasecmp(conn, "close")) {
+-				connection_close = 1;
+-			}
+-		}
+-	}
+-
+ 	kore_buf_init(&buf, 1024);
+-
+-	/* Note that req CAN be NULL. */
+-	if (req == NULL || req->owner->proto != CONN_PROTO_WEBSOCKET) {
+-		if (req != NULL && http_keepalive_max_requests > 0 &&
+-		    req->owner->http_response_count >= http_keepalive_max_requests)
+-			connection_close = 1;
+-		if (http_keepalive_time && connection_close == 0) {
+-			kore_buf_appendf(header_buf,
+-			    "connection: keep-alive\r\n");
+-			kore_buf_appendf(header_buf,
+-			    "keep-alive: timeout=%d\r\n", http_keepalive_time);
+-		} else {
+-			c->flags |= CONN_CLOSE_EMPTY;
+-			kore_buf_appendf(header_buf, "connection: close\r\n");
+-		}
+-	}
+-
+-	if (c->tls && http_hsts_enable) {
+-		kore_buf_appendf(header_buf, "strict-transport-security: ");
+-		kore_buf_appendf(header_buf,
+-		    "max-age=%s; includeSubDomains\r\n",
+-		    kore_u64_text(http_hsts_enable, hsts));
+-	}
+-
+-	if (http_pretty_error && d == NULL && status >= 400) {
+-		kore_buf_appendf(&buf, pretty_error_fmt,
+-		    status, text, status, text);
+-
++	if (d == NULL && http_response_error_body(status, &buf)) {
+ 		d = buf.data;
+ 		len = buf.offset;
+ 	}
+-
+-	if (req != NULL) {
+-		TAILQ_FOREACH(ck, &(req->resp_cookies), list)
+-			http_write_response_cookie(ck);
+-
+-		TAILQ_FOREACH(hdr, &(req->resp_headers), list) {
+-			kore_buf_appendf(header_buf, "%s: %s\r\n",
+-			    hdr->header, hdr->value);
+-		}
+-
+-		TAILQ_FOREACH(hdr, &(req->rt->dom->headers), list) {
+-			kore_buf_appendf(header_buf, "%s: %s\r\n",
+-			    hdr->header, hdr->value);
+-		}
+-
+-		if (status != 204 && status >= 200 &&
+-		    !(req->flags & HTTP_REQUEST_NO_CONTENT_LENGTH)) {
+-			kore_buf_appendf(header_buf,
+-			    "content-length: %lu\r\n", (unsigned long)(len));
+-		}
+-	} else {
+-		if (status != 204 && status >= 200) {
+-			kore_buf_appendf(header_buf,
+-			    "content-length: %lu\r\n", (unsigned long)(len));
+-		}
+-	}
+-
+-	kore_buf_append(header_buf, "\r\n", 2);
++	flags = req != NULL && (req->flags & HTTP_REQUEST_NO_CONTENT_LENGTH)
++	    ? HTTP_RESPONSE_HEAD_NO_LENGTH : 0;
++	if (http_response_head_build(req, c, status, flags, (u_int64_t)len,
++	    NULL, 0, header_buf))
++		c->flags |= CONN_CLOSE_EMPTY;
+ 	net_send_queue(c, header_buf->data, header_buf->offset);
+-
+-	if (req != NULL && req->method == HTTP_METHOD_HEAD)
+-		send_body = 0;
+-
+-	if (d != NULL && send_body)
++	if (d != NULL && (req == NULL || req->method != HTTP_METHOD_HEAD))
+ 		net_send_queue(c, d, len);
+-
+ 	if (!(c->flags & CONN_CLOSE_EMPTY) && !(c->flags & CONN_IS_BUSY))
+ 		http_start_recv(c);
+-
+ 	if (req != NULL)
+ 		req->content_length = len;
+-
+ 	kore_buf_cleanup(&buf);
+ }
+ 
+ static void
+-http_write_response_cookie(struct http_cookie *ck)
++http_write_response_cookie(struct http_cookie *ck, struct kore_buf *out)
+ {
+ 	struct tm		tm;
+ 	char			expires[HTTP_DATE_MAXSIZE];
+@@ -2822,7 +2824,7 @@
+ 	if (ck->flags & HTTP_COOKIE_SECURE)
+ 		kore_buf_appendf(ckhdr_buf, "; Secure");
+ 
+-	kore_buf_appendf(header_buf, "set-cookie: %s\r\n",
++	kore_buf_appendf(out, "set-cookie: %s\r\n",
+ 	    kore_buf_stringify(ckhdr_buf, NULL));
+ }
+ 
+diff --git a/include/kore/http.h b/include/kore/http.h
+--- a/include/kore/http.h
++++ b/include/kore/http.h
+@@ -385,6 +385,18 @@
+ void 		http_server_version(const char *);
+ void		http_process(void);
+ const char	*http_status_text(int);
++#define HTTP_RESPONSE_HEAD_COUNTED 1
++#define HTTP_RESPONSE_HEAD_CLOSE 2
++#define HTTP_RESPONSE_HEAD_NO_LENGTH 4
++#define HTTP_RESPONSE_HEAD_UPGRADE 8
++struct http_response_field {
++	const char *name;
++	const char *value;
++};
++int http_response_head_build(struct http_request *, struct connection *, int,
++    int, u_int64_t, const struct http_response_field *, size_t, struct kore_buf *);
++int http_response_error_body(int, struct kore_buf *);
++
+ const char	*http_method_text(int);
+ time_t		http_date_to_time(char *);
+ char		*http_validate_header(char *);

@@ -1,0 +1,319 @@
+#define _POSIX_C_SOURCE 200809L
+#include <knurl/knurl.h>
+#include "vectis-services.h"
+#include <knurl/lonejson.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#define CHECK(t)                                                               \
+    do {                                                                       \
+        if (!(t)) {                                                            \
+            fprintf(stderr, "openapi %d: %s\n", __LINE__, #t);                 \
+            return 1;                                                          \
+        }                                                                      \
+    } while (0)
+struct record {
+    char *name;
+};
+static const lonejson_field fields[] = {
+    LONEJSON_FIELD_STRING_ALLOC_REQ(struct record, name, "name")};
+LONEJSON_MAP_DEFINE(record_map, struct record, fields);
+static int called;
+static knurl_status never_called(knurl_request *request, knurl_reply *reply,
+                                 void *data, knurl_error *error)
+{
+    (void)request;
+    (void)reply;
+    (void)data;
+    (void)error;
+    ++called;
+    return KNURL_STATE;
+}
+static char *cstr(knurl_owned_bytes *bytes)
+{
+    char *out = malloc(bytes->length + 1);
+    if (out != NULL) {
+        memcpy(out, bytes->data, bytes->length);
+        out[bytes->length] = 0;
+    }
+    return out;
+}
+static int metadata(void)
+{
+    knurl_router *router;
+    knurl_route_config route;
+    knurl_openapi_route_doc doc;
+    knurl_openapi_document document;
+    knurl_openapi_response empty;
+    knurl_openapi_schema schema;
+    knurl_owned_bytes bytes;
+    lonejson_json_value value;
+    lonejson *runtime;
+    lonejson_error native;
+    knurl_error error;
+    char summary[] = "quoted \"summary\"\nline", tag[] = "test: #tag",
+         component[] = "A/B~ \"";
+    const char *tags[1];
+    char *json, *yaml;
+    CHECK(knurl_router_new(&router, &error) == KNURL_OK);
+    knurl_route_config_init(&route);
+    route.path = "/items/:id";
+    route.path_kind = KNURL_PATH_PARAMS;
+    route.handler = never_called;
+    CHECK(knurl_router_route(router, &route, NULL, &error) == KNURL_OK);
+    CHECK(knurl_router_route_count(router) == 1);
+    knurl_openapi_route_doc_init(&doc);
+    tags[0] = tag;
+    doc.summary = summary;
+    doc.operation_id = "readItems";
+    doc.tags = tags;
+    doc.tag_count = 1;
+    schema = knurl_openapi_lonejson_schema(component, &record_map);
+    CHECK(knurl_openapi_request_json(&doc, schema, &error) == KNURL_OK);
+    CHECK(knurl_openapi_response_json(&doc, 200, "done\nnow", schema, &error) ==
+          KNURL_OK);
+    CHECK(knurl_openapi_response_json(&doc, 999, "bad", schema, &error) ==
+          KNURL_INVALID);
+    CHECK(knurl_router_openapi_doc(
+              router, KNURL_HTTP_METHODS_GET | KNURL_HTTP_METHODS_POST,
+              "/items/:id?", &doc, &error) == KNURL_OK);
+    CHECK(knurl_router_openapi_doc(router, KNURL_HTTP_METHODS_GET,
+                                   "/items/{id}", &doc,
+                                   &error) == KNURL_CONFLICT);
+    memset(summary, 'x', sizeof(summary) - 1);
+    memset(tag, 'x', sizeof(tag) - 1);
+    memset(component, 'x', sizeof(component) - 1);
+    knurl_openapi_route_doc_cleanup(&doc);
+    knurl_openapi_route_doc_init(&doc);
+    memset(&empty, 0, sizeof(empty));
+    empty.status_code = 204;
+    empty.description = "empty";
+    doc.responses = &empty;
+    doc.response_count = 1;
+    CHECK(knurl_router_openapi_doc(router, KNURL_HTTP_METHODS_DELETE,
+                                   "/items/:id", &doc, &error) == KNURL_OK);
+    CHECK(knurl_router_openapi_doc(router, 0, "/invalid", &doc, &error) ==
+          KNURL_INVALID);
+    CHECK(knurl_router_openapi_doc(router,
+                                   KNURL_HTTP_METHODS_ALL &
+                                       ~(KNURL_HTTP_METHODS_GET |
+                                         KNURL_HTTP_METHODS_POST |
+                                         KNURL_HTTP_METHODS_DELETE),
+                                   "/items/:id", &doc, &error) == KNURL_OK);
+    CHECK(knurl_router_route_count(router) == 1 && called == 0);
+    knurl_openapi_document_init(&document);
+    document.title = "quoted \"API\"\n";
+    document.version = "1.2";
+    CHECK(knurl_router_openapi(router, &document, KNURL_OPENAPI_JSON, &bytes,
+                               &error) == KNURL_OK);
+    runtime = lonejson_new(NULL, &native);
+    CHECK(runtime != NULL);
+    lonejson_json_value_init(runtime, &value);
+    CHECK(lonejson_json_value_set_buffer(&value, bytes.data, bytes.length,
+                                         &native) == LONEJSON_STATUS_OK);
+    json = cstr(&bytes);
+    CHECK(json != NULL);
+    CHECK(strstr(json, "\"/items/{id}\"") != NULL &&
+          strstr(json, "\"summary\":\"quoted \\\"summary\\\"\\nline\"") !=
+              NULL);
+    CHECK(strstr(json, "#/components/schemas/A~1B~0%20%22") != NULL &&
+          strstr(json, "\"required\":[\"name\"]") != NULL);
+    CHECK(strstr(json, "\"tags\":[\"test: #tag\"]") != NULL &&
+          strstr(json, "\"204\":{\"description\":\"empty\"}") != NULL);
+    CHECK(strstr(json, "\"propfind\"") != NULL &&
+          strstr(json, "\"move\"") != NULL);
+    free(json);
+    knurl_owned_bytes_cleanup(&bytes);
+    lonejson_json_value_cleanup(&value);
+    lonejson_free(runtime);
+    CHECK(knurl_router_openapi(router, &document, KNURL_OPENAPI_YAML, &bytes,
+                               &error) == KNURL_OK);
+    yaml = cstr(&bytes);
+    CHECK(yaml != NULL);
+    CHECK(strstr(yaml, "  \"/items/{id}\":\n") != NULL &&
+          strstr(yaml, "summary: \"quoted \\\"summary\\\"\\nline\"") != NULL);
+    CHECK(strstr(yaml, "\"#/components/schemas/A~1B~0%20%22\"") != NULL &&
+          strstr(yaml, "required:\n        - \"name\"") != NULL);
+    CHECK(strstr(yaml, "    propfind:\n") != NULL &&
+          strstr(yaml, "    move:\n") != NULL);
+    free(yaml);
+    knurl_owned_bytes_cleanup(&bytes);
+    document.max_bytes = 1;
+    CHECK(knurl_router_openapi(router, &document, KNURL_OPENAPI_JSON, &bytes,
+                               &error) == KNURL_LIMIT &&
+          bytes.data == NULL && bytes.length == 0);
+    CHECK(knurl_router_openapi(router, &document, KNURL_OPENAPI_YAML, &bytes,
+                               &error) == KNURL_LIMIT &&
+          bytes.data == NULL && bytes.length == 0);
+    CHECK(knurl_router_openapi(router, NULL, (knurl_openapi_format)3, &bytes,
+                               &error) == KNURL_INVALID);
+    CHECK(knurl_router_destroy(router, &error) == KNURL_OK && called == 0);
+    return 0;
+}
+static int graph(void)
+{
+    lonejson_map *maps;
+    lonejson_field *members;
+    char (*names)[20];
+    knurl_router *router;
+    knurl_openapi_route_doc doc;
+    knurl_owned_bytes bytes;
+    knurl_error error;
+    size_t i;
+    char *text;
+    maps = calloc(512, sizeof(*maps));
+    members = calloc(512, sizeof(*members));
+    names = calloc(512, sizeof(*names));
+    CHECK(maps != NULL && members != NULL && names != NULL);
+    for (i = 0; i < 512; ++i) {
+        snprintf(names[i], sizeof(names[i]), "node%lu", (unsigned long)i);
+        maps[i].name = names[i];
+        maps[i].struct_size = sizeof(void *);
+        maps[i].fields = &members[i];
+        maps[i].field_count = 1;
+        members[i].json_key = "child";
+        members[i].kind = LONEJSON_FIELD_KIND_OBJECT_ARRAY;
+        members[i].submap = &maps[(i + 1) % 512];
+    }
+    CHECK(knurl_router_new(&router, &error) == KNURL_OK);
+    knurl_openapi_route_doc_init(&doc);
+    doc.request_schema = knurl_openapi_lonejson_schema(NULL, &maps[0]);
+    CHECK(knurl_router_openapi_doc(router, KNURL_HTTP_METHODS_POST, "/graph",
+                                   &doc, &error) == KNURL_OK);
+    CHECK(knurl_router_openapi(router, NULL, KNURL_OPENAPI_JSON, &bytes,
+                               &error) == KNURL_OK);
+    text = cstr(&bytes);
+    CHECK(text != NULL && strstr(text, "\"node511\"") != NULL &&
+          strstr(text, "\"items\":{\"$ref\":\"#/components/schemas/node0\"}") !=
+              NULL);
+    free(text);
+    knurl_owned_bytes_cleanup(&bytes);
+    CHECK(knurl_router_openapi(router, NULL, KNURL_OPENAPI_YAML, &bytes,
+                               &error) == KNURL_OK);
+    text = cstr(&bytes);
+    CHECK(text != NULL &&
+          strstr(text,
+                 "items:\n            $ref: \"#/components/schemas/node0\"") !=
+              NULL);
+    free(text);
+    knurl_owned_bytes_cleanup(&bytes);
+    doc.request_schema = knurl_openapi_lonejson_schema("node0", &maps[1]);
+    CHECK(knurl_router_openapi_doc(router, KNURL_HTTP_METHODS_GET, "/conflict",
+                                   &doc, &error) == KNURL_OK);
+    CHECK(knurl_router_openapi(router, NULL, KNURL_OPENAPI_JSON, &bytes,
+                               &error) == KNURL_CONFLICT &&
+          bytes.data == NULL);
+    CHECK(knurl_router_destroy(router, &error) == KNURL_OK);
+    free(maps);
+    free(members);
+    free(names);
+    return 0;
+}
+static reference_status reference_never(struct reference_app *app,
+                                        struct reference_request *request,
+                                        struct reference_response *reply,
+                                        void *data, reference_error *error)
+{
+    (void)app;
+    (void)request;
+    (void)reply;
+    (void)data;
+    (void)error;
+    ++called;
+    return REFERENCE_STATE;
+}
+static int reference_metadata(void)
+{
+    struct reference_app app;
+    struct reference_route_config route;
+    struct reference_openapi_document document;
+    reference_openapi_route_doc doc;
+    reference_openapi_schema schema;
+    struct reference_mutable_bytes bytes;
+    reference_error host;
+    knurl_server_config config;
+    knurl_listener_config listener;
+    knurl_error error;
+    char *text, *large;
+    size_t length = 10485761UL;
+    memset(&app, 0, sizeof(app));
+    knurl_server_config_init(&config);
+    knurl_listener_config_init(&listener);
+    config.listeners = &listener;
+    config.listener_count = 1;
+    CHECK(knurl_server_new(&config, &app.server, &error) == KNURL_OK);
+    memset(&route, 0, sizeof(route));
+    route.method = KNURL_HTTP_GET;
+    route.path = "/items/:id";
+    route.path_kind = 1;
+    route.handler = reference_never;
+    CHECK(reference_route_register(&app, &route, &host) == REFERENCE_OK);
+    reference_openapi_route_doc_init(&doc);
+    doc.summary = "Vectis metadata";
+    schema = reference_openapi_lonejson_schema("Item", &record_map);
+    CHECK(reference_openapi_request_json(&doc, schema, &host) == REFERENCE_OK);
+    CHECK(reference_openapi_response_json(&doc, 200, "OK", schema, &host) ==
+          REFERENCE_OK);
+    CHECK(reference_openapi_attach(&app, KNURL_HTTP_METHODS_GET, route.path,
+                                   &doc, &host) == REFERENCE_OK);
+    CHECK(reference_openapi_attach(&app, KNURL_HTTP_METHODS_GET, route.path,
+                                   &doc, &host) == REFERENCE_CONFLICT);
+    reference_openapi_route_doc_cleanup(&doc);
+    CHECK(reference_openapi_generate(&app, NULL, 0, &bytes, &host) ==
+          REFERENCE_OK);
+    text = malloc(bytes.size + 1);
+    CHECK(text != NULL);
+    memcpy(text, bytes.data, bytes.size);
+    text[bytes.size] = 0;
+    CHECK(strstr(text, "Vectis API") && strstr(text, "/items/{id}") &&
+          strstr(text, "#/components/schemas/Item"));
+    free(text);
+    reference_mutable_bytes_cleanup(&bytes);
+    reference_openapi_document_init(&document);
+    CHECK(!strcmp(document.title, "Vectis API") &&
+          !strcmp(document.version, "0.0.0"));
+    CHECK(reference_openapi_generate(&app, &document, 1, &bytes, &host) ==
+              REFERENCE_OK &&
+          bytes.size > 0);
+    reference_mutable_bytes_cleanup(&bytes);
+    CHECK(reference_openapi_generate(&app, NULL, 99, &bytes, &host) ==
+              REFERENCE_INVALID &&
+          !bytes.data && !bytes.size);
+    large = malloc(length + 1);
+    CHECK(large != NULL);
+    memset(large, 's', length);
+    large[length] = 0;
+    route.path = "/large";
+    route.path_kind = 0;
+    CHECK(reference_route_register(&app, &route, &host) == REFERENCE_OK);
+    reference_openapi_route_doc_init(&doc);
+    doc.summary = large;
+    CHECK(reference_openapi_attach(&app, KNURL_HTTP_METHODS_GET, route.path,
+                                   &doc, &host) == REFERENCE_OK);
+    free(large);
+    CHECK(reference_openapi_generate(&app, NULL, 0, &bytes, &host) ==
+              REFERENCE_OK &&
+          bytes.size > length);
+    reference_mutable_bytes_cleanup(&bytes);
+    CHECK(knurl_router_route_count(knurl_server_router(app.server)) == 2 &&
+          !called);
+    CHECK(knurl_server_destroy(app.server, &error) == KNURL_OK);
+    reference_route_cleanup(&app);
+    return 0;
+}
+static void *on_default_stack(void *data)
+{
+    *(int *)data = graph();
+    return NULL;
+}
+int main(void)
+{
+    pthread_t thread;
+    int result = 1;
+    CHECK(metadata() == 0);
+    CHECK(reference_metadata() == 0);
+    CHECK(pthread_create(&thread, NULL, on_default_stack, &result) == 0);
+    CHECK(pthread_join(thread, NULL) == 0 && result == 0);
+    return 0;
+}

@@ -1,0 +1,19 @@
+diff --git a/src/worker.c b/src/worker.c
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -642,6 +642,15 @@ kore_worker_entry(struct kore_worker *kw)
+ #endif
+ 		}
+ 
++		/* Partial headers have no http_request to keep the event loop awake. */
++		if (worker_active_connections > 0) {
++			if (next_timeo <= now) {
++				netwait = 0;
++			} else if (netwait > next_timeo - now) {
++				netwait = next_timeo - now;
++			}
++		}
++
+ #if defined(KORE_USE_PYTHON)
+ 		if (kore_python_coro_pending())
+ 			netwait = 0;

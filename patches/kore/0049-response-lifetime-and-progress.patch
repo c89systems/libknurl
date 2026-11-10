@@ -1,0 +1,92 @@
+--- a/include/kore/library.h
++++ b/include/kore/library.h
+@@ -15,6 +15,8 @@
+     void (*parent_drain)(void *, u_int64_t);
+     void (*parent_cleanup)(void *);
+     void (*worker_cleanup)(void *);
++    int (*request_release)(void *, struct http_request *);
++    void (*net_progress)(void *, struct netbuf *, size_t, int);
+     int (*process_start)(void *, struct kore_worker *);
+     int (*worker_start)(void *);
+     void (*worker_stopping)(void *);
+--- a/include/kore/http.h
++++ b/include/kore/http.h
+@@ -257,6 +257,7 @@
+ #define HTTP_REQUEST_RETAIN_EXTRA	0x0040
+ #define HTTP_REQUEST_NO_CONTENT_LENGTH	0x0080
+ #define HTTP_REQUEST_AUTHED		0x0100
++#define HTTP_REQUEST_LIBRARY_MANAGED	0x0200
+ 
+ #define HTTP_VERSION_1_1		0x1000
+ #define HTTP_VERSION_1_0		0x2000
+--- a/src/http.c
++++ b/src/http.c
+@@ -412,6 +412,13 @@
+ 		fatal("A page handler returned an unknown result: %d", r);
+ 	}
+ 
++	/* The library owns request lifetime through asynchronous response drain. */
++	if ((req->flags & HTTP_REQUEST_LIBRARY_MANAGED) &&
++	    !(req->flags & HTTP_REQUEST_DELETE)) {
++		http_request_sleep(req);
++		return;
++	}
++
+ 	if (req->rt->dom->accesslog || kore_accesslog_enabled())
+ 		kore_accesslog(req);
+ 
+@@ -461,6 +468,14 @@
+ 	struct http_arg		*q, *qnext;
+ 	struct http_header	*hdr, *next;
+ 	struct http_cookie	*ck, *cknext;
++
++	if ((req->flags & HTTP_REQUEST_LIBRARY_MANAGED) &&
++	    kore_library_hooks.request_release != NULL &&
++	    !kore_library_hooks.request_release(kore_library_hooks.arg, req)) {
++		req->flags &= ~HTTP_REQUEST_DELETE;
++		http_request_sleep(req);
++		return;
++	}
+ 
+ 	if (req->rt != NULL && req->rt->on_free != NULL)
+ 		kore_runtime_http_request_free(req->rt->on_free, req);
+--- a/src/net.c
++++ b/src/net.c
+@@ -19,6 +19,7 @@
+ #include <sys/types.h>
+ 
+ #include "kore.h"
++#include "library.h"
+ #if !defined(KORE_NO_HTTP)
+ #include "http.h"
+ #endif
+@@ -240,8 +241,12 @@
+ 		smin = c->snb->b_len - c->snb->s_off;
+ 		len = MIN(NETBUF_SEND_PAYLOAD_MAX, smin);
+ 
++		r = 0;
+ 		if (!c->write(c, len, &r))
+ 			return (KORE_RESULT_ERROR);
++		if (kore_library_hooks.net_progress != NULL)
++			kore_library_hooks.net_progress(kore_library_hooks.arg,
++			    c->snb, r, (c->snb->flags & NETBUF_MUST_RESEND) != 0);
+ 		if (!(c->evt.flags & KORE_EVENT_WRITE))
+ 			return (KORE_RESULT_OK);
+ #if !defined(KORE_NO_HTTP)
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -776,11 +776,12 @@
+ 	if (worker->no_accept == 0)
+ 		kore_worker_make_busy();
+ 	kore_connection_cleanup();
++	/* Retire library requests while native request/header pools still exist. */
++	if (kore_library_hooks.worker_cleanup != NULL)
++		kore_library_hooks.worker_cleanup(kore_library_hooks.arg);
+ #if !defined(KORE_NO_HTTP)
+ 	http_cleanup();
+ #endif
+-	if (kore_library_hooks.worker_cleanup != NULL)
+-		kore_library_hooks.worker_cleanup(kore_library_hooks.arg);
+ 	kore_server_cleanup();
+ 	kore_platform_event_cleanup();
+ 	kore_domain_cleanup();

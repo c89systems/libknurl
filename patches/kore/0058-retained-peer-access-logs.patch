@@ -1,0 +1,75 @@
+diff --git a/src/accesslog.c b/src/accesslog.c
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -156,6 +156,12 @@
+ void
+ kore_accesslog(struct http_request *req)
+ {
++	kore_accesslog_snapshot(req, NULL);
++}
++
++void
++kore_accesslog_snapshot(struct http_request *req, const char *peer)
++{
+ 	char content_length[21];
+ 	struct timespec		ts;
+ 	struct tm		*tm;
+@@ -224,26 +230,33 @@
+ 	cn = "-";
+ 	cn_value = NULL;
+ 
+-	if (req->owner->tls_cert != NULL) {
++	if (req->owner != NULL && req->owner->tls_cert != NULL) {
+ 		if (kore_x509_subject_name(req->owner, &cn_value,
+ 		    KORE_X509_COMMON_NAME_ONLY))
+ 			cn = cn_value;
+ 	}
+ 
+-	switch (req->owner->family) {
+-	case AF_INET:
+-		ptr = inet_ntop(req->owner->family,
+-		    &(req->owner->addr.ipv4.sin_addr), addr, sizeof(addr));
+-		break;
+-	case AF_INET6:
+-		ptr = inet_ntop(req->owner->family,
+-		    &(req->owner->addr.ipv6.sin6_addr), addr, sizeof(addr));
+-		break;
+-	case AF_UNIX:
++	if (peer != NULL) {
++		kore_strlcpy(addr, peer, sizeof(addr));
++		ptr = addr;
++	} else if (req->owner != NULL) {
++		switch (req->owner->family) {
++		case AF_INET:
++			ptr = inet_ntop(req->owner->family,
++			    &(req->owner->addr.ipv4.sin_addr), addr, sizeof(addr));
++			break;
++		case AF_INET6:
++			ptr = inet_ntop(req->owner->family,
++			    &(req->owner->addr.ipv6.sin6_addr), addr, sizeof(addr));
++			break;
++		case AF_UNIX:
++			ptr = NULL;
++			break;
++		default:
++			fatal("unknown family %d", req->owner->family);
++		}
++	} else {
+ 		ptr = NULL;
+-		break;
+-	default:
+-		fatal("unknown family %d", req->owner->family);
+ 	}
+ 
+ 	if (ptr == NULL) {
+diff --git a/include/kore/http.h b/include/kore/http.h
+--- a/include/kore/http.h
++++ b/include/kore/http.h
+@@ -376,6 +376,7 @@
+ extern struct kore_pool	http_header_pool;
+ 
+ void		kore_accesslog(struct http_request *);
++void		kore_accesslog_snapshot(struct http_request *, const char *);
+ 
+ void		http_init(void);
+ void		http_parent_init(void);

@@ -1,0 +1,25 @@
+--- a/include/kore/library.h
++++ b/include/kore/library.h
+@@ -40,6 +40,7 @@
+ int kore_worker_available(void);
+ void kore_library_parent_step(u_int64_t);
+ void kore_library_parent_drain(u_int64_t);
++void kore_library_http_pipeline_save(struct connection *, const void *, size_t);
+ /* Logical read/write mask, 0 on success or an errno value on failure. */
+ int kore_library_watch_update(int, unsigned int, unsigned int, void *);
+ void kore_library_cleanup(void);
+--- a/src/http.c
++++ b/src/http.c
+@@ -1610,6 +1610,12 @@
+ 		if (!http_header_recv(c->rnb))
+ 			kore_connection_disconnect(c);
+ 	}
++}
++
++void
++kore_library_http_pipeline_save(struct connection *c, const void *data, size_t len)
++{
++	http_pipeline_save(c, data, len);
+ }
+ 
+ static void

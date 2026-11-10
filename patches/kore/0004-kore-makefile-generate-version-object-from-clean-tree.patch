@@ -1,0 +1,13 @@
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -317,6 +317,9 @@ tools-install:
+ $(OBJDIR)/%.o: src/%.c
+ 	$(CC) $(CFLAGS) -c $< -o $@
+ 
++$(OBJDIR)/version.o: $(VERSION).c
++	$(CC) $(CFLAGS) -c $< -o $@
++
+ src/kore.c: $(VERSION).c
+ 
+ src/python.c: $(PYTHON_CURLOPT)

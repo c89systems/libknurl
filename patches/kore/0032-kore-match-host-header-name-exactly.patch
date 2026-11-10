@@ -1,0 +1,12 @@
+diff --git a/src/http.c b/src/http.c
+--- a/src/http.c
++++ b/src/http.c
+@@ -885,7 +885,7 @@ http_header_recv(struct netbuf *nb)
+ 	skip = 0;
+ 	host = NULL;
+ 	for (i = 0; i < h; i++) {
+-		if (strncasecmp(headers[i], "host", 4))
++		if (strncasecmp(headers[i], "host:", 5))
+ 			continue;
+ 
+ 		if ((host = http_validate_header(headers[i])) == NULL) {

@@ -1,0 +1,30 @@
+diff --git a/src/http.c b/src/http.c
+--- a/src/http.c
++++ b/src/http.c
+@@ -722,15 +722,25 @@ http_response_fileref(struct http_request *req, int status,
+     struct kore_fileref *ref)
+ {
++	struct http_header	*hdr;
+ 	struct tm		*tm;
+ 	time_t			mtime;
+ 	char			tbuf[128];
+ 	const char		*media_type, *modified;
++	int		has_content_type;
+ 
+ 	if (req->owner == NULL)
+ 		return;
+ 
++	has_content_type = 0;
++	TAILQ_FOREACH(hdr, &req->resp_headers, list) {
++		if (!strcasecmp(hdr->header, "content-type")) {
++			has_content_type = 1;
++			break;
++		}
++	}
++
+ 	media_type = http_media_type(ref->path);
+-	if (media_type != NULL)
++	if (!has_content_type && media_type != NULL)
+ 		http_response_header(req, "content-type", media_type);
+ 
+ 	if (http_request_header(req, "if-modified-since", &modified)) {

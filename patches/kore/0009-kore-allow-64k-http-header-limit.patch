@@ -1,0 +1,48 @@
+diff --git a/include/kore/http.h b/include/kore/http.h
+index 0704e4d..21e1435 100644
+--- a/include/kore/http.h
++++ b/include/kore/http.h
+@@ -353,7 +353,7 @@ struct http_media_type {
+ 
+ extern size_t		http_body_max;
+ extern u_int16_t	http_body_timeout;
+-extern u_int16_t	http_header_max;
++extern size_t		http_header_max;
+ extern u_int16_t	http_header_timeout;
+ extern u_int32_t	http_request_ms;
+ extern u_int64_t	http_hsts_enable;
+diff --git a/src/config.c b/src/config.c
+index 704a033..31bd040 100644
+--- a/src/config.c
++++ b/src/config.c
+@@ -1451,13 +1451,16 @@ configure_filemap_index(char *option)
+ static int
+ configure_http_header_max(char *option)
+ {
++	u_int64_t	value;
+ 	int		err;
+ 
+-	http_header_max = kore_strtonum(option, 10, 1, 65535, &err);
+-	if (err != KORE_RESULT_OK) {
++	value = kore_strtonum64(option, 0, &err);
++	if (err != KORE_RESULT_OK || value == 0 ||
++	    value > (u_int64_t)SIZE_MAX) {
+ 		kore_log(LOG_ERR, "bad http_header_max value '%s'", option);
+ 		return (KORE_RESULT_ERROR);
+ 	}
+ 
++	http_header_max = (size_t)value;
+ 	return (KORE_RESULT_OK);
+ }
+diff --git a/src/http.c b/src/http.c
+index 70f7fd6..7f5062f 100644
+--- a/src/http.c
++++ b/src/http.c
+@@ -176,6 +176,6 @@ u_int16_t	http_body_timeout = HTTP_BODY_TIMEOUT;
+ u_int32_t	http_request_limit = HTTP_REQUEST_LIMIT;
+ u_int64_t	http_hsts_enable = HTTP_HSTS_ENABLE;
+-u_int16_t	http_header_max = HTTP_HEADER_MAX_LEN;
++size_t		http_header_max = HTTP_HEADER_MAX_LEN;
+ u_int16_t	http_keepalive_time = HTTP_KEEPALIVE_TIME;
+ u_int16_t	http_header_timeout = HTTP_HEADER_TIMEOUT;
+ u_int32_t	http_keepalive_max_requests = 0;

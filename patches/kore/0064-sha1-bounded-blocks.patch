@@ -1,0 +1,45 @@
+diff --git a/src/sha1.c b/src/sha1.c
+--- a/src/sha1.c
++++ b/src/sha1.c
+@@ -56,7 +56,7 @@ SHA1Transform(u_int32_t state[5], const u_int8_t buffer[SHA1_BLOCK_LENGTH])
+ {
+ 	u_int32_t a, b, c, d, e;
+-	u_int8_t workspace[SHA1_BLOCK_LENGTH];
+-	CHAR64LONG16 *block = (CHAR64LONG16 *)workspace;
++	CHAR64LONG16 workspace;
++	CHAR64LONG16 *block = &workspace;
+ 
+ 	(void)memcpy(block, buffer, SHA1_BLOCK_LENGTH);
+ 
+@@ -122,18 +122,23 @@ SHA1Update(SHA1_CTX *context, const u_int8_t *data, size_t len)
+ {
+-	size_t i, j;
++	size_t part, j;
+ 
+ 	j = (size_t)((context->count >> 3) & 63);
+ 	context->count += ((u_int64_t)len << 3);
+-	if ((j + len) > 63) {
+-		(void)memcpy(&context->buffer[j], data, (i = 64-j));
++	part = SHA1_BLOCK_LENGTH - j;
++	if (len >= part) {
++		(void)memcpy(&context->buffer[j], data, part);
+ 		SHA1Transform(context->state, context->buffer);
+-		for ( ; i + 63 < len; i += 64)
+-			SHA1Transform(context->state, &data[i]);
++		data += part;
++		len -= part;
++		while (len >= SHA1_BLOCK_LENGTH) {
++			SHA1Transform(context->state, data);
++			data += SHA1_BLOCK_LENGTH;
++			len -= SHA1_BLOCK_LENGTH;
++		}
+ 		j = 0;
+-	} else {
+-		i = 0;
+ 	}
+-	(void)memcpy(&context->buffer[j], &data[i], len - i);
++	if (len != 0)
++		(void)memcpy(&context->buffer[j], data, len);
+ }
+ 
+ /*

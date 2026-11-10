@@ -1,0 +1,49 @@
+diff --git a/src/curl.c b/src/curl.c
+index b0831d61c3482f52ad3b9c759615d3ecca07d20f..177489ed64f6e8c4cb6b0ddf461985cbfaad871a 100644
+--- a/src/curl.c
++++ b/src/curl.c
+@@ -116,7 +116,7 @@ kore_curl_sysinit(void)
+ 		fatal("curl_multi_init(): failed");
+ 
+ 	/* XXX - make configurable? */
+-	curl_multi_setopt(multi, CURLMOPT_MAXCONNECTS, 500);
++	curl_multi_setopt(multi, CURLMOPT_MAXCONNECTS, 500L);
+ 
+ 	if ((res = curl_multi_setopt(multi,
+ 	    CURLMOPT_SOCKETFUNCTION, curl_socket)) != CURLM_OK)
+@@ -172,10 +172,10 @@ kore_curl_init(struct kore_curl *client, const char *url, int flags)
+ 	curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, kore_curl_tobuf);
+ 
+ 	curl_easy_setopt(handle, CURLOPT_URL, url);
+-	curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1);
++	curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
+ 	curl_easy_setopt(handle, CURLOPT_PRIVATE, client);
+ 	curl_easy_setopt(handle, CURLOPT_USERAGENT, user_agent);
+-	curl_easy_setopt(handle, CURLOPT_TIMEOUT, kore_curl_timeout);
++	curl_easy_setopt(handle, CURLOPT_TIMEOUT, (long)kore_curl_timeout);
+ 	curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, client->errbuf);
+ 
+ 	client->flags = flags;
+@@ -422,11 +422,11 @@ kore_curl_http_setup(struct kore_curl *client, int method, const void *data,
+ 	case HTTP_METHOD_OPTIONS:
+ 		break;
+ 	case HTTP_METHOD_HEAD:
+-		curl_easy_setopt(client->handle, CURLOPT_NOBODY, 1);
++		curl_easy_setopt(client->handle, CURLOPT_NOBODY, 1L);
+ 		break;
+ 	case HTTP_METHOD_PUT:
+ 		has_body = 1;
+-		curl_easy_setopt(client->handle, CURLOPT_UPLOAD, 1);
++		curl_easy_setopt(client->handle, CURLOPT_UPLOAD, 1L);
+ 		break;
+ 	case HTTP_METHOD_PATCH:
+ 	case HTTP_METHOD_DELETE:
+@@ -434,7 +434,7 @@ kore_curl_http_setup(struct kore_curl *client, int method, const void *data,
+ 		/* fallthrough */
+ 	case HTTP_METHOD_POST:
+ 		has_body = 1;
+-		curl_easy_setopt(client->handle, CURLOPT_POST, 1);
++		curl_easy_setopt(client->handle, CURLOPT_POST, 1L);
+ 		break;
+ 	default:
+ 		fatal("%s: unknown method %d", __func__, method);

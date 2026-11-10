@@ -1,0 +1,145 @@
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -884,7 +884,15 @@
+ void		kore_accesslog_cleanup(void);
+ void		kore_accesslog_run(void *, u_int64_t);
+ void		kore_accesslog_gather(void *, u_int64_t, int);
++int		kore_accesslog_enabled(void);
++#define KORE_ACCESSLOG_MAX_STATUS_LEVEL_RULES	32
+ #if defined(KORE_USE_PSLOG)
++struct kore_accesslog_status_level_rule {
++	u_int16_t	status;
++	pslog_level	level;
++};
++void		kore_accesslog_set_levels(pslog_level, pslog_level,
++		    pslog_level, const struct kore_accesslog_status_level_rule *, size_t);
+ void		kore_accesslog_set_logger(pslog_logger *);
+ void		kore_accesslog_set_real_ip_resolver(const char *(*)(
+ 		    struct http_request *, const char *, char *, size_t));
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -56,6 +56,12 @@
+ static struct kore_buf	*logbuf = NULL;
+ #if defined(KORE_USE_PSLOG)
+ static pslog_logger	*accesslog_logger = NULL;
++static pslog_level	accesslog_success_level = PSLOG_LEVEL_TRACE;
++static pslog_level	accesslog_client_error_level = PSLOG_LEVEL_WARN;
++static pslog_level	accesslog_server_error_level = PSLOG_LEVEL_ERROR;
++static struct kore_accesslog_status_level_rule
++	accesslog_status_levels[KORE_ACCESSLOG_MAX_STATUS_LEVEL_RULES];
++static size_t	accesslog_status_level_count = 0;
+ static const char	*(*accesslog_real_ip_resolver)(struct http_request *,
+ 			    const char *, char *, size_t) = NULL;
+ static const char	*(*accesslog_correlation_id_resolver)(struct http_request *,
+@@ -70,6 +76,41 @@
+ }
+ 
+ void
++kore_accesslog_set_levels(pslog_level success_level,
++    pslog_level client_error_level, pslog_level server_error_level,
++    const struct kore_accesslog_status_level_rule *status_levels,
++    size_t status_level_count)
++{
++	if (status_level_count > KORE_ACCESSLOG_MAX_STATUS_LEVEL_RULES)
++		status_level_count = KORE_ACCESSLOG_MAX_STATUS_LEVEL_RULES;
++
++	accesslog_success_level = success_level;
++	accesslog_client_error_level = client_error_level;
++	accesslog_server_error_level = server_error_level;
++	accesslog_status_level_count = status_level_count;
++	if (status_level_count > 0 && status_levels != NULL) {
++		memcpy(accesslog_status_levels, status_levels,
++		    sizeof(*status_levels) * status_level_count);
++	}
++}
++
++static pslog_level
++accesslog_pslog_level(u_int16_t status)
++{
++	size_t	idx;
++
++	for (idx = 0; idx < accesslog_status_level_count; idx++) {
++		if (accesslog_status_levels[idx].status == status)
++			return (accesslog_status_levels[idx].level);
++	}
++	if (status >= 500)
++		return (accesslog_server_error_level);
++	if (status >= 400)
++		return (accesslog_client_error_level);
++	return (accesslog_success_level);
++}
++
++void
+ kore_accesslog_set_real_ip_resolver(const char *(*resolver)(
+     struct http_request *, const char *, char *, size_t))
+ {
+@@ -84,6 +125,16 @@
+ }
+ #endif
+ 
++int
++kore_accesslog_enabled(void)
++{
++#if defined(KORE_USE_PSLOG)
++	return (accesslog_logger != NULL);
++#else
++	return (0);
++#endif
++}
++
+ void
+ kore_accesslog_worker_init(void)
+ {
+@@ -200,6 +251,10 @@
+ #if defined(KORE_USE_PSLOG)
+ 	accesslog_pslog(req, method, http_version, addr);
+ #endif
++	if (req->rt->dom->accesslog == 0) {
++		kore_free(cn_value);
++		return;
++	}
+ 
+ 	now = kore_time_ms();
+ 	if ((now - time_cache) >= 1000) {
+@@ -280,6 +335,7 @@
+ 	const char	*real_ip;
+ 	const char	*cid;
+ 	size_t		count;
++	pslog_level	level;
+ 
+ 	if (accesslog_logger == NULL)
+ 		return;
+@@ -311,8 +367,11 @@
+ 	if (cid != NULL && *cid != '\0')
+ 		fields[count++] = pslog_str("cid", cid);
+ 
+-	pslog_fields(accesslog_logger, PSLOG_LEVEL_INFO, "http request",
+-	    fields, count);
++	level = accesslog_pslog_level((u_int16_t)req->status);
++	if (level != PSLOG_LEVEL_DISABLED) {
++		pslog_fields(accesslog_logger, level, "http request", fields,
++		    count);
++	}
+ }
+ #endif
+ 
+--- a/src/http.c
++++ b/src/http.c
+@@ -419,7 +419,7 @@
+ 		fatal("A page handler returned an unknown result: %d", r);
+ 	}
+ 
+-	if (req->rt->dom->accesslog)
++	if (req->rt->dom->accesslog || kore_accesslog_enabled())
+ 		kore_accesslog(req);
+ 
+ 	req->flags |= HTTP_REQUEST_DELETE;
+@@ -1964,7 +1964,7 @@
+ 	http_response(req, rdr->status, NULL, 0);
+ 	kore_buf_cleanup(&location);
+ 
+-	if (dom->accesslog)
++	if (dom->accesslog || kore_accesslog_enabled())
+ 		kore_accesslog(req);
+ 
+ 	return (KORE_RESULT_OK);

@@ -1,0 +1,50 @@
+diff --git a/include/kore/http.h b/include/kore/http.h
+index fc2e9cc..0704e4d 100644
+--- a/include/kore/http.h
++++ b/include/kore/http.h
+@@ -22,6 +22,8 @@
+ #include <sys/types.h>
+ #include <sys/queue.h>
+ 
++#include <regex.h>
++
+ #include "sha2.h"
+ 
+ #if defined(__cplusplus)
+@@ -71,6 +73,11 @@ extern "C" {
+ #define HTTP_STATE_COMPLETE	2
+ #define HTTP_STATE_RETRY	3
+ 
++struct kore_domain;
++struct kore_fileref;
++struct kore_json_item;
++struct netbuf;
++
+ struct http_runlock_queue {
+ 	struct http_request		*req;
+ 	LIST_ENTRY(http_runlock_queue)	list;
+diff --git a/src/seccomp.c b/src/seccomp.c
+index 53f2da8..c3b355e 100644
+--- a/src/seccomp.c
++++ b/src/seccomp.c
+@@ -26,6 +26,9 @@
+ #include <linux/seccomp.h>
+ #include <linux/filter.h>
+ #include <linux/audit.h>
++#if defined(__aarch64__)
++#include <asm/ptrace.h>
++#endif
+ 
+ #include <stddef.h>
+ #include <sched.h>
+@@ -479,7 +482,9 @@ seccomp_register_violation(pid_t pid)
+ 	int				idx;
+ 	struct kore_worker		*kw;
+ 	struct iovec			iov;
+-#if defined(__arm__)
++#if defined(__aarch64__)
++	struct user_pt_regs		regs;
++#elif defined(__arm__)
+ 	struct pt_regs			regs;
+ #else
+ 	struct user_regs_struct		regs;

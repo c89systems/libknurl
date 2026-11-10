@@ -1,0 +1,133 @@
+diff --git a/include/kore/kore.h b/include/kore/kore.h
+index 394f967..87eddf8 100644
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -891,6 +891,13 @@ void		kore_accesslog_init(u_int16_t);
+ void		kore_accesslog_worker_init(void);
+ void		kore_accesslog_run(void *, u_int64_t);
+ void		kore_accesslog_gather(void *, u_int64_t, int);
++#if defined(KORE_USE_PSLOG)
++void		kore_accesslog_set_logger(pslog_logger *);
++void		kore_accesslog_set_real_ip_resolver(const char *(*)(
++		    struct http_request *, const char *, char *, size_t));
++void		kore_accesslog_set_correlation_id_resolver(const char *(*)(
++		    struct http_request *, char *, size_t));
++#endif
+ 
+ #if !defined(KORE_NO_HTTP)
+ /* auth.c */
+diff --git a/src/accesslog.c b/src/accesslog.c
+index 7a85216..fd73e17 100644
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -44,12 +44,45 @@ static void	accesslog_lock(struct kore_worker *);
+ static void	accesslog_unlock(struct kore_worker *);
+ static void	accesslog_flush_cb(struct kore_domain *);
+ static void	accesslog_flush(struct kore_domain *, u_int64_t, int);
++#if defined(KORE_USE_PSLOG)
++static void	accesslog_pslog(struct http_request *, const char *,
++		    const char *, const char *);
++#endif
+ 
+ static u_int64_t	time_cache = 0;
+ static char		tbuf[128] = { '\0' };
+ 
+ static struct kore_buf	*logbuf = NULL;
++#if defined(KORE_USE_PSLOG)
++static pslog_logger	*accesslog_logger = NULL;
++static const char	*(*accesslog_real_ip_resolver)(struct http_request *,
++			    const char *, char *, size_t) = NULL;
++static const char	*(*accesslog_correlation_id_resolver)(struct http_request *,
++			    char *, size_t) = NULL;
++#endif
+ 
++#if defined(KORE_USE_PSLOG)
++void
++kore_accesslog_set_logger(pslog_logger *logger)
++{
++	accesslog_logger = logger;
++}
++
++void
++kore_accesslog_set_real_ip_resolver(const char *(*resolver)(
++    struct http_request *, const char *, char *, size_t))
++{
++	accesslog_real_ip_resolver = resolver;
++}
++
++void
++kore_accesslog_set_correlation_id_resolver(const char *(*resolver)(
++    struct http_request *, char *, size_t))
++{
++	accesslog_correlation_id_resolver = resolver;
++}
++#endif
++
+ void
+ kore_accesslog_worker_init(void)
+ {
+@@ -127,6 +144,10 @@ kore_accesslog(struct http_request *req)
+ 		addr[1] = '\0';
+ 	}
+ 
++#if defined(KORE_USE_PSLOG)
++	accesslog_pslog(req, method, http_version, addr);
++#endif
++
+ 	now = kore_time_ms();
+ 	if ((now - time_cache) >= 1000) {
+ 		time(&curtime);
+@@ -208,6 +245,53 @@ kore_accesslog(struct http_request *req)
+ 	accesslog_unlock(worker);
+ }
+ 
++#if defined(KORE_USE_PSLOG)
++static void
++accesslog_pslog(struct http_request *req, const char *method,
++    const char *http_version, const char *client_ip)
++{
++	pslog_field	fields[10];
++	char		real_ip_buf[INET6_ADDRSTRLEN];
++	char		cid_buf[64];
++	const char	*real_ip;
++	const char	*cid;
++	size_t		count;
++
++	if (accesslog_logger == NULL)
++		return;
++
++	real_ip = NULL;
++	if (accesslog_real_ip_resolver != NULL) {
++		real_ip = accesslog_real_ip_resolver(req, client_ip,
++		    real_ip_buf, sizeof(real_ip_buf));
++	}
++	if (real_ip == NULL)
++		real_ip = client_ip;
++	cid = NULL;
++	if (accesslog_correlation_id_resolver != NULL)
++		cid = accesslog_correlation_id_resolver(req, cid_buf,
++		    sizeof(cid_buf));
++
++	count = 0;
++	fields[count++] = pslog_str("client_ip", client_ip);
++	fields[count++] = pslog_str("real_ip", real_ip);
++	fields[count++] = pslog_str("method", method);
++	fields[count++] = pslog_str("path", req->path);
++	fields[count++] = pslog_str("http_version", http_version);
++	fields[count++] = pslog_u64("status", (pslog_uint64)req->status);
++	fields[count++] = pslog_u64("bytes", (pslog_uint64)req->content_length);
++	fields[count++] = pslog_str("referer", req->referer != NULL ?
++	    req->referer : "-");
++	fields[count++] = pslog_str("user_agent", req->agent != NULL ?
++	    req->agent : "-");
++	if (cid != NULL && *cid != '\0')
++		fields[count++] = pslog_str("cid", cid);
++
++	pslog_fields(accesslog_logger, PSLOG_LEVEL_INFO, "http request",
++	    fields, count);
++}
++#endif
++
+ void
+ kore_accesslog_gather(void *arg, u_int64_t now, int force)
+ {

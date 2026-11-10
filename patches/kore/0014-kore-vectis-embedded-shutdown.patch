@@ -1,0 +1,118 @@
+diff --git a/src/kore.c b/src/kore.c
+index 25b5072..8f340d3 100644
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -81,7 +81,9 @@ static size_t		proctitle_maxlen = 0;
+ static void	usage(void);
+ static void	version(void);
+ 
++#if !defined(KORE_VECTIS_EMBEDDED_RUNTIME)
+ static void	kore_write_kore_pid(void);
++#endif
+ static void	kore_proctitle_setup(void);
+ static void	kore_server_shutdown(void);
+ static void	kore_server_start(int, char *[]);
+@@ -293,8 +293,10 @@ kore_server_configure(int argc, char **argv)
+ 		kore_free(rcall);
+ 	}
+ 
++#if !defined(KORE_VECTIS_EMBEDDED_RUNTIME)
+ 	if (unlink(kore_pidfile) == -1 && errno != ENOENT)
+ 		kore_log(LOG_NOTICE, "failed to remove pidfile (%s)", errno_s);
++#endif
+ 
+ 	kore_server_cleanup();
+ 
+@@ -761,19 +761,24 @@ kore_shutdown(void)
+ 
+ void
+ kore_proctitle(const char *title)
+ {
++#if defined(KORE_VECTIS_EMBEDDED_RUNTIME)
++	(void)title;
++	return;
++#else
+ 	int	len;
+ 
+ 	kore_argv[1] = NULL;
+ 
+ 	len = snprintf(kore_argv[0], proctitle_maxlen, "%s %s",
+ 	    basename(kore_progname), title);
+ 	if (len == -1 || (size_t)len >= proctitle_maxlen)
+ 		fatal("proctitle '%s' too large", title);
+ 
+ 	memset(kore_argv[0] + len, 0, proctitle_maxlen - len);
++#endif
+ }
+ 
+ void
+ kore_hooks_set(const char *config, const char *teardown, const char *daemonized)
+ {
+@@ -789,25 +794,29 @@ kore_hooks_set(const char *config, const char *teardown, const char *daemonized)
+ #endif
+ }
+ 
+ static void
+ kore_proctitle_setup(void)
+ {
++#if defined(KORE_VECTIS_EMBEDDED_RUNTIME)
++	proctitle_maxlen = 0;
++#else
+ 	int		i;
+ 	char		*p;
+ 
+ 	proctitle_maxlen = 0;
+ 
+ 	for (i = 0; environ[i] != NULL; i++) {
+ 		if ((p = strdup(environ[i])) == NULL)
+ 			fatal("strdup");
+ 		proctitle_maxlen += strlen(environ[i]) + 1;
+ 		environ[i] = p;
+ 	}
+ 
+ 	for (i = 0; kore_argv[i] != NULL; i++)
+ 		proctitle_maxlen += strlen(kore_argv[i]) + 1;
++#endif
+ }
+ 
+ static void
+ kore_server_start(int argc, char *argv[])
+ {
+@@ -830,6 +837,11 @@ kore_server_start(int argc, char *argv[])
+ 	struct kore_runtime_call	*rcall;
+ #endif
+ 
++#if defined(KORE_SINGLE_BINARY)
++	(void)argc;
++	(void)argv;
++#endif
++
+ 	if (!kore_quiet) {
+ 		kore_log(LOG_INFO, "%s %s starting, built=%s",
+ 		    __progname, kore_version, kore_build_date);
+@@ -876,7 +883,9 @@ kore_server_start(int argc, char *argv[])
+ 	}
+ 
+ 	kore_pid = getpid();
++#if !defined(KORE_VECTIS_EMBEDDED_RUNTIME)
+ 	kore_write_kore_pid();
++#endif
+ 
+ #if !defined(KORE_SINGLE_BINARY)
+ 	if (kore_runtime_count() == 0 || rarg0 == NULL)
+@@ -1016,6 +1025,7 @@ kore_server_cleanup(void)
+ 	net_cleanup();
+ }
+ 
++#if !defined(KORE_VECTIS_EMBEDDED_RUNTIME)
+ static void
+ kore_write_kore_pid(void)
+ {
+@@ -1029,6 +1039,7 @@ kore_write_kore_pid(void)
+ 		fclose(fp);
+ 	}
+ }
++#endif
+ 
+ static void
+ kore_call_parent_configure(int argc, char **argv)

@@ -1,0 +1,118 @@
+diff --git a/include/kore/kore.h b/include/kore/kore.h
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -288,6 +288,8 @@
+ 	u_int64_t			http_timeout;
+ 	u_int64_t			http_send_start;
+ 	u_int32_t			http_response_count;
++	u_int8_t			*http_pipeline;
++	size_t				http_pipeline_len;
+ 	struct kore_runtime_call	*ws_connect;
+ 	struct kore_runtime_call	*ws_message;
+ 	struct kore_runtime_call	*ws_disconnect;
+diff --git a/src/connection.c b/src/connection.c
+--- a/src/connection.c
++++ b/src/connection.c
+@@ -97,6 +97,8 @@
+ 	c->http_timeout = http_header_timeout * 1000;
+ 	c->http_send_start = 0;
+ 	c->http_response_count = 0;
++	c->http_pipeline = NULL;
++	c->http_pipeline_len = 0;
+ 	TAILQ_INIT(&(c->http_requests));
+ #endif
+ 
+@@ -375,6 +377,7 @@
+ 	}
+ 
+ 	kore_free(c->ws_connect);
++	kore_free(c->http_pipeline);
+ 	kore_free(c->ws_message);
+ 	kore_free(c->ws_disconnect);
+ #endif
+diff --git a/src/http.c b/src/http.c
+--- a/src/http.c
++++ b/src/http.c
+@@ -142,6 +142,7 @@
+ static int	http_data_convert(void *, void **, void *, int);
+ static void	http_write_response_cookie(struct http_cookie *);
+ static int	http_body_update(struct http_request *, const void *, size_t);
++static void	http_pipeline_save(struct connection *, const void *, size_t);
+ static void	http_argument_add(struct http_request *, char *, char *,
+ 		    int, int);
+ static int	http_check_redirect(struct http_request *,
+@@ -963,6 +964,8 @@
+ 			if (req->method == HTTP_METHOD_DELETE ||
+ 			    req->method == HTTP_METHOD_PROPFIND ||
+ 			    req->method == HTTP_METHOD_MKCOL) {
++				http_pipeline_save(c, end_headers,
++				    nb->s_off - len);
+ 				req->flags |= HTTP_REQUEST_COMPLETE;
+ 				return (KORE_RESULT_OK);
+ 			}
+@@ -974,6 +977,7 @@
+ 		}
+ 
+ 		if (req->content_length == 0) {
++			http_pipeline_save(c, end_headers, nb->s_off - len);
+ 			c->http_timeout = 0;
+ 			req->flags |= HTTP_REQUEST_COMPLETE;
+ 			req->flags &= ~HTTP_REQUEST_EXPECT_BODY;
+@@ -1019,13 +1023,20 @@
+ 		SHA256Init(&req->hashctx);
+ 		c->http_timeout = http_body_timeout * 1000;
+ 
+-		if (!http_body_update(req, end_headers, nb->s_off - len)) {
++		if ((u_int64_t)(nb->s_off - len) > req->content_length) {
++			http_pipeline_save(c,
++			    end_headers + req->content_length,
++			    (nb->s_off - len) - req->content_length);
++		}
++		if (!http_body_update(req, end_headers,
++		    MIN((u_int64_t)(nb->s_off - len), req->content_length))) {
+ 			req->flags |= HTTP_REQUEST_DELETE;
+ 			http_error_response(req->owner,
+ 			    HTTP_STATUS_INTERNAL_ERROR);
+ 			return (KORE_RESULT_OK);
+ 		}
+ 	} else {
++		http_pipeline_save(c, end_headers, nb->s_off - len);
+ 		c->http_timeout = 0;
+ 	}
+ 
+@@ -1521,9 +1532,35 @@
+ void
+ http_start_recv(struct connection *c)
+ {
++	size_t			len;
++	u_int8_t		*data;
++
+ 	c->http_start = kore_time_ms();
+ 	c->http_timeout = http_header_timeout * 1000;
++	data = c->http_pipeline;
++	len = c->http_pipeline_len;
++	c->http_pipeline = NULL;
++	c->http_pipeline_len = 0;
+ 	net_recv_reset(c, http_header_max, http_header_recv);
++	if (len > 0) {
++		memcpy(c->rnb->buf, data, len);
++		c->rnb->s_off = len;
++		kore_free(data);
++		if (!http_header_recv(c->rnb))
++			kore_connection_disconnect(c);
++	}
++}
++
++static void
++http_pipeline_save(struct connection *c, const void *data, size_t len)
++{
++	if (len == 0)
++		return;
++	if (c->http_pipeline != NULL)
++		fatal("%s: pipeline already saved", __func__);
++	c->http_pipeline = kore_malloc(len);
++	memcpy(c->http_pipeline, data, len);
++	c->http_pipeline_len = len;
+ }
+ 
+ void

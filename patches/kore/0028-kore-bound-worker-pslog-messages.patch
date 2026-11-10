@@ -1,0 +1,32 @@
+diff --git a/src/log.c b/src/log.c
+--- a/src/log.c
++++ b/src/log.c
+@@ -217,7 +217,9 @@ static void
+ log_from_worker(struct kore_msg *msg, const void *data)
+ {
+ 	const char		*name;
++	const char		*text;
+ 	const struct kore_wlog	*wlog;
++	struct kore_buf		buf;
+ 
+ 	if (msg->length < sizeof(*wlog)) {
+ 		kore_log(LOG_NOTICE,
+@@ -228,8 +230,17 @@ log_from_worker(struct kore_msg *msg, const void *data)
+ 
+ 	wlog = data;
+ 	name = kore_worker_name(wlog->wid);
++	if (wlog->loglen != msg->length - sizeof(*wlog)) {
++		kore_log(LOG_NOTICE, "invalid worker log length");
++		return;
++	}
+ 
+ 	if (kore_pslog_logger != NULL) {
+-		kore_pslog_emit(wlog->prio, name, wlog->logmsg);
++		/* Worker messages carry a length, not a terminating NUL. */
++		kore_buf_init(&buf, wlog->loglen + 1);
++		kore_buf_append(&buf, wlog->logmsg, wlog->loglen);
++		text = kore_buf_stringify(&buf, NULL);
++		kore_pslog_emit(wlog->prio, name, text);
++		kore_buf_cleanup(&buf);
+ 	} else if (kore_foreground || fp != stdout) {
+ 		log_print(wlog->prio, "proc=%s log=[%.*s]\n",

@@ -1,0 +1,34 @@
+diff --git a/src/acme.c b/src/acme.c
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -653,8 +653,10 @@ acme_account_reg(int resolve_only)
+ 	if (resolve_only) {
+ 		kore_json_create_literal(json,
+ 		    "onlyReturnExisting", KORE_JSON_TRUE);
+ 	}
+ 
+-	acme_sign_submit(json, account_url, NULL, acme_account_reg_submit);
++	acme_sign_submit(json, account_url,
++	    resolve_only ? kore_strdup("acme-resolve") : NULL,
++	    acme_account_reg_submit);
+ 	kore_json_item_free(json);
+ }
+@@ -668,7 +669,16 @@ acme_account_reg_submit(struct acme_sign_op *op, struct kore_buf *payload)
+ 	acme_request_prepare(&req, HTTP_METHOD_POST, account_url,
+ 	    payload->data, payload->offset);
+ 
+-	if (!acme_request_run(&req))
+-		goto cleanup;
++	if (!acme_request_run(&req)) {
++		if (op->udata != NULL &&
++		    req.curl.http.status == HTTP_STATUS_BAD_REQUEST) {
++			acme_request_cleanup(&req);
++			kore_log(LOG_INFO,
++			    "ACME account is absent; registering the existing key");
++			acme_account_reg(ACME_CREATE_ACCOUNT);
++			return;
++		}
++		goto cleanup;
++	}
+ 
+ 	switch (req.curl.http.status) {

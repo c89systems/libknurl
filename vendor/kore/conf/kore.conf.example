@@ -1,0 +1,370 @@
+# Example Kore configuration
+
+# Below you will find all available configuration
+# options for Kore. Options which have a default value
+# and can be left out of the configuration are commented
+# out with their default value specified.
+
+# Maximum length to queue pending connections (see listen(2))
+# MUST be set before any bind directive.
+#socket_backlog			5000
+
+# Server configuration.
+server tls {
+	bind		127.0.0.1 443
+	#unix		/var/run/kore.sock
+}
+
+#server notls {
+#	bind		127.0.0.1 80
+#	tls		no
+#}
+
+# Kore can have multiple settings for each processes that run under it.
+# There are 3 different type of processes:
+#
+#	1) A worker process, these handle the HTTP requests and your code
+#	   runs inside of these.
+#	2) A keymgr process, this handles your domain private keys
+#	   and signing during the TLS handshakes. It also holds your
+#	   ACME account-key and will sign ACME requests.
+#	3) An acme process, this talks to the ACME servers.
+#
+# You can individually turn on/off chrooting and dropping user
+# privileges per process. The -n and -r command-line options
+# are a global override for skipping chroot or dropping user
+# permissions on all processes.
+#
+# If no root/runas options are set in a process, it will inherit the
+# default values from the worker processes.
+#
+# The worker processes will get the current working directory or
+# current user if no options where specified for it.
+#
+# Configures the worker processes.
+privsep worker {
+	# The user the workers will run as.
+	runas		kore
+
+	# The root directory for the worker processes, if chroot isn't
+	# skipped, this is the directory it will chroot into.
+	#
+	# If not set, Kore will take the current working directory.
+	root		/var/chroot/kore
+
+	# We could configure this process to not chroot and only
+	# chdir into its root directory.
+	#skip		chroot
+}
+
+# Configures the keymgr process.
+#	If TLS is enabled you will need to specify paths to the domain
+#	certificate and key that Kore will load. This loading is done
+#	from the keymgr (separate process) and all paths must be relative
+#	to the keymgr process its root configuration option.
+privsep keymgr {
+	# The user the keymgr will run as.
+	runas		keymgr
+
+	# The root directory for the keymgr process. In this example
+	# we do not turn off chroot for this process so the keymgr
+	# will chroot into this directory.
+	root		/etc/keymgr
+}
+
+# Configure Kore to log all worker output to a certain file.
+#
+# This forces all logs from the workers to be written to this file
+# instead of stdout. Note that this is not the actual access log.
+#
+# Any message logged by your application with kore_log() will also
+# appear under here.
+#logfile /var/log/kore.log
+
+# How many worker processes Kore will spawn. If the directive
+# worker_set_affinity is set to 1 (the default) Kore will automatically
+# pin these worker processes to different CPU cores in your system.
+# NOTE: If you set this to the maximum number of cores you have
+# in your system (or more) you might consider turning off affinity
+# if you are running CPU heavy services on the same machine.
+workers		4
+
+# The number of active connections each worker can handle.
+# You might have to tweak this number based on your hardware.
+#worker_max_connections		512
+
+# Disable accepting of normal connections on a given worker process.
+#worker_no_accept 2
+
+# Limit of maximum open files per worker.
+#worker_rlimit_nofiles		768
+
+# Limit the number of new connections a worker can accept
+# in a single event loop. By default Kore will accept as
+# many new connections it can up to worker_max_connections.
+#
+# NOTE: If you are running benchmark tools that throw all
+# connections at Kore at the same time (when they are less
+# then worker_max_connections) or you have an actual reason
+# to not spend too much time in the accept loop this setting
+# will make a HUGE positive difference.
+
+# Number of accept() calls a worker will do at most in one go
+# before releasing the lock to others.
+#worker_accept_threshold		16
+
+# What should the Kore parent process do if a worker
+# process unexpectedly exits. The default policy is that
+# the worker process is automatically restarted.
+#
+# If you want the kore server to exit if a worker dies
+# you can swap the policy to "terminate".
+#worker_death_policy		restart
+
+# Workers bind themselves to a single CPU by default.
+# Turn this off by setting this option to 0
+#worker_set_affinity		1
+
+# Store the pid of the main process in this file.
+#pidfile	kore.pid
+
+# If TLS is enabled you can specify a file where Kore will read
+# initial entropy from and save entropy towards when exiting.
+#
+# Note that if you enable this you must provide the first iteration
+# of this file by generating 1024 cryptographically safe random bytes
+# and writing them to the file specified.
+#
+# Kore will refuse to start if the specified file does not exist,
+# is of the wrong size or cannot be opened in anyway.
+#
+# NOTE: This file location must be inside your chrooted environment.
+#rand_file	random.data
+
+# Filemap settings
+#	filemap_index	Name of the file to be used as the directory
+#				index for a filemap.
+#filemap_index index.html
+
+# HTTP specific settings.
+#	http_header_max		Maximum size of HTTP headers (in bytes).
+#
+#	http_header_timeout	Timeout in seconds for receiving the
+#				HTTP headers before the connection is closed.
+#
+#	http_body_max		Maximum size of an HTTP body (in bytes).
+#				If set to 0 disallows requests with a body
+#				all together.
+#
+#	http_body_timeout	Timeout in seconds for receiving the
+#				HTTP body in full before the connection
+#				is closed with an 408.
+#
+#	http_body_disk_offload	Number of bytes after which Kore will use
+#				a temporary file to hold the HTTP body
+#				instead of holding it in memory. If set to
+#				0 no disk offloading will be done. This is
+#				turned off by default.
+#
+#	http_body_disk_path	Path where Kore will store any temporary
+#				HTTP body files.
+#
+#	http_keepalive_time	Maximum seconds an HTTP connection can be
+#				kept alive by the browser.
+#				(Set to 0 to disable keepalive completely).
+#
+#	http_hsts_enable	Send Strict Transport Security header in
+#				all responses. Parameter is the age.
+#				(Set to 0 to disable sending this header).
+#
+#	http_request_limit	Limit the number of HTTP requests workers
+#				can queue up.
+#
+#	http_request_ms		The number of milliseconds workers can max
+#				spend inside the HTTP processing loop.
+#
+#	http_server_version	Override the server version string.
+#
+#http_header_max	4096
+#http_header_timeout	10
+#http_body_max		1024000
+#http_body_timeout	60
+#http_keepalive_time	0
+#http_hsts_enable	31536000
+#http_request_limit	1000
+#http_request_ms	10
+#http_body_disk_offload	0
+#http_body_disk_path	tmp_files
+#http_server_version	kore
+
+# Websocket specific settings.
+#	websocket_maxframe	Specifies the maximum frame size we can receive
+#	websocket_timeout	Specifies the time in seconds before a websocket
+#				connection would be closed due to inactivity.
+#websocket_maxframe	16384
+#websocket_timeout	120
+
+# Configure the number of available threads for background tasks.
+#task_threads		2
+
+# Load modules (you can load multiple at the same time).
+# An additional parameter can be specified as the "onload" function
+# which Kore will call when the module is loaded/reloaded.
+load contrib/examples/generic/example.module	example_load
+
+# Load a python file (if built with PYTHON=1)
+#python_import src/index.py example_load
+
+# Validators
+#	validator	name	type	regex|function
+#
+validator	v_example	function	v_example_func
+validator	v_regex		regex		^/test/[a-z]*$
+validator	v_number	regex		^[0-9]*$
+validator	v_session	function	v_session_validate
+
+# Specify what TLS version to be used. Default is TLSv1.3 if available.
+# Otherwise it will use TLS 1.2.
+# Allowed values:
+#	1.3 for TLSv1.3 (default, if available)
+#	1.2 for TLSv1.2
+#	both for TLSv1.2 and TLSv1.3
+#tls_version	1.3
+
+# Specify the TLS ciphers that will be used.
+#tls_cipher	AEAD-AES256-GCM-SHA384:AEAD-CHACHA20-POLY1305-SHA256:AEAD-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256
+
+# Required DH parameters for TLS if DHE ciphersuites are in-use.
+# Defaults to SHARE_DIR/ffdhe4096.pem, can be overwritten.
+#tls_dhparam	/usr/local/share/kore/ffdhe4096.pem
+
+# OpenBSD specific settings.
+# Add more pledges if your application requires more privileges.
+# All worker processes call pledge(2) after dropping privileges
+# (even if -rn was specified).
+# By default Kore will use the following promises: "stdio rpath inet error"
+#pledge dns wpath
+
+# seccomp specific settings.
+# If set to "yes", Kore will trace its child processes and properly
+# log seccomp violations while still allowing the syscalls.
+#seccomp_tracing	yes
+
+# Authentication configuration
+#
+# Using authentication blocks you can define a standard way for
+# Kore to validate your users. In the example below we create
+# a authentication block called auth_example, which requires
+# a cookie (session_id) to be set.
+#
+# If no cookie is present or the cookie is not valid according
+# to the set validator, Kore will redirect the browser to the
+# URI set in authentication_uri.
+#
+# Page handlers can be bound to authentication by specifying
+# authentication block at the end of the page directive (see below).
+authentication auth_example {
+	# The authentication type denotes the way the user should
+	# be authenticated.
+	#
+	# Allow values:
+	#	- cookie (checks for the cookie presence + pass to validator)
+	#	- header (checks for header presence + pass to validator)
+	#	- request (passes the http_request to the validator)
+	#
+	# Use cases for request could for example be IP based ACLs or
+	# any other criteria that can be extracted from a http_request.
+	#
+	# The request type does not need an authentication_validator.
+	#
+	authentication_type		cookie
+
+	# The name of whatever we are looking for.
+	authentication_value		session_id
+
+	# The validator that will be called to verify the cookie.
+	# Note this is YOUR validator, Kore does not have built-in
+	# session support. You must add this manually using your
+	# preferred method (Storing it in postgres, redis, ...)
+	authentication_validator	v_session
+
+	# The URI Kore will redirect to if a authentication fails.
+	# If this is not set, Kore will return a simple 403.
+	authentication_uri		/private
+}
+
+# Domain configuration
+#
+# Each domain configuration starts with listing what domain
+# the directives that follow are to be applied upon.
+#
+# Additionally you can specify the following in a domain configuration:
+#
+#	accesslog
+#		- File where all requests are logged.
+#
+#	NOTE: due to current limitations the client_verify CA path
+#	MUST be in the 'root' of the Kore workers, not the keymgr.
+#
+#	client_verify [CA] [optional CRL]
+#		- Turns on client verification, requiring the client to
+#		  send a certificate that will be verified by the given CA.
+#	client_verify_depth [depth]
+#		- Configure the depth for x509 chain validation.
+#		  By default 1.
+#
+# Routes
+#
+# Routes can be a static path or a POSIX regular expression.
+#
+# route /path {
+#	handler myhandler
+#	methods get post
+#	...
+# }
+#
+
+# Example domain that responds to localhost.
+domain localhost {
+	attach		tls
+
+	certfile	cert/server.crt
+	certkey		cert/server.key
+	accesslog	/var/log/kore_access.log
+
+	route / {
+		handler index_page
+		methods get
+	}
+
+	route /login {
+		handler login_do
+		methods post
+		validate post username v_username
+		validate post passphrase v_passphrase
+	}
+
+	route /mypages/ {
+		handler mypages_index
+		methods get
+		authenticate auth_example
+	}
+
+	# Allow access to files from the directory route_files via
+	# the /files/ URI.
+	#
+	# Note the directory given must be relative to the root configuration
+	# option.
+	filemap		/files/			static_files	[auth]
+}
+
+# Example redirect 80->443.
+#domain localhost {
+#	attach		notls
+#
+#	# specific redirect with a capture group and arguments
+#	redirect	^/account/(.*)$	301	https://localhost/account/$1
+#
+#	# redirect the others back to root.
+#	redirect	^/.*$		301	https://localhost
+#}

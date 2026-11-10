@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.21)
+project(knurl_kore_sources LANGUAGES NONE)
+if(NOT KNURL_ROOT)
+  get_filename_component(KNURL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+endif()
+include("${KNURL_ROOT}/cmake/KoreSources.cmake")
+knurl_add_kore_sources("${KNURL_ROOT}" "${CMAKE_BINARY_DIR}/kore")

@@ -1,0 +1,21 @@
+rockspec_format = "3.0"
+package = "lua-knurl"
+version = "@knurl_version@-1"
+source = {
+  url = "https://github.com/c89systems/libknurl/releases/download/v@knurl_version@/lua-knurl-@knurl_version@.tar.gz",
+  dir = "lua-knurl-@knurl_version@",
+}
+description = {
+  summary = "HTTP server facade and public C binding for libknurl",
+  homepage = "https://github.com/c89systems/libknurl",
+  license = "MIT",
+}
+dependencies = { "lua >= 5.5, < 5.6" }
+build = {
+  type = "command",
+  build_command = [[bash lua/build-rock.sh "$(KNURL_TARGET)" "$(KNURL_CORE_PREFIX)" "$(KNURL_SDK_ROOT)"]],
+  install = {
+    lua = { knurl = "lua/knurl.lua", ["knurl.meta"] = "lua/knurl.meta.lua" },
+    lib = { ["knurl.native"] = "build/rock/knurl/native.so" },
+  },
+}

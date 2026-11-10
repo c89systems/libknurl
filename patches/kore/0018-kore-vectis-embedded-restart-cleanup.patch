@@ -1,0 +1,198 @@
+diff --git a/include/kore/http.h b/include/kore/http.h
+index d38bdff..ecf34e5 100644
+--- a/include/kore/http.h
++++ b/include/kore/http.h
+@@ -371,6 +371,7 @@ void		kore_accesslog(struct http_request *);
+ 
+ void		http_init(void);
+ void		http_parent_init(void);
++void		http_parent_cleanup(void);
+ void		http_cleanup(void);
+ void 		http_server_version(const char *);
+ void		http_process(void);
+diff --git a/include/kore/kore.h b/include/kore/kore.h
+index eced9a7..4f081eb 100644
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -805,6 +805,7 @@ int		kore_worker_init(void);
+ void		kore_worker_privsep(void);
+ void		kore_worker_started(void);
+ void		kore_worker_shutdown(void);
++void		kore_worker_parent_cleanup(void);
+ void		kore_worker_make_busy(void);
+ void		kore_worker_no_accept(u_int8_t);
+ void		kore_worker_dispatch_signal(int);
+@@ -880,6 +881,7 @@ int		kore_tls_x509name_foreach(KORE_X509_NAMES *, int, void *,
+ /* accesslog.c */
+ void		kore_accesslog_init(u_int16_t);
+ void		kore_accesslog_worker_init(void);
++void		kore_accesslog_cleanup(void);
+ void		kore_accesslog_run(void *, u_int64_t);
+ void		kore_accesslog_gather(void *, u_int64_t, int);
+ #if defined(KORE_USE_PSLOG)
+@@ -1007,6 +1009,7 @@ void		kore_websocket_broadcast(struct connection *,
+ 
+ /* msg.c */
+ void		kore_msg_init(void);
++void		kore_msg_cleanup(void);
+ void		kore_msg_worker_init(void);
+ void		kore_msg_parent_init(void);
+ void		kore_msg_unregister(u_int8_t);
+diff --git a/src/accesslog.c b/src/accesslog.c
+index 0e9e0cb..d5f9d10 100644
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -81,6 +81,18 @@ kore_accesslog_worker_init(void)
+ 	kore_domain_closelogs();
+ }
+ 
++void
++kore_accesslog_cleanup(void)
++{
++	if (logbuf != NULL) {
++		kore_buf_free(logbuf);
++		logbuf = NULL;
++	}
++
++	time_cache = 0;
++	tbuf[0] = '\0';
++}
++
+ void
+ kore_accesslog(struct http_request *req)
+ {
+diff --git a/src/http.c b/src/http.c
+index 63052a7..4f202e9 100644
+--- a/src/http.c
++++ b/src/http.c
+@@ -193,6 +193,20 @@ http_parent_init(void)
+ 	LIST_INIT(&http_media_types);
+ }
+ 
++void
++http_parent_cleanup(void)
++{
++	struct http_media_type	*media;
++
++	while (!LIST_EMPTY(&http_media_types)) {
++		media = LIST_FIRST(&http_media_types);
++		LIST_REMOVE(media, list);
++		kore_free(media->ext);
++		kore_free(media->type);
++		kore_free(media);
++	}
++}
++
+ void
+ http_init(void)
+ {
+@@ -250,6 +264,8 @@ http_cleanup(void)
+ 
+ 	kore_pool_cleanup(&http_request_pool);
+ 	kore_pool_cleanup(&http_header_pool);
++	kore_pool_cleanup(&http_cookie_pool);
++	kore_pool_cleanup(&http_rlq_pool);
+ 	kore_pool_cleanup(&http_body_path);
+ }
+ 
+diff --git a/src/kore.c b/src/kore.c
+index bb16f4b..aca5abb 100644
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -303,6 +303,10 @@ main(int argc, char *argv[])
+ 
+ 	kore_server_cleanup();
+ 
++#if !defined(KORE_NO_HTTP)
++	http_parent_cleanup();
++#endif
++
+ 	if (!kore_quiet)
+ 		kore_log(LOG_INFO, "goodbye");
+ 
+@@ -314,6 +318,7 @@ main(int argc, char *argv[])
+ 	kore_lua_cleanup();
+ #endif
+ 
++	kore_msg_cleanup();
+ 	kore_mem_cleanup();
+ 
+ 	return (kore_quit);
+@@ -1017,7 +1022,9 @@ kore_server_shutdown(void)
+ 
+ #if !defined(KORE_NO_HTTP)
+ 	kore_accesslog_gather(NULL, kore_time_ms(), 1);
++	kore_accesslog_cleanup();
+ #endif
++	kore_worker_parent_cleanup();
+ 
+ 	kore_platform_event_cleanup();
+ 	kore_connection_cleanup();
+diff --git a/src/msg.c b/src/msg.c
+index 11da348..6e39c5f 100644
+--- a/src/msg.c
++++ b/src/msg.c
+@@ -50,6 +50,24 @@ void
+ kore_msg_init(void)
+ {
+ 	TAILQ_INIT(&msg_types);
++	cacheidx = 0;
++	conncache = NULL;
++}
++
++void
++kore_msg_cleanup(void)
++{
++	struct msg_type		*type;
++
++	while (!TAILQ_EMPTY(&msg_types)) {
++		type = TAILQ_FIRST(&msg_types);
++		TAILQ_REMOVE(&msg_types, type, list);
++		kore_free(type);
++	}
++
++	kore_free(conncache);
++	conncache = NULL;
++	cacheidx = 0;
+ }
+ 
+ void
+diff --git a/src/worker.c b/src/worker.c
+index c2e952f..bae9252 100644
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -27,6 +27,7 @@
+ #include <grp.h>
+ #include <pwd.h>
+ #include <signal.h>
++#include <string.h>
+ #include <unistd.h>
+ 
+ #include "kore.h"
+@@ -390,6 +391,26 @@ kore_worker_shutdown(void)
+ 	}
+ }
+ 
++void
++kore_worker_parent_cleanup(void)
++{
++	if (accept_lock != NULL) {
++		if (shmdt(accept_lock) == -1) {
++			kore_log(LOG_NOTICE,
++			    "failed to detach worker shm segment: %s", errno_s);
++		}
++	}
++
++	accept_lock = NULL;
++	kore_workers = NULL;
++	shm_accept_key = -1;
++	worker_pgrp = 0;
++	worker_no_lock = 0;
++	accept_avail = 0;
++	worker_active_connections = 0;
++	memset(worker_no_accept, 0, sizeof(worker_no_accept));
++}
++
+ void
+ kore_worker_dispatch_signal(int sig)
+ {
