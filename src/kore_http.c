@@ -218,12 +218,8 @@ static knurl_status admit(knurl_request *request, knurl_error *error)
                               "request body exceeds route limit");
         }
         if ((request->content_length.high || request->content_length.low) &&
-            request->method != KNURL_HTTP_POST &&
-            request->method != KNURL_HTTP_PUT &&
-            request->method != KNURL_HTTP_PATCH &&
-            request->method != KNURL_HTTP_DELETE &&
-            request->method != KNURL_HTTP_PROPFIND &&
-            request->method != KNURL_HTTP_MKCOL)
+            !(KNURL_KORE_BODY_METHODS &
+              KNURL_HTTP_METHOD_MASK(request->method)))
             return knurl_fail(
                 error, KNURL_NOT_SUPPORTED, "request_plan",
                 "this managed method does not accept a positive body length");

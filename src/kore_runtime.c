@@ -10,6 +10,7 @@
 #include "file_internal.h"
 
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -410,7 +411,8 @@ static knurl_status validate_config(knurl_server *server, int *spool,
             &policy, server->config.limits.body_spool_directory, &body, error);
         if (status != KNURL_OK)
             return status;
-        if (spool != NULL && !policy.disk_spool_disabled) {
+        if (spool != NULL && !policy.disk_spool_disabled &&
+            (route->methods & KNURL_KORE_BODY_METHODS)) {
             size_t size;
             if (knurl_u64_to_size(limit, &size, NULL) != KNURL_OK ||
                 size > body->memory_limit)
@@ -528,21 +530,28 @@ failed:
 
 static knurl_status probe_spool(const char *directory, knurl_error *error)
 {
-    knurl_status status;
+    struct rlimit limit;
+    knurl_status status = KNURL_OK;
     int fd, code;
     char *path;
 
-    status = knurl_private_file(directory, "knurl-body", &fd, &path, error);
-    if (status == KNURL_OK) {
-        status = knurl_file_write(fd, "\0", 1, error);
-        code = unlink(path) == -1 ? errno : 0;
-        if (close(fd) == -1 && code == 0)
-            code = errno;
-        free(path);
-        if (status == KNURL_OK && code != 0)
-            status = resource_error(error, KNURL_IO, "body_spool",
-                                    strerror(code), KNURL_ERROR_SYSTEM, code);
+    /* A one-byte write under a zero file-size limit raises SIGXFSZ. */
+    code = getrlimit(RLIMIT_FSIZE, &limit) == -1 ? errno : 0;
+    if (code == 0 && limit.rlim_cur == 0)
+        code = EFBIG;
+    if (code == 0) {
+        status = knurl_private_file(directory, "knurl-body", &fd, &path, error);
+        if (status == KNURL_OK) {
+            status = knurl_file_write(fd, "\0", 1, error);
+            code = unlink(path) == -1 ? errno : 0;
+            if (close(fd) == -1 && code == 0)
+                code = errno;
+            free(path);
+        }
     }
+    if (status == KNURL_OK && code != 0)
+        status = resource_error(error, KNURL_IO, "body_spool", strerror(code),
+                                KNURL_ERROR_SYSTEM, code);
     if (status != KNURL_OK && error != NULL) {
         (void)snprintf(error->operation, sizeof(error->operation),
                        "body_spool");

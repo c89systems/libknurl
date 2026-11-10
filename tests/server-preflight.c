@@ -3,11 +3,14 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define CHECK(test)                                                            \
@@ -107,6 +110,45 @@ static knurl_status reply(knurl_request *request, knurl_reply *out, void *data,
     return knurl_reply_text(out, 200, "text/plain", "ok", error);
 }
 
+static int limited_spool(knurl_server *server, const char *directory)
+{
+    struct rlimit limit;
+    struct sigaction action;
+    knurl_error error;
+    pid_t child;
+    int status;
+
+    child = fork();
+    CHECK(child != -1);
+    if (child == 0) {
+        memset(&action, 0, sizeof(action));
+        action.sa_handler = SIG_DFL;
+        if (sigemptyset(&action.sa_mask) != 0 ||
+            sigaction(SIGXFSZ, &action, NULL) != 0 ||
+            sigaddset(&action.sa_mask, SIGXFSZ) != 0 ||
+            sigprocmask(SIG_UNBLOCK, &action.sa_mask, NULL) != 0 ||
+            getrlimit(RLIMIT_FSIZE, &limit) != 0)
+            _exit(1);
+        limit.rlim_cur = 0;
+        if (setrlimit(RLIMIT_FSIZE, &limit) != 0)
+            _exit(1);
+        if (knurl_server_preflight(server, &error) != KNURL_IO ||
+            error.source != KNURL_ERROR_SYSTEM || error.native_code != EFBIG ||
+            strcmp(error.operation, "body_spool") != 0 ||
+            strcmp(error.detail, directory) != 0)
+            _exit(2);
+        if (sigaction(SIGXFSZ, NULL, &action) != 0 ||
+            action.sa_handler != SIG_DFL ||
+            sigprocmask(SIG_SETMASK, NULL, &action.sa_mask) != 0 ||
+            sigismember(&action.sa_mask, SIGXFSZ) != 0)
+            _exit(3);
+        _exit(0);
+    }
+    CHECK(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    return 0;
+}
+
 static int file_probes(void)
 {
     char directory[] = "preflight-XXXXXX";
@@ -157,8 +199,15 @@ static int file_probes(void)
     CHECK(knurl_server_preflight(server, &error) == KNURL_OK);
     CHECK(stat(log, &info) == 0 && S_ISREG(info.st_mode) && info.st_size == 0);
 
-    route.path = "/spill";
+    route.path = "/get-only";
+    route.method = KNURL_HTTP_GET;
     route.body.disk_spool_disabled = 0;
+    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
+                             &error) == KNURL_OK);
+    CHECK(knurl_server_preflight(server, &error) == KNURL_OK);
+
+    route.path = "/spill";
+    route.methods = KNURL_HTTP_METHODS_GET | KNURL_HTTP_METHODS_POST;
     CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
                              &error) == KNURL_OK);
     CHECK(knurl_server_validate(server, &error) == KNURL_OK);
@@ -167,6 +216,7 @@ static int file_probes(void)
           error.source == KNURL_ERROR_SYSTEM && error.native_code == ENOTDIR &&
           strcmp(error.detail, spool) == 0 && calls == 0);
     CHECK(unlink(spool) == 0 && mkdir(spool, 0700) == 0);
+    CHECK(limited_spool(server, spool) == 0);
     CHECK(knurl_server_preflight(server, &error) == KNURL_OK && calls == 0);
     CHECK(knurl_server_run(server, NULL, &error) == KNURL_OK && calls == 1);
     CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
