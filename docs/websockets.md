@@ -1,6 +1,6 @@
 # Application WebSockets
 
-The [public API](../include/knurl/websocket.h) accepts application WebSockets
+The [public API](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/websocket.h) accepts application WebSockets
 from a headers callback or registers them through `knurl_router_websocket`.
 The handle, frames and terminal outcome are borrowed. Send, close, resume and
 userdata changes require the connection's owner loop. Callbacks execute on that
@@ -104,13 +104,13 @@ WebSocket idle uses `timeouts.websocket_idle`; managed HTTP request and native
 keepalive timers expire with the handshake request. Output write-idle bounds
 continue to apply.
 
-The [runtime fixture](../tests/websocket-runtime.c) exercises the public API over
+The [runtime fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/websocket-runtime.c) exercises the public API over
 HTTP and HTTPS: route configuration copies, failed transactional acceptance,
 request/open/close ordering, atomic queue pressure, capacity notifications,
 early frames, held frame redelivery, extended lengths, control frames, malformed protocol,
 close timeout and worker drain. The private channel fixture also checks that
 reused Kore connection objects start with cleared event flags and retained frame
-allocations continue to consume queue capacity. The [installed Lua cases](../tests/lua/events.lua)
+allocations continue to consume queue capacity. The [installed Lua cases](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/events.lua)
 cover callback failures, replay and backpressure through the host VM. Exhaustive
 TLS retry/fault combinations are not established by these fixtures; see
-[verification](verification.md).
+[verification](https://github.com/c89systems/libknurl/blob/trunk/docs/verification.md).

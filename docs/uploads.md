@@ -38,7 +38,7 @@ request metadata and the terminal cause. Cancel application timers and watches
 there. The facade does not consume `knurl_request_userdata`; hooks and handlers
 retain its application meaning.
 
-The [public-only fixture](../tests/upload-runtime.c) demonstrates registration,
+The [public-only fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/upload-runtime.c) demonstrates registration,
 group hooks, prefix consumption, a timer-driven resume, empty input, rejection
 before open, error cleanup, and disconnect during input. It also checks the
 stateless form with no open callback.
@@ -94,7 +94,7 @@ Empty uploads truncate the destination and return `0`. The counter uses checked
 wide arithmetic on every target. No temporary file or transactional rename is
 introduced. File queue capacity uses `body.memory_buffer_limit_bytes`.
 
-The same [public fixture](../tests/upload-runtime.c) exercises a three-byte queue,
+The same [public fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/upload-runtime.c) exercises a three-byte queue,
 36 simultaneous readers with an unrelated control request, native versus owner
 thread callbacks, metadata after cancellation, request/header/query copies,
 borrowed-reader rejection, staged source results, empty uploads and file errors.

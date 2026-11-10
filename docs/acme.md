@@ -22,12 +22,12 @@ cannot replace it. Written runtime files remain after failure, as in Vectis.
 A replacement key manager loads those files; libknurl adds no rollback or
 remote-storage transaction. The host's durable store remains its authority.
 
-The [state fixture](../tests/acme-state.c) checks directory ownership, no added
+The [state fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/acme-state.c) checks directory ownership, no added
 layout, unchanged host files, terminal callback results, error preservation and
-the cooperative budget. The [runtime fixture](../tests/acme-runtime.c) checks
+the cooperative budget. The [runtime fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/acme-runtime.c) checks
 actual certificate distribution, failed persistence, restart, timeout and
-TLS-ALPN-01. The [protocol fixture](../tests/acme-protocol.c) uses the public
-[Vectis provider adapter](../tests/vectis-services.c) through real account/order,
+TLS-ALPN-01. The [protocol fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/acme-protocol.c) uses the public
+[Vectis provider adapter](https://github.com/c89systems/libknurl/blob/trunk/tests/vectis-services.c) through real account/order,
 issuance and renewal against a local HTTPS CA. No durable-client SDK is imported.
 
 ## Account, order and recovery flow
@@ -80,9 +80,9 @@ directory is selected explicitly. Changes made by a child lifecycle hook to
 `SSL_CERT_FILE` or `SSL_CERT_DIR` do not replace a running ACME client's policy.
 Peer and hostname verification remain enabled.
 
-The [public fixture](../tests/acme-protocol.c) consumes the shared library and
+The [public fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/acme-protocol.c) consumes the shared library and
 installed-style public headers, with no Kore headers or injected backend
-messages. Its [local CA](../tests/acme-ca.c) serves HTTPS, checks one-use nonces,
+messages. Its [local CA](https://github.com/c89systems/libknurl/blob/trunk/tests/acme-ca.c) serves HTTPS, checks one-use nonces,
 protected URLs, JWK/KID selection and RSA JWS signatures, verifies CSR signatures,
 domain keys and SANs, and validates the live TLS-ALPN authorization digest on both
 listeners. It issues a certificate inside the existing renewal window, then a
@@ -97,5 +97,5 @@ selection callback used by the hourly timer; the fixture does not wait an hour
 or claim wall-clock scheduler coverage. Complete allocation/fatal unwinding,
 faults during in-flight signing/authorization/finalization, CA rate-limit/retry
 handling, multi-SNI challenge combinations and final installed-artifact
-integration are not established by that fixture; see [verification](verification.md) and
-[KORE.md](../KORE.md) for the evidence boundary.
+integration are not established by that fixture; see [verification](https://github.com/c89systems/libknurl/blob/trunk/docs/verification.md) and
+[KORE.md](https://github.com/c89systems/libknurl/blob/trunk/KORE.md) for the evidence boundary.

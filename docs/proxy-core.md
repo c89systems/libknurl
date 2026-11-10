@@ -1,10 +1,10 @@
 # HTTP framing and proxy core
 
-Proxy framing stays private in [proxy_framing.c](../src/proxy_framing.c), lifted
+Proxy framing stays private in [proxy_framing.c](https://github.com/c89systems/libknurl/blob/trunk/src/proxy_framing.c), lifted
 from Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19` under the repository's
-[MIT license](../LICENSE). Callers register proxy routes through the public proxy API;
+[MIT license](https://github.com/c89systems/libknurl/blob/trunk/LICENSE). Callers register proxy routes through the public proxy API;
 their adapters own fixed/chunked body decoding, backpressure and trailers.
-The [private framing fixture](../tests/proxy-framing.c) retains protocol and
+The [private framing fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/proxy-framing.c) retains protocol and
 partial-progress coverage. The installed wire fixture uses its own existing
 small HTTP peer reader, so it does not depend on the implementation under test.
 
@@ -25,7 +25,7 @@ The private proxy core lifts Vectis's reusable server mechanisms:
   fallback; cleartext and raw connect-only exchanges use HTTP/1.1. TLS policy,
   in-memory trust/client identity and DNS use the selected cpkt curl/OpenSSL SDK.
 
-The [transport](../src/proxy_transport.h) uses libknurl watches/timers and has no
+The [transport](https://github.com/c89systems/libknurl/blob/trunk/src/proxy_transport.h) uses libknurl watches/timers and has no
 Kore structures or process-global pool. Its creator owns destruction on the same
 loop. Successful submission takes the easy handle; failed submission takes
 nothing. Completion borrows it for one callback before cleanup. Cancellation
@@ -36,7 +36,7 @@ registers its own. The relay cancels that replacement watch before releasing the
 transfer. Deferred watch retirement preserves userdata through an active event
 batch. Destruction inside transport dispatch returns STATE; defer it instead.
 
-The [live fixture](../tests/proxy-transport.c) transfers a 128 KiB producer through
+The [live fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/proxy-transport.c) transfers a 128 KiB producer through
 real sockets and the public server loop, consumes bounded curl chunks in small
 timed steps, and checks pool admission, pause/resume, cancellation and cleanup.
 The lifted unit fixtures cover validators, upload framing, HTTP/trailers,
@@ -46,7 +46,7 @@ lengths format through the C89 public wide-integer implementation.
 The [public HTTP/SSE route adapter](proxy-http.md) connects these components to
 request takeover, managed 100/103 output, final-response commitment and worker
 admission. Configuration and opaque hook views are installed in
-[`<knurl/proxy.h>`](../include/knurl/proxy.h). The
+[`<knurl/proxy.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/proxy.h). The
 [WebSocket/WSS relay](proxy-websocket.md) uses the same worker ownership and
 admission, the lifted handshake/wire validators and the public raw channel.
 Non-101 replies share the HTTP response writer. Vectis cutover still requires the

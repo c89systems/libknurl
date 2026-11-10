@@ -9,6 +9,9 @@ CMake install and writes a binary rehearsal under that build's `packages/`:
 The archive contains the static archive, ABI-versioned shared library and
 relative symlinks, public C headers, relocatable CMake/pkg-config metadata,
 licenses, provenance/dependency records and the foreground server example.
+Start at `share/knurl/README.md` for the C and Lua quick starts. The public
+guides are under `share/knurl/docs/`, Lua setup is in `share/knurl/lua/README.md`,
+and the SDK example guide is in `share/knurl/examples/README.md`.
 `share/knurl/RELEASE_MANIFEST` identifies every other installed file or symlink.
 Archive ordering, timestamps, permissions, owner IDs and gzip metadata are
 normalized. Static archives and Linux shared libraries omit debug sections;
@@ -56,7 +59,7 @@ products directly, use `cmake -DPRODUCT_DIR=<absolute-owned-directory>
 -P cmake/VerifyLuaPackage.cmake`; scratch stays under `build/`.
 
 These commands do not create a release, tag, upload or complete multi-product
-release inventory. [Release preparation](releasing.md) defines that inventory
+release inventory. [Release preparation](https://github.com/c89systems/libknurl/blob/trunk/docs/releasing.md) defines that inventory
 and the default-branch, signing, clean-build and final-artifact gates. Lua products
 retain their own checksums; a partial binary inventory cannot stand in for release
 CHECKSUMS.

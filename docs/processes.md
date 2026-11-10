@@ -23,8 +23,8 @@ are separate states. On a successful return, the default opens serving unless
 selects the gate explicitly and takes precedence over the default. Open it before
 starting clients whose application requests must complete inside the callback;
 otherwise those requests can receive 503. The gate setter belongs to the ready
-parent's owner loop. The [server fixture](../tests/server-runtime.c) and
-[service fixture](../tests/vectis-services-runtime.c) demonstrate this ordering.
+parent's owner loop. The [server fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/server-runtime.c) and
+[service fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/vectis-services-runtime.c) demonstrate this ordering.
 
 ## Worker failures and cleanup
 
@@ -63,24 +63,24 @@ the operation budget during shutdown. The budget uses atomic 32-bit publication
 and a wrap-safe monotonic deadline across the supported 32/64-bit targets.
 ACME persistence uses this primitive for its existing activation/failure ordering.
 
-The [public fixture](../tests/process-runtime.c) covers recovery, unexpected
+The [public fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/process-runtime.c) covers recovery, unexpected
 zero exit, termination, returned startup failures, startup cancellation, failed
 exit callbacks and shutdown abandonment. Its
-[private extension](../tests/process-backend.c) blocks a child to verify operation
+[private extension](https://github.com/c89systems/libknurl/blob/trunk/tests/process-backend.c) blocks a child to verify operation
 budgets during startup, serving and shutdown, and verifies budget cancellation.
-The [auxiliary fixture](../tests/auxiliary-runtime.c) proves loop/teardown hooks
+The [auxiliary fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/auxiliary-runtime.c) proves loop/teardown hooks
 for HTTP, key-manager and ACME roles, key-manager restart/terminate policy, and
 existing account-key loading against a local unavailable directory endpoint.
 Local-CA issuance/persistence is exercised separately by the ACME runtime and Lua
 fixtures; those are not claims about a remote CA.
 
-The [host adapter](../tests/vectis-host.c) maps shared readiness and existing
+The [host adapter](https://github.com/c89systems/libknurl/blob/trunk/tests/vectis-host.c) maps shared readiness and existing
 READY/control providers, the baseline 100 ms readiness/60 s auth-maintenance
-timers and fork-exit forwarding. Its [runtime case](../tests/vectis-host-runtime.c)
+timers and fork-exit forwarding. Its [runtime case](https://github.com/c89systems/libknurl/blob/trunk/tests/vectis-host-runtime.c)
 keeps outer supervision and control framing in the host and covers readiness,
 STOP/malformed/EOF shutdown, app/server reclamation and failed cleanup after
 reclamation. The accumulated failure-unwind gate remains tracked in the
-[integration inventory](vectis-integration-contract.md).
+[integration inventory](https://github.com/c89systems/libknurl/blob/trunk/docs/vectis-integration-contract.md).
 
 The worker completion marker follows the terminal callback's return. A callback
 that hangs after reclaiming its app is still escalated and reported as abandoned;

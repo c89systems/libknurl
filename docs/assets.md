@@ -1,7 +1,7 @@
 # Read-only assets and static serving
 
-[`<knurl/asset.h>`](../include/knurl/asset.h) supplies read-only opened assets,
-providers and bounded source adapters. [`<knurl/static.h>`](../include/knurl/static.h)
+[`<knurl/asset.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/asset.h) supplies read-only opened assets,
+providers and bounded source adapters. [`<knurl/static.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/static.h)
 registers files, directory roots and custom providers through the ordinary router.
 Both headers are included by the umbrella and expose no filesystem, Kore or
 Vectis layouts. Vectis retains pack manifest/payload ownership and supplies an
@@ -95,7 +95,7 @@ Defaults cover audio/video (MP3, MP4/M4A, FLAC, AAC, Ogg/Opus, WebM, QuickTime),
 HLS/DASH playlists and segments, subtitles, modern images, fonts, archives,
 office documents, ebooks and web/data formats. `.md`/`.markdown` remain
 `text/markdown; charset=utf-8`; `.mp3` is `audio/mpeg` and `.mp4` is `video/mp4`.
-The checked-in [catalogue](../src/mime.c) uses registered
+The checked-in [catalogue](https://github.com/c89systems/libknurl/blob/trunk/src/mime.c) uses registered
 [media types](https://www.iana.org/assignments/media-types/) where available and
 conventional types otherwise. Extension inference never reads or sniffs content.
 Compression suffixes do not set Content-Encoding or decompress the payload.
@@ -189,10 +189,10 @@ Multiple/malformed byte ranges are unsatisfiable; unknown range units are ignore
 HEAD retains representation length without reading content. Counters remain wide
 on armhf, including ranges beyond 4 GiB.
 
-The [asset fixture](../tests/asset.c) covers ownership transfer, provider retention,
+The [asset fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/asset.c) covers ownership transfer, provider retention,
 source pause/reset, invalid counts, premature EOF, reentry, path/symlink/special-
 file confinement, opened-file/root replacement and incremental listing. It runs
-on a default-stack pthread. The [wire fixture](../tests/static-runtime.c) covers
+on a default-stack pthread. The [wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/static-runtime.c) covers
 filesystem and packed responses, conditions/ranges, HEAD, redirects/query encoding,
 trailing-slash precedence, method denial before 100 Continue, group registration,
 source replacement and a range beyond 4 GiB. Both also run against relocated

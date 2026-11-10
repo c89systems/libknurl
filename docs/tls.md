@@ -43,7 +43,7 @@ omits port 443. It validates the Host authority, handles bracketed IPv6, and
 rejects an unapproved or malformed host. Local bind ports and presented ports are
 distinct. Redirects use the application serving gate.
 
-The [public TLS fixture](../tests/tls-runtime.c) covers file/memory/callback input,
+The [public TLS fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/tls-runtime.c) covers file/memory/callback input,
 bundles and extra chains, incorrect keys/trust/ciphers, source AGAIN and file
 bounds, SNI/Host checks, required/optional client authentication, TLS 1.2/1.3,
 multiple listeners and raw-URI redirects. Its channel echo preserves early bytes,
@@ -85,10 +85,10 @@ identities. Challenges work while application serving is paused and bypass
 client authentication only for the negotiated challenge connection. Ordinary
 HTTP remains gated and subject to the identity's client-auth policy.
 
-The [runtime fixture](../tests/acme-runtime.c) exercises actual private
+The [runtime fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/acme-runtime.c) exercises actual private
 key-manager signing, TLS 1.2/1.3, mTLS, repeated listeners, two HTTP workers,
 pending challenge handling, certificate replacement, persistence failure and
-parent-enforced timeout/recovery. Its [private driver](../tests/acme-backend.c)
+parent-enforced timeout/recovery. Its [private driver](https://github.com/c89systems/libknurl/blob/trunk/tests/acme-backend.c)
 submits the real ACME-to-key-manager certificate/challenge messages; it does not
 simulate a remote ACME directory, JWS account/order exchange or renewal schedule.
 The separate [protocol fixture](acme.md#account-order-and-recovery-flow) drives a local HTTPS CA through
@@ -135,12 +135,12 @@ Construction and validate invoke no ACME state callback or
 CA traffic. A successful RESTORE callback which requests stop completes cleanup
 without starting children. Effective configuration copies ordinary ACME values.
 
-The [installed Lua fixture](../tests/lua/tls.lua) covers live mutual TLS with
+The [installed Lua fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/tls.lua) covers live mutual TLS with
 callback certificate/key/chain, copied declarations, source reset/close and
 busy/closed ownership, bounded input, callback/OOM failures and startup reentry.
 It also exercises actual parent RESTORE/ERROR delivery, stop before fork and
 startup without an extra PERSIST call. The C reference provider exercises
-real key-manager PERSIST during issuance/renewal. The [Lua issuance fixture](../tests/lua/acme.lua)
+real key-manager PERSIST during issuance/renewal. The [Lua issuance fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/acme.lua)
 reuses that local CA in the host VM, with actual challenge verification and live
 certificate serving. Returned, thrown and OOM persistence failures reach the
 parent; ERROR observer failure preserves their cause. Callback owners remain

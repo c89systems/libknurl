@@ -41,11 +41,11 @@ references escape JSON Pointer tokens and URI-fragment bytes. Dynamic strings
 and keys use LoneJSON's quoting in both formats. Empty paths/components are
 mappings, and empty properties/responses remain mappings in YAML.
 
-The [public fixture](../tests/openapi.c) covers copied metadata, normalization,
+The [public fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/openapi.c) covers copied metadata, normalization,
 merged methods, optional response schemas, aliases, reference escaping, required
 fields, JSON validation, YAML layout, conflicting metadata and output bounds.
 Its 512-node recursive graph runs on a default-stack thread, including musl.
-The [REST wire fixture](../tests/rest-runtime.c) serves a document during a run
+The [REST wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/rest-runtime.c) serves a document during a run
 and verifies that annotation mutation is rejected there. Both are relocated
 static/shared SDK consumers.
 
@@ -71,5 +71,5 @@ its annotation: an annotation failure leaves that route registered. Treat such
 declaration failures as setup failures before run. Individual native route and
 annotation operations each retain their own failure guarantees. Explicit
 `openapi_doc` remains available independently of route registration.
-The [installed Lua fixture](../tests/lua/rest.lua) covers schema retention and
+The [installed Lua fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/rest.lua) covers schema retention and
 release, aliases, copied metadata, generation, conflicts and allocation failure.

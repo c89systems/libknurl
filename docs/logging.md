@@ -87,16 +87,16 @@ incoming records are rejected before sink emission. The parent never needs an
 arbitrary Lua state to emit them. A fresh run clears backend logger/resolver
 pointers and recreates owned logger state.
 
-The [public live fixture](../tests/policy-logs-runtime.c) covers copied rules,
+The [public live fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/policy-logs-runtime.c) covers copied rules,
 override/disabled sinks, independent file output, client identity and long IDs,
 status replacement, startup open failure, logger survival and server reuse.
 It also verifies final address/count records after a client resets a paused
 response connection, and runs against relocated static/shared SDKs. The
-[backend fixture](../tests/log-backend.c) covers sender bounds, short/mismatched/
+[backend fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/log-backend.c) covers sender bounds, short/mismatched/
 oversized IPC records and a locked unfinished access buffer without delaying
 shutdown. The [policy API](policy.md) supplies admission and observations;
 application loggers and metrics aggregation remain application-owned.
-The [file fixture](../tests/access-log-file.c) checks retention, exact thresholds,
+The [file fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/access-log-file.c) checks retention, exact thresholds,
 oversized records, restart append, permissions, truncate/disable options, failed
 rotation recovery, partial writes, ENOSPC and nonregular paths. Its two-worker,
 two-listener wire case verifies continued HTTP delivery, error diagnostics,

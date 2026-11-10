@@ -54,7 +54,7 @@ clangd --check=lua/include/knurl/lua.h --tweaks=none
 These commands use ordinary `.clangd` discovery. The `--check` exit status alone
 does not establish that hover/completion contains comments; that requires real
 `textDocument/hover` and `textDocument/completion` LSP requests or inspection in
-an editor. The [verification record](verification.md) reports those separately.
+an editor. The [verification record](https://github.com/c89systems/libknurl/blob/trunk/docs/verification.md) reports those separately.
 `--tweaks=none` avoids the previously recorded clangd code-action self-test
 limitations; it does not disable parser diagnostics or the live LSP checks.
 

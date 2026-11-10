@@ -1,6 +1,6 @@
 # XML mapping, routes, DOM and SAX
 
-Include [`<knurl/xml.h>`](../include/knurl/xml.h), or the ordinary umbrella.
+Include [`<knurl/xml.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/xml.h), or the ordinary umbrella.
 Opaque document, node and SAX handles keep libxml2 layouts private. The selected
 cpkt libxml2 supplies the implementation. This surface lifts Vectis's generic
 DOM/SAX code under the repository's MIT license.
@@ -47,7 +47,7 @@ Both parsers disable external resource loading per parser context and reject DTD
 declarations. They do not change libxml2's global error/resource handlers. Parser
 errors retain the XML native code and location in the public error.
 
-The [ported public fixture](../tests/xml.c) checks namespace-aware queries,
+The [ported public fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/xml.c) checks namespace-aware queries,
 empty attributes, scalar results, mutation invalidation, owner close, malformed
 input, DTD rejection, document/XPath/metadata bounds, SAX callback failure/reentry,
 input exceeding 16 MiB without a DOM, and process/thread confinement. DOM/SAX work
@@ -109,9 +109,9 @@ Mapped field callbacks/allocators used by the parser must support native work;
 LoneJSON permits shared runtimes with thread-safe allocator callbacks. Close
 revokes the request immediately; parser state remains retained until native ACK.
 
-The [XML reference adapter](../tests/vectis-forward.c) forwards the baseline
+The [XML reference adapter](https://github.com/c89systems/libknurl/blob/trunk/tests/vectis-forward.c) forwards the baseline
 app/request/raw-record/reply/userdata shape through public registrations. Its
-[wire fixture](../tests/xml-runtime.c) withholds the document end until a public
+[wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/xml-runtime.c) withholds the document end until a public
 LoneJSON allocator observes native field parsing. It also checks no transport
 body store, owner-loop callbacks, early malformed input, disconnect while
 parsing, a tiny queue, source replacement, auth/limits, empty 204 and handler 501.
@@ -151,12 +151,12 @@ and `knurl_reply_xml_materialized` explicitly collect output with an optional
 bound; zero adds no ceiling. Stack records are safe with these synchronous calls. Returned byte
 spans require their lengths and `knurl_owned_bytes_cleanup`.
 
-The [mapped fixture](../tests/xml-mapped.c) covers Vectis mapping behavior,
+The [mapped fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/xml-mapped.c) covers Vectis mapping behavior,
 namespace/local-name matching, attributes, mixed text, repeated object/scalar
 arrays, integer edges, fixed-array overflow and cleanup, input errors at EOF,
 DTD rejection, mapped text beyond 10 MiB, split UTF-8, one-byte output reads,
 spilled text, cancellation, failed ownership transfer and deferred output errors.
-It runs on a default-stack pthread. The [wire fixture](../tests/xml-runtime.c)
+It runs on a default-stack pthread. The [wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/xml-runtime.c)
 covers grouped registration, copied options, memory/file bodies, rewind, output,
 malformed input, auth short circuit, body limits and staged replacement. Both
 fixtures run against relocated static/shared installed SDKs.
@@ -165,9 +165,9 @@ The [Lua facade](lua.md) binds mapped `parse`/`parse_record`, materialized/live
 output, request-owned parsing and `server/group:xml_route` through the public C
 codecs and LoneJSON interop. Data/path inputs, root/text/attribute options,
 trimming, unknown-field precedence and separate mapped limits follow Vectis.
-The [installed typed fixture](../tests/lua/typed.lua) covers these paths and copied
+The [installed typed fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/typed.lua) covers these paths and copied
 route options. Owned Lua document/XPath/element and incremental SAX bindings lift
 Vectis's object facade through these public operations. Their
-[ported fixture](../tests/lua/xml.lua) covers mutation, retained owners, result
+[ported fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/xml.lua) covers mutation, retained owners, result
 cleanup, callback identity/reentry and Lua allocation failure. Node finalizers
 retire independent views during other queries without closing the active DOM.

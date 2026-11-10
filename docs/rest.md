@@ -65,7 +65,7 @@ independently, with an 8192-byte output bound and optional HTTP status override.
 These helpers materialize output before returning. Fast typed routes and live
 JSON producers retain their separate [record/generator APIs](json.md).
 
-The [public wire fixture](../tests/rest-runtime.c) exercises hooks, parse and
+The [public wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/rest-runtime.c) exercises hooks, parse and
 validation failures, empty versus null input, custom decode/release, a reply
 source borrowing decoded state, custom and failed error handlers, bounds,
 bodyless/raw routes, JSON newline behavior and OpenAPI generation during a run.
@@ -108,6 +108,6 @@ replace typed-record or live JSON APIs. `rest.error_response(error, options)`
 preserves custom error fields, decorates a copied value, maps the public statuses
 to HTTP, and uses a finite fallback if that envelope cannot be encoded.
 
-The [installed Lua fixture](../tests/lua/rest.lua) covers these server workflows,
+The [installed Lua fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/rest.lua) covers these server workflows,
 raw/null/empty bodies, validation/handler errors, recovery identity, live source
 replies, group middleware, admission limits and allocation failures.

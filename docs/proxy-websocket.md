@@ -1,6 +1,6 @@
 # WebSocket and WSS reverse proxy relays
 
-[`knurl_router_proxy`](../include/knurl/proxy.h) uses the same copied route
+[`knurl_router_proxy`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/proxy.h) uses the same copied route
 configuration for ordinary HTTP/SSE and WebSocket opening requests. A configured
 HTTP target supplies a plain upstream socket; an HTTPS target supplies TLS.
 Preflight, target selection, raw path/query rewriting, explicit Host and
@@ -59,7 +59,7 @@ chunking select a gateway reply before commitment, or abort committed output
 without a successful terminal chunk. Gateway edits retain the 64 KiB local-body
 bound and sticky-failure behavior.
 
-The [public wire fixture](../tests/proxy-websocket.c) runs plain and TLS variants.
+The [public wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/proxy-websocket.c) runs plain and TLS variants.
 It checks early-byte holding, 103/101 ordering, a 64 KiB opaque fragmented duplex
 exchange, plain TCP half-close, a synchronized 64 KiB chunked rejection with
 trailers, invalid acceptance, failed metadata edits, shared HTTP/WebSocket
@@ -68,7 +68,7 @@ commitment. The TLS variant verifies both listener TLS and upstream mTLS using
 copied in-memory material. A recovered worker crash fails the fixture. Both
 variants also run against relocated static and shared installed SDKs.
 
-Live upstream HTTP/2 belongs to the [HTTP proxy fixture](../tests/proxy-h2.c),
+Live upstream HTTP/2 belongs to the [HTTP proxy fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/proxy-h2.c),
 not the opaque WebSocket relay. Exhaustive TLS retry/fault combinations and
 slow-peer memory measurements are not established by these cases; see
-[verification](verification.md).
+[verification](https://github.com/c89systems/libknurl/blob/trunk/docs/verification.md).

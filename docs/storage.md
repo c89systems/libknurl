@@ -1,9 +1,9 @@
 # Storage operations and filesystem execution
 
-[`<knurl/storage.h>`](../include/knurl/storage.h) defines provider operations,
+[`<knurl/storage.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/storage.h) defines provider operations,
 resource handles and acknowledged cancellation without Vectis, Lua, filesystem or
 backend layouts. The native worker executor is private supporting machinery in
-[executor.h](../src/executor.h); no job/pool SDK is installed or exported.
+[executor.h](https://github.com/c89systems/libknurl/blob/trunk/src/executor.h); no job/pool SDK is installed or exported.
 Storage providers own their execution policy and report completion through the
 public storage operations. Built-in filesystem and upload/source helpers use the
 private post-fork executor.
@@ -78,7 +78,7 @@ acknowledgement checks the absolute deadline even if an event batch has delayed
 timer delivery. A late result retires as TIMEOUT, retaining its actual committed
 state; an already finished provider is not cancelled again. Acknowledgement
 before the deadline is independent of when the queued consumer callback runs.
-The [deadline fixture](../tests/storage-deadline.c) expires inside synchronous
+The [deadline fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/storage-deadline.c) expires inside synchronous
 provider invocation and covers committed and empty late acknowledgements plus
 an explicitly disabled bound. A pending operation's
 waker/owner state keeps the worker drain alive until acknowledgement. Native
@@ -126,7 +126,7 @@ ownership. The filesystem provider below supplies mutable transactions. The
 use the same public runtime. Native upload-reader/file helpers use the shared I/O
 executor; their direct file artifacts retain Vectis's partial-output semantics.
 
-The [internal fixture](../tests/storage-runtime.c) drives the real server and
+The [internal fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/storage-runtime.c) drives the real server and
 post-fork executor: copied arguments/chunks, native versus owner thread callbacks,
 queue admission, queued cancellation, synchronous/deferred results, duplicate and
 malformed completion, provider capability rejection, partial writes, provider and
@@ -146,7 +146,7 @@ the final fork; worker stopping closes it. Full/busy queues retry on an owner-lo
 timer under the operation's existing bound and deadline; cancellation can retire
 an unsubmitted operation without starting native work. Declaring multiple mounts
 does not multiply threads or consume one pool per provider. The server outlives
-its providers. The [public filesystem fixture](../tests/storage-filesystem.c)
+its providers. The [public filesystem fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/storage-filesystem.c)
 exercises more than 40 provider declarations in one worker, exceeding the shared
 job queue to prove bounded admission retries and cancellation before submission.
 

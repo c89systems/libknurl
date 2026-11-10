@@ -54,7 +54,7 @@ generic callbacks. Application services, authentication providers, metrics
 aggregation, packed assets, durable storage and outer supervision stay with
 the application.
 
-The [Vectis integration contract](vectis-integration-contract.md) defines
+The [Vectis integration contract](https://github.com/c89systems/libknurl/blob/trunk/docs/vectis-integration-contract.md) defines
 facade coverage and compatibility requirements. The
 [server API specification](server-api-spec.md) describes configuration,
 ownership, streaming and lifecycle behavior.
@@ -77,5 +77,5 @@ Darwin on arm64.
 ## Backend
 
 Kore is a pinned, pristine source snapshot. Ordered patches apply to disposable
-build copies. See [Development](development.md#upgrading-kore) for maintenance
-and [KORE.md](../KORE.md) for defect history and regression references.
+build copies. See [Development](https://github.com/c89systems/libknurl/blob/trunk/docs/development.md#upgrading-kore) for maintenance
+and [KORE.md](https://github.com/c89systems/libknurl/blob/trunk/KORE.md) for defect history and regression references.

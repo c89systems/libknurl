@@ -1,6 +1,6 @@
 # WebDAV mounts
 
-[`<knurl/webdav.h>`](../include/knurl/webdav.h) registers filesystem, read-only
+[`<knurl/webdav.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/webdav.h) registers filesystem, read-only
 and custom storage mounts through `knurl_router_webdav` and
 `knurl_route_group_webdav`. The same [storage operation contract](storage.md)
 provides conditional mutations, transactions, quotas, cancellation and recovery.
@@ -114,12 +114,12 @@ opened-file asset path uses bounded ordinary pread calls, which may block in the
 filesystem. The generic [source API](responses.md) separately supports
 native-reader execution; WebDAV file delivery does not select that mode.
 
-The [HTTP fixture](../tests/webdav-runtime.c) drives real sockets with 128-byte
+The [HTTP fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/webdav-runtime.c) drives real sockets with 128-byte
 transport chunks. It covers auth/challenge/redirect, middleware and principal/
 userdata ownership, read-only/packed mounts, validators/ranges/HEAD, incremental
 PUT before end-of-body, empty/conditional uploads, disconnect cleanup, MKCOL,
 finite-depth XML, hidden children, recursive/mapped/overwritten authorization,
 request abort during native policy handoff, destination confinement and COPY/MOVE.
-It also runs against relocated installed static/shared consumers. The [verification record](verification.md) covers the accumulated transport and
+It also runs against relocated installed static/shared consumers. The [verification record](https://github.com/c89systems/libknurl/blob/trunk/docs/verification.md) covers the accumulated transport and
 installed-consumer gate; it does not establish exhaustive fault combinations or
 a slow-peer memory bound.

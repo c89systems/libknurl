@@ -15,7 +15,7 @@ configuration, output, streaming and lifecycle behavior through forwarding.
 Behavioral baseline: Vectis commit
 `6b1e263e0436687f68a7768ca55f4361a6e59e19`. Its public declarations, implementation
 and regressions specify existing defaults, accepted inputs, errors and lifetimes.
-The [integration contract](vectis-integration-contract.md) identifies the sources.
+The [integration contract](https://github.com/c89systems/libknurl/blob/trunk/docs/vectis-integration-contract.md) identifies the sources.
 A discrepancy is resolved by tracing that baseline, not by inventing a new default.
 
 Vectis retains its app/service graph, outer supervision, business handlers,

@@ -83,11 +83,11 @@ initialization have transport events instead. Redirect listeners use managed
 output for truthful terminal counts and preserve their raw target without a
 routing decode. Their decoded path/query collections can be empty.
 
-The [policy fixture](../tests/policy-runtime.c) covers trusted-chain behavior,
+The [policy fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/policy-runtime.c) covers trusted-chain behavior,
 copied configuration, resolver failure, bounded admission, rejection before
 upload open, independent application/plan state, callback ordering, response
 replacement, interim output, post-commit abort and transport stalls/status.
-The [TLS fixture](../tests/tls-runtime.c) covers handshake failures and redirect
+The [TLS fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/tls-runtime.c) covers handshake failures and redirect
 accounting. The public policy fixture also runs against relocated static/shared
 SDKs. [Structured and file access logging](logging.md) use the same resolved
 identity without retaining application-owned request state.
@@ -150,7 +150,7 @@ worker failures follow the native worker-exit/failure event path. Return values 
 void notifications are discarded. Worker signal traps also wake the existing
 runtime event loop, retaining Kore's signal priority and meaning even when a
 signal arrives just before its blocking wait. This adds no polling or host stop
-request for an ordinary worker signal. The [installed Lua fixture](../tests/lua/policy.lua)
+request for an ordinary worker signal. The [installed Lua fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/policy.lua)
 checks wire failures, shared request state/body timing, copied snapshots, exact
 close notification, event reentry, allocation failure and callback-error cleanup.
 
@@ -199,8 +199,8 @@ are reaped. There is no per-address heap allocation on the HTTP loop.
 Vectis's thresholds: 20 TCP stalls, 10 TLS failures, 10 responses each for
 401/403, 50 for 404 and five for 429. It retains the default positive body
 ceiling. Routes, authentication, TLS, persistence and application event rules
-remain explicit declarations. The [table fixture](../tests/autoblock.c) covers
+remain explicit declarations. The [table fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/autoblock.c) covers
 shared counters, capacity, expiry/window reset, wide duration, saturation,
 worker-death recovery and fresh-table reuse. The
-[public live fixture](../tests/policy-logs-runtime.c) covers blocking and identity,
+[public live fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/policy-logs-runtime.c) covers blocking and identity,
 including 100 Continue, with no observer installed.

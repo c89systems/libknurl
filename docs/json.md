@@ -1,6 +1,6 @@
 # LoneJSON codecs and typed routes
 
-Include [`<knurl/lonejson.h>`](../include/knurl/lonejson.h) explicitly. The core
+Include [`<knurl/lonejson.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/lonejson.h) explicitly. The core
 umbrella remains independent of LoneJSON declarations. CMake consumers link
 `knurl::shared` or `knurl::static`; both expose the matching public LoneJSON
 dependency. Its header and library come from the selected released SDK.
@@ -99,7 +99,7 @@ constructs no full JSON buffer, so stack records are safe. The directory default
 to `/tmp`; this explicit file-backed helper adds no payload bound. Replacement
 and failure preserve headers and release file ownership through the common
 [reply materialization path](responses.md). The
-[spooled fixture](../tests/reply-spooled.c) verifies independent serialized bytes
+[spooled fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/reply-spooled.c) verifies independent serialized bytes
 after record mutation, descriptor cleanup and actual disk-write failure.
 
 `knurl_source_json` and `knurl_reply_json` use LoneJSON's public pull generator.
@@ -145,10 +145,10 @@ record. Retaining a table therefore does not require exposing C-owned storage or
 adding dependency APIs. A borrowed Lua Source rejects read/reset/close/transfer
 during iteration, remains open afterward, and retains its normal error state.
 
-The [API fixture](../tests/json.c) checks small generator reads over a 128 KiB
+The [API fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/json.c) checks small generator reads over a 128 KiB
 record, explicit output limits, release ownership, caller-owned selected items
 before EOF, source failures, callback stopping, cleanup and truncation. The
-[wire fixture](../tests/json-runtime.c) checks
+[wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/json-runtime.c) checks
 copied registrations, group hooks, file-backed input and rewind, malformed and
 overflowing input, after-hook replacement, auth short circuit, per-response output
 schemas, a 64 KiB reply borrowing its input record, file-backed array iteration
@@ -167,7 +167,7 @@ using their optional record provider to supply pinned Lua-owned storage. C owns
 input parsing, dispatch, serialization and hook ordering. The binding releases
 its record reference on completion/failure; a record retained by Lua remains
 owned by Lua. No second route preparation path or record conversion is needed.
-Their [installed fixture](../tests/lua/typed.lua) covers captured JSON, file/spooled
+Their [installed fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/typed.lua) covers captured JSON, file/spooled
 input, record lifetime, multiple output schemas and the shared hook chain.
 
 [Buffered REST](rest.md) adds generic decode/validate/error policy over ordinary

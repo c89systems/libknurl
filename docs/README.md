@@ -1,24 +1,15 @@
 # libknurl documentation
 
-The [product contract](server-api-spec.md) defines scope and preserved behavior.
-The [Vectis integration boundary and forwarding inventory](vectis-integration-contract.md)
-identify the baseline and reference adapters. Feature guides explain the public
-operations; they do not expand the contract. [Verification](verification.md)
-records measured evidence and its limits; [KORE.md](../KORE.md) tracks backend,
-patch and extraction defects with regression references.
-The [musl worker-stack assessment](musl-stack-assessment.md) records historical
-frame measurements and the findings behind the delivered traversal corrections.
+Start with the [quick starts](../README.md) or find a guide below. The
+[product contract](server-api-spec.md) defines the public behavior.
 
 | Use | Reference |
 | --- | --- |
 | Features, supported platforms and application boundary | [Overview](overview.md) |
-| Build, selected toolchains and Kore upgrades | [Development](development.md) |
-| Test profiles, Debug worker stacks and traversal performance | [Testing](testing.md) |
 | clangd comments, completion and LuaLS annotations | [Editor setup](editors.md) |
-| Version/signing boundary and complete artifact inventory | [Release preparation](releasing.md) |
-| Public C API and ownership/units/error hovers | [Installed headers](../include/knurl/) |
-| Lua facade, callbacks, shapes and lifetimes | [Lua guide](lua.md), [annotated facade](../lua/knurl.lua), [editor types](../lua/knurl.meta.lua) |
-| Host-owned Lua VM and provider interop | [Embedding header](../lua/include/knurl/lua.h), [Lua source packages](../lua/README.md) |
+| Public C API and ownership/units/error hovers | [Installed headers](https://github.com/c89systems/libknurl/tree/trunk/include/knurl/) |
+| Lua facade, callbacks, shapes and lifetimes | [Lua guide](lua.md), [annotated facade](https://github.com/c89systems/libknurl/blob/trunk/lua/knurl.lua), [editor types](https://github.com/c89systems/libknurl/blob/trunk/lua/knurl.meta.lua) |
+| Host-owned Lua VM and provider interop | [Embedding header](https://github.com/c89systems/libknurl/blob/trunk/lua/include/knurl/lua.h), [Lua source packages](../lua/README.md) |
 | Core SDK archives and relocated consumers | [SDK delivery](sdk.md) |
 | Lifecycle, signals, control and fork ownership | [Processes](processes.md) |
 | Routing, request metadata and body policies | [Requests](requests.md) |
@@ -43,3 +34,6 @@ annotations, including dynamic methods implemented in C. Neither editor metadata
 nor these guides expose private Kore or dependency layouts. Public indexes are
 zero-based in C and one-based in Lua unless an operation explicitly documents an
 exception, such as selected-array callback indexes.
+
+Contributor instructions and verification history are in the source repository.
+[Development](https://github.com/c89systems/libknurl/blob/trunk/docs/development.md)

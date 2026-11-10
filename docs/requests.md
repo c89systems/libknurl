@@ -95,8 +95,8 @@ remove. `knurl_body_result_open_reader` returns an independently closed public
 source: memory readers borrow the result/buffer; file readers pin an open FD.
 Keep memory owners alive until reader close. File readers do not remove artifacts.
 
-The [focused body fixture](../tests/body-runtime.c) is an executable public API
+The [focused body fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/body-runtime.c) is an executable public API
 example. [Connection channels](channels.md) provide exclusive raw input and
 tunnel takeover. The [full specification](server-api-spec.md) and
-[integration contract](vectis-integration-contract.md) define the related
+[integration contract](https://github.com/c89systems/libknurl/blob/trunk/docs/vectis-integration-contract.md) define the related
 codec, provider and language-facade behavior.

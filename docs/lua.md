@@ -1,7 +1,7 @@
 # Lua server facade
 
 Editor types and per-operation hover comments ship in
-[`knurl.meta.lua`](../lua/knurl.meta.lua); the [facade source](../lua/knurl.lua)
+[`knurl.meta.lua`](https://github.com/c89systems/libknurl/blob/trunk/lua/knurl.meta.lua); the [facade source](https://github.com/c89systems/libknurl/blob/trunk/lua/knurl.lua)
 attaches them to the exported module and dynamically registered methods. Add the
 installed `share/lua/5.5` directory to your Lua language server library paths
 when working outside this source tree. This metadata contains no runtime code.
@@ -20,7 +20,7 @@ filesystem WebDAV, reverse-proxy configuration/callbacks, WebSockets, SSE,
 loop registrations, supervision, observations, staged bytes/files and live response sources. Its
 behavior comes from Vectis's [callback routes](https://github.com/sa6mwa/vectis/blob/6b1e263e0436687f68a7768ca55f4361a6e59e19/manual/lua-app.md)
 and [existing bridge](https://github.com/sa6mwa/vectis/blob/6b1e263e0436687f68a7768ca55f4361a6e59e19/src/vectis_cli.c), rather than a new server
-framework. The [integration contract](vectis-integration-contract.md) remains
+framework. The [integration contract](https://github.com/c89systems/libknurl/blob/trunk/docs/vectis-integration-contract.md) remains
 the complete replacement requirement.
 
 Integer-valued fields use Lua's checked conversion, matching Vectis: exact whole
@@ -412,7 +412,7 @@ return a structured error and release the private input. `source` returns the
 ordinary public Source wrapper; pass it as `stream_source` in a response, read
 it manually, or close it to cancel. Its schema/record owners survive until native
 producer cleanup. It is not resettable. The
-[writer fixture](../tests/lua/codecs.lua) ports Vectis's mutation/GC/reentry,
+[writer fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/codecs.lua) ports Vectis's mutation/GC/reentry,
 spooled-input and mutable-record cases, adding small pulls, cancellation, wire
 GET/HEAD delivery, sink failures and allocation unwinding.
 Like Vectis, option getters and a table sink's `write` function are snapshotted
@@ -484,7 +484,7 @@ server:json_route{
 }
 ```
 
-The [typed fixture](../tests/lua/typed.lua) covers records, captured JSON,
+The [typed fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/typed.lua) covers records, captured JSON,
 file/spooled input, repeated body decoding, owner lifetime, copied declarations,
 group/hook order, auth short circuit, multiple output schemas, mapped XML,
 bounded live output, malformed input, allocation failures and staged replacement.
@@ -520,7 +520,7 @@ defaults and 32-rule bound. With no access logger override, the C runtime derive
 `sub=http` from the root. `access_log=false` or `{enabled=false}` disables
 structured access logs independently of `http.access_log_path`. Application
 seed selection, service fields and category enablement remain host policy.
-The [logging fixture](../tests/lua/logging.lua) covers retention, replacement,
+The [logging fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/logging.lua) covers retention, replacement,
 failed conversion, GC/coroutines, native-sink validation, severity overrides,
 derived and explicit loggers, and independent legacy file output.
 
@@ -575,7 +575,7 @@ arguments and explicitly closed receivers. Native failures and invalidated views
 use the public knurl error format. Process/thread confinement, mutation,
 DTD/external-resource rejection and parsing belong to the public C API.
 Documents, views and SAX receivers also support Lua 5.5 `<close>` scopes.
-The [ported XML fixture](../tests/lua/xml.lua) covers those workflows, bounded
+The [ported XML fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/xml.lua) covers those workflows, bounded
 delivery beyond 16 MiB, callbacks/reentry, both collectors, owner release and
 allocation failures.
 
@@ -599,12 +599,12 @@ method, index, type/cache, auth and hook options retain the ordinary C behavior.
 The host supplies packed lookup and durable-store adapters; C handles ranges,
 conditions, source output, DAV operations and listing.
 
-The [public host module](../tests/lua/providers.c) supplies generated and memory
+The [public host module](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/providers.c) supplies generated and memory
 assets plus the C read-only storage adapter, using only public headers. Its
-[mount fixture](../tests/lua/providers.lua) checks scoped ownership, registration
+[mount fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/providers.lua) checks scoped ownership, registration
 failure, binary data, grouped mounts, ranges without prefix reads, conditions,
 HEAD suppression, bounded reads, PROPFIND and read-only mutation rejection.
-An [isolated consumer](../tests/lua/consumer/CMakeLists.txt) builds that same
+An [isolated consumer](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/consumer/CMakeLists.txt) builds that same
 module against installed C/Lua SDKs and selected toolchains.
 
 `make lua-package` ships the facade/binding source archive,
@@ -612,7 +612,7 @@ release rockspec and source rock with a checksum inventory. The
 [source-package instructions](../lua/README.md) cover installed public SDK inputs,
 toolchain selection, LuaRocks installation and embedded hosts. The full Vectis
 reference adapter and completed development compatibility/artifact checks are
-recorded in [verification](verification.md). Actual Vectis cutover and release
+recorded in [verification](https://github.com/c89systems/libknurl/blob/trunk/docs/verification.md). Actual Vectis cutover and release
 verification retain their separate gates.
 
 ## Selected JSON arrays

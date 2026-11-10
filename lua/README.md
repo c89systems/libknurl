@@ -5,6 +5,9 @@ the installed public shared libknurl API. It uses the host's existing Lua VM and
 the released LoneJSON/pslog interop; this source package includes no server core,
 Kore, dependency sources, interpreter or duplicate runtime.
 
+The source archive includes the [quick starts](../README.md) and
+[public guides](../docs/README.md) for offline reading.
+
 Required installed SDKs, for one concrete target:
 
 - libknurl, matching this package's `VERSION`, shared component;

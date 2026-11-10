@@ -106,7 +106,7 @@ if the file is truncated before its declared end. Renaming/unlinking the path
 does not change the pinned file; close releases the descriptor without unlinking.
 Opening a FIFO or directory fails. Filesystem reads run synchronously on the
 owner loop. Mapped Lua file parsing uses this public reader. The short
-[file-source fixture](../tests/source-file.c) covers these ownership/failure cases.
+[file-source fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/source-file.c) covers these ownership/failure cases.
 
 `knurl_reply_source_spooled` lifts Vectis's synchronous `response_source`:
 it borrows an unowned source, resets it once when supported, and copies bounded
@@ -121,11 +121,11 @@ The borrowed source stays pinned during callback/replacement cleanup. Buffered
 explicit reset flags. These are explicit materializations, with no live-streaming
 claim. [Spooled JSON](json.md) shares that private file lifecycle.
 
-The [public materialization fixture](../tests/reply-spooled.c) proves output
+The [public materialization fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/reply-spooled.c) proves output
 larger than the buffered default, descriptor privacy/lifetime, source reentry,
 buffered replacement ownership, input/reset/AGAIN and actual file-size failures,
 plus synchronous stack-record JSON serialization. The installed
-[Lua fixture](../tests/lua/foundation.lua) covers the matching `spooled_source`
+[Lua fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/foundation.lua) covers the matching `spooled_source`
 declaration, HEAD, chunk remainders and allocation/close failures.
 
 `knurl_response_bytes` copies a complete body under the output bound and
@@ -162,11 +162,11 @@ native buffer referencing them while removing untouched final output. The
 interim budget remains cumulative after replacement. Pending interim output uses
 the ordinary response write-idle deadline.
 
-The [focused wire fixture](../tests/response-runtime.c) demonstrates manual
+The [focused wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/response-runtime.c) demonstrates manual
 bounded writes, source resume, trailers, large staged replies and wide file
-ranges. The [proxy fixture](../tests/proxy-runtime.c) covers interim queue
+ranges. The [proxy fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/proxy-runtime.c) covers interim queue
 pressure, forwarding and subsequent final-response replacement.
-The [native-source fixture](../tests/source-runtime.c) covers bounded executor
+The [native-source fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/source-runtime.c) covers bounded executor
 admission, HTTP responsiveness during blocking reads, explicit and early wakes,
 invalid producer results, body suppression, disconnect and worker-stop cleanup.
 Live replies enable trailers explicitly and supply their final fields through
