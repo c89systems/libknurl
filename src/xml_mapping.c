@@ -556,8 +556,8 @@ knurl_xml_append_object_array_item(lonejson *runtime, const lonejson_map *map,
     if (*out == NULL)
         return knurl_json_error(native.code, &native, error);
     memset(*out, 0, stride);
-    lonejson_init(runtime, field->submap, *out);
-    return KNURL_OK;
+    return knurl_json_error(
+        lonejson_init(runtime, field->submap, *out, &native), &native, error);
 }
 
 static knurl_status knurl_xml_skip_element(xmlTextReaderPtr reader,
@@ -1778,6 +1778,7 @@ knurl_status knurl_xml_parse_source(knurl_source *source,
     struct xml_input input;
     xmlTextReaderPtr reader;
     lonejson *runtime;
+    lonejson_error native;
     knurl_status status;
     int options, owned;
     knurl_error_clear(error);
@@ -1796,7 +1797,13 @@ knurl_status knurl_xml_parse_source(knurl_source *source,
         runtime = knurl_xml_lonejson_new(&effective, error);
     if (runtime == NULL)
         return error != NULL ? error->status : KNURL_NOMEM;
-    lonejson_reset(runtime, schema->map, record);
+    status = knurl_json_error(
+        lonejson_reset(runtime, schema->map, record, &native), &native, error);
+    if (status != KNURL_OK) {
+        if (owned)
+            lonejson_free(runtime);
+        return status;
+    }
     memset(&input, 0, sizeof(input));
     input.source = source;
     options = XML_PARSE_NONET | XML_PARSE_COMPACT;
@@ -1823,7 +1830,7 @@ knurl_status knurl_xml_parse_source(knurl_source *source,
             error->status = status;
     }
     if (status != KNURL_OK)
-        lonejson_reset(runtime, schema->map, record);
+        (void)lonejson_reset(runtime, schema->map, record, NULL);
     if (owned)
         lonejson_free(runtime);
     if (status == KNURL_OK)

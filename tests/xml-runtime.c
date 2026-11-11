@@ -27,6 +27,10 @@ struct input {
 static const lonejson_field input_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(struct input, message, "message")};
 LONEJSON_MAP_DEFINE(input_map, struct input, input_fields);
+static const lonejson_map cycle_map;
+static const lonejson_field cycle_fields[] = {
+    LONEJSON_FIELD_OBJECT_REQ(struct input, message, "child", &cycle_map)};
+LONEJSON_MAP_DEFINE(cycle_map, struct input, cycle_fields);
 static int called, replaced, stopped, live_called, empty_called;
 static struct {
     pthread_t owner;
@@ -51,7 +55,9 @@ static knurl_status acquire_record(knurl_request *request, int output,
     storage->owner = storage->view.record;
     if (storage->owner == NULL)
         return KNURL_NOMEM;
-    lonejson_init(schema->runtime, schema->map, storage->owner);
+    if (lonejson_init(schema->runtime, schema->map, storage->owner, NULL) !=
+        LONEJSON_STATUS_OK)
+        abort();
     return path.length == sizeof("/provider-fail") - 1 &&
                    memcmp(path.data, "/provider-fail", path.length) == 0
                ? KNURL_IO
@@ -64,7 +70,9 @@ static void release_record(knurl_record_storage *storage, void *data)
     if (!pthread_equal(parsing.owner, pthread_self()))
         ++record_wrong_thread;
     if (storage->owner != NULL) {
-        lonejson_cleanup(storage->view.schema.map, storage->owner);
+        if (lonejson_cleanup(storage->view.schema.map, storage->owner, NULL) !=
+            LONEJSON_STATUS_OK)
+            abort();
         free(storage->owner);
     }
 }
@@ -364,6 +372,7 @@ static int client(unsigned short port)
 {
     char *live = calloc(50000, 1);
     CHECK(live != NULL);
+    CHECK(exchange(port, "/init-fail", "<doc/>", 500, "", 0, 0, 0) == 0);
     strcpy(live, "<doc><message>");
     memset(live + strlen(live), 'x', 32768);
     strcat(live, "</message><ignored>");
@@ -463,7 +472,8 @@ int main(void)
     knurl_error error;
     knurl_run_result result;
     knurl_status status;
-    lonejson_schema_view input;
+    lonejson_schema_view input, invalid;
+    knurl_xml_route_config failed;
     int child_status;
     char path[16] = "/echo", root[16] = "doc";
     memset(&fixture, 0, sizeof(fixture));
@@ -539,6 +549,13 @@ int main(void)
     xml.path = "/small-queue";
     xml.buffer_bytes = 8;
     CHECK(knurl_router_xml_route(knurl_server_router(server), &xml, NULL,
+                                 &error) == KNURL_OK);
+    failed = xml;
+    failed.path = "/init-fail";
+    CHECK(knurl_json_schema_from_map(NULL, &cycle_map, &invalid, &error) ==
+          KNURL_OK);
+    failed.input = &invalid;
+    CHECK(knurl_router_xml_route(knurl_server_router(server), &failed, NULL,
                                  &error) == KNURL_OK);
     xml.path = "/unsupported";
     xml.body.max_bytes.low = 0;

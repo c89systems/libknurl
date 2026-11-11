@@ -78,7 +78,9 @@ static int fixed_items(void)
         CHECK(!supplied || runtime != NULL);
         CHECK(knurl_json_schema_from_map(runtime, &fixed_map, &schema,
                                          &error) == KNURL_OK);
-        lonejson_init(runtime, &fixed_map, &storage);
+        if (lonejson_init(runtime, &fixed_map, &storage, NULL) !=
+            LONEJSON_STATUS_OK)
+            abort();
         storage.nums.items = backing;
         storage.nums.capacity = 1;
         storage.nums.flags = LONEJSON_ARRAY_FIXED_CAPACITY;
@@ -100,7 +102,8 @@ static int fixed_items(void)
                   storage.message == NULL);
             CHECK(knurl_source_destroy(source, &error) == KNURL_OK);
         }
-        lonejson_cleanup(&fixed_map, &storage);
+        if (lonejson_cleanup(&fixed_map, &storage, NULL) != LONEJSON_STATUS_OK)
+            abort();
         if (supplied)
             lonejson_free(runtime);
     }
@@ -282,7 +285,8 @@ static int parse_sources(void)
         if (scenario == 0)
             CHECK(input.ended && record.message != NULL &&
                   !strcmp(record.message, "parsed"));
-        lonejson_cleanup(&map, &record);
+        if (lonejson_cleanup(&map, &record, NULL) != LONEJSON_STATUS_OK)
+            abort();
         CHECK(knurl_source_destroy(source, &error) == KNURL_OK &&
               input.closed == 1);
     }

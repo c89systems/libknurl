@@ -26,7 +26,7 @@ static void release_records(void *data)
     if (r->acquired)
         r->route->provider.release(&r->storage, r->route->userdata);
     else if (r->input.record != NULL) {
-        lonejson_cleanup(r->input.schema.map, r->input.record);
+        (void)lonejson_cleanup(r->input.schema.map, r->input.record, NULL);
         free(r->input.record);
     }
     if (r->input_runtime)
@@ -38,6 +38,8 @@ static knurl_status allocate_record(const lonejson_schema_view *schema,
                                     lonejson_record_view *view, int *owned,
                                     knurl_error *error)
 {
+    lonejson_error native;
+    lonejson_status code;
     memset(view, 0, sizeof(*view));
     view->size = sizeof(*view);
     view->abi_version = LONEJSON_VIEW_ABI_VERSION;
@@ -53,8 +55,13 @@ static knurl_status allocate_record(const lonejson_schema_view *schema,
     if (view->record == NULL)
         return knurl_fail(error, KNURL_NOMEM, "xml_route",
                           "cannot allocate typed record");
-    lonejson_init(view->schema.runtime, schema->map, view->record);
-    return KNURL_OK;
+    code =
+        lonejson_init(view->schema.runtime, schema->map, view->record, &native);
+    if (code != LONEJSON_STATUS_OK) {
+        free(view->record);
+        view->record = NULL;
+    }
+    return knurl_json_error(code, &native, error);
 }
 static knurl_status open_records(knurl_request *request, void *data, void **out,
                                  knurl_error *error)

@@ -23,7 +23,7 @@ if(CHECK_KIND STREQUAL "memory")
   set(runner "${VALGRIND}" --error-exitcode=99 --leak-check=full
     --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect
     --track-origins=yes --trace-children=yes "--log-file=${CMAKE_BINARY_DIR}/valgrind-%p.log")
-  foreach(name declarations asset mime json access_log_file source_file_test rest-runtime openapi xml-mapped xml_stack kore_json_stack autoblock policy-logs-runtime
+  foreach(name declarations asset mime json json_runtime access_log_file source_file_test rest-runtime openapi xml-mapped xml-runtime xml_stack kore_json_stack autoblock policy-logs-runtime
       storage-filesystem webdav-runtime proxy_framing proxy_http proxy_ws_wire)
     set(program "${KNURL_BUILD}/knurl_${name}")
     if(NOT EXISTS "${program}")

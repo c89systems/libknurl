@@ -57,7 +57,8 @@ fixture runs against relocated static/shared installed SDKs.
 Mapped codecs use released public LoneJSON schemas and record views from
 `<knurl/lonejson.h>`. `knurl_xml_parse_source` consumes a synchronous source to
 EOF without closing it. The caller supplies initialized mapped storage; parsing
-resets it before use and on failure, preserving fixed array backing. Dynamic
+resets it before use and attempts reset on failure, preserving fixed array
+backing. Dynamic
 strings and arrays are assigned through public LoneJSON APIs. No allocator
 headers or language-binding layouts are copied. A supplied schema runtime owns
 its allocation/spool policy; a NULL runtime creates an operation-owned runtime
@@ -73,16 +74,20 @@ populate arrays. Preserve trimming, `xml:space`, CDATA, deferred formatting
 whitespace, required fields and duplicate/noncontiguous-array rejection.
 `skip_unknown_disabled` rejects unknown fields when true. Spooled text requires
 `trim_text=0` and no presence flag. DTD/entity declarations and external resources
-are rejected per reader. Errors preserve dependency codes/locations and failed
-parses retire partial allocations.
+are rejected per reader. Errors preserve dependency codes/locations. Failed
+parses retire partial allocations when lifecycle workspace is available.
 
 Mapped input uses an iterative stack of reader frames. Shallow documents use
 small bounded inline storage; deeper mapping grows heap storage geometrically.
 Traversal preserves incremental input, field order, inherited `xml:space` and
 configured depth checks without consuming a native call frame per XML level.
-Allocation failure returns NOMEM and retires partial mapped state. The separate
-LoneJSON schema/record initialization and cleanup operations still have their
-own dependency stack limits; the mapper change does not remove those limits.
+Allocation failure returns NOMEM. LoneJSON 0.49.0 also uses bounded native stack
+space for record lifecycle traversal, with checked heap growth for deep maps.
+Check the status from `lonejson_init`, `lonejson_reset` and `lonejson_cleanup`,
+passing their optional error output. Workspace allocation failure leaves the
+record unchanged. Initial reset failure returns before consuming input. If a
+failure prevents the final reset, restore allocator availability and reset or
+clean up the caller-owned record before reuse; the first parse error is retained.
 
 `knurl_router_xml_route` and its route-group counterpart copy declarations and
 mapping option strings, borrowing maps/runtime/userdata through route destruction.

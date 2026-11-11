@@ -30,13 +30,13 @@ static void release_records(void *data)
     if (r->output_acquired)
         r->provider.release(&r->output_storage, r->userdata);
     else if (r->output.record != NULL) {
-        lonejson_cleanup(r->output.schema.map, r->output.record);
+        (void)lonejson_cleanup(r->output.schema.map, r->output.record, NULL);
         free(r->output.record);
     }
     if (r->input_acquired)
         r->provider.release(&r->input_storage, r->userdata);
     else if (r->input.record != NULL) {
-        lonejson_cleanup(r->input.schema.map, r->input.record);
+        (void)lonejson_cleanup(r->input.schema.map, r->input.record, NULL);
         free(r->input.record);
     }
     if (r->output_runtime)
@@ -50,6 +50,8 @@ static knurl_status allocate_record(const lonejson_schema_view *schema,
                                     knurl_error *error)
 {
     knurl_status status;
+    lonejson_error native;
+    lonejson_status code;
     memset(view, 0, sizeof(*view));
     view->size = sizeof(*view);
     view->abi_version = LONEJSON_VIEW_ABI_VERSION;
@@ -63,8 +65,13 @@ static knurl_status allocate_record(const lonejson_schema_view *schema,
     if (view->record == NULL)
         return knurl_fail(error, KNURL_NOMEM, "json_route",
                           "cannot allocate typed record");
-    lonejson_init(view->schema.runtime, schema->map, view->record);
-    return KNURL_OK;
+    code =
+        lonejson_init(view->schema.runtime, schema->map, view->record, &native);
+    if (code != LONEJSON_STATUS_OK) {
+        free(view->record);
+        view->record = NULL;
+    }
+    return knurl_json_error(code, &native, error);
 }
 static knurl_status dispatch(knurl_request *request, knurl_reply *reply,
                              void *data, knurl_error *error)

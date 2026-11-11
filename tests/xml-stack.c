@@ -114,6 +114,98 @@ static void end(void)
     CHECK(outstanding == 0);
     tracking = 0;
 }
+static void *lifecycle_malloc(void *data, size_t size)
+{
+    size_t *fail = data;
+    if (*fail != 0 && --*fail == 0)
+        return NULL;
+    return malloc(size);
+}
+static void *lifecycle_realloc(void *data, void *old, size_t size)
+{
+    size_t *fail = data;
+    if (*fail != 0 && --*fail == 0)
+        return NULL;
+    return realloc(old, size);
+}
+static void lifecycle_free(void *data, void *old)
+{
+    (void)data;
+    free(old);
+}
+static knurl_status unexpected_item(size_t index,
+                                    const lonejson_record_view *record,
+                                    void *data, knurl_error *error)
+{
+    (void)index;
+    (void)record;
+    (void)data;
+    (void)error;
+    abort();
+    return KNURL_STATE;
+}
+static void lifecycle(void)
+{
+    struct xml_stack_fixture f;
+    lonejson_config config;
+    lonejson_allocator allocator;
+    lonejson_error native;
+    knurl_error error;
+    knurl_source *source;
+    knurl_bytes empty = {"[]", 2};
+    knurl_status status;
+    size_t fail = 0, attempt;
+    /* This finite chain overflowed musl's default worker stack with 0.47. */
+    CHECK(xml_stack_fixture_new(&f, 4096) == 0);
+    lonejson_free(f.runtime);
+    config = lonejson_default_config();
+    config.max_depth = f.depth + 4;
+    allocator = lonejson_default_allocator();
+    allocator.malloc_fn = lifecycle_malloc;
+    allocator.realloc_fn = lifecycle_realloc;
+    allocator.free_fn = lifecycle_free;
+    allocator.ctx = &fail;
+    config.allocator = &allocator;
+    f.runtime = lonejson_new(&config, &native);
+    CHECK(f.runtime != NULL);
+    f.schema.runtime = f.runtime;
+    strcpy(f.record.text, "retained");
+    fail = 1;
+    CHECK(lonejson_init(f.runtime, f.maps, &f.record, &native) ==
+          LONEJSON_STATUS_ALLOCATION_FAILED);
+    CHECK(!strcmp(f.record.text, "retained"));
+    fail = 1;
+    CHECK(f.runtime->cleanup(f.runtime, f.maps, &f.record, &native) ==
+          LONEJSON_STATUS_ALLOCATION_FAILED);
+    CHECK(!strcmp(f.record.text, "retained"));
+    fail = 1;
+    CHECK(xml_stack_parse(&f, f.depth + 2, &error) == KNURL_NOMEM);
+    CHECK(error.source == KNURL_ERROR_LONEJSON &&
+          error.native_code == LONEJSON_STATUS_ALLOCATION_FAILED);
+    CHECK(!strcmp(f.record.text, "retained") && f.reads == 0);
+    fail = 0;
+    CHECK(lonejson_reset(f.runtime, f.maps, &f.record, &native) ==
+          LONEJSON_STATUS_OK);
+    CHECK(f.record.text[0] == 0);
+    /* Cover stream creation and both record resets with real allocator faults.
+     * Even an empty selected array must report a failed trailing reset. */
+    for (attempt = 1; attempt < 128; ++attempt) {
+        CHECK(knurl_source_bytes(empty, &source, &error) == KNURL_OK);
+        fail = attempt;
+        status = knurl_json_array_each_source(
+            source, NULL, &f.schema, &f.record, unexpected_item, NULL, &error);
+        if (status == KNURL_OK)
+            CHECK(fail != 0);
+        fail = 0;
+        CHECK(knurl_source_destroy(source, NULL) == KNURL_OK);
+        if (status == KNURL_OK)
+            break;
+        CHECK(status == KNURL_NOMEM && error.source == KNURL_ERROR_LONEJSON);
+        CHECK(strstr(error.detail, "errno 0") != NULL);
+    }
+    CHECK(attempt > 2 && attempt < 128);
+    xml_stack_fixture_destroy(&f);
+}
 struct array_record {
     lonejson_object_array children;
     char text[16];
@@ -144,7 +236,8 @@ static void nested_arrays(void)
     map.fields = fields;
     map.field_count = 2;
     CHECK(knurl_json_schema_from_map(NULL, &map, &schema, &error) == KNURL_OK);
-    lonejson_init(NULL, &map, &record);
+    if (lonejson_init(NULL, &map, &record, NULL) != LONEJSON_STATUS_OK)
+        abort();
     memcpy(p, "<r>", 3);
     p += 3;
     for (i = 0; i < 32; ++i) {
@@ -193,7 +286,8 @@ static void nested_arrays(void)
           record.children.count == 0);
     end();
     CHECK(knurl_source_destroy(source, &error) == KNURL_OK);
-    lonejson_cleanup(&map, &record);
+    if (lonejson_cleanup(&map, &record, NULL) != LONEJSON_STATUS_OK)
+        abort();
 }
 static void inherited_space(void)
 {
@@ -249,6 +343,7 @@ static void *worker(void *unused)
 #endif
     CHECK(pthread_attr_destroy(&attributes) == 0);
 #endif
+    lifecycle();
     nested_arrays();
     inherited_space();
     CHECK(xml_stack_fixture_new(&f, 3) == 0);

@@ -42,6 +42,7 @@ static knurl_status each(struct array_input *input, const char *selector,
     lonejson_array_stream_result result;
     lonejson_record_view view;
     lonejson_error native;
+    lonejson_status code;
     knurl_status status;
     int owned;
     size_t index = 0;
@@ -62,6 +63,7 @@ static knurl_status each(struct array_input *input, const char *selector,
         if (view.schema.runtime == NULL)
             return knurl_json_error(native.code, &native, error);
     }
+    lonejson_error_init(&native);
     stream = lonejson_array_stream_open_reader(view.schema.runtime, selector,
                                                read_input, input, &native);
     if (stream == NULL)
@@ -74,7 +76,12 @@ static knurl_status each(struct array_input *input, const char *selector,
             status = knurl_json_error(native.code, &native, error);
         else
             for (;;) {
-                lonejson_reset(view.schema.runtime, schema->map, item);
+                code = lonejson_reset(view.schema.runtime, schema->map, item,
+                                      &native);
+                if (code != LONEJSON_STATUS_OK) {
+                    status = knurl_json_error(code, &native, error);
+                    break;
+                }
                 result = lonejson_array_stream_next(stream, schema->map, item,
                                                     &native);
                 if (result == LONEJSON_ARRAY_STREAM_ITEM) {
@@ -88,7 +95,10 @@ static knurl_status each(struct array_input *input, const char *selector,
                     status = KNURL_OK;
                 else
                     status = knurl_json_error(native.code, &native, error);
-                lonejson_reset(view.schema.runtime, schema->map, item);
+                code = lonejson_reset(view.schema.runtime, schema->map, item,
+                                      &native);
+                if (status == KNURL_OK)
+                    status = knurl_json_error(code, &native, error);
                 if (status != KNURL_OK || result != LONEJSON_ARRAY_STREAM_ITEM)
                     break;
             }

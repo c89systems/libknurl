@@ -1,0 +1,108 @@
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -415,7 +415,7 @@
+ 	if (status != LONEJSON_STATUS_OK) {
+ 		kore_log(LOG_NOTICE, "%s: lonejson parse failed at %lu:%lu (%s)",
+ 		    what, (unsigned long)(error.line), (unsigned long)(error.column), error.message);
+-		lonejson_cleanup(map, dst);
++		(void)lonejson_cleanup(map, dst, NULL);
+ 		return (KORE_RESULT_ERROR);
+ 	}
+ 
+@@ -630,7 +630,7 @@
+ 		order_url = kore_strdup(doc.new_order);
+ 		account_url = kore_strdup(doc.new_account);
+ 		revoke_url = kore_strdup(doc.revoke_cert);
+-		lonejson_cleanup(&acme_directory_map, &doc);
++		(void)lonejson_cleanup(&acme_directory_map, &doc, NULL);
+ 	}
+ #else
+ 	struct kore_json	json;
+@@ -878,21 +878,21 @@
+ 		if (doc.authorizations.count == 0) {
+ 			kore_log(LOG_NOTICE, "[%s] no authorization URLs in payload",
+ 			    domain);
+-			lonejson_cleanup(&acme_order_map, &doc);
++			(void)lonejson_cleanup(&acme_order_map, &doc, NULL);
+ 			goto cleanup;
+ 		}
+ 
+ 		if (doc.finalize == NULL) {
+ 			kore_log(LOG_NOTICE, "[%s] order has no 'finalize' string",
+ 			    domain);
+-			lonejson_cleanup(&acme_order_map, &doc);
++			(void)lonejson_cleanup(&acme_order_map, &doc, NULL);
+ 			goto cleanup;
+ 		}
+ 
+ 		if ((stval = acme_status_type(doc.status)) == -1) {
+ 			kore_log(LOG_NOTICE, "[%s] order has invalid status",
+ 			    domain);
+-			lonejson_cleanup(&acme_order_map, &doc);
++			(void)lonejson_cleanup(&acme_order_map, &doc, NULL);
+ 			goto cleanup;
+ 		}
+ 
+@@ -919,7 +919,7 @@
+ 
+ 		order->curauth = LIST_FIRST(&order->auth);
+ 		kore_log(LOG_INFO, "[%s] order_id =  %s", order->domain, order->id);
+-		lonejson_cleanup(&acme_order_map, &doc);
++		(void)lonejson_cleanup(&acme_order_map, &doc, NULL);
+ 	}
+ #else
+ 	{
+@@ -1050,7 +1050,7 @@
+ 		if ((stval = acme_status_type(doc.status)) == -1) {
+ 			kore_log(LOG_NOTICE, "[%s] order has invalid status",
+ 			    order->domain);
+-			lonejson_cleanup(&acme_order_map, &doc);
++			(void)lonejson_cleanup(&acme_order_map, &doc, NULL);
+ 			goto cleanup;
+ 		}
+ 
+@@ -1060,7 +1060,7 @@
+ 				kore_log(LOG_NOTICE,
+ 				    "[%s] order missing 'certificate' member",
+ 				    order->domain);
+-				lonejson_cleanup(&acme_order_map, &doc);
++				(void)lonejson_cleanup(&acme_order_map, &doc, NULL);
+ 				goto cleanup;
+ 			}
+ 
+@@ -1068,7 +1068,7 @@
+ 			order->certloc = kore_strdup(doc.certificate);
+ 		}
+ 
+-		lonejson_cleanup(&acme_order_map, &doc);
++		(void)lonejson_cleanup(&acme_order_map, &doc, NULL);
+ 	}
+ #else
+ 	{
+@@ -1529,7 +1529,7 @@
+ 		if ((stval = acme_status_type(doc.status)) == -1) {
+ 			kore_log(LOG_NOTICE, "[%s] auth has invalid status",
+ 			    order->domain);
+-			lonejson_cleanup(&acme_auth_map, &doc);
++			(void)lonejson_cleanup(&acme_auth_map, &doc, NULL);
+ 			goto cleanup;
+ 		}
+ 
+@@ -1601,7 +1601,7 @@
+ 			break;
+ 		}
+ 
+-		lonejson_cleanup(&acme_auth_map, &doc);
++		(void)lonejson_cleanup(&acme_auth_map, &doc, NULL);
+ 	}
+ #else
+ 	{
+@@ -2012,7 +2012,7 @@
+ 			    "request to '%s' failed with 400 - body: %.*s",
+ 			    req->curl.url, (int)len, (const char *)body);
+ 		}
+-		lonejson_cleanup(&acme_badreq_map, &doc);
++		(void)lonejson_cleanup(&acme_badreq_map, &doc, NULL);
+ #else
+ 		{
+ 			struct kore_json		json;

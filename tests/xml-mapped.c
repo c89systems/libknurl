@@ -165,8 +165,10 @@ static int mapped(void)
     c.root_element = "invoice";
     CHECK(knurl_json_schema_from_map(NULL, &invoice_map, &schema, &error) ==
           KNURL_OK);
-    lonejson_init(NULL, &invoice_map, &doc);
-    lonejson_init(NULL, &invoice_map, &copy);
+    if (lonejson_init(NULL, &invoice_map, &doc, NULL) != LONEJSON_STATUS_OK)
+        abort();
+    if (lonejson_init(NULL, &invoice_map, &copy, NULL) != LONEJSON_STATUS_OK)
+        abort();
     memset(&error, 0xa5, sizeof(error));
     CHECK(parse(xml, &schema, &c, &doc, 0, &error) == KNURL_OK &&
           error.status == KNURL_OK);
@@ -196,14 +198,17 @@ static int mapped(void)
           doc.id == NULL);
     c.max_depth = 2;
     CHECK(parse(xml, &schema, &c, &doc, 0, &error) == KNURL_INVALID);
-    lonejson_cleanup(&invoice_map, &copy);
-    lonejson_cleanup(&invoice_map, &doc);
+    if (lonejson_cleanup(&invoice_map, &copy, NULL) != LONEJSON_STATUS_OK)
+        abort();
+    if (lonejson_cleanup(&invoice_map, &doc, NULL) != LONEJSON_STATUS_OK)
+        abort();
     knurl_xml_config_init(&c);
     c.root_element = "item";
     c.attribute_prefix = "@";
     CHECK(knurl_json_schema_from_map(NULL, &mixed_map, &schema, &error) ==
           KNURL_OK);
-    lonejson_init(NULL, &mixed_map, &mixed);
+    if (lonejson_init(NULL, &mixed_map, &mixed, NULL) != LONEJSON_STATUS_OK)
+        abort();
     CHECK(parse("<item id='split'>\n <text>hello</text>\n</item>", &schema, &c,
                 &mixed, 0, &error) == KNURL_OK &&
           strcmp(mixed.text, "hello") == 0);
@@ -240,12 +245,14 @@ static int mapped(void)
     CHECK(parse("<item id='a'>allocated</item><item/>", &schema, &c, &mixed, 0,
                 &error) == KNURL_INVALID &&
           mixed.item.count == 0);
-    lonejson_cleanup(&mixed_map, &mixed);
+    if (lonejson_cleanup(&mixed_map, &mixed, NULL) != LONEJSON_STATUS_OK)
+        abort();
     knurl_xml_config_init(&c);
     c.root_element = "numbers";
     CHECK(knurl_json_schema_from_map(NULL, &number_map, &schema, &error) ==
           KNURL_OK);
-    lonejson_init(NULL, &number_map, &numbers);
+    if (lonejson_init(NULL, &number_map, &numbers, NULL) != LONEJSON_STATUS_OK)
+        abort();
     CHECK(parse("<numbers><i>-1</i><i>2</i><u>18446744073709551615</u><d>1.25</"
                 "d><b>true</b><b>0</b></numbers>",
                 &schema, &c, &numbers, 0, &error) == KNURL_OK);
@@ -264,7 +271,8 @@ static int mapped(void)
           numbers.i.count == 0);
     CHECK(parse("<numbers><d>NaN</d></numbers>", &schema, &c, &numbers, 0,
                 &error) == KNURL_INVALID);
-    lonejson_cleanup(&number_map, &numbers);
+    if (lonejson_cleanup(&number_map, &numbers, NULL) != LONEJSON_STATUS_OK)
+        abort();
     return 0;
 }
 struct lifetime {
@@ -305,7 +313,8 @@ static int generation(void)
     policy.spool_default.memory_limit = 8;
     runtime = lonejson_new(&policy, &native);
     CHECK(runtime != NULL);
-    lonejson_init(runtime, &blob_map, &blob);
+    if (lonejson_init(runtime, &blob_map, &blob, NULL) != LONEJSON_STATUS_OK)
+        abort();
     memset(chunk, 'a', sizeof(chunk));
     chunk[2047] = (char)0xe2;
     chunk[2048] = (char)0x82;
@@ -378,7 +387,8 @@ static int generation(void)
     CHECK(g->read(g, out, 1, &n, &error) == KNURL_INVALID && n == 0);
     CHECK(g->destroy(g, &error) == KNURL_OK && l.outcome == KNURL_INVALID);
     free(collected);
-    lonejson_cleanup(&blob_map, &blob);
+    if (lonejson_cleanup(&blob_map, &blob, NULL) != LONEJSON_STATUS_OK)
+        abort();
     lonejson_free(runtime);
     return 0;
 }
@@ -407,7 +417,8 @@ static int limits_and_ownership(void)
     config.root_element = "doc";
     CHECK(knurl_json_schema_from_map(NULL, &blob_map, &schema, &error) ==
           KNURL_OK);
-    lonejson_init(NULL, &blob_map, &blob);
+    if (lonejson_init(NULL, &blob_map, &blob, NULL) != LONEJSON_STATUS_OK)
+        abort();
     large = malloc(length + 25);
     CHECK(large != NULL);
     memcpy(large, "<doc><body>", 11);
@@ -428,11 +439,13 @@ static int limits_and_ownership(void)
     CHECK(parse("<doc><body>abc</body></doc>", &schema, &config, &blob, 0,
                 &error) == KNURL_INVALID &&
           lonejson_spooled_size(&blob.body) == 0);
-    lonejson_cleanup(&blob_map, &blob);
+    if (lonejson_cleanup(&blob_map, &blob, NULL) != LONEJSON_STATUS_OK)
+        abort();
     free(large);
     CHECK(knurl_json_schema_from_map(NULL, &number_map, &schema, &error) ==
           KNURL_OK);
-    lonejson_init(NULL, &number_map, &numbers);
+    if (lonejson_init(NULL, &number_map, &numbers, NULL) != LONEJSON_STATUS_OK)
+        abort();
     numbers.i.items = backing;
     numbers.i.capacity = 1;
     numbers.i.flags = LONEJSON_ARRAY_FIXED_CAPACITY;
@@ -441,10 +454,12 @@ static int limits_and_ownership(void)
     CHECK(parse("<numbers><i>1</i><i>2</i></numbers>", &schema, &config,
                 &numbers, 0, &error) == KNURL_INVALID &&
           numbers.i.count == 0 && numbers.i.items == backing);
-    lonejson_cleanup(&number_map, &numbers);
+    if (lonejson_cleanup(&number_map, &numbers, NULL) != LONEJSON_STATUS_OK)
+        abort();
     CHECK(knurl_json_schema_from_map(NULL, &mixed_map, &schema, &error) ==
           KNURL_OK);
-    lonejson_init(NULL, &mixed_map, &mixed);
+    if (lonejson_init(NULL, &mixed_map, &mixed, NULL) != LONEJSON_STATUS_OK)
+        abort();
     strcpy(mixed.id, "a");
     strcpy(mixed.text, "hello");
     view(&r, &schema, &mixed);
@@ -473,7 +488,8 @@ static int limits_and_ownership(void)
                   &r, &output.xml, 0, &materialized, &error) == KNURL_INVALID &&
               materialized.data == NULL);
     }
-    lonejson_cleanup(&mixed_map, &mixed);
+    if (lonejson_cleanup(&mixed_map, &mixed, NULL) != LONEJSON_STATUS_OK)
+        abort();
     return 0;
 }
 static void *run(void *data)

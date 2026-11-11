@@ -2,8 +2,11 @@
 
 This document records the historical diagnosis before the iterative mapper and
 Kore patch 0066. Both local corrections are now implemented; see
-[verification](verification.md) and the [XML manual](xml.md). The separate
-LoneJSON initialization and provisional Lua binding handoffs remain open.
+[verification](verification.md) and the [XML manual](xml.md). The adopted
+[LoneJSON 0.49.0](https://github.com/c89systems/lonejson/releases/tag/v0.49.0)
+includes 0.48.0's record-lifecycle and Lua JSON stack corrections. The worker
+regression now exercises the finite 4,097-map lifecycle chain. Dependency
+findings and handoff status below describe the historical 0.47.0 baseline.
 
 The scoped investigation at `c48fff7` confirms a local mapped-XML recursion
 failure and separate dependency traversal failures. This is an assessment of
@@ -143,7 +146,8 @@ were stopped after the production executive reported another platform notice;
 two drafted deeper ARM32 cases were removed without execution.
 
 This records the scoped assessment of the baseline frames and known direct
-cycles. Local XML mapping and Kore traversal have since been corrected;
-LoneJSON initialization and binding handoffs remain open. External library internals, arbitrary callback
+cycles. Local XML mapping and Kore traversal have since been corrected, and the
+current LoneJSON pin includes upstream lifecycle and binding corrections.
+External library internals, arbitrary callback
 chains, physical ARM hardware, and the separately owned Lua runtime remain
 outside the established evidence. No release or complete product matrix was run.
