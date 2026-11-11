@@ -1,13 +1,17 @@
 #include "asset_internal.h"
+#include <knurl/storage.h>
+#include <knurl/asset.h>
 #include <stdlib.h>
 #include <string.h>
 
-struct knurl_asset_provider {
+struct knurl_asset_provider_impl {
+    knurl_asset_provider receiver;
     knurl_asset_provider_config config;
     size_t references;
     int closed, busy;
 };
-struct knurl_asset {
+struct knurl_asset_impl {
+    knurl_asset receiver;
     knurl_asset_config config;
     knurl_asset_provider *provider;
     void *owner;
@@ -162,38 +166,40 @@ knurl_status knurl_asset_new(const knurl_asset_config *config,
         (config->info.kind == KNURL_ASSET_DIRECTORY && config->next == NULL))
         return failure(error, KNURL_INVALID,
                        "provide asset metadata and read/list callback");
-    a = calloc(1, sizeof(*a));
+    a = calloc(1, sizeof(struct knurl_asset_impl));
     if (a == NULL)
         return failure(error, KNURL_NOMEM, "allocating asset");
-    status = knurl_asset_info_copy(&config->info, &a->config.info, error);
+    knurl_asset_receiver_init(a);
+    status = knurl_asset_info_copy(&config->info, &a->impl->config.info, error);
     if (status != KNURL_OK) {
         free(a);
         return status;
     }
-    a->config.read = config->read;
-    a->config.next = config->next;
-    a->config.close = config->close;
-    a->config.userdata = config->userdata;
+    a->impl->config.read = config->read;
+    a->impl->config.next = config->next;
+    a->impl->config.close = config->close;
+    a->impl->config.userdata = config->userdata;
     *out = a;
     knurl_error_clear(error);
     return KNURL_OK;
 }
 const knurl_asset_info *knurl_asset_stat(const knurl_asset *a)
 {
-    return a != NULL ? &a->config.info : NULL;
+    return a != NULL ? &a->impl->config.info : NULL;
 }
 static knurl_status access(knurl_asset *a, void *owner, knurl_error *error)
 {
     if (a == NULL)
         return failure(error, KNURL_INVALID, "missing asset");
-    if (a->busy) {
-        a->failure = KNURL_STATE;
+    if (a->impl->busy) {
+        a->impl->failure = KNURL_STATE;
         return failure(error, KNURL_STATE, "recursive asset operation");
     }
-    if (a->owner != owner)
+    if (a->impl->owner != owner)
         return failure(error, KNURL_STATE, "asset belongs to a source");
-    if (a->failure != KNURL_OK)
-        return failure(error, a->failure, "asset operation previously failed");
+    if (a->impl->failure != KNURL_OK)
+        return failure(error, a->impl->failure,
+                       "asset operation previously failed");
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -209,23 +215,24 @@ static knurl_status read_at(knurl_asset *a, void *owner, knurl_u64 offset,
     status = access(a, owner, error);
     if (status != KNURL_OK)
         return status;
-    if (a->config.info.kind != KNURL_ASSET_FILE || !knurl_u64_valid(offset) ||
-        bytes == NULL || capacity == 0 || produced == NULL)
+    if (a->impl->config.info.kind != KNURL_ASSET_FILE ||
+        !knurl_u64_valid(offset) || bytes == NULL || capacity == 0 ||
+        produced == NULL)
         return failure(
             error, KNURL_INVALID,
             "provide file asset, valid offset and nonempty read buffer");
-    if (knurl_asset_compare(offset, a->config.info.size) >= 0)
+    if (knurl_asset_compare(offset, a->impl->config.info.size) >= 0)
         return KNURL_EOF;
-    remaining = knurl_asset_subtract(a->config.info.size, offset);
+    remaining = knurl_asset_subtract(a->impl->config.info.size, offset);
     if (knurl_u64_to_size(remaining, &bound, NULL) == KNURL_OK &&
         capacity > bound)
         capacity = bound;
-    a->busy = 1;
-    status = a->config.read(offset, bytes, capacity, &count, a->config.userdata,
-                            error);
-    a->busy = 0;
-    if (a->failure != KNURL_OK)
-        status = a->failure;
+    a->impl->busy = 1;
+    status = a->impl->config.read(offset, bytes, capacity, &count,
+                                  a->impl->config.userdata, error);
+    a->impl->busy = 0;
+    if (a->impl->failure != KNURL_OK)
+        status = a->impl->failure;
     else if (status < KNURL_OK || status > KNURL_BACKEND ||
              (status == KNURL_OK && (count == 0 || count > capacity)) ||
              (status != KNURL_OK && count != 0))
@@ -233,7 +240,7 @@ static knurl_status read_at(knurl_asset *a, void *owner, knurl_u64 offset,
     else if (status == KNURL_EOF)
         status = KNURL_IO;
     if (status != KNURL_OK && status != KNURL_AGAIN) {
-        a->failure = status;
+        a->impl->failure = status;
         return error != NULL && error->status == status
                    ? status
                    : failure(error, status,
@@ -259,22 +266,22 @@ knurl_status knurl_asset_list_next(knurl_asset *a, knurl_asset_entry *out,
     status = access(a, NULL, error);
     if (status != KNURL_OK)
         return status;
-    if (out == NULL || a->config.info.kind != KNURL_ASSET_DIRECTORY)
+    if (out == NULL || a->impl->config.info.kind != KNURL_ASSET_DIRECTORY)
         return failure(error, KNURL_INVALID,
                        "provide directory asset and entry output");
-    if (a->ended)
+    if (a->impl->ended)
         return KNURL_EOF;
-    free((void *)a->entry.name);
-    knurl_asset_info_clear(&a->entry.info);
-    memset(&a->entry, 0, sizeof(a->entry));
+    free((void *)a->impl->entry.name);
+    knurl_asset_info_clear(&a->impl->entry.info);
+    memset(&a->impl->entry, 0, sizeof(a->impl->entry));
     memset(&entry, 0, sizeof(entry));
-    a->busy = 1;
-    status = a->config.next(&entry, a->config.userdata, error);
-    a->busy = 0;
-    if (a->failure != KNURL_OK)
-        status = a->failure;
+    a->impl->busy = 1;
+    status = a->impl->config.next(&entry, a->impl->config.userdata, error);
+    a->impl->busy = 0;
+    if (a->impl->failure != KNURL_OK)
+        status = a->impl->failure;
     if (status == KNURL_EOF) {
-        a->ended = 1;
+        a->impl->ended = 1;
         knurl_error_clear(error);
         return status;
     }
@@ -287,31 +294,32 @@ knurl_status knurl_asset_list_next(knurl_asset *a, knurl_asset_entry *out,
             status =
                 failure(error, KNURL_INVALID, "invalid asset list child name");
         else
-            status = knurl_asset_info_copy(&entry.info, &a->entry.info, error);
+            status =
+                knurl_asset_info_copy(&entry.info, &a->impl->entry.info, error);
         if (status == KNURL_OK) {
-            a->entry.name = knurl_copy_text(entry.name);
-            if (a->entry.name == NULL)
+            a->impl->entry.name = knurl_copy_text(entry.name);
+            if (a->impl->entry.name == NULL)
                 status = failure(error, KNURL_NOMEM, "copying list child name");
         }
     }
     if (status != KNURL_OK) {
         if (status < KNURL_OK || status > KNURL_BACKEND)
             status = KNURL_INVALID;
-        a->failure = status;
+        a->impl->failure = status;
         return error != NULL && error->status == status
                    ? status
                    : failure(error, status, "asset list callback failed");
     }
-    *out = a->entry;
+    *out = a->impl->entry;
     knurl_error_clear(error);
     return KNURL_OK;
 }
 static void provider_unref(knurl_asset_provider *p)
 {
-    if (p != NULL && --p->references == 0) {
-        p->busy = 1;
-        if (p->config.close != NULL)
-            p->config.close(p->config.userdata);
+    if (p != NULL && --p->impl->references == 0) {
+        p->impl->busy = 1;
+        if (p->impl->config.close != NULL)
+            p->impl->config.close(p->impl->config.userdata);
         free(p);
     }
 }
@@ -321,21 +329,21 @@ knurl_status knurl_asset_close(knurl_asset *a, knurl_error *error)
         knurl_error_clear(error);
         return KNURL_OK;
     }
-    if (a->busy) {
-        a->failure = KNURL_STATE;
+    if (a->impl->busy) {
+        a->impl->failure = KNURL_STATE;
         return failure(error, KNURL_STATE, "recursive asset close");
     }
-    if (a->owner != NULL)
+    if (a->impl->owner != NULL)
         return failure(error, KNURL_STATE, "asset belongs to a source");
-    a->busy = 1;
-    if (a->config.close != NULL)
-        a->config.close(a->config.userdata);
-    knurl_asset_info_clear(&a->config.info);
-    knurl_asset_info_clear(&a->entry.info);
-    free((void *)a->entry.name);
-    provider_unref(a->provider);
-    if (a->retained_release != NULL)
-        a->retained_release(a->retained_data);
+    a->impl->busy = 1;
+    if (a->impl->config.close != NULL)
+        a->impl->config.close(a->impl->config.userdata);
+    knurl_asset_info_clear(&a->impl->config.info);
+    knurl_asset_info_clear(&a->impl->entry.info);
+    free((void *)a->impl->entry.name);
+    provider_unref(a->impl->provider);
+    if (a->impl->retained_release != NULL)
+        a->impl->retained_release(a->impl->retained_data);
     free(a);
     knurl_error_clear(error);
     return KNURL_OK;
@@ -374,15 +382,15 @@ static void source_close(void *data, knurl_status outcome)
 {
     struct asset_source *s = data;
     (void)outcome;
-    s->asset->owner = NULL;
+    s->asset->impl->owner = NULL;
     knurl_asset_close(s->asset, NULL);
     free(s);
 }
 static knurl_status source_reset(void *data, knurl_error *error)
 {
     struct asset_source *s = data;
-    if (s->asset->failure != KNURL_OK)
-        return failure(error, s->asset->failure,
+    if (s->asset->impl->failure != KNURL_OK)
+        return failure(error, s->asset->impl->failure,
                        "asset read previously failed");
     s->offset = s->start;
     s->remaining = s->length;
@@ -401,13 +409,13 @@ knurl_status knurl_asset_source_take(knurl_asset *a, knurl_u64 offset,
     status = access(a, NULL, error);
     if (status != KNURL_OK)
         return status;
-    if (out == NULL || a->config.info.kind != KNURL_ASSET_FILE)
+    if (out == NULL || a->impl->config.info.kind != KNURL_ASSET_FILE)
         return failure(error, KNURL_INVALID,
                        "provide file asset and source output");
     status = knurl_u64_add(offset, length, &end, error);
     if (status != KNURL_OK)
         return status;
-    if (knurl_asset_compare(end, a->config.info.size) > 0)
+    if (knurl_asset_compare(end, a->impl->config.info.size) > 0)
         return failure(error, KNURL_INVALID,
                        "asset source range exceeds the opened content");
     s = calloc(1, sizeof(*s));
@@ -430,7 +438,7 @@ knurl_status knurl_asset_source_take(knurl_asset *a, knurl_u64 offset,
         free(s);
         return status;
     }
-    a->owner = s;
+    a->impl->owner = s;
     return KNURL_OK;
 }
 struct memory {
@@ -515,11 +523,12 @@ knurl_status knurl_asset_provider_new(const knurl_asset_provider_config *config,
     if (config == NULL || out == NULL || config->open == NULL)
         return failure(error, KNURL_INVALID,
                        "provide asset open callback and provider output");
-    p = calloc(1, sizeof(*p));
+    p = calloc(1, sizeof(struct knurl_asset_provider_impl));
     if (p == NULL)
         return failure(error, KNURL_NOMEM, "allocating asset provider");
-    p->config = *config;
-    p->references = 1;
+    knurl_asset_provider_receiver_init(p);
+    p->impl->config = *config;
+    p->impl->references = 1;
     *out = p;
     knurl_error_clear(error);
     return KNURL_OK;
@@ -536,21 +545,21 @@ knurl_status knurl_asset_provider_open(knurl_asset_provider *p,
         return failure(
             error, KNURL_INVALID,
             "provide provider, normalized absolute asset path and output");
-    if (p->closed || p->busy)
+    if (p->impl->closed || p->impl->busy)
         return failure(error, KNURL_STATE, "asset provider is closed or busy");
-    p->busy = 1;
+    p->impl->busy = 1;
     knurl_error_clear(error);
-    status = p->config.open(path, &a, p->config.userdata, error);
-    p->busy = 0;
-    if (status == KNURL_OK && a != NULL && a->provider == NULL &&
-        a->owner == NULL && !a->busy) {
-        a->provider = p;
-        ++p->references;
+    status = p->impl->config.open(path, &a, p->impl->config.userdata, error);
+    p->impl->busy = 0;
+    if (status == KNURL_OK && a != NULL && a->impl->provider == NULL &&
+        a->impl->owner == NULL && !a->impl->busy) {
+        a->impl->provider = p;
+        ++p->impl->references;
         *out = a;
         knurl_error_clear(error);
         return KNURL_OK;
     }
-    if (a != NULL && a->provider == NULL && a->owner == NULL)
+    if (a != NULL && a->impl->provider == NULL && a->impl->owner == NULL)
         knurl_asset_close(a, NULL);
     if (status == KNURL_EOF && a == NULL) {
         knurl_error_clear(error);
@@ -572,9 +581,9 @@ knurl_status knurl_asset_provider_close(knurl_asset_provider *p,
         knurl_error_clear(error);
         return KNURL_OK;
     }
-    if (p->busy || p->closed)
+    if (p->impl->busy || p->impl->closed)
         return failure(error, KNURL_STATE, "asset provider is closed or busy");
-    p->closed = 1;
+    p->impl->closed = 1;
     provider_unref(p);
     knurl_error_clear(error);
     return KNURL_OK;
@@ -587,16 +596,34 @@ knurl_status knurl_asset_claim(knurl_asset *asset, void *owner,
     knurl_status status = access(asset, NULL, error);
     if (status != KNURL_OK)
         return status;
-    if (asset->retained_release != NULL)
+    if (asset->impl->retained_release != NULL)
         return failure(error, KNURL_STATE,
                        "storage result must be a new unclaimed asset");
-    asset->owner = owner;
-    asset->retained_release = release;
-    asset->retained_data = data;
+    asset->impl->owner = owner;
+    asset->impl->retained_release = release;
+    asset->impl->retained_data = data;
     return KNURL_OK;
 }
 void knurl_asset_unclaim(knurl_asset *asset, void *owner)
 {
-    if (asset != NULL && asset->owner == owner)
-        asset->owner = NULL;
+    if (asset != NULL && asset->impl->owner == owner)
+        asset->impl->owner = NULL;
+}
+
+void knurl_asset_receiver_init(knurl_asset *receiver)
+{
+    static const knurl_asset methods = {
+        knurl_asset_stat,  knurl_asset_read,        knurl_asset_list_next,
+        knurl_asset_close, knurl_asset_source_take, NULL};
+    *receiver = methods;
+    receiver->impl = (struct knurl_asset_impl *)receiver;
+}
+
+void knurl_asset_provider_receiver_init(knurl_asset_provider *receiver)
+{
+    static const knurl_asset_provider methods = {
+        knurl_asset_provider_open, knurl_asset_provider_close,
+        knurl_storage_provider_assets, NULL};
+    *receiver = methods;
+    receiver->impl = (struct knurl_asset_provider_impl *)receiver;
 }

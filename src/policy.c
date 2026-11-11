@@ -10,51 +10,53 @@ void knurl_policy_observe(knurl_request *r, knurl_observation_kind kind,
 {
     knurl_observation event;
     int busy;
-    if (r->server->config.callbacks.on_observe == NULL || r->observing ||
-        !r->lifecycle_started)
+    if (r->impl->server->impl->config.callbacks.on_observe == NULL ||
+        r->impl->observing || !r->impl->lifecycle_started)
         return;
     memset(&event, 0, sizeof(event));
     event.kind = kind;
     event.request = r;
-    event.connection.peer = r->peer;
-    event.connection.local = r->local;
-    event.connection.listener_index = r->listener;
-    event.connection.tls = r->tls;
-    event.connection.process = r->server->process;
-    event.effective_address = r->effective_address;
-    event.correlation_id = r->correlation_id;
+    event.connection.peer = r->impl->peer;
+    event.connection.local = r->impl->local;
+    event.connection.listener_index = r->impl->listener;
+    event.connection.tls = r->impl->tls;
+    event.connection.process = r->impl->server->impl->process;
+    event.effective_address = r->impl->effective_address;
+    event.correlation_id = r->impl->correlation_id;
     event.name = knurl_view(name);
     event.status = status;
     event.cause = cause;
-    event.committed = r->response->outcome.committed;
-    event.disconnect_side = r->disconnect_side;
+    event.committed = r->impl->response->impl->outcome.committed;
+    event.disconnect_side = r->impl->disconnect_side;
     if (kind == KNURL_OBSERVE_REQUEST_COMPLETE) {
         event.has_outcome = 1;
-        event.outcome = r->outcome;
-        event.input_counts_known = r->body_store != NULL;
+        event.outcome = r->impl->outcome;
+        event.input_counts_known = r->impl->body_store != NULL;
     }
-    busy = r->response->busy;
-    r->response->busy = 1;
-    r->observing = 1;
-    r->server->config.callbacks.on_observe(
-        r->server, &event, r->server->config.callbacks.userdata);
-    r->observing = 0;
-    r->response->busy = busy;
+    busy = r->impl->response->impl->busy;
+    r->impl->response->impl->busy = 1;
+    r->impl->observing = 1;
+    r->impl->server->impl->config.callbacks.on_observe(
+        r->impl->server, &event,
+        r->impl->server->impl->config.callbacks.userdata);
+    r->impl->observing = 0;
+    r->impl->response->impl->busy = busy;
 }
 knurl_status knurl_policy_start(knurl_request *r, knurl_error *error)
 {
     knurl_status status;
-    r->lifecycle_started = 1;
-    r->response->busy = 1;
+    r->impl->lifecycle_started = 1;
+    r->impl->response->impl->busy = 1;
     status = knurl_request_identity(r, error);
-    r->response->busy = 0;
+    r->impl->response->impl->busy = 0;
     if (status != KNURL_OK)
         return status;
-    if (r->server->config.callbacks.on_request_start != NULL) {
-        r->response->busy = 1;
-        status = r->server->config.callbacks.on_request_start(
-            r->server, r, r->server->config.callbacks.userdata, error);
-        r->response->busy = 0;
+    if (r->impl->server->impl->config.callbacks.on_request_start != NULL) {
+        r->impl->response->impl->busy = 1;
+        status = r->impl->server->impl->config.callbacks.on_request_start(
+            r->impl->server, r,
+            r->impl->server->impl->config.callbacks.userdata, error);
+        r->impl->response->impl->busy = 0;
         if (status != KNURL_OK)
             return status;
     }
@@ -69,7 +71,8 @@ knurl_status knurl_request_event(knurl_request *r, const char *name,
     if (r == NULL || name == NULL || name[0] == 0)
         return knurl_fail(error, KNURL_INVALID, "request_event",
                           "request and event name are required");
-    if (!r->lifecycle_started || r->close_notified || r->observing)
+    if (!r->impl->lifecycle_started || r->impl->close_notified ||
+        r->impl->observing)
         return knurl_fail(error, KNURL_STATE, "request_event",
                           "request is closed or observing");
     status = knurl_loop_owner(knurl_request_loop(r), error);
@@ -79,7 +82,7 @@ knurl_status knurl_request_event(knurl_request *r, const char *name,
         if ((unsigned char)name[i] < 32 || (unsigned char)name[i] == 127)
             return knurl_fail(error, KNURL_INVALID, "request_event",
                               "event name contains a control byte");
-    knurl_autoblock_note(r->server, r->effective_address,
+    knurl_autoblock_note(r->impl->server, r->impl->effective_address,
                          KNURL_OBSERVE_APPLICATION, 0, name);
     knurl_policy_observe(r, KNURL_OBSERVE_APPLICATION, name, 0, KNURL_OK);
     knurl_error_clear(error);
@@ -88,17 +91,18 @@ knurl_status knurl_request_event(knurl_request *r, const char *name,
 knurl_status knurl_policy_admit(knurl_request *r, int *handled,
                                 knurl_error *error)
 {
-    const knurl_admission_config *config = &r->server->config.admission;
+    const knurl_admission_config *config =
+        &r->impl->server->impl->config.admission;
     knurl_reply *reply;
     knurl_status status;
     knurl_admission_action action = KNURL_ADMISSION_ALLOW;
     knurl_bytes empty = {0};
     *handled = 0;
-    if (!knurl_autoblock_allowed(r->server, r->effective_address)) {
+    if (!knurl_autoblock_allowed(r->impl->server, r->impl->effective_address)) {
         *handled = 1;
-        r->response->close_connection = 1;
-        status =
-            knurl_response_bytes(r->response, 403, "text/plain", empty, error);
+        r->impl->response->impl->close_connection = 1;
+        status = knurl_response_bytes(r->impl->response, 403, "text/plain",
+                                      empty, error);
         if (status == KNURL_OK)
             knurl_policy_observe(r, KNURL_OBSERVE_REQUEST_REJECTED, NULL, 403,
                                  KNURL_OK);
@@ -109,9 +113,9 @@ knurl_status knurl_policy_admit(knurl_request *r, int *handled,
     status = knurl_reply_new(&reply, error);
     if (status != KNURL_OK)
         return status;
-    r->response->busy = 1;
+    r->impl->response->impl->busy = 1;
     status = config->on_request(r, reply, &action, config->userdata, error);
-    r->response->busy = 0;
+    r->impl->response->impl->busy = 0;
     if (status != KNURL_OK)
         goto done;
     if (action < KNURL_ADMISSION_ALLOW || action > KNURL_ADMISSION_CLOSE) {
@@ -122,29 +126,32 @@ knurl_status knurl_policy_admit(knurl_request *r, int *handled,
     if (action == KNURL_ADMISSION_ALLOW)
         goto done;
     *handled = 1;
-    r->response->close_connection = 1;
+    r->impl->response->impl->close_connection = 1;
     if (action == KNURL_ADMISSION_CLOSE) {
-        r->disconnect_side = KNURL_DISCONNECT_HOST;
-        status = knurl_response_abort(r->response, KNURL_CANCELLED, error);
+        r->impl->disconnect_side = KNURL_DISCONNECT_HOST;
+        status =
+            knurl_response_abort(r->impl->response, KNURL_CANCELLED, error);
         knurl_policy_observe(r, KNURL_OBSERVE_REQUEST_REJECTED, NULL, 0,
                              KNURL_CANCELLED);
         goto done;
     }
-    if (!reply->selected)
+    if (!reply->impl->selected)
         status = knurl_reply_status(reply, 403, error);
     if (status == KNURL_OK &&
-        (reply->kind == KNURL_REPLY_FILE || reply->kind == KNURL_REPLY_SOURCE ||
-         reply->body_length > r->server->config.io.output_queue_bytes))
+        (reply->impl->kind == KNURL_REPLY_FILE ||
+         reply->impl->kind == KNURL_REPLY_SOURCE ||
+         reply->impl->body_length >
+             r->impl->server->impl->config.io.output_queue_bytes))
         status = knurl_fail(
             error, KNURL_LIMIT, "admission",
             "rejection requires bounded copied bytes/status/headers");
     if (status == KNURL_OK)
-        status = knurl_response_submit(r->response, reply, error);
+        status = knurl_response_submit(r->impl->response, reply, error);
     if (status == KNURL_OK) {
-        r->response->complete_reply = 1;
-        r->response->phase = KNURL_RESPONSE_FINISHING;
+        r->impl->response->impl->complete_reply = 1;
+        r->impl->response->impl->phase = KNURL_RESPONSE_FINISHING;
         knurl_policy_observe(r, KNURL_OBSERVE_REQUEST_REJECTED, NULL,
-                             r->response->outcome.status, KNURL_OK);
+                             r->impl->response->impl->outcome.status, KNURL_OK);
     }
 done:
     knurl_reply_destroy(reply, NULL);
@@ -152,14 +159,16 @@ done:
 }
 void knurl_policy_closed(knurl_request *r)
 {
-    if (!r->lifecycle_started)
+    if (!r->impl->lifecycle_started)
         return;
-    knurl_autoblock_note(r->server, r->effective_address,
-                         KNURL_OBSERVE_HTTP_STATUS, r->outcome.response.status,
-                         NULL);
+    knurl_autoblock_note(r->impl->server, r->impl->effective_address,
+                         KNURL_OBSERVE_HTTP_STATUS,
+                         r->impl->outcome.response.status, NULL);
     knurl_policy_observe(r, KNURL_OBSERVE_REQUEST_COMPLETE, NULL,
-                         r->outcome.response.status, r->outcome.cause);
-    if (r->server->config.callbacks.on_request_close != NULL)
-        r->server->config.callbacks.on_request_close(
-            r->server, r, &r->outcome, r->server->config.callbacks.userdata);
+                         r->impl->outcome.response.status,
+                         r->impl->outcome.cause);
+    if (r->impl->server->impl->config.callbacks.on_request_close != NULL)
+        r->impl->server->impl->config.callbacks.on_request_close(
+            r->impl->server, r, &r->impl->outcome,
+            r->impl->server->impl->config.callbacks.userdata);
 }

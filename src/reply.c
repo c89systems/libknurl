@@ -2,6 +2,9 @@
 #define _FILE_OFFSET_BITS 64
 
 #include "reply_internal.h"
+#include <knurl/xml.h>
+#include <knurl/reply.h>
+#include <knurl/lonejson.h>
 #include "file_internal.h"
 
 #include <sys/stat.h>
@@ -15,7 +18,7 @@ static knurl_status mutable(knurl_reply *reply, knurl_error *error)
 {
     if (reply == NULL)
         return knurl_fail(error, KNURL_INVALID, "reply", "reply is required");
-    if (reply->busy)
+    if (reply->impl->busy)
         return knurl_fail(error, KNURL_STATE, "reply",
                           "reply mutation is already in progress");
     return KNURL_OK;
@@ -27,32 +30,32 @@ static void clear_payload(knurl_reply *reply)
     char *type;
     int file;
     knurl_source *source;
-    body = reply->body;
-    type = reply->content_type;
-    file = reply->file;
-    source = reply->source;
-    reply->kind = KNURL_REPLY_EMPTY;
-    reply->body = NULL;
-    reply->body_length = 0;
-    reply->content_type = NULL;
-    reply->file = -1;
-    reply->file_length.high = reply->file_length.low = 0;
-    reply->file_modified = 0;
-    reply->source = NULL;
+    body = reply->impl->body;
+    type = reply->impl->content_type;
+    file = reply->impl->file;
+    source = reply->impl->source;
+    reply->impl->kind = KNURL_REPLY_EMPTY;
+    reply->impl->body = NULL;
+    reply->impl->body_length = 0;
+    reply->impl->content_type = NULL;
+    reply->impl->file = -1;
+    reply->impl->file_length.high = reply->impl->file_length.low = 0;
+    reply->impl->file_modified = 0;
+    reply->impl->source = NULL;
     free(body);
     free(type);
-    free(reply->file_path);
-    reply->file_path = NULL;
+    free(reply->impl->file_path);
+    reply->impl->file_path = NULL;
     if (file != -1)
         (void)close(file);
     if (source != NULL) {
-        if (reply->owner != NULL) {
-            source->retired_next = NULL;
-            if (reply->retired_tail != NULL)
-                reply->retired_tail->retired_next = source;
+        if (reply->impl->owner != NULL) {
+            source->impl->retired_next = NULL;
+            if (reply->impl->retired_tail != NULL)
+                reply->impl->retired_tail->impl->retired_next = source;
             else
-                reply->retired_head = source;
-            reply->retired_tail = source;
+                reply->impl->retired_head = source;
+            reply->impl->retired_tail = source;
         } else {
             knurl_source_release(source, KNURL_CANCELLED);
         }
@@ -82,13 +85,13 @@ static knurl_status prepare_type(knurl_reply *reply, int status,
 static void select_payload(knurl_reply *reply, int status,
                            knurl_reply_kind kind, char *type)
 {
-    reply->busy = 1;
+    reply->impl->busy = 1;
     clear_payload(reply);
-    reply->status = status;
-    reply->selected = 1;
-    reply->kind = kind;
-    reply->content_type = type;
-    reply->busy = 0;
+    reply->impl->status = status;
+    reply->impl->selected = 1;
+    reply->impl->kind = kind;
+    reply->impl->content_type = type;
+    reply->impl->busy = 0;
 }
 
 /* Vectis's handler-error response is raw diagnostic bytes, with no application
@@ -101,8 +104,8 @@ knurl_status knurl_reply_failure(knurl_reply *reply, int code,
         return knurl_reply_status(reply, code, NULL);
     status = knurl_reply_text(reply, code, "text/plain", message, NULL);
     if (status == KNURL_OK) {
-        free(reply->content_type);
-        reply->content_type = NULL;
+        free(reply->impl->content_type);
+        reply->impl->content_type = NULL;
     }
     return status;
 }
@@ -115,24 +118,25 @@ knurl_status knurl_reply_new(knurl_reply **out, knurl_error *error)
     if (out == NULL)
         return knurl_fail(error, KNURL_INVALID, "reply_new",
                           "reply output is required");
-    reply = malloc(sizeof(*reply));
+    reply = malloc(sizeof(struct knurl_reply_impl));
     if (reply == NULL)
         return knurl_fail(error, KNURL_NOMEM, "reply_new",
                           "cannot allocate reply");
-    reply->selected = reply->status = reply->busy = 0;
-    reply->owner = NULL;
-    reply->kind = KNURL_REPLY_EMPTY;
-    reply->content_type = NULL;
-    reply->body = NULL;
-    reply->body_length = 0;
-    reply->file = -1;
-    reply->file_path = NULL;
-    reply->file_length.high = reply->file_length.low = 0;
-    reply->file_modified = 0;
-    reply->source = NULL;
-    reply->retired_head = reply->retired_tail = NULL;
-    reply->headers = NULL;
-    reply->header_count = 0;
+    knurl_reply_receiver_init(reply);
+    reply->impl->selected = reply->impl->status = reply->impl->busy = 0;
+    reply->impl->owner = NULL;
+    reply->impl->kind = KNURL_REPLY_EMPTY;
+    reply->impl->content_type = NULL;
+    reply->impl->body = NULL;
+    reply->impl->body_length = 0;
+    reply->impl->file = -1;
+    reply->impl->file_path = NULL;
+    reply->impl->file_length.high = reply->impl->file_length.low = 0;
+    reply->impl->file_modified = 0;
+    reply->impl->source = NULL;
+    reply->impl->retired_head = reply->impl->retired_tail = NULL;
+    reply->impl->headers = NULL;
+    reply->impl->header_count = 0;
     *out = reply;
     knurl_error_clear(error);
     return KNURL_OK;
@@ -144,32 +148,32 @@ void knurl_reply_retire(knurl_reply *reply)
     int busy;
     if (reply == NULL)
         return;
-    busy = reply->busy;
-    reply->busy = 1;
-    while (reply->retired_head != NULL) {
-        source = reply->retired_head;
-        reply->retired_head = source->retired_next;
+    busy = reply->impl->busy;
+    reply->impl->busy = 1;
+    while (reply->impl->retired_head != NULL) {
+        source = reply->impl->retired_head;
+        reply->impl->retired_head = source->impl->retired_next;
         knurl_source_release(source, KNURL_CANCELLED);
     }
-    reply->retired_tail = NULL;
-    reply->busy = busy;
+    reply->impl->retired_tail = NULL;
+    reply->impl->busy = busy;
 }
 
 knurl_status knurl_reply_destroy(knurl_reply *reply, knurl_error *error)
 {
     size_t i;
     if (reply != NULL) {
-        if (reply->busy || reply->owner != NULL)
+        if (reply->impl->busy || reply->impl->owner != NULL)
             return knurl_fail(error, KNURL_STATE, "reply_destroy",
                               "reply is owned or busy");
-        reply->busy = 1;
+        reply->impl->busy = 1;
         knurl_reply_retire(reply);
         clear_payload(reply);
-        for (i = 0; i < reply->header_count; ++i) {
-            free((void *)reply->headers[i].name.data);
-            free((void *)reply->headers[i].value.data);
+        for (i = 0; i < reply->impl->header_count; ++i) {
+            free((void *)reply->impl->headers[i].name.data);
+            free((void *)reply->impl->headers[i].value.data);
         }
-        free(reply->headers);
+        free(reply->impl->headers);
         free(reply);
     }
     knurl_error_clear(error);
@@ -212,12 +216,12 @@ static knurl_status header_store(knurl_reply *reply, const char *name,
         return knurl_fail(error, KNURL_INVALID, "reply_header",
                           "provide a token header name, no value controls, "
                           "and valid media-type syntax for Content-Type");
-    if (reply->header_count >= (size_t)-1 / sizeof(*headers))
+    if (reply->impl->header_count >= (size_t)-1 / sizeof(*headers))
         return knurl_fail(error, KNURL_OVERFLOW, "reply_header",
                           "header count overflow");
     name_copy = knurl_copy_text(name);
     value_copy = knurl_copy_text(value);
-    headers = malloc((reply->header_count + 1) * sizeof(*headers));
+    headers = malloc((reply->impl->header_count + 1) * sizeof(*headers));
     if (name_copy == NULL || value_copy == NULL || headers == NULL) {
         free(name_copy);
         free(value_copy);
@@ -231,24 +235,24 @@ static knurl_status header_store(knurl_reply *reply, const char *name,
     header.value.length = strlen(value_copy);
     count = 0;
     inserted = 0;
-    for (i = 0; i < reply->header_count; ++i) {
-        if (replace &&
-            knurl_text_equal_case(reply->headers[i].name.data, name_copy)) {
+    for (i = 0; i < reply->impl->header_count; ++i) {
+        if (replace && knurl_text_equal_case(reply->impl->headers[i].name.data,
+                                             name_copy)) {
             if (!inserted) {
                 headers[count++] = header;
                 inserted = 1;
             }
-            free((void *)reply->headers[i].name.data);
-            free((void *)reply->headers[i].value.data);
+            free((void *)reply->impl->headers[i].name.data);
+            free((void *)reply->impl->headers[i].value.data);
         } else {
-            headers[count++] = reply->headers[i];
+            headers[count++] = reply->impl->headers[i];
         }
     }
     if (!inserted)
         headers[count++] = header;
-    free(reply->headers);
-    reply->headers = headers;
-    reply->header_count = count;
+    free(reply->impl->headers);
+    reply->impl->headers = headers;
+    reply->impl->header_count = count;
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -291,8 +295,8 @@ knurl_status knurl_reply_bytes(knurl_reply *reply, int status,
         memcpy(copy, body.data, body.length);
     }
     select_payload(reply, status, KNURL_REPLY_BYTES, type);
-    reply->body = copy;
-    reply->body_length = body.length;
+    reply->impl->body = copy;
+    reply->impl->body_length = body.length;
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -332,7 +336,7 @@ knurl_status knurl_reply_file(knurl_reply *reply, int status,
                           "cannot copy reply file path");
     }
     select_payload(reply, status, KNURL_REPLY_FILE, type);
-    reply->file_path = copy;
+    reply->impl->file_path = copy;
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -343,9 +347,9 @@ knurl_status knurl_reply_open_file(knurl_reply *reply, knurl_error *error)
     int code;
     knurl_status result;
     struct stat info;
-    if (reply->file != -1)
+    if (reply->impl->file != -1)
         return KNURL_OK;
-    file = open(reply->file_path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    file = open(reply->impl->file_path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
     if (file == -1) {
         code = errno;
         result = knurl_fail(error, KNURL_EOF, "reply_file_open",
@@ -373,10 +377,10 @@ knurl_status knurl_reply_open_file(knurl_reply *reply, knurl_error *error)
             error, KNURL_IO, "reply_file_open",
             "reply file must be a regular file with a valid size");
     }
-    reply->file = file;
-    reply->file_length.high = (unsigned long)((info.st_size >> 16) >> 16);
-    reply->file_length.low = (unsigned long)info.st_size & 0xffffffffUL;
-    reply->file_modified = info.st_mtime;
+    reply->impl->file = file;
+    reply->impl->file_length.high = (unsigned long)((info.st_size >> 16) >> 16);
+    reply->impl->file_length.low = (unsigned long)info.st_size & 0xffffffffUL;
+    reply->impl->file_modified = info.st_mtime;
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -390,17 +394,18 @@ knurl_status knurl_reply_source_take(knurl_reply *reply, int status,
     result = prepare_type(reply, status, content_type, &type, error);
     if (result != KNURL_OK)
         return result;
-    if (source == NULL || source->borrowed || source->owner != NULL ||
-        source->busy || source->failure != KNURL_OK) {
+    if (source == NULL || source->impl->borrowed ||
+        source->impl->owner != NULL || source->impl->busy ||
+        source->impl->failure != KNURL_OK) {
         free(type);
         return knurl_fail(
             error, source == NULL ? KNURL_INVALID : KNURL_STATE,
             "reply_source_take",
             "provide an unowned source which is not busy or failed");
     }
-    source->owner = reply;
+    source->impl->owner = reply;
     select_payload(reply, status, KNURL_REPLY_SOURCE, type);
-    reply->source = source;
+    reply->impl->source = source;
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -431,7 +436,7 @@ knurl_status knurl_reply_generate_file(knurl_reply *reply, int status,
         return result;
     if (directory == NULL || directory[0] == 0)
         directory = "/tmp";
-    reply->busy = 1;
+    reply->impl->busy = 1;
     result = knurl_private_file(directory, "knurl-response", &fd, &path, error);
     if (result == KNURL_OK) {
         if (unlink(path) != 0)
@@ -450,13 +455,15 @@ knurl_status knurl_reply_generate_file(knurl_reply *reply, int status,
     if (result == KNURL_OK && (!S_ISREG(info.st_mode) || info.st_size < 0))
         result =
             spool_error(error, "invalid private response file size", EOVERFLOW);
-    reply->busy = 0;
+    reply->impl->busy = 0;
     if (result == KNURL_OK) {
         select_payload(reply, status, KNURL_REPLY_FILE, type);
-        reply->file = fd;
-        reply->file_length.high = (unsigned long)((info.st_size >> 16) >> 16);
-        reply->file_length.low = (unsigned long)info.st_size & 0xffffffffUL;
-        reply->file_modified = info.st_mtime;
+        reply->impl->file = fd;
+        reply->impl->file_length.high =
+            (unsigned long)((info.st_size >> 16) >> 16);
+        reply->impl->file_length.low =
+            (unsigned long)info.st_size & 0xffffffffUL;
+        reply->impl->file_modified = info.st_mtime;
         knurl_error_clear(error);
         return KNURL_OK;
     }
@@ -485,11 +492,11 @@ static knurl_status spool_source_write(int fd, void *data, knurl_error *error)
     if (chunk == NULL)
         return knurl_fail(error, KNURL_NOMEM, "reply_source_spooled",
                           "cannot allocate response source chunk");
-    status = s->source->config.reset != NULL
+    status = s->source->impl->config.reset != NULL
                  ? knurl_source_reset(s->source, error)
                  : KNURL_OK;
     if (status == KNURL_OK) {
-        s->source->owner = s;
+        s->source->impl->owner = s;
         s->claimed = 1;
     }
     while (status == KNURL_OK) {
@@ -517,7 +524,7 @@ knurl_status knurl_reply_source_spooled(knurl_reply *reply, int status,
 {
     struct spool_source state;
     knurl_status result;
-    if (source == NULL || source->owner != NULL || source->busy)
+    if (source == NULL || source->impl->owner != NULL || source->impl->busy)
         return knurl_fail(error, source == NULL ? KNURL_INVALID : KNURL_STATE,
                           "reply_source_spooled",
                           "provide an unowned source which is not busy");
@@ -526,7 +533,7 @@ knurl_status knurl_reply_source_spooled(knurl_reply *reply, int status,
     result = knurl_reply_generate_file(reply, status, content_type, directory,
                                        spool_source_write, &state, error);
     if (state.claimed)
-        source->owner = NULL;
+        source->impl->owner = NULL;
     return result;
 }
 
@@ -561,7 +568,7 @@ knurl_reply_source_materialized(knurl_reply *reply, int status,
     result = prepare_type(reply, status, content_type, &type, error);
     if (result != KNURL_OK)
         return result;
-    if (source == NULL || source->owner != NULL || source->busy) {
+    if (source == NULL || source->impl->owner != NULL || source->impl->busy) {
         free(type);
         return knurl_fail(error, source == NULL ? KNURL_INVALID : KNURL_STATE,
                           "reply_source_materialized",
@@ -586,11 +593,11 @@ knurl_reply_source_materialized(knurl_reply *reply, int status,
         return knurl_fail(error, KNURL_NOMEM, "reply_source_materialized",
                           "cannot allocate source chunk");
     }
-    reply->busy = 1;
+    reply->impl->busy = 1;
     result =
         effective.reset_before ? knurl_source_reset(source, error) : KNURL_OK;
     if (result == KNURL_OK) {
-        source->owner = reply;
+        source->impl->owner = reply;
         claimed = 1;
     }
     while (result == KNURL_OK) {
@@ -636,51 +643,51 @@ knurl_reply_source_materialized(knurl_reply *reply, int status,
     }
     if (effective.reset_after) {
         if (claimed)
-            source->owner = NULL;
+            source->impl->owner = NULL;
         reset_result =
             knurl_source_reset(source, result == KNURL_OK ? error : NULL);
-        source->owner = reply;
+        source->impl->owner = reply;
         claimed = 1;
         if (result == KNURL_OK)
             result = reset_result;
     }
-    reply->busy = 0;
+    reply->impl->busy = 0;
     free(chunk);
     if (result != KNURL_OK) {
         if (claimed)
-            source->owner = NULL;
+            source->impl->owner = NULL;
         free(body);
         free(type);
         return result;
     }
     select_payload(reply, status, KNURL_REPLY_BYTES, type);
-    reply->body = body;
-    reply->body_length = length;
+    reply->impl->body = body;
+    reply->impl->body_length = length;
     if (claimed)
-        source->owner = NULL;
+        source->impl->owner = NULL;
     knurl_error_clear(error);
     return KNURL_OK;
 }
 
 int knurl_reply_is_selected(const knurl_reply *reply)
 {
-    return reply != NULL && reply->selected;
+    return reply != NULL && reply->impl->selected;
 }
 
 int knurl_reply_status_code(const knurl_reply *reply)
 {
-    return reply != NULL ? reply->status : 0;
+    return reply != NULL ? reply->impl->status : 0;
 }
 
 knurl_reply_kind knurl_reply_payload_kind(const knurl_reply *reply)
 {
-    return reply != NULL ? reply->kind : KNURL_REPLY_EMPTY;
+    return reply != NULL ? reply->impl->kind : KNURL_REPLY_EMPTY;
 }
 
 knurl_bytes knurl_reply_content_type(const knurl_reply *reply)
 {
     knurl_bytes value;
-    value.data = reply != NULL ? reply->content_type : NULL;
+    value.data = reply != NULL ? reply->impl->content_type : NULL;
     value.length = value.data != NULL ? strlen(value.data) : 0;
     return value;
 }
@@ -688,23 +695,54 @@ knurl_bytes knurl_reply_content_type(const knurl_reply *reply)
 knurl_bytes knurl_reply_body(const knurl_reply *reply)
 {
     knurl_bytes value;
-    value.data = reply != NULL ? reply->body : NULL;
-    value.length = reply != NULL ? reply->body_length : 0;
+    value.data = reply != NULL ? reply->impl->body : NULL;
+    value.length = reply != NULL ? reply->impl->body_length : 0;
     return value;
 }
 
 size_t knurl_reply_header_count(const knurl_reply *reply)
 {
-    return reply != NULL ? reply->header_count : 0;
+    return reply != NULL ? reply->impl->header_count : 0;
 }
 
 knurl_status knurl_reply_header_at(const knurl_reply *reply, size_t index,
                                    knurl_header *out, knurl_error *error)
 {
-    if (reply == NULL || out == NULL || index >= reply->header_count)
+    if (reply == NULL || out == NULL || index >= reply->impl->header_count)
         return knurl_fail(error, KNURL_INVALID, "reply_header_at",
                           "header index is outside this reply");
-    *out = reply->headers[index];
+    *out = reply->impl->headers[index];
     knurl_error_clear(error);
     return KNURL_OK;
+}
+
+void knurl_reply_receiver_init(knurl_reply *receiver)
+{
+    static const knurl_reply methods = {knurl_reply_xml,
+                                        knurl_reply_xml_materialized,
+                                        knurl_reply_destroy,
+                                        knurl_reply_status,
+                                        knurl_reply_header_add,
+                                        knurl_reply_header_set,
+                                        knurl_reply_text,
+                                        knurl_reply_bytes,
+                                        knurl_reply_file,
+                                        knurl_reply_source_take,
+                                        knurl_reply_source_materialized,
+                                        knurl_reply_source_spooled,
+                                        knurl_reply_is_selected,
+                                        knurl_reply_status_code,
+                                        knurl_reply_payload_kind,
+                                        knurl_reply_content_type,
+                                        knurl_reply_body,
+                                        knurl_reply_header_count,
+                                        knurl_reply_header_at,
+                                        knurl_reply_json,
+                                        knurl_reply_json_materialized,
+                                        knurl_reply_json_spooled,
+                                        knurl_reply_rest_json,
+                                        knurl_reply_error_json,
+                                        NULL};
+    *receiver = methods;
+    receiver->impl = (struct knurl_reply_impl *)receiver;
 }

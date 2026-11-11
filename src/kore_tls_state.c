@@ -13,7 +13,7 @@ knurl_status knurl_kore_tls_registry(struct knurl_runtime *runtime,
     size_t count;
     size_t slots;
     size_t i;
-    config = &runtime->server->config;
+    config = &runtime->server->impl->config;
     count = 0;
     for (i = 0; i < config->listener_count; ++i)
         if (config->listeners[i].kind == KNURL_LISTENER_HTTPS) {
@@ -77,7 +77,7 @@ void knurl_kore_tls_worker(struct knurl_runtime *runtime, size_t index,
     offset = index * runtime->tls_binding_count;
     for (i = 0; i < runtime->tls_binding_count; ++i) {
         usable =
-            starting && runtime->server->config.tls
+            starting && runtime->server->impl->config.tls
                                 .identities[runtime->tls_bindings[i].identity]
                                 .mode == KNURL_TLS_MANUAL;
         __atomic_store_n(&runtime->tls_installed[offset + i], usable,
@@ -95,7 +95,7 @@ void knurl_kore_tls_updated(void *userdata, struct kore_domain *domain,
     size_t offset;
     int revision;
     runtime = userdata;
-    config = &runtime->server->config.tls;
+    config = &runtime->server->impl->config.tls;
     for (i = 0; i < runtime->tls_binding_count; ++i) {
         if (runtime->tls_bindings[i].domain != domain)
             continue;
@@ -132,11 +132,11 @@ knurl_status knurl_server_tls_identity_state(const knurl_server *server,
     size_t j;
     int found;
     if (server == NULL || out == NULL ||
-        index >= server->config.tls.identity_count)
+        index >= server->impl->config.tls.identity_count)
         return knurl_fail(
             error, KNURL_INVALID, "tls_identity_state",
             "provide server, output and configured identity index");
-    runtime = server->runtime;
+    runtime = server->impl->runtime;
     if (runtime == NULL)
         return knurl_fail(error, KNURL_STATE, "tls_identity_state",
                           "TLS identity state belongs to the active run");
@@ -146,7 +146,7 @@ knurl_status knurl_server_tls_identity_state(const knurl_server *server,
         if (runtime->tls_bindings[i].identity != index)
             continue;
         found = 1;
-        for (j = 0; j < server->config.workers.count; ++j)
+        for (j = 0; j < server->impl->config.workers.count; ++j)
             if (!__atomic_load_n(
                     &runtime->tls_installed[j * runtime->tls_binding_count + i],
                     __ATOMIC_ACQUIRE)) {
@@ -180,16 +180,17 @@ void knurl_kore_tls_observe(struct knurl_runtime *runtime,
                         __ATOMIC_ACQUIRE))
         failed_identity =
             __atomic_load_n(&runtime->shared->acme_identity, __ATOMIC_ACQUIRE);
-    for (i = 0; i < runtime->server->config.tls.identity_count; ++i) {
+    for (i = 0; i < runtime->server->impl->config.tls.identity_count; ++i) {
         memset(&event, 0, sizeof(event));
         event.identity_index = i;
         (void)knurl_server_tls_identity_state(runtime->server, i, &event.state,
                                               NULL);
-        identity = &runtime->server->config.tls.identities[i];
+        identity = &runtime->server->impl->config.tls.identities[i];
         changed = 0;
         for (j = 0; j < runtime->tls_binding_count; ++j)
             if (runtime->tls_bindings[j].identity == i)
-                for (k = 0; k < runtime->server->config.workers.count; ++k) {
+                for (k = 0; k < runtime->server->impl->config.workers.count;
+                     ++k) {
                     offset = k * runtime->tls_binding_count + j;
                     revision = __atomic_load_n(&runtime->tls_installed[offset],
                                                __ATOMIC_ACQUIRE);
@@ -210,9 +211,9 @@ void knurl_kore_tls_observe(struct knurl_runtime *runtime,
             event.error.status == KNURL_OK && !changed)
             continue;
         runtime->tls_observed[i] = (int)event.state;
-        if (runtime->server->config.callbacks.on_tls_identity != NULL)
-            runtime->server->config.callbacks.on_tls_identity(
+        if (runtime->server->impl->config.callbacks.on_tls_identity != NULL)
+            runtime->server->impl->config.callbacks.on_tls_identity(
                 runtime->server, &event,
-                runtime->server->config.callbacks.userdata);
+                runtime->server->impl->config.callbacks.userdata);
     }
 }

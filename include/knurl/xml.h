@@ -435,6 +435,129 @@ KNURL_API knurl_status knurl_xml_sax_feed(knurl_xml_sax *, const void *, size_t,
 KNURL_API knurl_status knurl_xml_sax_finish(knurl_xml_sax *, knurl_error *);
 /** Release a SAX parser without invoking callbacks. */
 KNURL_API knurl_status knurl_xml_sax_close(knurl_xml_sax *, knurl_error *);
+
+struct knurl_error;
+struct knurl_owned_bytes;
+struct knurl_xml_namespace;
+struct knurl_xml_node;
+struct knurl_xml_xpath_result;
+/** Library-owned xml document receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_xml_document {
+    /** Return an owned element view retaining its document; mutation
+     * invalidates previous views, including the receiver.
+     */
+    knurl_status (*root)(struct knurl_xml_document *, struct knurl_xml_node **,
+                         struct knurl_error *);
+    /** Evaluate namespace-aware XPath into caller-owned results; clean with
+     * knurl_xml_xpath_result_cleanup.
+     */
+    knurl_status (*xpath)(struct knurl_xml_document *, const char *,
+                          const struct knurl_xml_namespace *, size_t,
+                          struct knurl_xml_xpath_result *,
+                          struct knurl_error *);
+    /** Copy the DOM into caller-owned bytes; the integer selects pretty
+     * formatting.
+     */
+    knurl_status (*serialize_materialized)(struct knurl_xml_document *, int,
+                                           struct knurl_owned_bytes *,
+                                           struct knurl_error *);
+    /** Explicitly close the document owner and invalidate its views. Views
+     * retain parent allocation state for safe later view cleanup.
+     */
+    knurl_status (*close)(struct knurl_xml_document *, struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    void *impl;
+};
+
+struct knurl_error;
+struct knurl_owned_bytes;
+struct knurl_xml_child_config;
+struct knurl_xml_name;
+/** Library-owned xml node receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_xml_node {
+    /** Borrow local name/namespace/prefix until document mutation or close. */
+    knurl_status (*name)(struct knurl_xml_node *, struct knurl_xml_name *,
+                         struct knurl_error *);
+    /** Return a caller-owned copy of the element's text content. */
+    knurl_status (*text)(struct knurl_xml_node *, struct knurl_owned_bytes *,
+                         struct knurl_error *);
+    /** Copy a named optional attribute; present distinguishes an absent
+     * attribute from empty text.
+     */
+    knurl_status (*attribute)(struct knurl_xml_node *, const char *,
+                              const char *, struct knurl_owned_bytes *, int *,
+                              struct knurl_error *);
+    /** Replace element text; invalidates all existing views, including this
+     * receiver.
+     */
+    knurl_status (*set_text)(struct knurl_xml_node *, const void *, size_t,
+                             struct knurl_error *);
+    /** Set a namespaced attribute from caller bytes; invalidates existing
+     * views, including this receiver.
+     */
+    knurl_status (*set_attribute)(struct knurl_xml_node *, const char *,
+                                  const void *, size_t, const char *,
+                                  const char *, struct knurl_error *);
+    /** Append an element with optional namespace/text; returns its owned view
+     * and invalidates older views.
+     */
+    knurl_status (*append_child)(struct knurl_xml_node *, const char *,
+                                 const struct knurl_xml_child_config *,
+                                 struct knurl_xml_node **,
+                                 struct knurl_error *);
+    /** Remove the element and invalidate all existing document views. */
+    knurl_status (*remove)(struct knurl_xml_node *, struct knurl_error *);
+    /** Release an owned node view; safe cleanup does not mutate the document.
+     */
+    knurl_status (*close)(struct knurl_xml_node *, struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    void *impl;
+};
+
+struct knurl_error;
+/** Library-owned xml sax receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_xml_sax {
+    /** Synchronously feed a bounded XML chunk; callback data expires on return
+     * and failures latch the parser.
+     */
+    knurl_status (*feed)(struct knurl_xml_sax *, const void *, size_t,
+                         struct knurl_error *);
+    /** Finish incremental XML parsing; report incomplete or failed input
+     * without constructing a DOM.
+     */
+    knurl_status (*finish)(struct knurl_xml_sax *, struct knurl_error *);
+    /** Release a SAX parser without invoking callbacks. */
+    knurl_status (*close)(struct knurl_xml_sax *, struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    void *impl;
+};
+
+struct knurl_error;
+/** Library-owned xml generator receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_xml_generator {
+    /** Pull a bounded XML output chunk; EOF completes generation, without
+     * collecting the whole output.
+     */
+    knurl_status (*read)(struct knurl_xml_generator *, void *, size_t, size_t *,
+                         struct knurl_error *);
+    /** Close the generator and release its retained record owner once. */
+    knurl_status (*destroy)(struct knurl_xml_generator *, struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    struct knurl_xml_generator_impl *impl;
+};
+
 #ifdef __cplusplus
 }
 #endif

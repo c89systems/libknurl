@@ -35,7 +35,7 @@ static knurl_status body(knurl_request *request, const void *data,
                          size_t length, size_t *consumed, void *userdata,
                          knurl_error *error)
 {
-    struct upload *s = request->codec_data;
+    struct upload *s = request->impl->codec_data;
     knurl_status status;
     (void)userdata;
     *consumed = 0;
@@ -52,23 +52,23 @@ static knurl_status body(knurl_request *request, const void *data,
 }
 static knurl_status submit(knurl_request *request, knurl_error *error)
 {
-    knurl_status status =
-        knurl_response_submit(request->response, request->reply, error);
-    if (status == KNURL_OK && request->in_headers) {
-        request->response->complete_reply = 1;
-        request->response->phase = KNURL_RESPONSE_FINISHING;
+    knurl_status status = knurl_response_submit(request->impl->response,
+                                                request->impl->reply, error);
+    if (status == KNURL_OK && request->impl->in_headers) {
+        request->impl->response->impl->complete_reply = 1;
+        request->impl->response->impl->phase = KNURL_RESPONSE_FINISHING;
     }
     return status;
 }
 static knurl_status finish(knurl_request *request, void *userdata,
                            knurl_error *error)
 {
-    struct upload *s = request->codec_data;
+    struct upload *s = request->impl->codec_data;
     knurl_status status;
     (void)userdata;
     status = open_upload(request, s, error);
     if (status == KNURL_OK)
-        status = s->config.finish(request, request->reply, s->state,
+        status = s->config.finish(request, request->impl->reply, s->state,
                                   s->config.userdata, error);
     if (status == KNURL_OK)
         status = knurl_router_hooks_after(request, error);
@@ -79,7 +79,7 @@ static knurl_status finish(knurl_request *request, void *userdata,
 static void closed(knurl_request *request, const knurl_request_outcome *outcome,
                    void *userdata)
 {
-    struct upload *s = request->codec_data;
+    struct upload *s = request->impl->codec_data;
     knurl_status cause = outcome->cause;
     (void)userdata;
     if (cause == KNURL_OK)
@@ -95,10 +95,10 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
     struct upload *s;
     knurl_status status;
     int stopped;
-    status = knurl_reply_new(&request->reply, error);
+    status = knurl_reply_new(&request->impl->reply, error);
     if (status != KNURL_OK)
         return status;
-    request->reply->owner = request;
+    request->impl->reply->impl->owner = request;
     status = knurl_router_hooks_before(request, &stopped, error);
     if (status != KNURL_OK)
         return status;
@@ -111,8 +111,8 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
         return knurl_fail(error, KNURL_NOMEM, "upload",
                           "allocating upload context");
     s->config = *(const knurl_upload_stream_config *)userdata;
-    request->codec_data = s;
-    request->codec_cleanup = free;
+    request->impl->codec_data = s;
+    request->impl->codec_cleanup = free;
     plan->body = s->config.body;
     plan->body.mode = KNURL_BODY_STREAM;
     plan->on_body = body;
@@ -155,7 +155,7 @@ static knurl_status add(knurl_router *router, knurl_route_group *group,
     if (status != KNURL_OK)
         free(copy);
     else {
-        registered->release_userdata = free;
+        registered->impl->release_userdata = free;
         if (out != NULL)
             *out = registered;
     }

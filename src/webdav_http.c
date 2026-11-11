@@ -39,10 +39,10 @@ knurl_status knurl_dav_finish(struct dav_request *s, knurl_error *error)
     status = knurl_router_hooks_after(s->request, error);
     if (status == KNURL_OK)
         status = knurl_response_submit(knurl_request_response(s->request),
-                                       s->request->reply, error);
-    if (status == KNURL_OK && s->request->in_headers) {
-        s->request->response->complete_reply = 1;
-        s->request->response->phase = KNURL_RESPONSE_FINISHING;
+                                       s->request->impl->reply, error);
+    if (status == KNURL_OK && s->request->impl->in_headers) {
+        s->request->impl->response->impl->complete_reply = 1;
+        s->request->impl->response->impl->phase = KNURL_RESPONSE_FINISHING;
     }
     if (status != KNURL_OK)
         knurl_dav_error(s, 500, status);
@@ -57,7 +57,8 @@ void knurl_dav_error(struct dav_request *s, int code, knurl_status cause)
     s->stopped = 1;
     response = knurl_request_response(s->request);
     if (!s->finalized) {
-        if (knurl_reply_status(s->request->reply, code, NULL) == KNURL_OK) {
+        if (knurl_reply_status(s->request->impl->reply, code, NULL) ==
+            KNURL_OK) {
             (void)knurl_dav_finish(s, NULL);
             return;
         }
@@ -126,20 +127,21 @@ knurl_status knurl_dav_authorize(struct dav_request *s, const char *path,
                           : (s->route->config.conceal_disabled ? 403 : 404));
     status = KNURL_OK;
     if (output.location != NULL)
-        status = knurl_reply_header_set(s->request->reply, "location",
+        status = knurl_reply_header_set(s->request->impl->reply, "location",
                                         output.location, error);
     if (status == KNURL_OK && output.www_authenticate != NULL)
-        status = knurl_reply_header_set(s->request->reply, "www-authenticate",
-                                        output.www_authenticate, error);
+        status =
+            knurl_reply_header_set(s->request->impl->reply, "www-authenticate",
+                                   output.www_authenticate, error);
     if (status == KNURL_OK) {
         if (output.body.length != 0)
-            status = knurl_reply_bytes(s->request->reply, code,
+            status = knurl_reply_bytes(s->request->impl->reply, code,
                                        output.content_type != NULL
                                            ? output.content_type
                                            : "text/plain",
                                        output.body, error);
         else
-            status = knurl_reply_status(s->request->reply, code, error);
+            status = knurl_reply_status(s->request->impl->reply, code, error);
     }
     return status;
 }
@@ -264,8 +266,9 @@ static void retired(const knurl_storage_outcome *outcome, void *data)
         config.cache_control = s->route->config.cache_control != NULL
                                    ? s->route->config.cache_control
                                    : "no-cache";
-        if (knurl_static_reply_asset(&config, 1, s->request, s->request->reply,
-                                     s->asset, s->path, &error) == KNURL_OK) {
+        if (knurl_static_reply_asset(&config, 1, s->request,
+                                     s->request->impl->reply, s->asset, s->path,
+                                     &error) == KNURL_OK) {
             s->asset = NULL;
             (void)knurl_dav_finish(s, NULL);
         } else {
@@ -296,7 +299,8 @@ static void retired(const knurl_storage_outcome *outcome, void *data)
                                   r->created
                               ? 201
                               : 204);
-        if (knurl_reply_status(s->request->reply, code, &error) == KNURL_OK)
+        if (knurl_reply_status(s->request->impl->reply, code, &error) ==
+            KNURL_OK)
             (void)knurl_dav_finish(s, NULL);
         else
             knurl_dav_error(s, 500, error.status);
@@ -359,7 +363,7 @@ static knurl_status body(knurl_request *request, const void *data,
                          size_t length, size_t *consumed, void *userdata,
                          knurl_error *error)
 {
-    struct dav_request *s = request->codec_data;
+    struct dav_request *s = request->impl->codec_data;
     knurl_bytes bytes;
     (void)userdata;
     *consumed = 0;
@@ -390,7 +394,7 @@ static knurl_status body(knurl_request *request, const void *data,
 static knurl_status body_end(knurl_request *request, void *userdata,
                              knurl_error *error)
 {
-    struct dav_request *s = request->codec_data;
+    struct dav_request *s = request->impl->codec_data;
     knurl_bytes empty = {0};
     (void)userdata;
     s->body_end = 1;
@@ -415,7 +419,7 @@ static knurl_status body_end(knurl_request *request, void *userdata,
 static void request_close(knurl_request *request,
                           const knurl_request_outcome *outcome, void *userdata)
 {
-    struct dav_request *s = request->codec_data;
+    struct dav_request *s = request->impl->codec_data;
     (void)outcome;
     (void)userdata;
     s->request = NULL;
@@ -537,20 +541,20 @@ knurl_status knurl_dav_headers(knurl_request *request, knurl_request_plan *plan,
     const char *value;
     knurl_bytes empty = {0};
     int finish, authorized, supported;
-    status = knurl_reply_new(&request->reply, error);
+    status = knurl_reply_new(&request->impl->reply, error);
     if (status != KNURL_OK)
         return status;
-    request->reply->owner = request;
+    request->impl->reply->impl->owner = request;
     status = knurl_router_hooks_before(request, &finish, error);
     if (status != KNURL_OK)
         return status;
     if (finish) {
         plan->disposition = KNURL_REQUEST_REPLY;
-        status =
-            knurl_response_submit(request->response, request->reply, error);
+        status = knurl_response_submit(request->impl->response,
+                                       request->impl->reply, error);
         if (status == KNURL_OK) {
-            request->response->complete_reply = 1;
-            request->response->phase = KNURL_RESPONSE_FINISHING;
+            request->impl->response->impl->complete_reply = 1;
+            request->impl->response->impl->phase = KNURL_RESPONSE_FINISHING;
         }
         return status;
     }
@@ -563,19 +567,20 @@ knurl_status knurl_dav_headers(knurl_request *request, knurl_request_plan *plan,
     s->method = knurl_request_method(request);
     s->overwrite = 1;
     s->depth = -1;
-    request->codec_data = s;
-    request->codec_cleanup = request_release;
+    request->impl->codec_data = s;
+    request->impl->codec_cleanup = request_release;
     plan->on_body = body;
     plan->on_body_end = body_end;
     plan->on_close = request_close;
     knurl_body_policy_init_stream(&plan->body);
     plan->body.max_bytes = r->config.max_body_bytes;
     {
-        knurl_u64 hard = request->server->config.limits.hard_body_bytes;
+        knurl_u64 hard =
+            request->impl->server->impl->config.limits.hard_body_bytes;
         int order = 0;
         if (!plan->body.max_bytes.high && !plan->body.max_bytes.low)
             plan->body.max_bytes =
-                request->server->config.limits.default_body_bytes;
+                request->impl->server->impl->config.limits.default_body_bytes;
         if (hard.high || hard.low) {
             (void)knurl_u64_compare(plan->body.max_bytes, hard, &order, NULL);
             if (order > 0)
@@ -606,13 +611,14 @@ knurl_status knurl_dav_headers(knurl_request *request, knurl_request_plan *plan,
                     (s->method == KNURL_HTTP_MOVE &&
                      (r->capabilities & KNURL_STORAGE_CAN_MOVE));
     if (!supported || s->method == KNURL_HTTP_OPTIONS) {
-        status =
-            knurl_reply_header_set(request->reply, "allow", allow(r), error);
-        if (status == KNURL_OK && s->method == KNURL_HTTP_OPTIONS)
-            status = knurl_reply_header_set(request->reply, "dav", "1", error);
-        if (status == KNURL_OK)
-            status = knurl_reply_status(request->reply, supported ? 204 : 405,
+        status = knurl_reply_header_set(request->impl->reply, "allow", allow(r),
                                         error);
+        if (status == KNURL_OK && s->method == KNURL_HTTP_OPTIONS)
+            status =
+                knurl_reply_header_set(request->impl->reply, "dav", "1", error);
+        if (status == KNURL_OK)
+            status = knurl_reply_status(request->impl->reply,
+                                        supported ? 204 : 405, error);
         if (status == KNURL_OK)
             status = knurl_dav_finish(s, error);
         goto replied;
@@ -621,7 +627,7 @@ knurl_status knurl_dav_headers(knurl_request *request, knurl_request_plan *plan,
         value = header(request, "depth");
         if (value == NULL || strcmp(value, "infinity") == 0) {
             status = knurl_reply_text(
-                request->reply, 403, "application/xml; charset=utf-8",
+                request->impl->reply, 403, "application/xml; charset=utf-8",
                 "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:error "
                 "xmlns:D=\"DAV:\"><D:propfind-finite-depth/></D:error>",
                 error);

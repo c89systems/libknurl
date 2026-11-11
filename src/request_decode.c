@@ -76,53 +76,56 @@ knurl_status knurl_request_decode(knurl_request *request, knurl_error *error)
     knurl_header pair;
     knurl_header *next;
     knurl_status status;
-    status = decode(request->raw_path, 0, &request->path, error);
+    status = decode(request->impl->raw_path, 0, &request->impl->path, error);
     if (status == KNURL_OK)
-        status = knurl_route_path_validate(request->path.data,
+        status = knurl_route_path_validate(request->impl->path.data,
                                            KNURL_PATH_LITERAL, error);
     /* A single trailing slash is admitted only when the ordinary first match
      * is a directory/asset/DAV mount. Keep decoded traversal and ordinary
      * route rejection ahead of the existing raw proxy fallback. */
-    if (status == KNURL_INVALID && request->server != NULL &&
-        request->path.data != NULL && request->path.length > 1) {
-        char *path = (char *)request->path.data;
-        size_t last = request->path.length - 1;
+    if (status == KNURL_INVALID && request->impl->server != NULL &&
+        request->impl->path.data != NULL && request->impl->path.length > 1) {
+        char *path = (char *)request->impl->path.data;
+        size_t last = request->impl->path.length - 1;
         if (path[last] == '/' && path[last - 1] != '/') {
             path[last] = 0;
             status = knurl_route_path_validate(path, KNURL_PATH_LITERAL, error);
             path[last] = '/';
             if (status == KNURL_OK) {
-                status = knurl_router_select(request->server->router, request,
-                                             error);
+                status = knurl_router_select(
+                    request->impl->server->impl->router, request, error);
                 if (status == KNURL_EOF ||
-                    (status == KNURL_OK && !request->route->directory_mount))
+                    (status == KNURL_OK &&
+                     !request->impl->route->impl->directory_mount))
                     status =
                         knurl_fail(error, KNURL_INVALID, "request_decode",
                                    "trailing slash requires a directory mount");
             }
         }
     }
-    if (status == KNURL_INVALID && request->server != NULL &&
-        knurl_proxy_validate_path(request->raw_path.data, NULL) == KNURL_OK) {
-        free((void *)request->path.data);
-        request->path.data = knurl_copy_text(request->raw_path.data);
-        request->path.length = request->raw_path.length;
-        if (request->path.data == NULL)
+    if (status == KNURL_INVALID && request->impl->server != NULL &&
+        knurl_proxy_validate_path(request->impl->raw_path.data, NULL) ==
+            KNURL_OK) {
+        free((void *)request->impl->path.data);
+        request->impl->path.data =
+            knurl_copy_text(request->impl->raw_path.data);
+        request->impl->path.length = request->impl->raw_path.length;
+        if (request->impl->path.data == NULL)
             return knurl_fail(error, KNURL_NOMEM, "request_decode",
                               "cannot copy raw proxy path");
-        status =
-            knurl_router_select_raw(request->server->router, request, error);
+        status = knurl_router_select_raw(request->impl->server->impl->router,
+                                         request, error);
         if (status == KNURL_EOF)
             status = KNURL_INVALID;
         if (status == KNURL_OK)
-            request->raw_selected = 1;
+            request->impl->raw_selected = 1;
     }
     if (status != KNURL_OK)
         return status;
-    cursor = request->query.data;
+    cursor = request->impl->query.data;
     if (cursor == NULL)
         return KNURL_OK;
-    limit = cursor + request->query.length;
+    limit = cursor + request->impl->query.length;
     while (cursor < limit) {
         end = memchr(cursor, '&', (size_t)(limit - cursor));
         if (end == NULL)
@@ -143,16 +146,16 @@ knurl_status knurl_request_decode(knurl_request *request, knurl_error *error)
                 free((void *)pair.name.data);
                 return status;
             }
-            next = realloc(request->queries,
-                           (request->query_count + 1) * sizeof(*next));
+            next = realloc(request->impl->queries,
+                           (request->impl->query_count + 1) * sizeof(*next));
             if (next == NULL) {
                 free((void *)pair.name.data);
                 free((void *)pair.value.data);
                 return knurl_fail(error, KNURL_NOMEM, "request_query",
                                   "cannot allocate query pair");
             }
-            request->queries = next;
-            request->queries[request->query_count++] = pair;
+            request->impl->queries = next;
+            request->impl->queries[request->impl->query_count++] = pair;
         }
         cursor = end < limit ? end + 1 : limit;
     }

@@ -61,33 +61,34 @@ static int forwarded(const knurl_client_ip_config *config, knurl_bytes header,
 }
 knurl_status knurl_request_identity(knurl_request *r, knurl_error *error)
 {
-    const knurl_server_config *config = &r->server->config;
+    const knurl_server_config *config = &r->impl->server->impl->config;
     knurl_bytes header;
     knurl_status status;
     size_t n = 0, i;
     unsigned char bytes[16];
     char resolved[46];
     int found = 0;
-    r->effective_address = r->peer.address;
-    if (r->peer.address.data != NULL &&
-        trusted(&config->client_ip, r->peer.address.data)) {
+    r->impl->effective_address = r->impl->peer.address;
+    if (r->impl->peer.address.data != NULL &&
+        trusted(&config->client_ip, r->impl->peer.address.data)) {
         if (knurl_request_header_first(r, "x-forwarded-for", &header, NULL) ==
             KNURL_OK)
-            found = forwarded(&config->client_ip, header, r->effective_storage);
+            found = forwarded(&config->client_ip, header,
+                              r->impl->effective_storage);
         if (!found && knurl_request_header_first(r, "x-real-ip", &header,
                                                  NULL) == KNURL_OK)
             found =
                 token(header.data, (const char *)header.data + header.length,
-                      r->effective_storage);
+                      r->impl->effective_storage);
         if (found)
-            r->effective_address = knurl_view(r->effective_storage);
+            r->impl->effective_address = knurl_view(r->impl->effective_storage);
     }
     if (config->client_ip.resolve != NULL) {
         status = config->client_ip.resolve(r, resolved, sizeof(resolved), &n,
                                            config->client_ip.userdata, error);
         if (status != KNURL_OK)
             return status;
-        if (n == 0 || n >= sizeof(r->effective_storage) ||
+        if (n == 0 || n >= sizeof(r->impl->effective_storage) ||
             memchr(resolved, 0, n) != NULL)
             return knurl_fail(error, KNURL_INVALID, "client_address",
                               "resolver returned an invalid address length");
@@ -96,13 +97,14 @@ knurl_status knurl_request_identity(knurl_request *r, knurl_error *error)
             return knurl_fail(
                 error, KNURL_INVALID, "client_address",
                 "resolver must return a numeric IPv4 or IPv6 address");
-        memcpy(r->effective_storage, resolved, n + 1);
-        r->effective_address = knurl_view(r->effective_storage);
+        memcpy(r->impl->effective_storage, resolved, n + 1);
+        r->impl->effective_address = knurl_view(r->impl->effective_storage);
     }
     if (config->correlation_id.resolve != NULL) {
         n = 0;
         status = config->correlation_id.resolve(
-            r, r->correlation_storage, sizeof(r->correlation_storage), &n,
+            r, r->impl->correlation_storage,
+            sizeof(r->impl->correlation_storage), &n,
             config->correlation_id.userdata, error);
         if (status != KNURL_OK)
             return status;
@@ -110,13 +112,13 @@ knurl_status knurl_request_identity(knurl_request *r, knurl_error *error)
             return knurl_fail(error, KNURL_LIMIT, "correlation_id",
                               "identifier exceeds 128 bytes");
         for (i = 0; i < n; ++i)
-            if ((unsigned char)r->correlation_storage[i] < 32 ||
-                (unsigned char)r->correlation_storage[i] == 127)
+            if ((unsigned char)r->impl->correlation_storage[i] < 32 ||
+                (unsigned char)r->impl->correlation_storage[i] == 127)
                 return knurl_fail(error, KNURL_INVALID, "correlation_id",
                                   "identifier contains a control byte");
-        r->correlation_storage[n] = 0;
-        r->correlation_id.data = r->correlation_storage;
-        r->correlation_id.length = n;
+        r->impl->correlation_storage[n] = 0;
+        r->impl->correlation_id.data = r->impl->correlation_storage;
+        r->impl->correlation_id.length = n;
     }
     knurl_error_clear(error);
     return KNURL_OK;

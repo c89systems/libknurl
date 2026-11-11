@@ -15,7 +15,7 @@
 knurl_status knurl_autoblock_open(knurl_server *server, knurl_error *error)
 {
     struct knurl_autoblock *table;
-    const knurl_autoblock_config *config = &server->config.autoblock;
+    const knurl_autoblock_config *config = &server->impl->config.autoblock;
     int code;
 #if defined(__linux__)
     pthread_mutexattr_t attr;
@@ -65,12 +65,12 @@ knurl_status knurl_autoblock_open(knurl_server *server, knurl_error *error)
         return knurl_fail(error, KNURL_IO, "autoblock",
                           "initializing recoverable shared lock");
     }
-    server->autoblock = table;
+    server->impl->autoblock = table;
     return KNURL_OK;
 }
 void knurl_autoblock_close(knurl_server *server)
 {
-    struct knurl_autoblock *table = server->autoblock;
+    struct knurl_autoblock *table = server->impl->autoblock;
     if (table == NULL)
         return;
 #if defined(__linux__)
@@ -81,7 +81,7 @@ void knurl_autoblock_close(knurl_server *server)
 #endif
     munmap(table->shared, table->bytes);
     free(table);
-    server->autoblock = NULL;
+    server->impl->autoblock = NULL;
 }
 #if !defined(__linux__)
 static int file_lock(int fd, short type)
@@ -177,7 +177,7 @@ static int ip_copy(knurl_bytes ip, char out[46])
 }
 int knurl_autoblock_allowed(knurl_server *server, knurl_bytes ip)
 {
-    struct knurl_autoblock *table = server->autoblock;
+    struct knurl_autoblock *table = server->impl->autoblock;
     struct knurl_autoblock_entry *entry;
     char text[46];
     uint64_t now;
@@ -211,8 +211,8 @@ void knurl_autoblock_note(knurl_server *server, knurl_bytes ip,
                           knurl_observation_kind kind, int status,
                           const char *name)
 {
-    struct knurl_autoblock *table = server->autoblock;
-    const knurl_autoblock_config *config = &server->config.autoblock;
+    struct knurl_autoblock *table = server->impl->autoblock;
+    const knurl_autoblock_config *config = &server->impl->config.autoblock;
     char text[46];
     size_t i;
     uint64_t now;

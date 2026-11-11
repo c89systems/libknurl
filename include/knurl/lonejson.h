@@ -42,12 +42,6 @@ KNURL_API knurl_status knurl_json_parse_source(knurl_source *,
                                                const lonejson_schema_view *,
                                                void *, knurl_error *);
 
-/** Borrow the caller's reused mapped record at a zero-based array index; copy
- * anything needed after return. Non-OK stops iteration.
- */
-typedef knurl_status (*knurl_json_array_item_fn)(
-    size_t index, const lonejson_record_view *item, void *userdata,
-    knurl_error *error);
 /** Synchronous selected-array iteration, matching Vectis. NULL/empty selector
  * selects the root array; otherwise it selects one direct object key. Caller
  * provides initialized, empty mapped storage. Each item is reset before parsing
@@ -115,11 +109,6 @@ KNURL_API knurl_status knurl_json_serialize_materialized(
 KNURL_API knurl_status knurl_reply_json_materialized(
     knurl_reply *reply, int status, const lonejson_schema_view *schema,
     const void *record, size_t max_bytes, knurl_error *error);
-/** Synchronously accept the complete offered JSON chunk with OK or fail
- * terminally. Chunk bytes are borrowed only during the call.
- */
-typedef knurl_status (*knurl_json_sink_fn)(const void *, size_t, void *,
-                                           knurl_error *);
 /** Synchronous bounded generation into a sink. The sink accepts the complete
  * offered chunk with OK or fails terminally. No complete JSON buffer/file is
  * created. Borrows record/schema unchanged through return. */

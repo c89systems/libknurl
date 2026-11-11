@@ -170,10 +170,10 @@ knurl_status knurl_proxy_ws_start(struct proxy_exchange *x, const char *url,
             return KNURL_NOMEM;
     }
     if (knurl_proxy_headers_add(outbound, "X-Forwarded-For",
-                                x->request->peer.address.data) !=
+                                x->request->impl->peer.address.data) !=
             KNURL_PROXY_HEADER_OK ||
         knurl_proxy_headers_add(outbound, "X-Forwarded-Proto",
-                                x->request->tls ? "https" : "http") !=
+                                x->request->impl->tls ? "https" : "http") !=
             KNURL_PROXY_HEADER_OK ||
         knurl_proxy_headers_add(outbound, "X-Forwarded-Host", host) !=
             KNURL_PROXY_HEADER_OK)

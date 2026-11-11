@@ -141,6 +141,7 @@
 ---@field json_route knurl.Registration # Public mapped input/output records; serialize ordinary output before after-hooks.
 ---@field json_typed_route knurl.Registration # Mapped input, ordinary staged response selection with per-response schemas.
 ---@field xml_route knurl.Registration # Live bounded native XML parse into a public mapped record.
+---@field rest_route fun(self:knurl.Server|knurl.Group, options:table): boolean?, knurl.Error? # Buffered REST decode/validate/handler registration with Lua request tables.
 ---@field upload knurl.Registration # Live owner-thread chunks; explicit prefix/AGAIN backpressure.
 ---@field upload_file knurl.Registration # Native incremental writes; destination and partial files are caller artifacts.
 ---@field static_file knurl.Registration # File source, conditional/range replies and delayed open.
@@ -182,8 +183,11 @@
 ---@field group fun(self:knurl.Server, prefix:string|table, options?:table): knurl.Group|boolean|nil, knurl.Error? # Prefix wrapper or bulk route declarations, preserving existing order.
 ---@field run fun(self:knurl.Server): table?, knurl.Error? # Run lifecycle to terminal result; do not reenter.
 ---@field stop fun(self:knurl.Server): boolean?, knurl.Error? # Request graceful stop.
+---@field notify_signal fun(self:knurl.Server, number:integer): boolean?, knurl.Error? # Forward a nonnegative host signal number to Core.
+---@field kore_revision fun(self:knurl.Server): string?, knurl.Error? # Runtime backend revision.
 ---@field close fun(self:knurl.Server): boolean?, knurl.Error? # Destroy inactive server and release retained Lua owners.
 ---@field validate fun(self:knurl.Server): boolean?, knurl.Error? # Checks declarations/materials; may call TLS openers, never binds/forks.
+---@field preflight fun(self:knurl.Server): boolean?, knurl.Error? # Validate and probe listeners, access log and applicable explicit spool resources before run.
 ---@field effective_config fun(self:knurl.Server): table?, knurl.Error? # Copied normalized settings; snapshot includes configured TLS memory bytes.
 ---@field content_type fun(self:knurl.Server, path:string): string?, knurl.Error? # Infer from filename using instance overrides and Core defaults; no file access.
 ---@field set_pslog fun(self:knurl.Server, logger:userdata?, access_log?:boolean|table): boolean?, knurl.Error? # Inactive-server registration; failures preserve prior logger owners.
@@ -270,6 +274,7 @@
 ---@field read fun(self:knurl.Source, capacity:integer): string?, any # Bytes or nil, EOF/AGAIN; never an implicit whole-value read.
 ---@field reset fun(self:knurl.Source): boolean?, knurl.Error? # Optional rewind; unsupported for live mapped generators.
 ---@field resume fun(self:knurl.Source): boolean?, knurl.Error? # Owner-loop notification after runtime transfer; coalesces later pulls.
+---@field cancelled fun(self:knurl.Source): boolean?, knurl.Error? # Read Core cancellation state while the source remains alive.
 ---@field close fun(self:knurl.Source): boolean?, knurl.Error? # Release untransferred source once; fails while owned by runtime.
 
 ---Independent completed-body copy; close metadata but remove file artifacts explicitly.
@@ -422,6 +427,7 @@
 
 ---Public module loaded into an existing Lua 5.5 VM; owns neither VM nor interpreter.
 ---@class knurl.Module
+---@field version string # Version of the public C library loaded by the binding.
 ---@field AGAIN integer # Producer/consumer would block; explicit resume/readiness required.
 ---@field EOF integer # End of input/output, distinct from ordinary errors.
 ---@field status knurl.Status # Portable Core status constants, including OK and all failures.

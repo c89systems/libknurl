@@ -85,12 +85,12 @@ knurl_status knurl_tls_material_read(const knurl_tls_material *material,
                                   : KNURL_INVALID,
                               "tls_material", "TLS material open failed");
         }
-        if (source == NULL || source->borrowed || source->owner != NULL ||
-            source->busy)
+        if (source == NULL || source->impl->borrowed ||
+            source->impl->owner != NULL || source->impl->busy)
             return knurl_fail(
                 error, KNURL_STATE, "tls_material",
                 "TLS material open must transfer an unowned source");
-        source->owner = &source;
+        source->impl->owner = &source;
     }
     capacity = maximum < 8192 ? maximum + 1 : 8192;
     data = malloc(capacity);

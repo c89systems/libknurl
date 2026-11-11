@@ -1,9 +1,11 @@
 #include "storage_internal.h"
+#include <knurl/storage.h>
 #include "asset_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-struct knurl_storage_provider {
+struct knurl_storage_provider_impl {
+    knurl_storage_provider receiver;
     knurl_storage_provider_config config;
     size_t references, resources;
     knurl_loop *loop;
@@ -12,14 +14,16 @@ struct knurl_storage_provider {
     pthread_t thread;
     int closed;
 };
-struct knurl_storage_resource {
+struct knurl_storage_resource_impl {
+    knurl_storage_resource receiver;
     knurl_storage_provider *provider;
     knurl_storage_resource_config config;
     knurl_storage_operation *owner, *pending;
     size_t references;
     int closed, busy;
 };
-struct knurl_storage_operation {
+struct knurl_storage_operation_impl {
+    knurl_storage_operation receiver;
     knurl_storage_provider *provider;
     knurl_loop *loop;
     knurl_storage_operation *next;
@@ -88,14 +92,14 @@ const char *knurl_storage_code_string(knurl_storage_code code)
                ? names[code]
                : "unknown";
 }
-static void provider_ref(knurl_storage_provider *p) { ++p->references; }
+static void provider_ref(knurl_storage_provider *p) { ++p->impl->references; }
 static void provider_unref(void *data)
 {
     knurl_storage_provider *p = data;
-    if (--p->references == 0) {
-        if (p->config.close != NULL)
-            p->config.close(p->config.userdata);
-        free((void *)p->config.commit_description);
+    if (--p->impl->references == 0) {
+        if (p->impl->config.close != NULL)
+            p->impl->config.close(p->impl->config.userdata);
+        free((void *)p->impl->config.commit_description);
         free(p);
     }
 }
@@ -104,8 +108,9 @@ static knurl_status provider_owner(knurl_storage_provider *p,
 {
     if (p == NULL)
         return fail(error, KNURL_INVALID, "missing storage provider");
-    if (p->loop != NULL && (p->process != (long)getpid() ||
-                            !pthread_equal(p->thread, pthread_self())))
+    if (p->impl->loop != NULL &&
+        (p->impl->process != (long)getpid() ||
+         !pthread_equal(p->impl->thread, pthread_self())))
         return fail(error, KNURL_STATE,
                     "provider belongs to another process/thread");
     return KNURL_OK;
@@ -123,17 +128,19 @@ knurl_storage_provider_new(const knurl_storage_provider_config *config,
         return fail(error, KNURL_INVALID,
                     "provide invoke/cancel callbacks, valid capabilities and "
                     "bounded commit description");
-    p = calloc(1, sizeof(*p));
+    p = calloc(1, sizeof(struct knurl_storage_provider_impl));
     if (p == NULL)
         return fail(error, KNURL_NOMEM, "allocating storage provider");
-    p->config = *config;
-    p->config.commit_description = knurl_copy_text(config->commit_description);
+    knurl_storage_provider_receiver_init(p);
+    p->impl->config = *config;
+    p->impl->config.commit_description =
+        knurl_copy_text(config->commit_description);
     if (config->commit_description != NULL &&
-        p->config.commit_description == NULL) {
+        p->impl->config.commit_description == NULL) {
         free(p);
         return fail(error, KNURL_NOMEM, "copying commit description");
     }
-    p->references = 1;
+    p->impl->references = 1;
     *out = p;
     knurl_error_clear(error);
     return KNURL_OK;
@@ -141,12 +148,12 @@ knurl_storage_provider_new(const knurl_storage_provider_config *config,
 unsigned int
 knurl_storage_provider_capabilities(const knurl_storage_provider *p)
 {
-    return p != NULL ? p->config.capabilities : 0;
+    return p != NULL ? p->impl->config.capabilities : 0;
 }
 const char *
 knurl_storage_provider_commit_description(const knurl_storage_provider *p)
 {
-    return p != NULL ? p->config.commit_description : NULL;
+    return p != NULL ? p->impl->config.commit_description : NULL;
 }
 knurl_status knurl_storage_provider_close(knurl_storage_provider *p,
                                           knurl_error *error)
@@ -159,9 +166,9 @@ knurl_status knurl_storage_provider_close(knurl_storage_provider *p,
     status = provider_owner(p, error);
     if (status != KNURL_OK)
         return status;
-    if (p->closed)
+    if (p->impl->closed)
         return fail(error, KNURL_STATE, "storage provider is closed");
-    p->closed = 1;
+    p->impl->closed = 1;
     provider_unref(p);
     knurl_error_clear(error);
     return KNURL_OK;
@@ -169,18 +176,18 @@ knurl_status knurl_storage_provider_close(knurl_storage_provider *p,
 static void resource_ref(knurl_storage_resource *r)
 {
     if (r != NULL)
-        ++r->references;
+        ++r->impl->references;
 }
 static void resource_unref(knurl_storage_resource *r)
 {
     knurl_storage_provider *p;
-    if (r == NULL || --r->references != 0)
+    if (r == NULL || --r->impl->references != 0)
         return;
-    p = r->provider;
-    r->busy = 1;
-    if (r->config.close != NULL)
-        r->config.close(r->config.userdata);
-    --p->resources;
+    p = r->impl->provider;
+    r->impl->busy = 1;
+    if (r->impl->config.close != NULL)
+        r->impl->config.close(r->impl->config.userdata);
+    --p->impl->resources;
     free(r);
     provider_unref(p);
 }
@@ -198,31 +205,32 @@ knurl_storage_resource_new(knurl_storage_operation *op,
          config->kind != KNURL_STORAGE_WRITE))
         return fail(error, KNURL_INVALID,
                     "provide operation, resource kind and output");
-    status = knurl_loop_owner(op->loop, error);
+    status = knurl_loop_owner(op->impl->loop, error);
     if (status != KNURL_OK)
         return status;
-    if (op->retiring || op->acknowledged)
+    if (op->impl->retiring || op->impl->acknowledged)
         return fail(error, KNURL_STATE, "storage operation already completed");
-    r = calloc(1, sizeof(*r));
+    r = calloc(1, sizeof(struct knurl_storage_resource_impl));
     if (r == NULL)
         return fail(error, KNURL_NOMEM, "allocating storage resource");
-    r->config = *config;
-    r->provider = op->provider;
-    r->references = 1;
-    ++r->provider->resources;
-    provider_ref(r->provider);
+    knurl_storage_resource_receiver_init(r);
+    r->impl->config = *config;
+    r->impl->provider = op->impl->provider;
+    r->impl->references = 1;
+    ++r->impl->provider->impl->resources;
+    provider_ref(r->impl->provider);
     *out = r;
     knurl_error_clear(error);
     return KNURL_OK;
 }
 void *knurl_storage_resource_userdata(const knurl_storage_resource *r)
 {
-    return r != NULL ? r->config.userdata : NULL;
+    return r != NULL ? r->impl->config.userdata : NULL;
 }
 knurl_storage_resource_kind
 knurl_storage_resource_type(const knurl_storage_resource *r)
 {
-    return r != NULL ? r->config.kind : KNURL_STORAGE_LIST;
+    return r != NULL ? r->impl->config.kind : KNURL_STORAGE_LIST;
 }
 knurl_status knurl_storage_resource_close(knurl_storage_resource *r,
                                           knurl_error *error)
@@ -232,13 +240,13 @@ knurl_status knurl_storage_resource_close(knurl_storage_resource *r,
         knurl_error_clear(error);
         return KNURL_OK;
     }
-    status = provider_owner(r->provider, error);
+    status = provider_owner(r->impl->provider, error);
     if (status != KNURL_OK)
         return status;
-    if (r->busy || r->closed || r->owner != NULL)
+    if (r->impl->busy || r->impl->closed || r->impl->owner != NULL)
         return fail(error, KNURL_STATE,
                     "storage resource is closed, busy or owned by a result");
-    r->closed = 1;
+    r->impl->closed = 1;
     resource_unref(r);
     knurl_error_clear(error);
     return KNURL_OK;
@@ -257,7 +265,7 @@ static knurl_status arguments_check(knurl_storage_provider *p,
                                     const knurl_storage_arguments *a,
                                     knurl_error *error)
 {
-    unsigned int caps = p->config.capabilities;
+    unsigned int caps = p->impl->config.capabilities;
     int resource_action;
     if (a == NULL || a->action < KNURL_STORAGE_STAT ||
         a->action > KNURL_STORAGE_MOVE ||
@@ -274,12 +282,12 @@ static knurl_status arguments_check(knurl_storage_provider *p,
                       a->action == KNURL_STORAGE_PUT_FINISH ||
                       a->action == KNURL_STORAGE_PUT_ABORT;
     if (resource_action) {
-        if (a->resource == NULL || a->resource->provider != p ||
-            a->resource->closed || a->resource->owner != NULL ||
-            a->resource->pending != NULL ||
-            a->resource->config.kind != (a->action == KNURL_STORAGE_LIST_NEXT
-                                             ? KNURL_STORAGE_LIST
-                                             : KNURL_STORAGE_WRITE))
+        if (a->resource == NULL || a->resource->impl->provider != p ||
+            a->resource->impl->closed || a->resource->impl->owner != NULL ||
+            a->resource->impl->pending != NULL ||
+            a->resource->impl->config.kind !=
+                (a->action == KNURL_STORAGE_LIST_NEXT ? KNURL_STORAGE_LIST
+                                                      : KNURL_STORAGE_WRITE))
             return fail(error, KNURL_INVALID,
                         "operation needs an open resource from this provider");
     } else if (a->resource != NULL || !knurl_asset_path_valid(a->path))
@@ -318,16 +326,16 @@ static knurl_status arguments_check(knurl_storage_provider *p,
 }
 static void result_clear(knurl_storage_operation *op)
 {
-    if (op->result.asset != NULL) {
-        knurl_asset_unclaim(op->result.asset, op);
-        knurl_asset_close(op->result.asset, NULL);
+    if (op->impl->result.asset != NULL) {
+        knurl_asset_unclaim(op->impl->result.asset, op);
+        knurl_asset_close(op->impl->result.asset, NULL);
     }
-    if (op->result.resource != NULL) {
-        op->result.resource->owner = NULL;
-        knurl_storage_resource_close(op->result.resource, NULL);
+    if (op->impl->result.resource != NULL) {
+        op->impl->result.resource->impl->owner = NULL;
+        knurl_storage_resource_close(op->impl->result.resource, NULL);
     }
-    op->result.asset = NULL;
-    op->result.resource = NULL;
+    op->impl->result.asset = NULL;
+    op->impl->result.resource = NULL;
 }
 static void result_metadata_clear(knurl_storage_result *r)
 {
@@ -340,7 +348,7 @@ static knurl_status result_check(knurl_storage_operation *op,
                                  const knurl_storage_result *r, int expired,
                                  knurl_error *error)
 {
-    knurl_storage_action action = op->arguments.action;
+    knurl_storage_action action = op->impl->arguments.action;
     if (r->code < KNURL_STORAGE_OK || r->code > KNURL_STORAGE_DENIED ||
         !bounded(r->recovery_path, KNURL_ASSET_PATH_MAX) ||
         (r->committed && !commits(action)) ||
@@ -352,11 +360,11 @@ static knurl_status result_check(knurl_storage_operation *op,
         return fail(error, KNURL_INVALID,
                     "result does not match storage action");
     if (r->resource != NULL &&
-        (r->resource->provider != op->provider || r->resource->closed ||
-         r->resource->owner != NULL ||
-         r->resource->config.kind != (action == KNURL_STORAGE_LIST_OPEN
-                                          ? KNURL_STORAGE_LIST
-                                          : KNURL_STORAGE_WRITE)))
+        (r->resource->impl->provider != op->impl->provider ||
+         r->resource->impl->closed || r->resource->impl->owner != NULL ||
+         r->resource->impl->config.kind != (action == KNURL_STORAGE_LIST_OPEN
+                                                ? KNURL_STORAGE_LIST
+                                                : KNURL_STORAGE_WRITE)))
         return fail(error, KNURL_INVALID,
                     "result resource does not match provider/action");
     if (r->asset != NULL &&
@@ -364,7 +372,7 @@ static knurl_status result_check(knurl_storage_operation *op,
         return fail(error, KNURL_INVALID, "OPEN_READ must return a file asset");
     if (r->accepted != 0 &&
         (action != KNURL_STORAGE_PUT_WRITE || r->code != KNURL_STORAGE_OK ||
-         r->accepted > op->arguments.bytes.length))
+         r->accepted > op->impl->arguments.bytes.length))
         return fail(error, KNURL_INVALID, "invalid accepted write prefix");
     if (!expired && !knurl_storage_operation_cancelled(op) &&
         r->code == KNURL_STORAGE_OK) {
@@ -396,19 +404,19 @@ knurl_storage_operation_complete(knurl_storage_operation *op,
     int expired = 0;
     if (op == NULL)
         return fail(error, KNURL_INVALID, "missing storage operation");
-    status = knurl_loop_owner(op->loop, error);
+    status = knurl_loop_owner(op->impl->loop, error);
     if (status != KNURL_OK)
         return status;
-    if (op->acknowledged || op->retiring || op->scope_busy)
+    if (op->impl->acknowledged || op->impl->retiring || op->impl->scope_busy)
         return fail(error, KNURL_STATE,
                     "storage operation already acknowledged");
-    if (op->timer != NULL) {
+    if (op->impl->timer != NULL) {
         status = knurl_loop_monotonic(&acknowledged_at, error);
         if (status != KNURL_OK)
             return status;
-        expired = acknowledged_at.high > op->timer->due.high ||
-                  (acknowledged_at.high == op->timer->due.high &&
-                   acknowledged_at.low >= op->timer->due.low);
+        expired = acknowledged_at.high > op->impl->timer->impl->due.high ||
+                  (acknowledged_at.high == op->impl->timer->impl->due.high &&
+                   acknowledged_at.low >= op->impl->timer->impl->due.low);
     }
     knurl_storage_result_init(&empty);
     if (result == NULL)
@@ -444,9 +452,9 @@ knurl_storage_operation_complete(knurl_storage_operation *op,
     }
     if (status == KNURL_OK && result->asset != NULL) {
         status = knurl_asset_claim(result->asset, op, provider_unref,
-                                   op->provider, error);
+                                   op->impl->provider, error);
         if (status == KNURL_OK) {
-            provider_ref(op->provider);
+            provider_ref(op->impl->provider);
             copy.asset = result->asset;
         }
     }
@@ -456,41 +464,44 @@ knurl_storage_operation_complete(knurl_storage_operation *op,
     }
     copy.resource = result->resource;
     if (copy.resource != NULL)
-        copy.resource->owner = op;
-    op->result = copy;
-    op->acknowledged = 1;
+        copy.resource->impl->owner = op;
+    op->impl->result = copy;
+    op->impl->acknowledged = 1;
     /* A queued timer is not proof its deadline has not elapsed. Completion
      * can arrive in the same native event batch before timer delivery. */
     if (expired) {
-        if (op->cause == KNURL_OK)
-            op->cause = KNURL_TIMEOUT;
-        __atomic_store_n(&op->cancelled, 1, __ATOMIC_RELEASE);
+        if (op->impl->cause == KNURL_OK)
+            op->impl->cause = KNURL_TIMEOUT;
+        __atomic_store_n(&op->impl->cancelled, 1, __ATOMIC_RELEASE);
     }
-    if (op->arguments.resource != NULL && op->arguments.resource->pending == op)
-        op->arguments.resource->pending = NULL;
-    if (op->timer != NULL)
-        knurl_timer_cancel(op->timer);
-    (void)knurl_waker_signal(op->waker, NULL);
+    if (op->impl->arguments.resource != NULL &&
+        op->impl->arguments.resource->impl->pending == op)
+        op->impl->arguments.resource->impl->pending = NULL;
+    if (op->impl->timer != NULL)
+        knurl_timer_cancel(op->impl->timer);
+    (void)knurl_waker_signal(op->impl->waker, NULL);
     knurl_error_clear(error);
     return KNURL_OK;
 }
 knurl_loop *knurl_storage_operation_loop(const knurl_storage_operation *op)
 {
-    return op != NULL && knurl_loop_owner(op->loop, NULL) == KNURL_OK ? op->loop
-                                                                      : NULL;
+    return op != NULL && knurl_loop_owner(op->impl->loop, NULL) == KNURL_OK
+               ? op->impl->loop
+               : NULL;
 }
 const knurl_storage_arguments *
 knurl_storage_operation_arguments(const knurl_storage_operation *op)
 {
-    return op != NULL ? &op->arguments : NULL;
+    return op != NULL ? &op->impl->arguments : NULL;
 }
 void *knurl_storage_operation_userdata(const knurl_storage_operation *op)
 {
-    return op != NULL ? op->userdata : NULL;
+    return op != NULL ? op->impl->userdata : NULL;
 }
 int knurl_storage_operation_cancelled(const knurl_storage_operation *op)
 {
-    return op == NULL || __atomic_load_n(&op->cancelled, __ATOMIC_ACQUIRE) != 0;
+    return op == NULL ||
+           __atomic_load_n(&op->impl->cancelled, __ATOMIC_ACQUIRE) != 0;
 }
 knurl_status knurl_storage_operation_set_userdata(knurl_storage_operation *op,
                                                   void *data,
@@ -499,19 +510,20 @@ knurl_status knurl_storage_operation_set_userdata(knurl_storage_operation *op,
     knurl_status status;
     if (op == NULL)
         return fail(error, KNURL_INVALID, "missing storage operation");
-    status = knurl_loop_owner(op->loop, error);
+    status = knurl_loop_owner(op->impl->loop, error);
     if (status != KNURL_OK)
         return status;
-    if (op->retiring || op->acknowledged || op->userdata != NULL)
+    if (op->impl->retiring || op->impl->acknowledged ||
+        op->impl->userdata != NULL)
         return fail(error, KNURL_STATE,
                     "operation context is already set or retiring");
-    op->userdata = data;
+    op->impl->userdata = data;
     knurl_error_clear(error);
     return KNURL_OK;
 }
 int knurl_storage_operation_has_scope_check(const knurl_storage_operation *op)
 {
-    return op != NULL && op->config.check_scope != NULL;
+    return op != NULL && op->impl->config.check_scope != NULL;
 }
 knurl_status knurl_storage_operation_check_scope(knurl_storage_operation *op,
                                                  const char *path,
@@ -526,24 +538,24 @@ knurl_status knurl_storage_operation_check_scope(knurl_storage_operation *op,
         (destination != NULL && !knurl_asset_path_valid(destination)))
         return fail(error, KNURL_INVALID,
                     "provide normalized scope paths and decision output");
-    status = knurl_loop_owner(op->loop, error);
+    status = knurl_loop_owner(op->impl->loop, error);
     if (status != KNURL_OK)
         return status;
-    if (op->acknowledged || op->retiring || op->scope_busy)
+    if (op->impl->acknowledged || op->impl->retiring || op->impl->scope_busy)
         return fail(
             error, KNURL_STATE,
             "scope check requires a pending operation outside another check");
     if (knurl_storage_operation_cancelled(op))
         return fail(error, KNURL_CANCELLED, "storage policy access revoked");
-    if (op->config.check_scope == NULL) {
+    if (op->impl->config.check_scope == NULL) {
         *allowed = 1;
         knurl_error_clear(error);
         return KNURL_OK;
     }
-    op->scope_busy = 1;
-    status = op->config.check_scope(op, path, destination, allowed,
-                                    op->config.userdata, error);
-    op->scope_busy = 0;
+    op->impl->scope_busy = 1;
+    status = op->impl->config.check_scope(op, path, destination, allowed,
+                                          op->impl->config.userdata, error);
+    op->impl->scope_busy = 0;
     if (status != KNURL_OK || knurl_storage_operation_cancelled(op))
         *allowed = 0;
     if (status == KNURL_OK && knurl_storage_operation_cancelled(op))
@@ -555,74 +567,76 @@ static void operation_unref(void *data)
 {
     knurl_storage_operation *op = data;
     knurl_storage_outcome outcome;
-    if (--op->references != 0)
+    if (--op->impl->references != 0)
         return;
-    outcome.cause = op->cause;
+    outcome.cause = op->impl->cause;
     outcome.cancelled = knurl_storage_operation_cancelled(op);
-    outcome.result = &op->result;
+    outcome.result = &op->impl->result;
     result_clear(op);
-    if (op->accepted && op->provider->config.retired != NULL)
-        op->provider->config.retired(op, &outcome,
-                                     op->provider->config.userdata);
-    if (op->accepted && op->config.retired != NULL)
-        op->config.retired(&outcome, op->config.userdata);
-    result_metadata_clear(&op->result);
-    free((void *)op->arguments.path);
-    free((void *)op->arguments.destination);
-    free((void *)op->arguments.if_match);
-    free((void *)op->arguments.if_none_match);
-    free((void *)op->arguments.bytes.data);
-    if (op->arguments.resource != NULL && op->arguments.resource->pending == op)
-        op->arguments.resource->pending = NULL;
-    resource_unref(op->arguments.resource);
-    provider_unref(op->provider);
+    if (op->impl->accepted && op->impl->provider->impl->config.retired != NULL)
+        op->impl->provider->impl->config.retired(
+            op, &outcome, op->impl->provider->impl->config.userdata);
+    if (op->impl->accepted && op->impl->config.retired != NULL)
+        op->impl->config.retired(&outcome, op->impl->config.userdata);
+    result_metadata_clear(&op->impl->result);
+    free((void *)op->impl->arguments.path);
+    free((void *)op->impl->arguments.destination);
+    free((void *)op->impl->arguments.if_match);
+    free((void *)op->impl->arguments.if_none_match);
+    free((void *)op->impl->arguments.bytes.data);
+    if (op->impl->arguments.resource != NULL &&
+        op->impl->arguments.resource->impl->pending == op)
+        op->impl->arguments.resource->impl->pending = NULL;
+    resource_unref(op->impl->arguments.resource);
+    provider_unref(op->impl->provider);
     free(op);
 }
 static void unlink_operation(knurl_storage_operation *op)
 {
-    knurl_storage_operation **p = &op->loop->storage_operations;
-    if (!op->linked)
+    knurl_storage_operation **p = &op->impl->loop->impl->storage_operations;
+    if (!op->impl->linked)
         return;
     while (*p != NULL && *p != op)
-        p = &(*p)->next;
+        p = &(*p)->impl->next;
     if (*p == op)
-        *p = op->next;
-    op->linked = 0;
-    --op->loop->storage_count;
+        *p = op->impl->next;
+    op->impl->linked = 0;
+    --op->impl->loop->impl->storage_count;
 }
 static void operation_ready(knurl_loop *loop, void *data)
 {
     knurl_storage_operation *op = data;
     knurl_storage_outcome outcome;
     (void)loop;
-    if (op->retiring)
+    if (op->impl->retiring)
         return;
-    if (knurl_storage_operation_cancelled(op) && !op->detached &&
-        !op->interrupted) {
-        op->interrupted = 1;
-        if (op->config.interrupted != NULL)
-            op->config.interrupted(op, op->cause, op->config.userdata);
+    if (knurl_storage_operation_cancelled(op) && !op->impl->detached &&
+        !op->impl->interrupted) {
+        op->impl->interrupted = 1;
+        if (op->impl->config.interrupted != NULL)
+            op->impl->config.interrupted(op, op->impl->cause,
+                                         op->impl->config.userdata);
     }
-    if (!op->acknowledged)
+    if (!op->impl->acknowledged)
         return;
-    op->delivered = 1;
-    outcome.cause = op->cause;
+    op->impl->delivered = 1;
+    outcome.cause = op->impl->cause;
     outcome.cancelled = knurl_storage_operation_cancelled(op);
-    outcome.result = &op->result;
-    if (!outcome.cancelled && op->config.completed != NULL)
-        op->config.completed(op, &outcome, op->config.userdata);
-    op->retiring = 1;
+    outcome.result = &op->impl->result;
+    if (!outcome.cancelled && op->impl->config.completed != NULL)
+        op->impl->config.completed(op, &outcome, op->impl->config.userdata);
+    op->impl->retiring = 1;
     unlink_operation(op);
-    if (op->timer != NULL)
-        knurl_timer_cancel(op->timer);
-    knurl_waker_destroy(op->waker, NULL);
+    if (op->impl->timer != NULL)
+        knurl_timer_cancel(op->impl->timer);
+    knurl_waker_destroy(op->impl->waker, NULL);
     operation_unref(op);
 }
 static void protocol_failure(knurl_storage_operation *op, knurl_status status,
                              const knurl_error *native)
 {
     knurl_storage_result result;
-    if (op->acknowledged)
+    if (op->impl->acknowledged)
         return;
     knurl_storage_result_init(&result);
     result.code =
@@ -631,8 +645,8 @@ static void protocol_failure(knurl_storage_operation *op, knurl_status status,
         result.error = *native;
     if (result.error.status != status)
         fail(&result.error, status, "storage provider callback failed");
-    if (op->cause == KNURL_OK)
-        op->cause = status;
+    if (op->impl->cause == KNURL_OK)
+        op->impl->cause = status;
     (void)knurl_storage_operation_complete(op, &result, NULL);
 }
 static knurl_status cancel_operation(knurl_storage_operation *op,
@@ -641,27 +655,28 @@ static knurl_status cancel_operation(knurl_storage_operation *op,
 {
     knurl_status status;
     knurl_error native;
-    if (op->delivered) {
+    if (op->impl->delivered) {
         knurl_error_clear(error);
         return KNURL_OK;
     }
     if (detach)
-        op->detached = 1;
-    if (__atomic_exchange_n(&op->cancelled, 1, __ATOMIC_ACQ_REL)) {
+        op->impl->detached = 1;
+    if (__atomic_exchange_n(&op->impl->cancelled, 1, __ATOMIC_ACQ_REL)) {
         knurl_error_clear(error);
         return KNURL_OK;
     }
-    if (op->cause == KNURL_OK)
-        op->cause = cause;
-    (void)knurl_waker_signal(op->waker, NULL);
-    if (op->acknowledged) {
+    if (op->impl->cause == KNURL_OK)
+        op->impl->cause = cause;
+    (void)knurl_waker_signal(op->impl->waker, NULL);
+    if (op->impl->acknowledged) {
         knurl_error_clear(error);
         return KNURL_OK;
     }
     knurl_error_clear(&native);
-    status = op->provider->config.cancel(
-        op, &op->arguments, op->provider->config.userdata, &native);
-    if (status == KNURL_OK && !op->acknowledged)
+    status = op->impl->provider->impl->config.cancel(
+        op, &op->impl->arguments, op->impl->provider->impl->config.userdata,
+        &native);
+    if (status == KNURL_OK && !op->impl->acknowledged)
         status = knurl_storage_operation_complete(op, NULL, &native);
     if (status == KNURL_OK || status == KNURL_AGAIN) {
         knurl_error_clear(error);
@@ -682,14 +697,14 @@ static knurl_status cancel_operation(knurl_storage_operation *op,
 static void deadline_retired(void *data)
 {
     knurl_storage_operation *op = data;
-    op->timer = NULL;
+    op->impl->timer = NULL;
     operation_unref(op);
 }
 static void deadline(knurl_timer *timer, void *data)
 {
     knurl_storage_operation *op = data;
     (void)timer;
-    if (!op->acknowledged)
+    if (!op->impl->acknowledged)
         (void)cancel_operation(op, KNURL_TIMEOUT, 0, NULL);
 }
 knurl_status knurl_storage_operation_cancel(knurl_storage_operation *op,
@@ -700,7 +715,7 @@ knurl_status knurl_storage_operation_cancel(knurl_storage_operation *op,
         knurl_error_clear(error);
         return KNURL_OK;
     }
-    status = knurl_loop_owner(op->loop, error);
+    status = knurl_loop_owner(op->impl->loop, error);
     if (status != KNURL_OK)
         return status;
     return cancel_operation(op, KNURL_CANCELLED, 1, error);
@@ -714,15 +729,15 @@ knurl_status knurl_storage_operation_take_asset(knurl_storage_operation *op,
         *out = NULL;
     if (op == NULL || out == NULL)
         return fail(error, KNURL_INVALID, "provide operation and asset output");
-    status = knurl_loop_owner(op->loop, error);
+    status = knurl_loop_owner(op->impl->loop, error);
     if (status != KNURL_OK)
         return status;
-    if (!op->acknowledged || !op->delivered || op->retiring ||
-        knurl_storage_operation_cancelled(op) || op->result.asset == NULL)
+    if (!op->impl->acknowledged || !op->impl->delivered || op->impl->retiring ||
+        knurl_storage_operation_cancelled(op) || op->impl->result.asset == NULL)
         return fail(error, KNURL_STATE,
                     "asset may be taken only during successful completion");
-    *out = op->result.asset;
-    op->result.asset = NULL;
+    *out = op->impl->result.asset;
+    op->impl->result.asset = NULL;
     knurl_asset_unclaim(*out, op);
     knurl_error_clear(error);
     return KNURL_OK;
@@ -737,16 +752,17 @@ knurl_status knurl_storage_operation_take_resource(knurl_storage_operation *op,
     if (op == NULL || out == NULL)
         return fail(error, KNURL_INVALID,
                     "provide operation and resource output");
-    status = knurl_loop_owner(op->loop, error);
+    status = knurl_loop_owner(op->impl->loop, error);
     if (status != KNURL_OK)
         return status;
-    if (!op->acknowledged || !op->delivered || op->retiring ||
-        knurl_storage_operation_cancelled(op) || op->result.resource == NULL)
+    if (!op->impl->acknowledged || !op->impl->delivered || op->impl->retiring ||
+        knurl_storage_operation_cancelled(op) ||
+        op->impl->result.resource == NULL)
         return fail(error, KNURL_STATE,
                     "resource may be taken only during successful completion");
-    *out = op->result.resource;
-    op->result.resource = NULL;
-    (*out)->owner = NULL;
+    *out = op->impl->result.resource;
+    op->impl->result.resource = NULL;
+    (*out)->impl->owner = NULL;
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -754,7 +770,7 @@ static knurl_status copy_arguments(knurl_storage_operation *op,
                                    const knurl_storage_arguments *a,
                                    knurl_error *error)
 {
-    knurl_storage_arguments *copy = &op->arguments;
+    knurl_storage_arguments *copy = &op->impl->arguments;
     *copy = *a;
     copy->path = knurl_copy_text(a->path);
     copy->destination = knurl_copy_text(a->destination);
@@ -763,7 +779,7 @@ static knurl_status copy_arguments(knurl_storage_operation *op,
     copy->bytes.data = NULL;
     resource_ref(copy->resource);
     if (copy->resource != NULL)
-        copy->resource->pending = op;
+        copy->resource->impl->pending = op;
     if (a->bytes.length != 0) {
         void *bytes = malloc(a->bytes.length);
         if (bytes != NULL)
@@ -798,14 +814,16 @@ knurl_storage_operation_start(knurl_storage_provider *p, knurl_loop *loop,
     status = knurl_loop_owner(loop, error);
     if (status != KNURL_OK)
         return status;
-    if (!loop->native_ready || !loop->http_worker)
+    if (!loop->impl->native_ready || !loop->impl->http_worker)
         return fail(
             error, KNURL_STATE,
             "storage operations require an active post-fork HTTP worker loop");
-    if (!loop->accepting || loop->executor_stopping || p->closed)
+    if (!loop->impl->accepting || loop->impl->executor_stopping ||
+        p->impl->closed)
         return fail(error, KNURL_STATE, "storage intake is closing");
-    if (p->loop != NULL && (p->loop != loop || p->identity != loop->identity ||
-                            p->process != (long)getpid()))
+    if (p->impl->loop != NULL &&
+        (p->impl->loop != loop || p->impl->identity != loop->impl->identity ||
+         p->impl->process != (long)getpid()))
         return fail(error, KNURL_STATE,
                     "provider is bound to another loop/run");
     status = arguments_check(p, args, error);
@@ -820,7 +838,7 @@ knurl_storage_operation_start(knurl_storage_provider *p, knurl_loop *loop,
             args->action != KNURL_STORAGE_MOVE)
             return fail(error, KNURL_INVALID,
                         "scope checks apply to DELETE/COPY/MOVE");
-        if (!(p->config.capabilities & KNURL_STORAGE_CAN_SCOPE_CHECK))
+        if (!(p->impl->config.capabilities & KNURL_STORAGE_CAN_SCOPE_CHECK))
             return fail(error, KNURL_NOT_SUPPORTED,
                         "provider cannot atomically check mutation scope");
     }
@@ -830,53 +848,56 @@ knurl_storage_operation_start(knurl_storage_provider *p, knurl_loop *loop,
                     "for absence");
     if (defaults.timeout_ms == 0)
         defaults.timeout_ms = 30000;
-    op = calloc(1, sizeof(*op));
+    op = calloc(1, sizeof(struct knurl_storage_operation_impl));
     if (op == NULL)
         return fail(error, KNURL_NOMEM, "allocating storage operation");
-    op->references = 1;
-    op->loop = loop;
-    op->provider = p;
+    knurl_storage_operation_receiver_init(op);
+    op->impl->references = 1;
+    op->impl->loop = loop;
+    op->impl->provider = p;
     provider_ref(p);
-    op->config = defaults;
+    op->impl->config = defaults;
     status = copy_arguments(op, args, error);
     if (status != KNURL_OK) {
         operation_unref(op);
         return status;
     }
     status = knurl_waker_new(loop, operation_ready, operation_unref, op,
-                             &op->waker, error);
+                             &op->impl->waker, error);
     if (status != KNURL_OK) {
         operation_unref(op);
         return status;
     }
-    ++op->references;
+    ++op->impl->references;
     if (!defaults.timeout_disabled) {
-        status = knurl_loop_timer(loop, defaults.timeout_ms, 0, deadline,
-                                  deadline_retired, op, &op->timer, error);
+        status =
+            knurl_loop_timer(loop, defaults.timeout_ms, 0, deadline,
+                             deadline_retired, op, &op->impl->timer, error);
         if (status != KNURL_OK) {
-            knurl_waker_destroy(op->waker, NULL);
+            knurl_waker_destroy(op->impl->waker, NULL);
             operation_unref(op);
             return status;
         }
-        ++op->references;
+        ++op->impl->references;
     }
-    if (p->loop == NULL) {
-        p->loop = loop;
-        p->identity = loop->identity;
-        p->process = (long)getpid();
-        p->thread = pthread_self();
+    if (p->impl->loop == NULL) {
+        p->impl->loop = loop;
+        p->impl->identity = loop->impl->identity;
+        p->impl->process = (long)getpid();
+        p->impl->thread = pthread_self();
     }
-    op->accepted = 1;
-    op->next = loop->storage_operations;
-    loop->storage_operations = op;
-    op->linked = 1;
-    ++loop->storage_count;
+    op->impl->accepted = 1;
+    op->impl->next = loop->impl->storage_operations;
+    loop->impl->storage_operations = op;
+    op->impl->linked = 1;
+    ++loop->impl->storage_count;
     *out = op;
-    op->invoke_busy = 1;
+    op->impl->invoke_busy = 1;
     knurl_error_clear(&native);
-    status = p->config.invoke(op, &op->arguments, p->config.userdata, &native);
-    op->invoke_busy = 0;
-    if (status == KNURL_OK && !op->acknowledged) {
+    status = p->impl->config.invoke(op, &op->impl->arguments,
+                                    p->impl->config.userdata, &native);
+    op->impl->invoke_busy = 0;
+    if (status == KNURL_OK && !op->impl->acknowledged) {
         status = knurl_storage_operation_complete(op, NULL, &native);
         if (status != KNURL_OK)
             protocol_failure(op, status, &native);
@@ -890,8 +911,47 @@ void knurl_storage_stopping(knurl_loop *loop)
     knurl_storage_operation *op, *next;
     if (loop == NULL)
         return;
-    for (op = loop->storage_operations; op != NULL; op = next) {
-        next = op->next;
+    for (op = loop->impl->storage_operations; op != NULL; op = next) {
+        next = op->impl->next;
         (void)cancel_operation(op, KNURL_CANCELLED, 0, NULL);
     }
+}
+
+void knurl_storage_provider_receiver_init(knurl_storage_provider *receiver)
+{
+    static const knurl_storage_provider methods = {
+        knurl_storage_provider_capabilities,
+        knurl_storage_provider_commit_description, knurl_storage_provider_close,
+        knurl_storage_operation_start, NULL};
+    *receiver = methods;
+    receiver->impl = (struct knurl_storage_provider_impl *)receiver;
+}
+
+void knurl_storage_operation_receiver_init(knurl_storage_operation *receiver)
+{
+    static const knurl_storage_operation methods = {
+        knurl_storage_operation_complete,
+        knurl_storage_operation_loop,
+        knurl_storage_operation_arguments,
+        knurl_storage_operation_userdata,
+        knurl_storage_operation_set_userdata,
+        knurl_storage_operation_has_scope_check,
+        knurl_storage_operation_check_scope,
+        knurl_storage_operation_cancelled,
+        knurl_storage_operation_cancel,
+        knurl_storage_operation_take_asset,
+        knurl_storage_operation_take_resource,
+        knurl_storage_resource_new,
+        NULL};
+    *receiver = methods;
+    receiver->impl = (struct knurl_storage_operation_impl *)receiver;
+}
+
+void knurl_storage_resource_receiver_init(knurl_storage_resource *receiver)
+{
+    static const knurl_storage_resource methods = {
+        knurl_storage_resource_userdata, knurl_storage_resource_type,
+        knurl_storage_resource_close, NULL};
+    *receiver = methods;
+    receiver->impl = (struct knurl_storage_resource_impl *)receiver;
 }

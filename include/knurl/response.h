@@ -159,6 +159,110 @@ KNURL_API knurl_status knurl_response_producer(knurl_response *response,
 KNURL_API knurl_status knurl_response_producer_resume(knurl_response *response,
                                                       knurl_error *error);
 
+struct knurl_bytes;
+struct knurl_error;
+struct knurl_header;
+struct knurl_source;
+struct knurl_u64;
+/** Library-owned response receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_response {
+    /** Return the live response's current output phase on its owner loop. */
+    knurl_response_phase (*state)(const struct knurl_response *response);
+    /** Return nonzero once final response headers have reached transport
+     * commitment.
+     */
+    int (*is_committed)(const struct knurl_response *response);
+    /** Return bytes currently retained in the bounded output queue. */
+    size_t (*queued_bytes)(const struct knurl_response *response);
+    /** Install owner-loop writable/terminal callbacks; caller retains userdata
+     * through terminal delivery.
+     */
+    knurl_status (*callbacks)(struct knurl_response *response,
+                              knurl_response_writable_fn writable,
+                              knurl_response_close_fn close, void *userdata,
+                              struct knurl_error *error);
+    /** Set a final status while BUILDING; this does not begin output. */
+    knurl_status (*status)(struct knurl_response *response, int status,
+                           struct knurl_error *error);
+    /** Copy a header, replacing case-insensitive matches while BUILDING. */
+    knurl_status (*header_set)(struct knurl_response *response,
+                               const char *name, const char *value,
+                               struct knurl_error *error);
+    /** Append a copied repeated header while BUILDING. */
+    knurl_status (*header_add)(struct knurl_response *response,
+                               const char *name, const char *value,
+                               struct knurl_error *error);
+    /** Declare the exact output-body length while BUILDING; mismatch fails
+     * delivery.
+     */
+    knurl_status (*known_length)(struct knurl_response *response,
+                                 struct knurl_u64 length,
+                                 struct knurl_error *error);
+    /** Declare copied trailer names before begin; end supplies their values. */
+    knurl_status (*trailers_enable)(struct knurl_response *response,
+                                    const char *const *names, size_t count,
+                                    struct knurl_error *error);
+    /** Begin explicit live output; subsequent writes follow bounded transport
+     * backpressure.
+     */
+    knurl_status (*begin)(struct knurl_response *response,
+                          struct knurl_error *error);
+    /** BUILDING only, HTTP/1.1 100/103. Copies bounded fields into the ordered
+     * output queue without committing the later final response. AGAIN takes
+     * nothing. At most 16 interim blocks / 128 KiB per request. */
+    knurl_status (*interim)(struct knurl_response *response, int status,
+                            const struct knurl_header *headers, size_t count,
+                            struct knurl_error *error);
+    /** Accepts a bounded prefix. AGAIN always accepts zero bytes. */
+    knurl_status (*write)(struct knurl_response *response, const void *data,
+                          size_t length, size_t *accepted,
+                          struct knurl_error *error);
+    /** Finish live output with optional declared trailers; completion waits for
+     * queued bytes to drain.
+     */
+    knurl_status (*end)(struct knurl_response *response,
+                        const struct knurl_header *trailers, size_t count,
+                        struct knurl_error *error);
+    /** Discard an uncommitted output selection so a replacement can be built;
+     * fails after commitment.
+     */
+    knurl_status (*replace_uncommitted)(struct knurl_response *response,
+                                        struct knurl_error *error);
+    /** Abort output with a terminal cause; retained producers retire through
+     * acknowledgement/cleanup.
+     */
+    knurl_status (*abort)(struct knurl_response *response, knurl_status cause,
+                          struct knurl_error *error);
+    /** Complete reply conveniences require BUILDING; failure installs no reply.
+     */
+    knurl_status (*bytes)(struct knurl_response *response, int status,
+                          const char *content_type, struct knurl_bytes bytes,
+                          struct knurl_error *error);
+    /** Takes the regular-file FD only on success. Bounded pread on the owner
+     * loop can block on filesystem I/O; this is not a native-reader executor.
+     */
+    knurl_status (*file_take)(struct knurl_response *response, int fd,
+                              struct knurl_u64 offset, struct knurl_u64 length,
+                              struct knurl_error *error);
+    /** Takes a source only on success. OWNER_LOOP reads are nonblocking;
+     * NATIVE_READER callbacks run through the bounded worker executor. No
+     * implicit reset. EOF alone indicates success; AGAIN pauses until an
+     * explicit later resume. */
+    knurl_status (*producer)(struct knurl_response *response,
+                             struct knurl_source *source,
+                             struct knurl_error *error);
+    /** Schedule another owner-loop producer pull after AGAIN; coalesces without
+     * recursion.
+     */
+    knurl_status (*producer_resume)(struct knurl_response *response,
+                                    struct knurl_error *error);
+    /** Private library state; applications must not access it. */
+    struct knurl_response_impl *impl;
+};
+
 #ifdef __cplusplus
 }
 #endif

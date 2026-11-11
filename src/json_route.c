@@ -78,8 +78,8 @@ static knurl_status dispatch(knurl_request *request, knurl_reply *reply,
     if (records == NULL)
         return knurl_fail(error, KNURL_NOMEM, "json_route",
                           "cannot allocate route records");
-    request->codec_data = records;
-    request->codec_cleanup = release_records;
+    request->impl->codec_data = records;
+    request->impl->codec_cleanup = release_records;
     records->provider = route->provider;
     records->userdata = route->userdata;
     if (route->input.map != NULL && route->provider.acquire != NULL) {
@@ -132,8 +132,8 @@ static knurl_status dispatch(knurl_request *request, knurl_reply *reply,
             reply, 200, &records->output.schema, records->output.record,
             route->max_output_bytes != 0 ? route->max_output_bytes : (size_t)-1,
             error);
-    request->codec_data = NULL;
-    request->codec_cleanup = NULL;
+    request->impl->codec_data = NULL;
+    request->impl->codec_cleanup = NULL;
     release_records(records);
     return status;
 }
@@ -218,7 +218,7 @@ static knurl_status add_route(knurl_router *router, knurl_route_group *group,
     if (status != KNURL_OK)
         free(data);
     else {
-        registered->release_userdata = free;
+        registered->impl->release_userdata = free;
         if (out != NULL)
             *out = registered;
     }

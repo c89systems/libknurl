@@ -324,8 +324,8 @@ knurl_status knurl_router_proxy(knurl_router *router,
     if (status != KNURL_OK)
         knurl_proxy_route_data_free(data);
     else {
-        registered->release_userdata = knurl_proxy_route_data_free;
-        registered->raw_path = 1;
+        registered->impl->release_userdata = knurl_proxy_route_data_free;
+        registered->impl->raw_path = 1;
         if (out != NULL)
             *out = registered;
     }

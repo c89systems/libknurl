@@ -53,9 +53,9 @@ static int token_in(knurl_bytes field, const char *token, int fold)
 static int offered(knurl_request *request, const char *name, const char *token)
 {
     size_t i;
-    for (i = 0; i < request->header_count; ++i)
-        if (knurl_text_equal_case(request->headers[i].name.data, name) &&
-            token_in(request->headers[i].value, token, 0))
+    for (i = 0; i < request->impl->header_count; ++i)
+        if (knurl_text_equal_case(request->impl->headers[i].name.data, name) &&
+            token_in(request->impl->headers[i].value, token, 0))
             return 1;
     return 0;
 }
@@ -67,9 +67,9 @@ static int single(knurl_request *request, const char *name, knurl_bytes *out)
     out->data = NULL;
     out->length = 0;
     count = 0;
-    for (i = 0; i < request->header_count; ++i)
-        if (knurl_text_equal_case(request->headers[i].name.data, name)) {
-            *out = request->headers[i].value;
+    for (i = 0; i < request->impl->header_count; ++i)
+        if (knurl_text_equal_case(request->impl->headers[i].name.data, name)) {
+            *out = request->impl->headers[i].value;
             ++count;
         }
     return count == 1;
@@ -80,12 +80,13 @@ static int connection_upgrade(knurl_request *request)
     size_t i;
     int upgrade;
     upgrade = 0;
-    for (i = 0; i < request->header_count; ++i) {
-        if (!knurl_text_equal_case(request->headers[i].name.data, "connection"))
+    for (i = 0; i < request->impl->header_count; ++i) {
+        if (!knurl_text_equal_case(request->impl->headers[i].name.data,
+                                   "connection"))
             continue;
-        if (token_in(request->headers[i].value, "close", 1))
+        if (token_in(request->impl->headers[i].value, "close", 1))
             return 0;
-        if (token_in(request->headers[i].value, "upgrade", 1))
+        if (token_in(request->impl->headers[i].value, "upgrade", 1))
             upgrade = 1;
     }
     return upgrade;
@@ -103,11 +104,12 @@ int knurl_websocket_accept_key(knurl_request *request, char *accept)
     unsigned int length;
     size_t i;
     unsigned char byte;
-    if (request->method != KNURL_HTTP_GET || request->version.length != 8 ||
-        memcmp(request->version.data, "HTTP/1.1", 8) != 0 ||
-        request->has_coding ||
-        (request->has_length &&
-         (request->content_length.high || request->content_length.low)) ||
+    if (request->impl->method != KNURL_HTTP_GET ||
+        request->impl->version.length != 8 ||
+        memcmp(request->impl->version.data, "HTTP/1.1", 8) != 0 ||
+        request->impl->has_coding ||
+        (request->impl->has_length && (request->impl->content_length.high ||
+                                       request->impl->content_length.low)) ||
         !single(request, "sec-websocket-key", &key) || key.length != 24 ||
         !single(request, "sec-websocket-version", &version) ||
         version.length != 2 || memcmp(version.data, "13", 2) != 0 ||
@@ -159,18 +161,19 @@ knurl_status knurl_channel_upgrade(knurl_channel *channel,
     if (channel == NULL || (count != 0 && headers == NULL))
         return knurl_fail(error, KNURL_INVALID, "channel_upgrade",
                           "provide a live channel and handshake fields");
-    request = channel->request;
-    status = knurl_loop_owner(request->server->loop, error);
+    request = channel->impl->request;
+    status = knurl_loop_owner(request->impl->server->impl->loop, error);
     if (status != KNURL_OK)
         return status;
-    if (channel->phase != KNURL_CHANNEL_HTTP_INPUT || channel->input_complete)
+    if (channel->impl->phase != KNURL_CHANNEL_HTTP_INPUT ||
+        channel->impl->input_complete)
         return knurl_fail(
             error, KNURL_STATE, "channel_upgrade",
             "channel has already completed or upgraded HTTP input");
     if (!knurl_websocket_accept_key(request, accept))
         return knurl_fail(error, KNURL_INVALID, "channel_upgrade",
                           "request is not a valid WebSocket handshake");
-    existing = request->response->headers->header_count;
+    existing = request->impl->response->impl->headers->impl->header_count;
     if (count > (size_t)-1 - existing)
         return knurl_fail(error, KNURL_LIMIT, "channel_upgrade",
                           "handshake field count exceeds its finite bound");
@@ -181,14 +184,19 @@ knurl_status knurl_channel_upgrade(knurl_channel *channel,
     connection_upgrades = 0;
     upgrades = connections = accepts = protocols = extensions = 0;
     for (i = 0; i < existing + count; ++i) {
-        candidate = i < existing ? &request->response->headers->headers[i]
-                                 : &headers[i - existing];
-        if (candidate->name.length > request->response->header_bound ||
-            candidate->value.length > request->response->header_bound ||
+        candidate =
+            i < existing
+                ? &request->impl->response->impl->headers->impl->headers[i]
+                : &headers[i - existing];
+        if (candidate->name.length >
+                request->impl->response->impl->header_bound ||
+            candidate->value.length >
+                request->impl->response->impl->header_bound ||
             candidate->name.length >
-                request->response->header_bound - candidate->value.length ||
+                request->impl->response->impl->header_bound -
+                    candidate->value.length ||
             candidate->name.length + candidate->value.length + 4 >
-                request->response->header_bound - total) {
+                request->impl->response->impl->header_bound - total) {
             status = knurl_fail(error, KNURL_LIMIT, "channel_upgrade",
                                 "handshake exceeds its finite header bound");
             break;
@@ -266,7 +274,8 @@ knurl_status knurl_channel_upgrade(knurl_channel *channel,
         status = KNURL_INVALID;
     if (status == KNURL_OK)
         status = knurl_response_upgrade_headers(
-            request->response, copy->headers, copy->header_count, error);
+            request->impl->response, copy->impl->headers,
+            copy->impl->header_count, error);
     (void)knurl_reply_destroy(copy, NULL);
     if (status != KNURL_OK) {
         if (error == NULL || error->status != status)
@@ -275,11 +284,11 @@ knurl_status knurl_channel_upgrade(knurl_channel *channel,
                 "invalid or conflicting upstream WebSocket handshake");
         return status;
     }
-    channel->phase = KNURL_CHANNEL_TUNNEL;
-    request->outcome.body_complete = 1;
-    request->outcome.body_cause = KNURL_OK;
-    channel->ops.completed(channel);
-    channel->ops.interest(channel);
+    channel->impl->phase = KNURL_CHANNEL_TUNNEL;
+    request->impl->outcome.body_complete = 1;
+    request->impl->outcome.body_cause = KNURL_OK;
+    channel->impl->ops.completed(channel);
+    channel->impl->ops.interest(channel);
     knurl_channel_schedule(channel);
     knurl_error_clear(error);
     return KNURL_OK;

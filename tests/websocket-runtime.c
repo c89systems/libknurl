@@ -71,7 +71,7 @@ static void request_close(knurl_request *request,
     c = data;
     OBSERVE(!c->request_closed && !c->opens &&
             pthread_equal(c->owner, pthread_self()));
-    OBSERVE(knurl_request_target(request).length != 0);
+    OBSERVE(request->target(request).length != 0);
     c->request_closed = 1;
     if (strcmp(c->path, "/bad") == 0) {
         OBSERVE(!out->upgraded);
@@ -90,7 +90,7 @@ static void resume(knurl_timer *timer, void *data)
     (void)timer;
     c = data;
     c->timer = NULL;
-    OBSERVE(knurl_websocket_resume(c->ws, NULL) == KNURL_OK);
+    OBSERVE(c->ws->resume(c->ws, NULL) == KNURL_OK);
 }
 
 static knurl_status frame(knurl_websocket *ws, knurl_websocket_opcode opcode,
@@ -101,19 +101,18 @@ static knurl_status frame(knurl_websocket *ws, knurl_websocket_opcode opcode,
     OBSERVE(c->request_closed && c->opens == 1 &&
             pthread_equal(c->owner, pthread_self()));
     if (strcmp(c->path, "/protocol") == 0)
-        return knurl_websocket_send(ws, opcode, bytes.data, bytes.length,
-                                    error);
+        return ws->send(ws, opcode, bytes.data, bytes.length, error);
     if (bytes.length == 256) {
         OBSERVE(opcode == KNURL_WEBSOCKET_BINARY && c->frames++ == 2);
-        return knurl_websocket_send_text(ws, "wide", 4, error);
+        return ws->send_text(ws, "wide", 4, error);
     }
     OBSERVE(bytes.length == 4);
     if (opcode == KNURL_WEBSOCKET_TEXT) {
         OBSERVE(memcmp(bytes.data, "hold", 4) == 0 && c->frames == 0);
         if (c->holds++ == 0) {
             c->held = bytes.data;
-            OBSERVE(knurl_loop_timer(knurl_websocket_loop(ws), 30, 0, resume,
-                                     NULL, c, &c->timer, error) == KNURL_OK);
+            OBSERVE(knurl_loop_timer(ws->loop(ws), 30, 0, resume, NULL, c,
+                                     &c->timer, error) == KNURL_OK);
             return KNURL_AGAIN;
         }
         OBSERVE(c->held == bytes.data && c->holds == 2);
@@ -121,7 +120,7 @@ static knurl_status frame(knurl_websocket *ws, knurl_websocket_opcode opcode,
         OBSERVE(opcode == KNURL_WEBSOCKET_BINARY && c->frames == 1 &&
                 memcmp(bytes.data, "next", 4) == 0);
     ++c->frames;
-    return knurl_websocket_send(ws, opcode, bytes.data, bytes.length, error);
+    return ws->send(ws, opcode, bytes.data, bytes.length, error);
 }
 
 static void writable(knurl_websocket *ws, void *data)
@@ -129,8 +128,7 @@ static void writable(knurl_websocket *ws, void *data)
     struct context *c;
     c = data;
     OBSERVE(c->request_closed && c->opens == 1 && c->writable++ == 0);
-    OBSERVE(knurl_websocket_send_binary(ws, output, sizeof(output), NULL) ==
-            KNURL_OK);
+    OBSERVE(ws->send_binary(ws, output, sizeof(output), NULL) == KNURL_OK);
 }
 
 static knurl_status open_ws(knurl_websocket *ws, void *data, knurl_error *error)
@@ -141,37 +139,30 @@ static knurl_status open_ws(knurl_websocket *ws, void *data, knurl_error *error)
     c->ws = ws;
     OBSERVE(c->request_closed && !c->opens++ &&
             pthread_equal(c->owner, pthread_self()));
-    OBSERVE(knurl_websocket_state(ws) == KNURL_WEBSOCKET_OPEN &&
-            knurl_websocket_server(ws) != NULL &&
-            knurl_websocket_loop(ws) != NULL);
-    OBSERVE(knurl_websocket_userdata(ws) == c);
-    OBSERVE(knurl_websocket_set_userdata(ws, c, error) == KNURL_OK);
+    OBSERVE(ws->state(ws) == KNURL_WEBSOCKET_OPEN && ws->server(ws) != NULL &&
+            ws->loop(ws) != NULL);
+    OBSERVE(ws->userdata(ws) == c);
+    OBSERVE(ws->set_userdata(ws, c, error) == KNURL_OK);
     if (strcmp(c->path, "/echo") == 0) {
-        OBSERVE(knurl_websocket_send_text(ws, "x", 257, error) == KNURL_LIMIT);
-        OBSERVE(knurl_websocket_send_binary(ws, output, 126, error) ==
-                KNURL_LIMIT);
-        OBSERVE(knurl_websocket_send_binary(ws, output, sizeof(output),
-                                            error) == KNURL_OK);
-        OBSERVE(knurl_websocket_send_binary(ws, output, sizeof(output),
-                                            error) == KNURL_OK);
-        queued = knurl_websocket_queued_bytes(ws);
+        OBSERVE(ws->send_text(ws, "x", 257, error) == KNURL_LIMIT);
+        OBSERVE(ws->send_binary(ws, output, 126, error) == KNURL_LIMIT);
+        OBSERVE(ws->send_binary(ws, output, sizeof(output), error) == KNURL_OK);
+        OBSERVE(ws->send_binary(ws, output, sizeof(output), error) == KNURL_OK);
+        queued = ws->queued_bytes(ws);
         OBSERVE(queued == 124);
-        OBSERVE(knurl_websocket_send_binary(ws, output, sizeof(output),
-                                            error) == KNURL_AGAIN);
+        OBSERVE(ws->send_binary(ws, output, sizeof(output), error) ==
+                KNURL_AGAIN);
         {
             const unsigned char closing[2] = {3, 232};
-            OBSERVE(knurl_websocket_send(ws, KNURL_WEBSOCKET_CLOSE, closing, 2,
-                                         error) == KNURL_AGAIN);
-            OBSERVE(knurl_websocket_state(ws) == KNURL_WEBSOCKET_OPEN);
+            OBSERVE(ws->send(ws, KNURL_WEBSOCKET_CLOSE, closing, 2, error) ==
+                    KNURL_AGAIN);
+            OBSERVE(ws->state(ws) == KNURL_WEBSOCKET_OPEN);
         }
-        OBSERVE(knurl_websocket_queued_bytes(ws) == queued);
+        OBSERVE(ws->queued_bytes(ws) == queued);
     } else if (strcmp(c->path, "/timeout") == 0) {
-        OBSERVE(knurl_websocket_close(ws, 1005, view(""), error) ==
-                KNURL_INVALID);
-        OBSERVE(knurl_websocket_close(ws, 1000, view("bye"), error) ==
-                KNURL_OK);
-        OBSERVE(knurl_websocket_close(ws, 1000, view("again"), error) ==
-                KNURL_OK);
+        OBSERVE(ws->close(ws, 1005, view(""), error) == KNURL_INVALID);
+        OBSERVE(ws->close(ws, 1000, view("bye"), error) == KNURL_OK);
+        OBSERVE(ws->close(ws, 1000, view("again"), error) == KNURL_OK);
     } else if (strcmp(c->path, "/open-error") == 0)
         return KNURL_INVALID;
     return KNURL_OK;
@@ -185,10 +176,10 @@ static void close_ws(knurl_websocket *ws, const knurl_websocket_outcome *out,
     ++closes;
     OBSERVE(c->request_closed && out->opened == c->opens &&
             pthread_equal(c->owner, pthread_self()));
-    OBSERVE(knurl_websocket_state(ws) == KNURL_WEBSOCKET_CLOSED);
-    OBSERVE(knurl_websocket_resume(ws, NULL) == KNURL_STATE);
-    OBSERVE(knurl_websocket_send_text(ws, "x", 1, NULL) == KNURL_STATE);
-    OBSERVE(knurl_websocket_close(ws, 1000, view(""), NULL) == KNURL_OK);
+    OBSERVE(ws->state(ws) == KNURL_WEBSOCKET_CLOSED);
+    OBSERVE(ws->resume(ws, NULL) == KNURL_STATE);
+    OBSERVE(ws->send_text(ws, "x", 1, NULL) == KNURL_STATE);
+    OBSERVE(ws->close(ws, 1000, view(""), NULL) == KNURL_OK);
     if (strcmp(c->path, "/echo") == 0 && out->cause != KNURL_OK)
         (void)fprintf(stderr,
                       "echo closed: cause=%s local=%u peer=%u frames=%d "
@@ -213,7 +204,7 @@ static void close_ws(knurl_websocket *ws, const knurl_websocket_outcome *out,
     else
         OBSERVE(!out->clean && out->cause != KNURL_OK && c->frames == 0);
     if (c->timer != NULL)
-        knurl_timer_cancel(c->timer);
+        c->timer->cancel(c->timer);
     free(c);
 }
 
@@ -227,7 +218,7 @@ static knurl_status admission(knurl_request *request, knurl_request_plan *plan,
     c = calloc(1, sizeof(*c));
     if (c == NULL)
         return KNURL_NOMEM;
-    path = knurl_request_path(request);
+    path = request->path(request);
     OBSERVE(path.length < sizeof(c->path));
     memcpy(c->path, path.data, path.length);
     c->owner = pthread_self();
@@ -256,19 +247,18 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
     struct context *c;
     knurl_bytes path;
     knurl_status status;
-    path = knurl_request_path(request);
+    path = request->path(request);
     if (path.length == 5 && memcmp(path.data, "/stop", 5) == 0) {
-        status = knurl_response_bytes(knurl_request_response(request), 200,
+        status = knurl_response_bytes(request->response(request), 200,
                                       "text/plain", view("stopped"), error);
         plan->disposition = KNURL_REQUEST_REPLY;
         if (status == KNURL_OK)
-            (void)knurl_server_request_stop(knurl_request_server(request),
-                                            error);
+            (void)knurl_server_request_stop(request->server(request), error);
         return status;
     }
     if (path.length == 5 && memcmp(path.data, "/echo", 5) == 0)
         return knurl_router_dispatch_headers(
-            knurl_server_router(knurl_request_server(request)), request, plan,
+            knurl_server_router(request->server(request)), request, plan,
             error);
     status = admission(request, plan, data, error);
     if (status != KNURL_OK)
@@ -285,7 +275,7 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
     config.close_timeout_ms = 40;
     if (strcmp(c->path, "/bad") == 0) {
         config.protocol = "not-offered";
-        OBSERVE(knurl_websocket_accept(request, &config, &ws, error) ==
+        OBSERVE(request->websocket_accept(request, &config, &ws, error) ==
                     KNURL_INVALID &&
                 ws == NULL);
         config.protocol = NULL;
@@ -295,26 +285,26 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
             extension.value = view("permessage-deflate");
             config.headers = &extension;
             config.header_count = 1;
-            OBSERVE(knurl_websocket_accept(request, &config, &ws, error) ==
+            OBSERVE(request->websocket_accept(request, &config, &ws, error) ==
                         KNURL_NOT_SUPPORTED &&
                     ws == NULL);
             config.headers = NULL;
             config.header_count = 0;
         }
         config.output_queue_bytes = 126;
-        OBSERVE(knurl_websocket_accept(request, &config, &ws, error) ==
+        OBSERVE(request->websocket_accept(request, &config, &ws, error) ==
                     KNURL_LIMIT &&
                 ws == NULL);
-        OBSERVE(knurl_response_bytes(knurl_request_response(request), 403,
+        OBSERVE(knurl_response_bytes(request->response(request), 403,
                                      "text/plain", view("rejected"),
                                      error) == KNURL_OK);
         plan->disposition = KNURL_REQUEST_REPLY;
         return KNURL_OK;
     }
-    status = knurl_websocket_accept(request, &config, &ws, error);
+    status = request->websocket_accept(request, &config, &ws, error);
     if (status == KNURL_OK) {
-        OBSERVE(knurl_response_replace_uncommitted(
-                    knurl_request_response(request), error) == KNURL_STATE);
+        OBSERVE(knurl_response_replace_uncommitted(request->response(request),
+                                                   error) == KNURL_STATE);
         knurl_error_clear(error);
     }
     plan->disposition = strcmp(c->path, "/wrong") == 0
@@ -593,9 +583,9 @@ static knurl_status ready(knurl_server *server, const knurl_process_context *p,
     int result;
     (void)p;
     f = data;
-    if (knurl_server_listener_at(server, 0, &listener, error) != KNURL_OK)
+    if (server->listener_at(server, 0, &listener, error) != KNURL_OK)
         return KNURL_INVALID;
-    if (knurl_server_set_serving(server, 1, error) != KNURL_OK)
+    if (server->set_serving(server, 1, error) != KNURL_OK)
         return KNURL_STATE;
     f->client = fork();
     if (f->client == -1)
@@ -721,16 +711,16 @@ int main(int argc, char **argv)
     route.websocket.headers = &header;
     route.websocket.header_count = 1;
     /* The admission callback explicitly transfers the context to WS close. */
-    CHECK(knurl_router_websocket(knurl_server_router(server), &route, NULL,
+    CHECK(knurl_router_websocket(server->router(server), &route, NULL,
                                  &error) == KNURL_OK);
     memcpy(copied, "changed", 8);
-    status = knurl_server_run(server, &result, &error);
+    status = server->run(server, &result, &error);
     if (status != KNURL_OK)
         (void)fprintf(stderr, "%s: %s\n", error.operation, error.message);
     CHECK(status == KNURL_OK && !result.escalated);
     CHECK(waitpid(f.client, &child_status, 0) == f.client &&
           WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
-    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(server->destroy(server, &error) == KNURL_OK);
     free(f.bundle);
     return 0;
 }

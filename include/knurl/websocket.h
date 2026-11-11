@@ -213,6 +213,63 @@ KNURL_API void *knurl_websocket_userdata(const knurl_websocket *);
 KNURL_API knurl_status knurl_websocket_set_userdata(knurl_websocket *, void *,
                                                     knurl_error *);
 
+struct knurl_bytes;
+struct knurl_error;
+struct knurl_loop;
+struct knurl_server;
+/** Library-owned websocket receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_websocket {
+    /** Copies one raw frame, retaining Kore's opcode/text-byte behavior. The
+     * frame uses FIN; continuation is accepted for sending. The receive payload
+     * limit is independent of output capacity. AGAIN queues nothing and arms
+     * notification. No extensions are negotiated. */
+    knurl_status (*send)(struct knurl_websocket *, knurl_websocket_opcode,
+                         const void *, size_t, struct knurl_error *);
+    /** Copy one text frame; AGAIN queues nothing. See knurl_websocket_send for
+     * byte/opcode behavior.
+     */
+    knurl_status (*send_text)(struct knurl_websocket *, const char *, size_t,
+                              struct knurl_error *);
+    /** Copy one binary frame; AGAIN queues nothing. See knurl_websocket_send.
+     */
+    knurl_status (*send_binary)(struct knurl_websocket *, const void *, size_t,
+                                struct knurl_error *);
+    /** AGAIN from on_frame holds the complete frame. Resume redelivers it
+     * later, before subsequent frames, without recursion. */
+    knurl_status (*resume)(struct knurl_websocket *, struct knurl_error *);
+    /** Code zero sends an empty close; otherwise use a valid
+     * protocol/application code and at most 123 UTF-8 bytes. Repeated close is
+     * harmless. */
+    knurl_status (*close)(struct knurl_websocket *, unsigned short,
+                          struct knurl_bytes, struct knurl_error *);
+    /** Inspect the connection phase while its borrowed handle is valid. */
+    knurl_websocket_phase (*state)(const struct knurl_websocket *);
+    /** Borrow the connection's server; the WebSocket handle expires after
+     * on_close returns.
+     */
+    struct knurl_server *(*server)(const struct knurl_websocket *);
+    /** Borrow the connection's owner loop; never retain across fork/run
+     * boundaries.
+     */
+    struct knurl_loop *(*loop)(const struct knurl_websocket *);
+    /** Includes each complete wire allocation until transport releases it. */
+    size_t (*queued_bytes)(const struct knurl_websocket *);
+    /** Read connection-scoped caller userdata while the borrowed handle remains
+     * valid.
+     */
+    void *(*userdata)(const struct knurl_websocket *);
+    /** Replace the caller-owned connection association; the library never frees
+     * it.
+     */
+    knurl_status (*set_userdata)(struct knurl_websocket *, void *,
+                                 struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    struct knurl_websocket_impl *impl;
+};
+
 #ifdef __cplusplus
 }
 #endif

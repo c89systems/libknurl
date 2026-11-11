@@ -150,6 +150,8 @@ endif()
 include(cmake/SDK.cmake)
 
 if(BUILD_TESTING)
+  add_test(NAME knurl.receiver-surface COMMAND "${CMAKE_COMMAND}"
+    "-DKNURL_ROOT=${CMAKE_CURRENT_SOURCE_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ReceiverSurface.cmake")
   include(cmake/DebugTestStacks.cmake)
   add_test(NAME lifecycle.stack-allocation-policy COMMAND "${CMAKE_COMMAND}"
     "-DCOMPILER=${CMAKE_C_COMPILER}" "-DBUILD=${CMAKE_CURRENT_BINARY_DIR}"

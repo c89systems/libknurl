@@ -23,7 +23,7 @@ static int snapshot(struct knurl_runtime *runtime,
     if (out->info.listener_index == (size_t)-1)
         return 0;
     out->info.tls = connection->owner->server->tls;
-    out->info.process = runtime->server->process;
+    out->info.process = runtime->server->impl->process;
     knurl_kore_endpoint(connection->fd, 1, &out->info.peer, out->peer);
     knurl_kore_endpoint(connection->fd, 0, &out->info.local, out->local);
     return 1;
@@ -33,15 +33,16 @@ static void observe(struct knurl_runtime *runtime,
                     knurl_observation_kind kind, int status, knurl_status cause)
 {
     knurl_observation event;
-    if (runtime->server->config.callbacks.on_observe == NULL)
+    if (runtime->server->impl->config.callbacks.on_observe == NULL)
         return;
     memset(&event, 0, sizeof(event));
     event.connection = *info;
     event.kind = kind;
     event.status = status;
     event.cause = cause;
-    runtime->server->config.callbacks.on_observe(
-        runtime->server, &event, runtime->server->config.callbacks.userdata);
+    runtime->server->impl->config.callbacks.on_observe(
+        runtime->server, &event,
+        runtime->server->impl->config.callbacks.userdata);
 }
 int knurl_kore_accept(void *data, struct connection *connection)
 {
@@ -50,7 +51,8 @@ int knurl_kore_accept(void *data, struct connection *connection)
     knurl_admission_action action = KNURL_ADMISSION_ALLOW;
     knurl_status status = KNURL_OK;
     knurl_error error;
-    const knurl_admission_config *config = &runtime->server->config.admission;
+    const knurl_admission_config *config =
+        &runtime->server->impl->config.admission;
     if (!snapshot(runtime, connection, &copy))
         return 1;
     observe(runtime, &copy.info, KNURL_OBSERVE_CONNECTION_ACCEPTED, 0,
@@ -92,11 +94,12 @@ void knurl_kore_http_status(void *data, struct http_request *request,
                             int status)
 {
     knurl_request *managed = request->hdlr_extra;
-    if (managed != NULL && managed->lifecycle_started) {
+    if (managed != NULL && managed->impl->lifecycle_started) {
         /* Managed final status is counted once at close. Native 100 Continue
          * still uses the already resolved request identity, never the proxy. */
         if (status < 200)
-            knurl_autoblock_note(managed->server, managed->effective_address,
+            knurl_autoblock_note(managed->impl->server,
+                                 managed->impl->effective_address,
                                  KNURL_OBSERVE_HTTP_STATUS, status, NULL);
         knurl_policy_observe(managed, KNURL_OBSERVE_HTTP_STATUS, NULL, status,
                              KNURL_OK);

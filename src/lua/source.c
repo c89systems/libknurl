@@ -471,7 +471,7 @@ static int source_read(lua_State *L)
                             &error));
     buffer = lua_newuserdatauv(L, capacity, 0);
     s->L = L;
-    status = knurl_source_read(s->native, buffer, capacity, &produced, &error);
+    status = s->native->read(s->native, buffer, capacity, &produced, &error);
     if (status == KNURL_EOF || status == KNURL_AGAIN) {
         lua_pushnil(L);
         rl_sentinel(L, status);
@@ -491,18 +491,27 @@ static int source_reset(lua_State *L)
             L, (rl_fail(&error, KNURL_STATE, "source is closed or transferred"),
                 &error));
     s->L = L;
-    if (knurl_source_reset(s->native, &error) != KNURL_OK)
+    if (s->native->reset(s->native, &error) != KNURL_OK)
         return rl_error(L, &error);
     lua_pushboolean(L, 1);
     return 1;
 }
+static int source_cancelled(lua_State *L)
+{
+    struct rl_source *s = luaL_testudata(L, 1, RL_SOURCE);
+    knurl_error error;
+    if (s == NULL || s->native == NULL)
+        return rl_error(
+            L, (rl_fail(&error, KNURL_STATE, "source is closed"), &error));
+    lua_pushboolean(L, s->native->cancelled(s->native));
+    return 1;
+}
 void rl_sources_open(lua_State *L)
 {
-    static const luaL_Reg methods[] = {{"close", source_close},
-                                       {"resume", source_resume},
-                                       {"read", source_read},
-                                       {"reset", source_reset},
-                                       {NULL, NULL}};
+    static const luaL_Reg methods[] = {
+        {"close", source_close},         {"resume", source_resume},
+        {"cancelled", source_cancelled}, {"read", source_read},
+        {"reset", source_reset},         {NULL, NULL}};
     luaL_newmetatable(L, RL_SOURCE);
     lua_pushvalue(L, -1);
     lua_setfield(L, -2, "__index");

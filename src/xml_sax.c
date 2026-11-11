@@ -7,7 +7,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <knurl/xml.h>
-#include "xml_internal.h"
 #include "internal.h"
 typedef struct xml_sax_state {
     knurl_xml_sax receiver;
@@ -277,6 +276,7 @@ knurl_status knurl_xml_sax_new(const knurl_xml_sax_callbacks *callbacks,
     xmlCtxtSetResourceLoader(state->native, sax_no_resource, state);
     (void)xmlCtxtUseOptions(state->native, XML_PARSE_NONET | XML_PARSE_NO_XXE |
                                                XML_PARSE_NOENT);
+    knurl_xml_sax_receiver_init(&state->receiver);
     state->receiver.impl = state;
     *out = &state->receiver;
     return KNURL_OK;
@@ -340,4 +340,11 @@ knurl_status knurl_xml_sax_close(knurl_xml_sax *receiver, knurl_error *error)
     xmlFreeParserCtxt(state->native);
     free(state);
     return KNURL_OK;
+}
+
+void knurl_xml_sax_receiver_init(knurl_xml_sax *receiver)
+{
+    static const knurl_xml_sax methods = {
+        knurl_xml_sax_feed, knurl_xml_sax_finish, knurl_xml_sax_close, NULL};
+    *receiver = methods;
 }

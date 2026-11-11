@@ -74,7 +74,7 @@ static knurl_status reply(knurl_request *request, int status, const char *text,
     knurl_bytes bytes;
     bytes.data = text;
     bytes.length = strlen(text);
-    return knurl_response_bytes(knurl_request_response(request), status,
+    return knurl_response_bytes(request->response(request), status,
                                 "text/plain", bytes, error);
 }
 
@@ -86,8 +86,8 @@ static void resumed(knurl_timer *timer, void *userdata)
     c->timer = NULL;
     OBSERVE(c->calls == 1 && pthread_equal(c->owner, pthread_self()));
     c->resumed = 1;
-    OBSERVE(knurl_request_body_resume(c->request, NULL) == KNURL_OK);
-    OBSERVE(knurl_request_body_resume(c->request, NULL) == KNURL_OK);
+    OBSERVE(c->request->body_resume(c->request, NULL) == KNURL_OK);
+    OBSERVE(c->request->body_resume(c->request, NULL) == KNURL_OK);
     OBSERVE(c->calls == 1);
 }
 
@@ -115,8 +115,8 @@ static knurl_status consume(knurl_request *request, const void *data,
     *consumed = 0;
     OBSERVE(pthread_equal(c->owner, pthread_self()) && length > 0 &&
             length <= 32);
-    OBSERVE(knurl_request_body(request) == NULL &&
-            knurl_request_body_bytes(request, &view, NULL) == KNURL_STATE);
+    OBSERVE(request->body(request) == NULL &&
+            request->body_bytes(request, &view, NULL) == KNURL_STATE);
     if (is(c, "/invalid")) {
         *consumed = 1;
         return KNURL_AGAIN;
@@ -126,13 +126,12 @@ static knurl_status consume(knurl_request *request, const void *data,
     if (c->calls == 1 && (is(c, "/stream") || is(c, "/again"))) {
         if (is(c, "/stream")) {
             count = 0;
-            OBSERVE(knurl_response_write(knurl_request_response(request), "r",
-                                         1, &count, error) == KNURL_OK &&
+            OBSERVE(knurl_response_write(request->response(request), "r", 1,
+                                         &count, error) == KNURL_OK &&
                     count == 1);
         }
-        if (knurl_loop_timer(knurl_request_loop(request),
-                             is(c, "/again") ? 1100 : 5, 0, resumed, NULL, c,
-                             &c->timer, error) != KNURL_OK)
+        if (knurl_loop_timer(request->loop(request), is(c, "/again") ? 1100 : 5,
+                             0, resumed, NULL, c, &c->timer, error) != KNURL_OK)
             return KNURL_IO;
         if (is(c, "/again"))
             return KNURL_AGAIN;
@@ -156,10 +155,10 @@ static void closed(knurl_request *request, const knurl_request_outcome *out,
     c = userdata;
     ++closed_count;
     OBSERVE(pthread_equal(c->owner, pthread_self()));
-    OBSERVE(knurl_request_target(request).length != 0 &&
-            knurl_response_state(knurl_request_response(request)) >=
+    OBSERVE(request->target(request).length != 0 &&
+            knurl_response_state(request->response(request)) >=
                 KNURL_RESPONSE_COMPLETE);
-    OBSERVE(knurl_request_body_resume(request, NULL) == KNURL_STATE);
+    OBSERVE(request->body_resume(request, NULL) == KNURL_STATE);
     if (is(c, "/immediate")) {
         OBSERVE(out->body_complete && out->body_cause == KNURL_OK && !c->ended);
     } else if (is(c, "/early") || is(c, "/chunked")) {
@@ -189,7 +188,7 @@ static void closed(knurl_request *request, const knurl_request_outcome *out,
         OBSERVE(c->delivered == 64 && out->delivered_body_bytes.low == 64 &&
                 out->received_body_bytes.low == 64);
     if (c->timer != NULL)
-        knurl_timer_cancel(c->timer);
+        c->timer->cancel(c->timer);
     free(c);
 }
 
@@ -202,7 +201,7 @@ static knurl_status spill(knurl_request *request, const char *directory,
     config.memory_limit_bytes = 4;
     config.directory = directory;
     config.prefix = prefix;
-    return knurl_request_body_spill(request, &config, out, error);
+    return request->body_spill(request, &config, out, error);
 }
 
 static knurl_status complete(knurl_request *request, void *userdata,
@@ -226,49 +225,47 @@ static knurl_status complete(knurl_request *request, void *userdata,
     if (is(c, "/deadline"))
         return KNURL_OK;
     if (is(c, "/deferred"))
-        return knurl_loop_timer(knurl_request_loop(request), 5, 0, deferred,
-                                NULL, c, &c->timer, error);
+        return knurl_loop_timer(request->loop(request), 5, 0, deferred, NULL, c,
+                                &c->timer, error);
     if (is(c, "/stream")) {
-        OBSERVE(knurl_response_write(knurl_request_response(request), "d", 1,
-                                     &count, error) == KNURL_OK &&
+        OBSERVE(knurl_response_write(request->response(request), "d", 1, &count,
+                                     error) == KNURL_OK &&
                 count == 1);
-        return knurl_response_end(knurl_request_response(request), NULL, 0,
-                                  error);
+        return knurl_response_end(request->response(request), NULL, 0, error);
     }
     if (is(c, "/buffer") || is(c, "/spill") || is(c, "/spill-failure")) {
-        body = knurl_request_body(request);
+        body = request->body(request);
         OBSERVE(body != NULL);
-        OBSERVE(knurl_body_read(body, buffer, 1, &count, error) == KNURL_OK &&
+        OBSERVE(body->read(body, buffer, 1, &count, error) == KNURL_OK &&
                 count == 1);
         knurl_body_result_init(&result);
-        OBSERVE(knurl_request_body_copy(request, buffer, sizeof(buffer),
-                                        &result, error) == KNURL_OK);
+        OBSERVE(request->body_copy(request, buffer, sizeof(buffer), &result,
+                                   error) == KNURL_OK);
         OBSERVE(result.kind == KNURL_BODY_MEMORY &&
                 result.memory.length == 64 && result.memory.data == buffer &&
                 !result.owns_memory);
         for (i = 0; i < 64; ++i)
             OBSERVE(buffer[i] == (unsigned char)('a' + i % 26));
         knurl_body_result_cleanup(&result);
-        OBSERVE(knurl_body_read(body, buffer, 1, &count, error) == KNURL_OK &&
+        OBSERVE(body->read(body, buffer, 1, &count, error) == KNURL_OK &&
                 count == 1 && buffer[0] == 'a');
         if (is(c, "/buffer")) {
-            OBSERVE(knurl_request_body_copy(request, NULL, 0, &retained,
-                                            error) == KNURL_OK);
+            OBSERVE(request->body_copy(request, NULL, 0, &retained, error) ==
+                    KNURL_OK);
             OBSERVE(retained.owns_memory && retained.memory.length == 64);
             OBSERVE(knurl_body_result_open_reader(&retained, &reader, error) ==
                     KNURL_OK);
-            OBSERVE(knurl_source_read(reader, buffer, 3, &count, error) ==
+            OBSERVE(reader->read(reader, buffer, 3, &count, error) ==
                         KNURL_OK &&
                     count == 3 && memcmp(buffer, "abc", 3) == 0);
-            OBSERVE(knurl_source_reset(reader, error) == KNURL_OK);
-            OBSERVE(knurl_source_destroy(reader, error) == KNURL_OK);
+            OBSERVE(reader->reset(reader, error) == KNURL_OK);
+            OBSERVE(reader->destroy(reader, error) == KNURL_OK);
         } else if (is(c, "/spill")) {
-            OBSERVE(knurl_body_kind(body) == KNURL_BODY_FILE);
-            if (knurl_body_file(body, &fd, &path, error) != KNURL_OK)
+            OBSERVE(body->kind(body) == KNURL_BODY_FILE);
+            if (body->file(body, &fd, &path, error) != KNURL_OK)
                 return KNURL_INVALID;
-            OBSERVE(knurl_body_bytes(body, &bytes, NULL) == KNURL_STATE &&
-                    knurl_request_body_bytes(request, &bytes, NULL) ==
-                        KNURL_STATE);
+            OBSERVE(body->bytes(body, &bytes, NULL) == KNURL_STATE &&
+                    request->body_bytes(request, &bytes, NULL) == KNURL_STATE);
             OBSERVE(fcntl(fd, F_GETFD) >= 0);
             transport_path = copy_text(path);
             OBSERVE(transport_path != NULL);
@@ -278,23 +275,23 @@ static knurl_status complete(knurl_request *request, void *userdata,
             materialize.memory_limit_bytes = 0;
             materialize.directory = ".";
             buffer[4] = 'z';
-            OBSERVE(knurl_request_body_spill(request, &materialize, &result,
-                                             error) == KNURL_OK);
+            OBSERVE(request->body_spill(request, &materialize, &result,
+                                        error) == KNURL_OK);
             OBSERVE(buffer[4] == 'z');
             artifact_path = copy_text(result.path);
             OBSERVE(knurl_body_result_open_reader(&result, &reader, error) ==
                     KNURL_OK);
-            OBSERVE(knurl_source_read(reader, buffer, sizeof(buffer), &count,
-                                      error) == KNURL_OK &&
+            OBSERVE(reader->read(reader, buffer, sizeof(buffer), &count,
+                                 error) == KNURL_OK &&
                     count == 64);
-            OBSERVE(knurl_source_read(reader, buffer, sizeof(buffer), &count,
-                                      error) == KNURL_EOF &&
+            OBSERVE(reader->read(reader, buffer, sizeof(buffer), &count,
+                                 error) == KNURL_EOF &&
                     count == 0);
-            OBSERVE(knurl_source_reset(reader, error) == KNURL_OK);
-            OBSERVE(knurl_source_read(reader, buffer, 3, &count, error) ==
+            OBSERVE(reader->reset(reader, error) == KNURL_OK);
+            OBSERVE(reader->read(reader, buffer, 3, &count, error) ==
                         KNURL_OK &&
                     count == 3 && memcmp(buffer, "abc", 3) == 0);
-            OBSERVE(knurl_source_destroy(reader, error) == KNURL_OK);
+            OBSERVE(reader->destroy(reader, error) == KNURL_OK);
             OBSERVE(result.kind == KNURL_BODY_FILE && artifact_path != NULL &&
                     strcmp(result.path, transport_path) != 0);
             knurl_body_result_cleanup(&result);
@@ -322,7 +319,7 @@ static knurl_status configure_plan(knurl_request *request,
     if (c == NULL)
         return KNURL_NOMEM;
     c->request = request;
-    c->path = knurl_request_path(request).data;
+    c->path = request->path(request).data;
     c->owner = pthread_self();
     plan->userdata = c;
     plan->on_close = closed;
@@ -331,7 +328,7 @@ static knurl_status configure_plan(knurl_request *request,
     if (is(c, "/stop")) {
         OBSERVE(opened == closed_count + 1 &&
                 (rate_mode != 0 || methods == KNURL_HTTP_METHODS_ALL));
-        (void)knurl_server_request_stop(knurl_request_server(request), NULL);
+        (void)knurl_server_request_stop(request->server(request), NULL);
         return failures ? KNURL_INVALID : KNURL_OK;
     }
     if (is(c, "/survives")) {
@@ -366,7 +363,7 @@ static knurl_status configure_plan(knurl_request *request,
         return KNURL_OK;
     }
     if (is(c, "/method")) {
-        methods |= KNURL_HTTP_METHOD_MASK(knurl_request_method(request));
+        methods |= KNURL_HTTP_METHOD_MASK(request->method(request));
         return KNURL_OK;
     }
     if (is(c, "/buffer") || is(c, "/spill") || is(c, "/spill-failure") ||
@@ -390,13 +387,13 @@ static knurl_status configure_plan(knurl_request *request,
     if (is(c, "/stream") || is(c, "/truncated")) {
         length.high = 0;
         length.low = 2;
-        OBSERVE(knurl_response_known_length(knurl_request_response(request),
-                                            length, error) == KNURL_OK);
-        OBSERVE(knurl_response_begin(knurl_request_response(request), error) ==
+        OBSERVE(knurl_response_known_length(request->response(request), length,
+                                            error) == KNURL_OK);
+        OBSERVE(knurl_response_begin(request->response(request), error) ==
                 KNURL_OK);
         if (is(c, "/truncated"))
-            OBSERVE(knurl_response_write(knurl_request_response(request), "r",
-                                         1, &count, error) == KNURL_OK &&
+            OBSERVE(knurl_response_write(request->response(request), "r", 1,
+                                         &count, error) == KNURL_OK &&
                     count == 1);
     }
     return KNURL_OK;
@@ -406,10 +403,10 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
                             void *userdata, knurl_error *error)
 {
     const char *path;
-    path = knurl_request_path(request).data;
+    path = request->path(request).data;
     if (strcmp(path, "/route") == 0 || strcmp(path, "/raw") == 0)
         return knurl_router_dispatch_headers(
-            knurl_server_router(knurl_request_server(request)), request, plan,
+            knurl_server_router(request->server(request)), request, plan,
             error);
     return configure_plan(request, plan, userdata, error);
 }
@@ -419,7 +416,7 @@ static knurl_status facade(knurl_request *request, knurl_reply *result,
 {
     (void)request;
     (void)userdata;
-    return knurl_reply_text(result, 200, "text/plain", "routed", error);
+    return result->text(result, 200, "text/plain", "routed", error);
 }
 
 static int connect_to(unsigned short port)
@@ -666,9 +663,9 @@ static knurl_status ready(knurl_server *server,
     int result;
     (void)process;
     fixture = userdata;
-    if (knurl_server_listener_at(server, 0, &listener, error) != KNURL_OK)
+    if (server->listener_at(server, 0, &listener, error) != KNURL_OK)
         return KNURL_INVALID;
-    if (knurl_server_set_serving(server, 1, error) != KNURL_OK)
+    if (server->set_serving(server, 1, error) != KNURL_OK)
         return KNURL_STATE;
     fixture->client = fork();
     if (fixture->client == -1)
@@ -723,19 +720,19 @@ int main(int argc, char **argv)
     knurl_route_config_init(&route);
     route.path = "/route";
     route.handler = facade;
-    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
-                             &error) == KNURL_OK);
+    CHECK(knurl_router_route(server->router(server), &route, NULL, &error) ==
+          KNURL_OK);
     route.path = "/raw";
     route.handler = NULL;
     route.on_headers = configure_plan;
-    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
-                             &error) == KNURL_OK);
-    status = knurl_server_run(server, &result, &error);
+    CHECK(knurl_router_route(server->router(server), &route, NULL, &error) ==
+          KNURL_OK);
+    status = server->run(server, &result, &error);
     if (status != KNURL_OK)
         (void)fprintf(stderr, "%s: %s\n", error.operation, error.message);
     CHECK(status == KNURL_OK && !result.escalated);
     CHECK(waitpid(fixture.client, &child_status, 0) == fixture.client);
     CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
-    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(server->destroy(server, &error) == KNURL_OK);
     return 0;
 }

@@ -172,10 +172,10 @@ const char *knurl_static_content_type(const char *path)
 const char *knurl_server_content_type(const knurl_server *server,
                                       const char *path)
 {
-    const char *type = server != NULL
-                           ? lookup(server->config.http.mime_types,
-                                    server->config.http.mime_type_count, path)
-                           : NULL;
+    const char *type =
+        server != NULL ? lookup(server->impl->config.http.mime_types,
+                                server->impl->config.http.mime_type_count, path)
+                       : NULL;
     return type != NULL ? type : knurl_static_content_type(path);
 }
 
@@ -187,8 +187,8 @@ const char *knurl_mime_resolve(const knurl_server *server,
     if (type == NULL)
         type = lookup(route->mime_types, route->mime_type_count, path);
     if (type == NULL && server != NULL)
-        type = lookup(server->config.http.mime_types,
-                      server->config.http.mime_type_count, path);
+        type = lookup(server->impl->config.http.mime_types,
+                      server->impl->config.http.mime_type_count, path);
     if (type == NULL && provided != NULL && provided[0] != 0)
         type = provided;
     return type != NULL ? type : knurl_static_content_type(path);

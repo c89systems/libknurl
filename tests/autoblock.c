@@ -46,7 +46,7 @@ int main(void)
     config.autoblock.tcp_stall_threshold = 2;
     config.autoblock.tls_failure_threshold = 2;
     CHECK(knurl_server_new(&config, &server, &error) == KNURL_OK);
-    CHECK(server->autoblock == NULL);
+    CHECK(server->impl->autoblock == NULL);
     CHECK(knurl_autoblock_open(server, &error) == KNURL_OK);
     knurl_autoblock_note(server, ip("192.0.2.1"), KNURL_OBSERVE_HTTP_STATUS,
                          404, NULL);
@@ -71,7 +71,7 @@ int main(void)
     knurl_autoblock_note(server, ip("192.0.2.3"), KNURL_OBSERVE_TCP_STALL, 0,
                          NULL);
     CHECK(knurl_autoblock_allowed(server, ip("192.0.2.3")));
-    entry = &server->autoblock->shared->entries[0];
+    entry = &server->impl->autoblock->shared->entries[0];
     entry->until = entry->window = 0;
     knurl_autoblock_note(server, ip("192.0.2.3"), KNURL_OBSERVE_TLS_FAILURE, 0,
                          NULL);
@@ -84,8 +84,8 @@ int main(void)
                          NULL);
     CHECK(knurl_autoblock_allowed(server, ip("192.0.2.3")));
     CHECK(entry->counters[1] == 1);
-    server->config.autoblock.tcp_stall_threshold = UINT_MAX;
-    server->config.autoblock.block_seconds = UINT_MAX;
+    server->impl->config.autoblock.tcp_stall_threshold = UINT_MAX;
+    server->impl->config.autoblock.block_seconds = UINT_MAX;
     entry->counters[0] = UINT_MAX;
     knurl_autoblock_note(server, ip("192.0.2.3"), KNURL_OBSERVE_TCP_STALL, 0,
                          NULL);
@@ -94,7 +94,7 @@ int main(void)
     child = fork();
     CHECK(child >= 0);
     if (child == 0)
-        _exit(knurl_autoblock_lock(server->autoblock) ? 0 : 1);
+        _exit(knurl_autoblock_lock(server->impl->autoblock) ? 0 : 1);
     CHECK(waitpid(child, &result, 0) == child && WIFEXITED(result) &&
           WEXITSTATUS(result) == 0);
 #if defined(__linux__)
@@ -103,7 +103,7 @@ int main(void)
     CHECK(!knurl_autoblock_allowed(server, ip("192.0.2.3")));
 #endif
     knurl_autoblock_close(server);
-    CHECK(server->autoblock == NULL);
+    CHECK(server->impl->autoblock == NULL);
     CHECK(knurl_autoblock_open(server, &error) == KNURL_OK);
     CHECK(knurl_autoblock_allowed(server, ip("192.0.2.2")));
     knurl_autoblock_close(server);

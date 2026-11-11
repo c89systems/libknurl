@@ -237,7 +237,7 @@ static void tunnel_closed(knurl_channel *channel,
     if (outcome->cause != KNURL_OK || !outcome->read_eof ||
         !outcome->write_shutdown || outcome->sent_bytes.high ||
         outcome->sent_bytes.low != 65536 ||
-        !knurl_request_is_tls(state->request))
+        !state->request->is_tls(state->request))
         state->fixture->failure = 1;
     ++state->fixture->tunnel_closed;
 }
@@ -263,25 +263,24 @@ static void tunnel_event(knurl_channel *channel, unsigned int events,
     size_t count;
     size_t i;
     state = userdata;
-    if (knurl_channel_state(channel) == KNURL_CHANNEL_HTTP_INPUT) {
+    if (channel->state(channel) == KNURL_CHANNEL_HTTP_INPUT) {
         for (i = 0; i < 3; ++i) {
             headers[i].name.data = names[i];
             headers[i].name.length = strlen(names[i]);
             headers[i].value.data = values[i];
             headers[i].value.length = strlen(values[i]);
         }
-        if (knurl_channel_upgrade(channel, headers, 3, NULL) != KNURL_OK)
+        if (channel->upgrade(channel, headers, 3, NULL) != KNURL_OK)
             goto failed;
     }
     if (events & KNURL_WRITE_CLOSED) {
-        if (knurl_channel_close(channel, KNURL_OK, NULL) != KNURL_OK)
+        if (channel->close(channel, KNURL_OK, NULL) != KNURL_OK)
             goto failed;
         return;
     }
     for (;;) {
         if (state->offset < state->used) {
-            status =
-                knurl_channel_write(channel, state->pending + state->offset,
+            status = channel->write(channel, state->pending + state->offset,
                                     state->used - state->offset, &count, NULL);
             if (status == KNURL_AGAIN)
                 break;
@@ -292,13 +291,13 @@ static void tunnel_event(knurl_channel *channel, unsigned int events,
         }
         if (state->eof)
             break;
-        status = knurl_channel_read(channel, state->pending,
-                                    sizeof(state->pending), &count, NULL);
+        status = channel->read(channel, state->pending, sizeof(state->pending),
+                               &count, NULL);
         if (status == KNURL_AGAIN)
             break;
         if (status == KNURL_EOF) {
             state->eof = 1;
-            if (knurl_channel_shutdown_write(channel, NULL) != KNURL_OK)
+            if (channel->shutdown_write(channel, NULL) != KNURL_OK)
                 goto failed;
             break;
         }
@@ -307,7 +306,7 @@ static void tunnel_event(knurl_channel *channel, unsigned int events,
         state->used = count;
         state->offset = 0;
     }
-    (void)knurl_channel_interest(
+    (void)channel->interest(
         channel,
         (state->eof ? 0 : KNURL_READABLE) |
             (state->offset < state->used ? KNURL_WRITABLE : 0),
@@ -315,7 +314,7 @@ static void tunnel_event(knurl_channel *channel, unsigned int events,
     return;
 failed:
     state->fixture->failure = 1;
-    (void)knurl_channel_close(channel, KNURL_INVALID, NULL);
+    (void)channel->close(channel, KNURL_INVALID, NULL);
 }
 
 static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
@@ -335,7 +334,7 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
     config.on_event = tunnel_event;
     config.on_close = tunnel_closed;
     config.userdata = state;
-    if (knurl_request_takeover(request, &config, &channel, error) != KNURL_OK) {
+    if (request->takeover(request, &config, &channel, error) != KNURL_OK) {
         free(state);
         return KNURL_INVALID;
     }
@@ -382,18 +381,16 @@ static knurl_status handler(knurl_request *request, knurl_reply *reply,
 {
     struct fixture *fixture;
     fixture = userdata;
-    if (knurl_request_listener_index(request) == 0 &&
-        knurl_request_is_tls(request))
+    if (request->listener_index(request) == 0 && request->is_tls(request))
         return KNURL_INVALID;
-    if (knurl_request_path(request).length == 5 &&
-        memcmp(knurl_request_path(request).data, "/stop", 5) == 0) {
+    if (request->path(request).length == 5 &&
+        memcmp(request->path(request).data, "/stop", 5) == 0) {
         if (fixture->failure || fixture->tunnel_closed != 1)
             return KNURL_INVALID;
-        (void)knurl_server_request_stop(knurl_request_server(request), NULL);
+        (void)knurl_server_request_stop(request->server(request), NULL);
     }
-    return knurl_reply_text(reply, 200, "text/plain",
-                            knurl_request_is_tls(request) ? "secure" : "clear",
-                            error);
+    return reply->text(reply, 200, "text/plain",
+                       request->is_tls(request) ? "secure" : "clear", error);
 }
 
 static int connect_to(unsigned short port)
@@ -690,11 +687,11 @@ static knurl_status ready(knurl_server *server,
     (void)process;
     fixture = userdata;
     for (i = 0; i < 7; ++i) {
-        if (knurl_server_listener_at(server, i, &listener, error) != KNURL_OK)
+        if (server->listener_at(server, i, &listener, error) != KNURL_OK)
             return KNURL_INVALID;
         fixture->ports[i] = listener.port;
     }
-    if (knurl_server_set_serving(server, 1, error) != KNURL_OK)
+    if (server->set_serving(server, 1, error) != KNURL_OK)
         return KNURL_STATE;
     fixture->client = fork();
     if (fixture->client < 0)
@@ -714,9 +711,9 @@ static int invalid(const knurl_server_config *config, knurl_status expected)
     knurl_server *server;
     knurl_error error;
     CHECK(knurl_server_new(config, &server, &error) == KNURL_OK);
-    CHECK(knurl_server_validate(server, &error) == expected);
-    CHECK(knurl_server_preflight(server, &error) == expected);
-    CHECK(knurl_server_destroy(server, NULL) == KNURL_OK);
+    CHECK(server->validate(server, &error) == expected);
+    CHECK(server->preflight(server, &error) == expected);
+    CHECK(server->destroy(server, NULL) == KNURL_OK);
     return 0;
 }
 
@@ -757,23 +754,23 @@ static int preflight_listeners(const knurl_server_config *config,
         listeners[indices[i]].port = ntohs(address.sin_port);
         CHECK(knurl_server_new(config, &server, &error) == KNURL_OK);
         listeners[indices[i]].port = 0;
-        CHECK(knurl_server_validate(server, &error) == KNURL_OK);
-        CHECK(knurl_server_preflight(server, &error) == KNURL_BACKEND);
+        CHECK(server->validate(server, &error) == KNURL_OK);
+        CHECK(server->preflight(server, &error) == KNURL_BACKEND);
         CHECK(error.source == KNURL_ERROR_SYSTEM &&
               error.native_code == EADDRINUSE &&
               strcmp(error.operation, "listener_bind") == 0);
-        CHECK(knurl_server_get_state(server) == KNURL_SERVER_DECLARED);
-        CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+        CHECK(server->get_state(server) == KNURL_SERVER_DECLARED);
+        CHECK(server->destroy(server, &error) == KNURL_OK);
     }
     CHECK(close(fd) == 0);
 
     listeners[0].port = listeners[4].port = ntohs(address.sin_port);
     CHECK(knurl_server_new(config, &server, &error) == KNURL_OK);
     listeners[0].port = listeners[4].port = 0;
-    CHECK(knurl_server_preflight(server, &error) == KNURL_BACKEND);
+    CHECK(server->preflight(server, &error) == KNURL_BACKEND);
     CHECK(error.native_code == EADDRINUSE &&
           strcmp(error.operation, "listener_bind") == 0);
-    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(server->destroy(server, &error) == KNURL_OK);
     fd = socket(AF_INET, SOCK_STREAM, 0);
     CHECK(fd >= 0 &&
           bind(fd, (struct sockaddr *)&address, sizeof(address)) == 0);
@@ -787,7 +784,7 @@ static knurl_status stop_ready(knurl_server *server,
 {
     (void)process;
     ++*(int *)userdata;
-    return knurl_server_request_stop(server, error);
+    return server->request_stop(server, error);
 }
 
 static int preflight_redirect_spool(const knurl_server_config *baseline)
@@ -820,22 +817,21 @@ static int preflight_redirect_spool(const knurl_server_config *baseline)
 
     config.listener_count = 1;
     CHECK(knurl_server_new(&config, &server, &error) == KNURL_OK);
-    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
-                             &error) == KNURL_OK);
-    CHECK(knurl_server_preflight(server, &error) == KNURL_OK);
-    CHECK(knurl_server_run(server, NULL, &error) == KNURL_OK &&
-          ready_calls == 1);
-    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(knurl_router_route(server->router(server), &route, NULL, &error) ==
+          KNURL_OK);
+    CHECK(server->preflight(server, &error) == KNURL_OK);
+    CHECK(server->run(server, NULL, &error) == KNURL_OK && ready_calls == 1);
+    CHECK(server->destroy(server, &error) == KNURL_OK);
 
     config.listener_count = 2;
     CHECK(knurl_server_new(&config, &server, &error) == KNURL_OK);
-    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
-                             &error) == KNURL_OK);
-    CHECK(knurl_server_preflight(server, &error) == KNURL_IO);
+    CHECK(knurl_router_route(server->router(server), &route, NULL, &error) ==
+          KNURL_OK);
+    CHECK(server->preflight(server, &error) == KNURL_IO);
     CHECK(error.native_code == ENOENT &&
           strcmp(error.operation, "body_spool") == 0 &&
           strcmp(error.detail, spool) == 0);
-    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(server->destroy(server, &error) == KNURL_OK);
     CHECK(rmdir(directory) == 0);
     return 0;
 }
@@ -1002,23 +998,23 @@ static int run(struct fixture *fixture)
     old_opens = fixture->opens;
     CHECK(knurl_server_new(&config, &server, &error) == KNURL_OK);
     CHECK(fixture->opens == old_opens);
-    CHECK(knurl_server_validate(server, &error) == KNURL_OK);
+    CHECK(server->validate(server, &error) == KNURL_OK);
     CHECK(fixture->opens == old_opens + 1 && fixture->closes == fixture->opens);
     knurl_route_config_init(&route);
     route.path = "/tunnel";
     route.on_headers = headers;
     route.userdata = fixture;
-    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
-                             &error) == KNURL_OK);
+    CHECK(knurl_router_route(server->router(server), &route, NULL, &error) ==
+          KNURL_OK);
     knurl_route_config_init(&route);
     route.path = "^/";
     route.path_kind = KNURL_PATH_REGEX;
     route.handler = handler;
     route.userdata = fixture;
-    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
-                             &error) == KNURL_OK);
+    CHECK(knurl_router_route(server->router(server), &route, NULL, &error) ==
+          KNURL_OK);
     fixture->client = -1;
-    status = knurl_server_run(server, &result, &error);
+    status = server->run(server, &result, &error);
     if (status != KNURL_OK)
         (void)fprintf(stderr, "TLS runtime %s: %s\n", error.operation,
                       error.message);
@@ -1028,7 +1024,7 @@ static int run(struct fixture *fixture)
     CHECK(fixture->opens == old_opens + 2 &&
           fixture->closes == fixture->opens && !fixture->failure);
     CHECK(borrowed.resets == 2 && borrowed.closes == 0);
-    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(server->destroy(server, &error) == KNURL_OK);
     CHECK(borrowed.closes == 0);
     return 0;
 }

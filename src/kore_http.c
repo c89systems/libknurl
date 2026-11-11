@@ -20,7 +20,7 @@ const char *knurl_kore_revision(const knurl_server *server)
 
 struct http_request *knurl_kore_request(knurl_request *request)
 {
-    return request != NULL ? request->native : NULL;
+    return request != NULL ? request->impl->native : NULL;
 }
 
 static knurl_http_method method(int native)
@@ -92,44 +92,45 @@ static knurl_status metadata(struct knurl_runtime *runtime,
 {
     struct http_header *header;
     size_t i;
-    request->native = native;
-    request->server = runtime->server;
-    request->method = method(native->method);
-    request->method_token = knurl_view(native->raw_method);
-    request->version = knurl_view(
+    request->impl->native = native;
+    request->impl->server = runtime->server;
+    request->impl->method = method(native->method);
+    request->impl->method_token = knurl_view(native->raw_method);
+    request->impl->version = knurl_view(
         (native->flags & HTTP_VERSION_1_0) ? "HTTP/1.0" : "HTTP/1.1");
-    request->target = knurl_view(native->raw_target);
-    request->raw_path = knurl_view(native->path);
-    request->query = knurl_view(native->query_string);
-    request->authority = knurl_view(native->host);
-    request->tls = native->owner->tls != 0;
+    request->impl->target = knurl_view(native->raw_target);
+    request->impl->raw_path = knurl_view(native->path);
+    request->impl->query = knurl_view(native->query_string);
+    request->impl->authority = knurl_view(native->host);
+    request->impl->tls = native->owner->tls != 0;
     for (i = 0; i < runtime->bound_count; ++i) {
         if (native->owner->owner->server == runtime->native_servers[i]) {
-            request->listener = i;
+            request->impl->listener = i;
             break;
         }
     }
-    knurl_kore_endpoint(native->owner->fd, 1, &request->peer,
-                        request->peer_address);
-    knurl_kore_endpoint(native->owner->fd, 0, &request->local,
-                        request->local_address);
-    TAILQ_FOREACH(header, &native->req_headers, list)++ request->header_count;
-    if (request->header_count != 0) {
-        request->headers =
-            malloc(request->header_count * sizeof(*request->headers));
-        if (request->headers == NULL)
+    knurl_kore_endpoint(native->owner->fd, 1, &request->impl->peer,
+                        request->impl->peer_address);
+    knurl_kore_endpoint(native->owner->fd, 0, &request->impl->local,
+                        request->impl->local_address);
+    TAILQ_FOREACH(header, &native->req_headers, list)
+    ++request->impl->header_count;
+    if (request->impl->header_count != 0) {
+        request->impl->headers = malloc(request->impl->header_count *
+                                        sizeof(*request->impl->headers));
+        if (request->impl->headers == NULL)
             return knurl_fail(error, KNURL_NOMEM, "request_headers",
                               "cannot allocate header views");
     }
     i = 0;
     TAILQ_FOREACH(header, &native->req_headers, list)
     {
-        request->headers[i].name = knurl_view(header->header);
-        request->headers[i++].value = knurl_view(header->value);
+        request->impl->headers[i].name = knurl_view(header->header);
+        request->impl->headers[i++].value = knurl_view(header->value);
     }
     /* Redirects preserve the raw target, including encoded path separators;
      * routing decoders must not reject or rewrite that URI. */
-    if (runtime->server->config.listeners[request->listener].kind ==
+    if (runtime->server->impl->config.listeners[request->impl->listener].kind ==
         KNURL_LISTENER_REDIRECT)
         return KNURL_OK;
     return knurl_request_decode(request, error);
@@ -140,58 +141,63 @@ static knurl_status admit(knurl_request *request, knurl_error *error)
     knurl_body_policy *policy;
     knurl_u64 hard;
     int order;
-    policy = &request->plan.body;
-    if (request->plan.disposition == KNURL_REQUEST_WEBSOCKET &&
-        request->websocket != NULL && request->channel != NULL)
+    policy = &request->impl->plan.body;
+    if (request->impl->plan.disposition == KNURL_REQUEST_WEBSOCKET &&
+        request->impl->websocket != NULL && request->impl->channel != NULL)
         return KNURL_OK;
-    if (request->plan.disposition == KNURL_REQUEST_TAKEOVER &&
-        request->channel != NULL && request->websocket == NULL)
+    if (request->impl->plan.disposition == KNURL_REQUEST_TAKEOVER &&
+        request->impl->channel != NULL && request->impl->websocket == NULL)
         return KNURL_OK;
-    if (request->channel != NULL)
+    if (request->impl->channel != NULL)
         return knurl_fail(error, KNURL_INVALID, "request_plan",
                           "installed ownership requires its WEBSOCKET or "
                           "TAKEOVER disposition");
-    if (request->plan.disposition != KNURL_REQUEST_MANAGED) {
-        if (request->plan.disposition != KNURL_REQUEST_REPLY)
+    if (request->impl->plan.disposition != KNURL_REQUEST_MANAGED) {
+        if (request->impl->plan.disposition != KNURL_REQUEST_REPLY)
             return knurl_fail(
                 error, KNURL_NOT_SUPPORTED, "request_plan",
                 "upgrade/takeover requires an installed connection capability");
-        if (request->response->phase != KNURL_RESPONSE_FINISHING)
+        if (request->impl->response->impl->phase != KNURL_RESPONSE_FINISHING)
             return knurl_fail(
                 error, KNURL_INVALID, "request_plan",
                 "REPLY requires a successfully ended final response");
-        if (request->has_coding ||
-            (request->has_length &&
-             (request->content_length.high || request->content_length.low))) {
+        if (request->impl->has_coding ||
+            (request->impl->has_length &&
+             (request->impl->content_length.high ||
+              request->impl->content_length.low))) {
             knurl_kore_body_cancel(request, KNURL_CANCELLED);
-            request->response->close_connection = 1;
+            request->impl->response->impl->close_connection = 1;
         } else {
             return knurl_kore_body_empty_reply(request, error);
         }
         return KNURL_OK;
     }
-    if (request->has_coding)
+    if (request->impl->has_coding)
         return knurl_fail(error, KNURL_NOT_SUPPORTED, "request_plan",
                           "chunked bodies require connection takeover");
-    if (!request->has_length && (request->method == KNURL_HTTP_POST ||
-                                 request->method == KNURL_HTTP_PUT ||
-                                 request->method == KNURL_HTTP_PATCH)) {
-        request->rejection_status = 411;
+    if (!request->impl->has_length &&
+        (request->impl->method == KNURL_HTTP_POST ||
+         request->impl->method == KNURL_HTTP_PUT ||
+         request->impl->method == KNURL_HTTP_PATCH)) {
+        request->impl->rejection_status = 411;
         return knurl_fail(error, KNURL_INVALID, "request_plan",
                           "managed POST, PUT and PATCH require Content-Length");
     }
-    if (request->plan.on_body_end == NULL && !request->response->producer &&
-        request->response->phase == KNURL_RESPONSE_BUILDING)
+    if (request->impl->plan.on_body_end == NULL &&
+        !request->impl->response->impl->producer &&
+        request->impl->response->impl->phase == KNURL_RESPONSE_BUILDING)
         return knurl_fail(
             error, KNURL_INVALID, "request_plan",
             "MANAGED requires body completion or an installed response owner");
-    if ((policy->mode == KNURL_BODY_STREAM && request->plan.on_body == NULL) ||
-        (policy->mode != KNURL_BODY_STREAM && request->plan.on_body != NULL))
+    if ((policy->mode == KNURL_BODY_STREAM &&
+         request->impl->plan.on_body == NULL) ||
+        (policy->mode != KNURL_BODY_STREAM &&
+         request->impl->plan.on_body != NULL))
         return knurl_fail(error, KNURL_INVALID, "request_plan",
                           "on_body belongs exclusively to STREAM delivery");
     policy->max_bytes = knurl_body_policy_limit(
-        policy, request->server->config.limits.default_body_bytes);
-    hard = request->server->config.limits.hard_body_bytes;
+        policy, request->impl->server->impl->config.limits.default_body_bytes);
+    hard = request->impl->server->impl->config.limits.hard_body_bytes;
     if (!knurl_u64_valid(policy->max_bytes))
         return knurl_fail(error, KNURL_INVALID, "request_plan",
                           "invalid body limit words");
@@ -203,30 +209,32 @@ static knurl_status admit(knurl_request *request, knurl_error *error)
                 error, KNURL_INVALID, "request_plan",
                 "plan body limit exceeds the configured hard ceiling");
     }
-    if (request->has_length) {
-        (void)knurl_u64_compare(request->content_length, policy->max_bytes,
-                                &order, NULL);
+    if (request->impl->has_length) {
+        (void)knurl_u64_compare(request->impl->content_length,
+                                policy->max_bytes, &order, NULL);
         if (policy->mode == KNURL_BODY_NONE &&
-            (request->content_length.high || request->content_length.low)) {
-            request->rejection_status = 413;
+            (request->impl->content_length.high ||
+             request->impl->content_length.low)) {
+            request->impl->rejection_status = 413;
             return knurl_fail(error, KNURL_LIMIT, "request_plan",
                               "request body is not allowed for this route");
         }
         if (order > 0) {
-            request->rejection_status = 413;
+            request->impl->rejection_status = 413;
             return knurl_fail(error, KNURL_LIMIT, "request_plan",
                               "request body exceeds route limit");
         }
-        if ((request->content_length.high || request->content_length.low) &&
+        if ((request->impl->content_length.high ||
+             request->impl->content_length.low) &&
             !(KNURL_KORE_BODY_METHODS &
-              KNURL_HTTP_METHOD_MASK(request->method)))
+              KNURL_HTTP_METHOD_MASK(request->impl->method)))
             return knurl_fail(
                 error, KNURL_NOT_SUPPORTED, "request_plan",
                 "this managed method does not accept a positive body length");
     }
     return knurl_body_create(
-        policy, request->server->config.limits.body_spool_directory,
-        &request->body_store, error);
+        policy, request->impl->server->impl->config.limits.body_spool_directory,
+        &request->impl->body_store, error);
 }
 
 int knurl_kore_prebody(struct http_request *native, const void *data,
@@ -246,25 +254,27 @@ int knurl_kore_prebody(struct http_request *native, const void *data,
     runtime = kore_library_hooks.arg;
     if (!__atomic_load_n(&runtime->shared->serving, __ATOMIC_ACQUIRE))
         return reject(native, 503);
-    runtime->server->state = KNURL_SERVER_SERVING;
-    request = calloc(1, sizeof(*request));
+    runtime->server->impl->state = KNURL_SERVER_SERVING;
+    request = calloc(1, sizeof(struct knurl_request_impl));
     if (request == NULL)
         return reject(native, 500);
+    knurl_request_receiver_init(request);
     native->hdlr_extra = request;
     status = metadata(runtime, native, request, &error);
     if (status != KNURL_OK)
         return reject(native, status == KNURL_INVALID ? 400 : 500);
     hosts = lengths = coding = expect = 0;
-    for (i = 0; i < request->header_count; ++i) {
-        if (knurl_text_equal_case(request->headers[i].name.data, "host"))
+    for (i = 0; i < request->impl->header_count; ++i) {
+        if (knurl_text_equal_case(request->impl->headers[i].name.data, "host"))
             ++hosts;
-        if (knurl_text_equal_case(request->headers[i].name.data,
+        if (knurl_text_equal_case(request->impl->headers[i].name.data,
                                   "content-length"))
             ++lengths;
-        if (knurl_text_equal_case(request->headers[i].name.data,
+        if (knurl_text_equal_case(request->impl->headers[i].name.data,
                                   "transfer-encoding"))
             ++coding;
-        if (knurl_text_equal_case(request->headers[i].name.data, "expect"))
+        if (knurl_text_equal_case(request->impl->headers[i].name.data,
+                                  "expect"))
             ++expect;
     }
     if (hosts != 1 || lengths > 1 || coding > 1 || (coding && lengths))
@@ -274,21 +284,21 @@ int knurl_kore_prebody(struct http_request *native, const void *data,
                                          NULL);
         if (!knurl_text_equal_case(value.data, "chunked"))
             return reject(native, 501);
-        request->has_coding = 1;
+        request->impl->has_coding = 1;
     }
     if (lengths) {
         (void)knurl_request_header_first(request, "content-length", &value,
                                          NULL);
         if (knurl_u64_from_decimal(value.data, value.length,
-                                   &request->content_length,
+                                   &request->impl->content_length,
                                    &error) != KNURL_OK)
             return reject(native, 400);
-        request->has_length = 1;
+        request->impl->has_length = 1;
     }
     if (expect) {
         (void)knurl_request_header_first(request, "expect", &value, NULL);
         if (expect > 1 || !knurl_text_equal_case(value.data, "100-continue") ||
-            memcmp(request->version.data, "HTTP/1.1", 8) != 0)
+            memcmp(request->impl->version.data, "HTTP/1.1", 8) != 0)
             return reject(native, 417);
     }
     status = knurl_kore_response_create(runtime, request, &error);
@@ -303,7 +313,7 @@ int knurl_kore_prebody(struct http_request *native, const void *data,
     }
     if (handled)
         return KORE_RESULT_RETRY;
-    if (runtime->server->config.listeners[request->listener].kind ==
+    if (runtime->server->impl->config.listeners[request->impl->listener].kind ==
         KNURL_LISTENER_REDIRECT)
         return knurl_kore_redirect(request);
     status = knurl_kore_body_create(request, data, length, &error);
@@ -312,44 +322,46 @@ int knurl_kore_prebody(struct http_request *native, const void *data,
         return KORE_RESULT_RETRY;
     }
     knurl_request_plan_init(&plan);
-    plan.userdata = request->userdata;
-    request->dispatch_started = 1;
-    request->in_headers = 1;
-    if (runtime->server->config.dispatch.mode == KNURL_DISPATCH_CALLBACK)
-        status = runtime->server->config.dispatch.on_headers(
-            request, &plan, runtime->server->config.dispatch.userdata, &error);
+    plan.userdata = request->impl->userdata;
+    request->impl->dispatch_started = 1;
+    request->impl->in_headers = 1;
+    if (runtime->server->impl->config.dispatch.mode == KNURL_DISPATCH_CALLBACK)
+        status = runtime->server->impl->config.dispatch.on_headers(
+            request, &plan, runtime->server->impl->config.dispatch.userdata,
+            &error);
     else
-        status = knurl_router_dispatch_headers(runtime->server->router, request,
-                                               &plan, &error);
-    request->plan = plan;
-    request->in_headers = 0;
+        status = knurl_router_dispatch_headers(runtime->server->impl->router,
+                                               request, &plan, &error);
+    request->impl->plan = plan;
+    request->impl->in_headers = 0;
     if (status == KNURL_OK)
         status = admit(request, &error);
     if (status != KNURL_OK) {
-        knurl_channel_finish(request->channel,
+        knurl_channel_finish(request->impl->channel,
                              status > KNURL_EOF && status <= KNURL_BACKEND
                                  ? status
                                  : KNURL_INVALID);
         knurl_kore_request_fail_message(
             request, status,
-            request->rejection_status
-                ? request->rejection_status
+            request->impl->rejection_status
+                ? request->impl->rejection_status
                 : (status == KNURL_NOT_SUPPORTED ? 501 : 500),
-            request->rejection_status == 413 ? error.message : NULL);
+            request->impl->rejection_status == 413 ? error.message : NULL);
         return KORE_RESULT_RETRY;
     }
     if (expect && plan.disposition == KNURL_REQUEST_MANAGED &&
-        request->has_length &&
-        (request->content_length.high || request->content_length.low) &&
-        request->response->phase == KNURL_RESPONSE_BUILDING) {
-        status =
-            knurl_response_interim(request->response, 100, NULL, 0, &error);
+        request->impl->has_length &&
+        (request->impl->content_length.high ||
+         request->impl->content_length.low) &&
+        request->impl->response->impl->phase == KNURL_RESPONSE_BUILDING) {
+        status = knurl_response_interim(request->impl->response, 100, NULL, 0,
+                                        &error);
         if (status != KNURL_OK)
             knurl_kore_request_fail(request, status, 500);
         else
             knurl_kore_http_status(runtime, native, 100);
     }
-    request->response->schedule(request->response);
+    request->impl->response->impl->schedule(request->impl->response);
     return KORE_RESULT_RETRY;
 }
 
@@ -367,7 +379,7 @@ void knurl_kore_request_free(struct http_request *native)
     native->hdlr_extra = NULL;
     if (request != NULL) {
         knurl_request_cleanup(request);
-        request->native = NULL;
+        request->impl->native = NULL;
         free(request);
     }
 }

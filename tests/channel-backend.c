@@ -19,23 +19,26 @@ static void idle_channel(knurl_channel *channel) { (void)channel; }
 
 static int retained_frame_budget(void)
 {
-    knurl_websocket ws;
+    struct knurl_websocket_impl state;
+    knurl_websocket *ws = &state.receiver;
     knurl_channel *channel;
     int bounded;
-    channel = calloc(1, sizeof(*channel));
+    channel = calloc(1, sizeof(struct knurl_channel_impl));
     if (channel == NULL)
         return 0;
-    memset(&ws, 0, sizeof(ws));
-    ws.channel = channel;
-    channel->config.send_bytes = 127;
+    memset(&state, 0, sizeof(state));
+    knurl_websocket_receiver_init(ws);
+    knurl_channel_receiver_init(channel);
+    ws->impl->channel = channel;
+    channel->impl->config.send_bytes = 127;
     /* Simulate a pinned frame whose prefix has reached the transport. */
-    channel->retained = 124;
-    channel->queued = 1;
-    channel->ops.interest = channel->schedule = idle_channel;
-    bounded = knurl_websocket_queue(&ws, KNURL_WEBSOCKET_BINARY, "ab", 2,
+    channel->impl->retained = 124;
+    channel->impl->queued = 1;
+    channel->impl->ops.interest = channel->impl->schedule = idle_channel;
+    bounded = knurl_websocket_queue(ws, KNURL_WEBSOCKET_BINARY, "ab", 2,
                                     NULL) == KNURL_AGAIN;
-    bounded = bounded && channel->head == NULL && channel->queued == 1 &&
-              channel->retained == 124;
+    bounded = bounded && channel->impl->head == NULL &&
+              channel->impl->queued == 1 && channel->impl->retained == 124;
     knurl_channel_release(channel, 0);
     return bounded;
 }

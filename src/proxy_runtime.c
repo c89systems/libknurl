@@ -127,7 +127,7 @@ void knurl_proxy_record_failure(struct proxy_exchange *x, knurl_status cause,
     }
     if (x->request != NULL &&
         !strcmp(x->accounting.disconnect_side, "upstream"))
-        x->request->disconnect_side = KNURL_DISCONNECT_UPSTREAM;
+        x->request->impl->disconnect_side = KNURL_DISCONNECT_UPSTREAM;
 }
 
 static void stop_timer(struct proxy_exchange *x)
@@ -161,11 +161,11 @@ static void request_closed(knurl_request *request,
             out->response.status ? out->response.status : x->local_status;
         x->accounting.cause =
             x->failure.status != KNURL_OK ? x->failure.status : out->cause;
-        if (request->server->state == KNURL_SERVER_STOPPING &&
+        if (request->impl->server->impl->state == KNURL_SERVER_STOPPING &&
             out->cause != KNURL_OK) {
             x->accounting.disconnect_side = "worker";
             x->accounting.error_category = "shutdown";
-            request->disconnect_side = KNURL_DISCONNECT_HOST;
+            request->impl->disconnect_side = KNURL_DISCONNECT_HOST;
         } else if (x->accounting.error_category == NULL &&
                    out->cause != KNURL_OK) {
             x->accounting.disconnect_side = "downstream";
@@ -176,15 +176,15 @@ static void request_closed(knurl_request *request,
             x->accounting.error_category = "none";
         }
         if (!strcmp(x->accounting.disconnect_side, "upstream"))
-            request->disconnect_side = KNURL_DISCONNECT_UPSTREAM;
+            request->impl->disconnect_side = KNURL_DISCONNECT_UPSTREAM;
         else if (!strcmp(x->accounting.disconnect_side, "downstream"))
-            request->disconnect_side = KNURL_DISCONNECT_DOWNSTREAM;
+            request->impl->disconnect_side = KNURL_DISCONNECT_DOWNSTREAM;
         if (x->route->on_exchange != NULL)
             x->route->on_exchange(request, &x->accounting,
                                   x->route->on_exchange_userdata);
     }
-    request->response->progress = NULL;
-    request->response->progress_data = NULL;
+    request->impl->response->impl->progress = NULL;
+    request->impl->response->impl->progress_data = NULL;
     x->request = NULL;
     x->channel = NULL;
     stop_timer(x);
@@ -221,7 +221,7 @@ void knurl_proxy_schedule(struct proxy_exchange *x)
     status = knurl_loop_defer(x->loop, turn, knurl_proxy_release, x, NULL);
     if (status != KNURL_OK) {
         --x->refs;
-        (void)knurl_response_abort(x->request->response, status, NULL);
+        (void)knurl_response_abort(x->request->impl->response, status, NULL);
         return;
     }
     x->queued = 1;
@@ -400,7 +400,7 @@ static knurl_status prepare_local(struct proxy_exchange *x)
     knurl_response *r;
     size_t i;
     knurl_status status;
-    r = x->request->response;
+    r = x->request->impl->response;
     if (!x->failed) {
         x->failed = 1;
         stop_timer(x);
@@ -411,7 +411,8 @@ static knurl_status prepare_local(struct proxy_exchange *x)
         }
         (void)knurl_channel_interest(x->channel, 0, NULL);
         if (knurl_proxy_ws_tunneled(x) || knurl_response_is_committed(r) ||
-            (r->inflight && (r->head == NULL || !r->head->interim))) {
+            (r->impl->inflight &&
+             (r->impl->head == NULL || !r->impl->head->interim))) {
             (void)knurl_response_abort(r, x->failure.status, NULL);
             return KNURL_STATE;
         }
@@ -432,7 +433,7 @@ static knurl_status prepare_local(struct proxy_exchange *x)
             }
         }
     }
-    if (r->phase == KNURL_RESPONSE_ABORTED)
+    if (r->impl->phase == KNURL_RESPONSE_ABORTED)
         return KNURL_STATE;
     if (!x->local_prepared) {
         status = knurl_response_status(r, x->local.status, NULL);
@@ -445,7 +446,7 @@ static knurl_status prepare_local(struct proxy_exchange *x)
                 r, wide((uint64_t)x->local.body_length), NULL);
         if (status != KNURL_OK)
             return status;
-        r->close_connection = 1;
+        r->impl->close_connection = 1;
         x->local_prepared = 1;
     }
     return KNURL_OK;
@@ -456,7 +457,7 @@ static knurl_status local_step(struct proxy_exchange *x)
     knurl_status status;
     knurl_response *r;
     size_t accepted;
-    r = x->request->response;
+    r = x->request->impl->response;
     status = prepare_local(x);
     if (status != KNURL_OK)
         return status;
@@ -466,7 +467,7 @@ static knurl_status local_step(struct proxy_exchange *x)
             return status;
         x->local_begun = 1;
     }
-    if (!r->suppressed && x->local_offset != x->local.body_length) {
+    if (!r->impl->suppressed && x->local_offset != x->local.body_length) {
         status = knurl_response_write(r, x->local.body + x->local_offset,
                                       x->local.body_length - x->local_offset,
                                       &accepted, NULL);
@@ -532,7 +533,7 @@ static knurl_status final_headers(struct proxy_exchange *x)
     size_t i;
     int code;
     int suppressed;
-    r = x->request->response;
+    r = x->request->impl->response;
     up = &x->upstream.response;
     if (!x->final_prepared) {
         status = knurl_proxy_response_apply(
@@ -546,8 +547,8 @@ static knurl_status final_headers(struct proxy_exchange *x)
             status = knurl_response_header_add(
                 r, x->upstream.outbound_headers.fields[i].name,
                 x->upstream.outbound_headers.fields[i].value, NULL);
-        suppressed = x->request->method == KNURL_HTTP_HEAD || code == 204 ||
-                     code == 205 || code == 304;
+        suppressed = x->request->impl->method == KNURL_HTTP_HEAD ||
+                     code == 204 || code == 205 || code == 304;
         if (status == KNURL_OK && suppressed && up->has_content_length &&
             code != 204 && code != 205)
             status =
@@ -556,7 +557,7 @@ static knurl_status final_headers(struct proxy_exchange *x)
             status = knurl_response_trailers_enable(r, NULL, 0, NULL);
         if (status != KNURL_OK)
             return status;
-        r->close_connection = 1;
+        r->impl->close_connection = 1;
         x->final_prepared = 1;
     }
     status = knurl_response_begin(r, NULL);
@@ -575,7 +576,7 @@ static knurl_status relay_step(struct proxy_exchange *x)
     size_t count;
     size_t accepted;
     size_t at;
-    r = x->request->response;
+    r = x->request->impl->response;
     while ((i = x->interims) != NULL) {
         status = knurl_response_interim(r, i->status, i->views,
                                         i->headers.count, NULL);
@@ -596,7 +597,7 @@ static knurl_status relay_step(struct proxy_exchange *x)
     body = knurl_proxy_http_upstream_body(&x->upstream, &count);
     if (count != 0) {
         accepted = count;
-        if (!r->suppressed) {
+        if (!r->impl->suppressed) {
             status = knurl_response_write(r, body, count, &accepted, NULL);
             if (status != KNURL_OK)
                 return status;
@@ -610,7 +611,7 @@ static knurl_status relay_step(struct proxy_exchange *x)
     }
     if (!x->up_done)
         return KNURL_OK;
-    count = r->suppressed ? 0 : x->upstream.response.trailers.count;
+    count = r->impl->suppressed ? 0 : x->upstream.response.trailers.count;
     trailers = count != 0 ? malloc(count * sizeof(*trailers)) : NULL;
     if (count != 0 && trailers == NULL)
         return KNURL_NOMEM;
@@ -638,8 +639,8 @@ static void step(struct proxy_exchange *x)
     if (x->failure.status != KNURL_OK) {
         status = local_step(x);
         if (status != KNURL_OK && status != KNURL_AGAIN)
-            (void)knurl_response_abort(x->request->response, x->failure.status,
-                                       NULL);
+            (void)knurl_response_abort(x->request->impl->response,
+                                       x->failure.status, NULL);
         return;
     }
     if (x->ended)
@@ -745,27 +746,28 @@ static knurl_status simple_reply(knurl_request *request,
         }
     } else
         body = knurl_view(message);
-    request->response->close_connection = 1;
+    request->impl->response->impl->close_connection = 1;
     if (status == KNURL_OK) {
         knurl_bytes empty = {NULL, 0};
         status = knurl_reply_bytes(reply, code, "application/octet-stream",
                                    local != NULL ? empty : body, error);
         if (status == KNURL_OK) {
-            free(reply->content_type);
-            reply->content_type = NULL;
+            free(reply->impl->content_type);
+            reply->impl->content_type = NULL;
             if (local != NULL) {
-                reply->body = local->body;
-                reply->body_length = local->body_length;
+                reply->impl->body = local->body;
+                reply->impl->body_length = local->body_length;
                 local->body = NULL;
                 local->body_length = 0;
             }
-            status = knurl_response_submit(request->response, reply, error);
+            status =
+                knurl_response_submit(request->impl->response, reply, error);
         }
     }
     (void)knurl_reply_destroy(reply, NULL);
     if (status == KNURL_OK) {
-        request->response->complete_reply = 1;
-        request->response->phase = KNURL_RESPONSE_FINISHING;
+        request->impl->response->impl->complete_reply = 1;
+        request->impl->response->impl->phase = KNURL_RESPONSE_FINISHING;
         plan->disposition = KNURL_REQUEST_REPLY;
     }
     return status;
@@ -777,22 +779,22 @@ static knurl_status worker_get(knurl_server *server,
 {
     struct knurl_proxy_worker *w;
     knurl_status status;
-    if (server->proxy != NULL) {
-        *out = server->proxy;
+    if (server->impl->proxy != NULL) {
+        *out = server->impl->proxy;
         return KNURL_OK;
     }
     w = calloc(1, sizeof(*w));
     if (w == NULL)
         return KNURL_NOMEM;
     status = knurl_proxy_transport_new(
-        server->loop, server->config.proxy.active_exchanges,
-        server->config.proxy.idle_connections, &w->transport, error);
+        server->impl->loop, server->impl->config.proxy.active_exchanges,
+        server->impl->config.proxy.idle_connections, &w->transport, error);
     if (status != KNURL_OK) {
         free(w);
         return status;
     }
     w->refs = 1;
-    *out = server->proxy = w;
+    *out = server->impl->proxy = w;
     return KNURL_OK;
 }
 
@@ -827,16 +829,18 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
     knurl_proxy_local_init(&local);
     memset(&directed, 0, sizeof(directed));
     status = KNURL_OK;
-    for (i = 0; i < request->header_count; ++i)
-        if (knurl_proxy_headers_add(&inbound, request->headers[i].name.data,
-                                    request->headers[i].value.data) !=
+    for (i = 0; i < request->impl->header_count; ++i)
+        if (knurl_proxy_headers_add(&inbound,
+                                    request->impl->headers[i].name.data,
+                                    request->impl->headers[i].value.data) !=
             KNURL_PROXY_HEADER_OK) {
             status = KNURL_INVALID;
             break;
         }
     if (status != KNURL_OK ||
-        memcmp(request->version.data, "HTTP/1.1", 8) != 0 ||
-        knurl_proxy_validate_path(request->raw_path.data, error) != KNURL_OK ||
+        memcmp(request->impl->version.data, "HTTP/1.1", 8) != 0 ||
+        knurl_proxy_validate_path(request->impl->raw_path.data, error) !=
+            KNURL_OK ||
         knurl_proxy_request_head_parse(&inbound, &head, NULL) !=
             KNURL_PROXY_HEADER_OK) {
         status = simple_reply(request, plan, NULL, 400,
@@ -844,8 +848,10 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
         goto finished;
     }
     body_limit =
-        ((uint64_t)request->server->config.limits.hard_body_bytes.high << 32) |
-        request->server->config.limits.hard_body_bytes.low;
+        ((uint64_t)
+             request->impl->server->impl->config.limits.hard_body_bytes.high
+         << 32) |
+        request->impl->server->impl->config.limits.hard_body_bytes.low;
     if (body_limit != 0u && head.has_content_length &&
         head.content_length > body_limit) {
         status =
@@ -854,16 +860,16 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
         goto finished;
     }
     if (head.websocket_upgrade &&
-        (!knurl_proxy_ws_request_valid(request->method, &inbound, NULL) ||
+        (!knurl_proxy_ws_request_valid(request->impl->method, &inbound, NULL) ||
          head.chunked || head.has_content_length)) {
         status = simple_reply(request, plan, NULL, 400,
                               "invalid proxy WebSocket handshake\n", error);
         goto finished;
     }
     if (route->preflight != NULL) {
-        input.method = request->method;
-        input.path = request->raw_path.data;
-        input.query = request->query.data;
+        input.method = request->impl->method;
+        input.path = request->impl->raw_path.data;
+        input.query = request->impl->query.data;
         input.host = head.host;
         input.headers = &inbound;
         input.matched_request = request;
@@ -881,11 +887,12 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
             goto finished;
         }
     }
-    status = worker_get(request->server, &w, error);
+    status = worker_get(request->impl->server, &w, error);
     if (status != KNURL_OK)
         goto finished;
     if (w->closing ||
-        w->active >= request->server->config.proxy.active_exchanges) {
+        w->active >=
+            request->impl->server->impl->config.proxy.active_exchanges) {
         status = simple_reply(request, plan, NULL, 503,
                               "proxy worker exchange limit reached\n", error);
         goto finished;
@@ -896,7 +903,7 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
         goto finished;
     }
     x->request = request;
-    x->loop = request->server->loop;
+    x->loop = request->impl->server->impl->loop;
     x->worker = w;
     x->route = route;
     x->refs = 1;
@@ -917,19 +924,20 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
     if (status != KNURL_OK)
         goto finished;
     plan->disposition = KNURL_REQUEST_TAKEOVER;
-    status =
-        knurl_response_callbacks(request->response, writable, NULL, x, error);
-    request->response->progress = knurl_proxy_progress;
-    request->response->progress_data = x;
+    status = knurl_response_callbacks(request->impl->response, writable, NULL,
+                                      x, error);
+    request->impl->response->impl->progress = knurl_proxy_progress;
+    request->impl->response->impl->progress_data = x;
     if (status == KNURL_OK &&
         knurl_proxy_headers_sanitize_request(&inbound, &sanitized) !=
             KNURL_PROXY_HEADER_OK)
         status = KNURL_INVALID;
     if (status == KNURL_OK)
         status = knurl_proxy_director_prepare(
-            route, request->method, request->raw_path.data, request->query.data,
-            head.host, head.websocket_upgrade, request, &inbound, &sanitized,
-            &directed, &x->target, &x->authority, error);
+            route, request->impl->method, request->impl->raw_path.data,
+            request->impl->query.data, head.host, head.websocket_upgrade,
+            request, &inbound, &sanitized, &directed, &x->target, &x->authority,
+            error);
     if (status != KNURL_OK)
         goto exchange_failed;
     url = route->targets[directed.target_index];
@@ -945,8 +953,9 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
         goto finished;
     }
     if (!add_header(x, "Host", x->authority) ||
-        !add_header(x, "X-Forwarded-For", request->peer.address.data) ||
-        !add_header(x, "X-Forwarded-Proto", request->tls ? "https" : "http") ||
+        !add_header(x, "X-Forwarded-For", request->impl->peer.address.data) ||
+        !add_header(x, "X-Forwarded-Proto",
+                    request->impl->tls ? "https" : "http") ||
         !add_header(x, "X-Forwarded-Host", head.host)) {
         status = KNURL_NOMEM;
         goto exchange_failed;
@@ -1041,8 +1050,9 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
         goto exchange_failed;
     }
     accounting_start(x);
-    if (head.expect_continue && x->channel->receive_length == 0) {
-        status = knurl_response_interim(request->response, 100, NULL, 0, error);
+    if (head.expect_continue && x->channel->impl->receive_length == 0) {
+        status = knurl_response_interim(request->impl->response, 100, NULL, 0,
+                                        error);
         if (status != KNURL_OK)
             goto exchange_failed;
     }
@@ -1069,10 +1079,10 @@ void knurl_proxy_worker_clear(knurl_server *server)
 {
     struct knurl_proxy_worker *w;
     struct proxy_exchange *x;
-    w = server->proxy;
+    w = server->impl->proxy;
     if (w == NULL)
         return;
-    server->proxy = NULL;
+    server->impl->proxy = NULL;
     w->closing = 1;
     for (x = w->exchanges; x != NULL; x = x->next) {
         stop_timer(x);

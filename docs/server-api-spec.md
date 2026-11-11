@@ -49,6 +49,34 @@ change before release; each operation must map to a concrete baseline consumer.
 | Policy/logging | Trusted-proxy resolution, admission, shared autoblock status/event/window/capacity rules and named events; request/lifecycle/transport observations. Borrow public pslog root/access loggers, preserve derived sub=http, enable/disable, category/status levels and independent file access logs. File logs default to 10 MiB per file and three total files, preserving whole records; size/count/disable are configurable. File write/rotation errors, including ENOSPC, report an error and drop that record while HTTP continues; later records retry. Host metrics and policy decisions stay external. |
 | Host/backend integration | Parent/worker/key-manager/ACME start/ready/stopping/stopped/exit/error notifications, process context, control FD/readiness and parent timers; request start/close and TLS-state observations. Supply only the loop/watch/timer/defer/wake operations needed by these consumers. An opt-in Kore request accessor preserves vectis_request_kore(). |
 
+## C receivers and Lua binding
+
+Library-owned handles expose receiver methods. Obtain a handle through its
+constructor or borrowed accessor, then pass that handle as the first argument.
+For example, `server->preflight(server, &error)` probes startup resources and
+`server->router(server)` borrows its router. Register routes with
+`router->route(router, &route, NULL, &error)`.
+
+Server, router, group, route, request, body, reply, response, source, channel,
+WebSocket, loop, watch, timer, waker, asset, asset-provider, storage-provider,
+storage-operation, storage-resource and XML handles expose their own operations.
+Cross-surface registrations belong to the receiving router or group. Mapped
+codecs belong to the source, request or reply they consume. Factories and
+stateless configuration, numeric and serialization helpers are module functions.
+
+Receiver methods point to the corresponding exported C implementations. Their
+ownership, lifetime and error contracts apply to both call forms. Applications
+must not allocate, copy or modify a receiver or access its `impl` field. A
+borrowed receiver expires with its documented owner. Public headers expose
+method signatures and opaque state pointers.
+
+Lua exposes these capabilities through its C binding against the installed
+public shared library. The facade adapts Lua values, callbacks and owner
+lifetimes. For example, `server:preflight()` invokes the C server receiver and
+returns `nil, error` on a Core failure. Plain server methods are forwarded from
+the binding automatically. C headers and `knurl.meta.lua` document
+the callable methods for editors.
+
 ## Configuration and ownership
 
 Preserve all baseline server fields, normalization and effective values:

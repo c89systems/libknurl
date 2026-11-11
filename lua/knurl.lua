@@ -1,7 +1,7 @@
 ---HTTP/WebDAV/proxy server facade over the installed public libknurl API.
 ---Uses the host VM; server declarations are inert until validation/run.
 local native = require('knurl.native')
-local M = { AGAIN = native.AGAIN, EOF = native.EOF, count = native.count, status = native.status }
+local M = { version = native.version, AGAIN = native.AGAIN, EOF = native.EOF, count = native.count, status = native.status }
 ---WebSocket/loop constants and bounded single-event SSE encoding from Core.
 M.websocket,M.loop,M.sse_encode=native.websocket,native.loop,native.sse_encode
 ---Host-control FD readiness constants; see Server:control_interest.
@@ -252,36 +252,6 @@ function Server:group(prefix,opts)
   if type(normalized)=='string' and normalized:sub(-1)=='/' then normalized=normalized:sub(1,-2) end
   return setmetatable({_native=handle,_server=self,_prefix=normalized},Group)
 end
----Run lifecycle to terminal result; do not reenter.
-function Server:run() return self._native:run() end
----Request graceful stop.
-function Server:stop() return self._native:stop() end
----Release callback owners without delivering events.
-function Server:close() return self._native:close() end
----Checks declarations/materials; may call TLS openers, never binds/forks.
-function Server:validate() return self._native:validate() end
----Copied normalized settings; snapshot includes configured TLS memory bytes.
-function Server:effective_config() return self._native:effective_config() end
----Infer a filename's Content-Type using copied instance overrides and Core defaults.
-function Server:content_type(path) return self._native:content_type(path) end
----Inactive-server registration; failures preserve prior logger owners.
-function Server:set_pslog(logger,access_log) return self._native:set_pslog(logger,access_log) end
----Change active readiness serving gate.
-function Server:set_serving(value) return self._native:set_serving(value) end
----connecting/open/closing/closed.
-function Server:state() return self._native:state() end
----One-based active-run bound address/port snapshot.
-function Server:listener(index) return self._native:listener(index) end
----Size of the existing dispatch/OpenAPI registry.
-function Server:route_count() return self._native:route_count() end
----Attach annotations with retained immutable public maps.
-function Server:openapi_doc(opts) return self._native:openapi_doc(opts) end
----Materialized OpenAPI JSON/YAML, without running handlers.
-function Server:openapi(opts) return self._native:openapi(opts) end
----Change host-control readiness mask.
-function Server:control_interest(interest) return self._native:control_interest(interest) end
----One-based active identity availability.
-function Server:tls_identity_state(index) return self._native:tls_identity_state(index) end
 local function supervision_options(self,opts)
   if type(opts)~='table' then return opts end
   opts=copy(opts)
@@ -314,8 +284,6 @@ for _,name in ipairs{'defer','timer','watch','waker'} do
     return self._native[name](self._native,opts)
   end
 end
----Exact monotonic milliseconds from the active owner loop.
-function Server:now() return self._native:now() end
 local function sse(self,opts)
   if type(opts)~='table' or type(opts.read)~='function' then return invalid('SSE declaration and read callback required') end
   opts=copy(opts)
@@ -510,6 +478,8 @@ function rest.route(server,opts)
   if not route then return nil,err end
   return register_rest(server,route)
 end
+---Receiver registrations use the same Lua value/callback adapter.
+Server.rest_route,Group.rest_route=rest.route,rest.route
 ---Register ordered REST routes after copying shared prefix/defaults.
 function rest.group(server,opts)
   if type(server)~='table' or type(server.group)~='function' or type(opts)~='table' or type(opts.routes)~='table' then
@@ -590,6 +560,13 @@ function M.server(opts)
   local handle,err=native.server(opts)
   if not handle then return nil,err end
   self._native=handle
+  -- Plain receiver methods follow the C binding automatically. Explicit Lua
+  -- adapters above handle route declarations, callbacks and ownership.
+  for name,method in pairs(getmetatable(handle).__index) do
+    if type(method)=='function' and name:sub(1,2)~='__' and Server[name]==nil then
+      Server[name]=function(owner,...) return method(owner._native,...) end
+    end
+  end
   return self
 end
 ---@cast M knurl.Module

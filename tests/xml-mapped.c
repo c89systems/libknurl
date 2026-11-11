@@ -121,8 +121,8 @@ static knurl_status parse(const char *text, const lonejson_schema_view *schema,
     status = knurl_source_new(&input, &source, error);
     if (status != KNURL_OK)
         return status;
-    status = knurl_xml_parse_source(source, schema, config, record, error);
-    knurl_source_destroy(source, NULL);
+    status = source->xml_parse(source, schema, config, record, error);
+    source->destroy(source, NULL);
     return status;
 }
 static void view(lonejson_record_view *r, const lonejson_schema_view *schema,
@@ -278,8 +278,7 @@ static void release(void *data, knurl_status outcome)
     struct lifetime *l = data;
     l->count++;
     l->outcome = outcome;
-    if (l->reenter &&
-        knurl_xml_generator_destroy(l->generator, NULL) != KNURL_STATE)
+    if (l->reenter && l->generator->destroy(l->generator, NULL) != KNURL_STATE)
         l->count = 99;
 }
 static int generation(void)
@@ -330,7 +329,7 @@ static int generation(void)
     CHECK(collected != NULL);
     total = 0;
     for (;;) {
-        status = knurl_xml_generator_read(g, out, sizeof(out), &n, &error);
+        status = g->read(g, out, sizeof(out), &n, &error);
         if (status == KNURL_EOF)
             break;
         CHECK(status == KNURL_OK && n == 1 && total < 90000);
@@ -338,29 +337,25 @@ static int generation(void)
     }
     CHECK(total == 82226 && memcmp(collected, "<blob><body>", 12) == 0 &&
           memcmp(collected + total - 14, "</body></blob>", 14) == 0);
-    CHECK(knurl_xml_generator_read(g, out, sizeof(out), &n, &error) ==
-              KNURL_EOF &&
-          n == 0);
+    CHECK(g->read(g, out, sizeof(out), &n, &error) == KNURL_EOF && n == 0);
     l.reenter = 1;
-    CHECK(knurl_xml_generator_destroy(g, &error) == KNURL_OK && l.count == 1 &&
+    CHECK(g->destroy(g, &error) == KNURL_OK && l.count == 1 &&
           l.outcome == KNURL_OK);
     l.reenter = 0;
     CHECK(knurl_xml_generator_new(&c, &g, &error) == KNURL_OK);
-    CHECK(knurl_xml_generator_read(g, out, sizeof(out), &n, &error) ==
-          KNURL_OK);
-    CHECK(knurl_xml_generator_destroy(g, &error) == KNURL_OK && l.count == 2 &&
+    CHECK(g->read(g, out, sizeof(out), &n, &error) == KNURL_OK);
+    CHECK(g->destroy(g, &error) == KNURL_OK && l.count == 2 &&
           l.outcome == KNURL_CANCELLED);
     CHECK(knurl_source_xml(&c, &source, &error) == KNURL_OK);
-    CHECK(knurl_source_destroy(source, &error) == KNURL_OK && l.count == 3 &&
+    CHECK(source->destroy(source, &error) == KNURL_OK && l.count == 3 &&
           l.outcome == KNURL_CANCELLED);
     CHECK(knurl_reply_new(&reply, &error) == KNURL_OK);
-    CHECK(knurl_reply_xml(reply, 200, &c, &error) == KNURL_OK);
-    CHECK(knurl_reply_text(reply, 201, "text/plain", "replace", &error) ==
+    CHECK(reply->xml(reply, 200, &c, &error) == KNURL_OK);
+    CHECK(reply->text(reply, 201, "text/plain", "replace", &error) ==
               KNURL_OK &&
           l.count == 4 && l.outcome == KNURL_CANCELLED);
-    CHECK(knurl_reply_xml(reply, 99, &c, &error) == KNURL_INVALID &&
-          l.count == 4);
-    CHECK(knurl_reply_destroy(reply, &error) == KNURL_OK);
+    CHECK(reply->xml(reply, 99, &c, &error) == KNURL_INVALID && l.count == 4);
+    CHECK(reply->destroy(reply, &error) == KNURL_OK);
     knurl_owned_bytes_init(&bytes);
     CHECK(knurl_xml_serialize_materialized(&r, &c.xml, 32, &bytes, &error) ==
               KNURL_LIMIT &&
@@ -374,18 +369,14 @@ static int generation(void)
     CHECK(lonejson_spooled_append(&blob.body, "\xff", 1, &native) ==
           LONEJSON_STATUS_OK);
     CHECK(knurl_xml_generator_new(&c, &g, &error) == KNURL_OK);
-    CHECK(knurl_xml_generator_read(g, out, 1, &n, &error) == KNURL_OK &&
-          out[0] == '<');
+    CHECK(g->read(g, out, 1, &n, &error) == KNURL_OK && out[0] == '<');
     do {
         char buffer[4096];
-        status =
-            knurl_xml_generator_read(g, buffer, sizeof(buffer), &n, &error);
+        status = g->read(g, buffer, sizeof(buffer), &n, &error);
     } while (status == KNURL_OK);
     CHECK(status == KNURL_INVALID);
-    CHECK(knurl_xml_generator_read(g, out, 1, &n, &error) == KNURL_INVALID &&
-          n == 0);
-    CHECK(knurl_xml_generator_destroy(g, &error) == KNURL_OK &&
-          l.outcome == KNURL_INVALID);
+    CHECK(g->read(g, out, 1, &n, &error) == KNURL_INVALID && n == 0);
+    CHECK(g->destroy(g, &error) == KNURL_OK && l.outcome == KNURL_INVALID);
     free(collected);
     lonejson_cleanup(&blob_map, &blob);
     lonejson_free(runtime);
@@ -425,10 +416,10 @@ static int limits_and_ownership(void)
     input.data = large;
     input.length = length + 24;
     CHECK(knurl_source_bytes(input, &source, &error) == KNURL_OK);
-    CHECK(knurl_xml_parse_source(source, &schema, &config, &blob, &error) ==
+    CHECK(source->xml_parse(source, &schema, &config, &blob, &error) ==
               KNURL_OK &&
           lonejson_spooled_size(&blob.body) == length);
-    CHECK(knurl_source_destroy(source, &error) == KNURL_OK);
+    CHECK(source->destroy(source, &error) == KNURL_OK);
     config.trim_text = 1;
     CHECK(parse("<doc><body>abc</body></doc>", &schema, &config, &blob, 0,
                 &error) == KNURL_INVALID);
@@ -467,15 +458,14 @@ static int limits_and_ownership(void)
         int result;
         CHECK(child >= 0);
         if (child == 0)
-            _exit(knurl_xml_generator_read(g, &byte, 1, &n, &error) ==
-                              KNURL_STATE &&
-                          knurl_xml_generator_destroy(g, &error) == KNURL_STATE
+            _exit(g->read(g, &byte, 1, &n, &error) == KNURL_STATE &&
+                          g->destroy(g, &error) == KNURL_STATE
                       ? 0
                       : 1);
         CHECK(waitpid(child, &result, 0) == child && WIFEXITED(result) &&
               WEXITSTATUS(result) == 0);
     }
-    CHECK(knurl_xml_generator_destroy(g, &error) == KNURL_OK);
+    CHECK(g->destroy(g, &error) == KNURL_OK);
     for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
         memcpy(mixed.text, invalid[i], 4);
         knurl_owned_bytes_init(&materialized);

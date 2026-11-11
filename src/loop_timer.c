@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "loop_internal.h"
+#include <knurl/loop.h>
 
 #include <stdlib.h>
 #include <time.h>
@@ -65,17 +66,18 @@ knurl_status knurl_loop_deadline(knurl_u64 now, long delay, knurl_u64 *out,
 void knurl_loop_timer_remove(knurl_timer *timer)
 {
     knurl_loop *loop;
-    if (!timer->scheduled)
+    if (!timer->impl->scheduled)
         return;
-    loop = timer->item.loop;
-    if (timer->timer_previous != NULL)
-        timer->timer_previous->timer_next = timer->timer_next;
+    loop = timer->impl->item.loop;
+    if (timer->impl->timer_previous != NULL)
+        timer->impl->timer_previous->impl->timer_next = timer->impl->timer_next;
     else
-        loop->timers = timer->timer_next;
-    if (timer->timer_next != NULL)
-        timer->timer_next->timer_previous = timer->timer_previous;
-    timer->timer_next = timer->timer_previous = NULL;
-    timer->scheduled = 0;
+        loop->impl->timers = timer->impl->timer_next;
+    if (timer->impl->timer_next != NULL)
+        timer->impl->timer_next->impl->timer_previous =
+            timer->impl->timer_previous;
+    timer->impl->timer_next = timer->impl->timer_previous = NULL;
+    timer->impl->scheduled = 0;
 }
 
 void knurl_loop_timer_schedule(knurl_timer *timer)
@@ -84,23 +86,25 @@ void knurl_loop_timer_schedule(knurl_timer *timer)
     knurl_timer *cursor;
     knurl_timer *previous;
     int order;
-    loop = timer->item.loop;
+    loop = timer->impl->item.loop;
     previous = NULL;
-    for (cursor = loop->timers; cursor != NULL; cursor = cursor->timer_next) {
-        (void)knurl_u64_compare(timer->due, cursor->due, &order, NULL);
+    for (cursor = loop->impl->timers; cursor != NULL;
+         cursor = cursor->impl->timer_next) {
+        (void)knurl_u64_compare(timer->impl->due, cursor->impl->due, &order,
+                                NULL);
         if (order < 0)
             break;
         previous = cursor;
     }
-    timer->timer_previous = previous;
-    timer->timer_next = cursor;
+    timer->impl->timer_previous = previous;
+    timer->impl->timer_next = cursor;
     if (previous != NULL)
-        previous->timer_next = timer;
+        previous->impl->timer_next = timer;
     else
-        loop->timers = timer;
+        loop->impl->timers = timer;
     if (cursor != NULL)
-        cursor->timer_previous = timer;
-    timer->scheduled = 1;
+        cursor->impl->timer_previous = timer;
+    timer->impl->scheduled = 1;
 }
 
 knurl_status knurl_loop_timer(knurl_loop *loop, long delay_ms, long repeat_ms,
@@ -123,28 +127,37 @@ knurl_status knurl_loop_timer(knurl_loop *loop, long delay_ms, long repeat_ms,
     status = knurl_loop_monotonic(&now, error);
     if (status != KNURL_OK)
         return status;
-    timer = calloc(1, sizeof(*timer));
+    timer = calloc(1, sizeof(struct knurl_timer_impl));
     if (timer == NULL)
         return knurl_fail(error, KNURL_NOMEM, "loop_timer",
                           "cannot allocate timer");
-    status = knurl_loop_deadline(now, delay_ms, &timer->due, error);
+    knurl_timer_receiver_init(timer);
+    status = knurl_loop_deadline(now, delay_ms, &timer->impl->due, error);
     if (status == KNURL_OK)
-        status = knurl_loop_accept(loop, &timer->item, KNURL_LOOP_TIMER,
-                                   retired, userdata, error);
+        status = knurl_loop_accept(loop, &timer->impl->item, timer,
+                                   KNURL_LOOP_TIMER, retired, userdata, error);
     if (status != KNURL_OK) {
         free(timer);
         return status;
     }
-    timer->repeat = repeat_ms;
-    timer->callback = callback;
+    timer->impl->repeat = repeat_ms;
+    timer->impl->callback = callback;
     knurl_loop_timer_schedule(timer);
-    loop->backend.wake(loop->backend.userdata);
+    loop->impl->backend.wake(loop->impl->backend.userdata);
     *out = timer;
     return KNURL_OK;
 }
 
 void knurl_timer_cancel(knurl_timer *timer)
 {
-    if (timer != NULL && knurl_loop_owner(timer->item.loop, NULL) == KNURL_OK)
-        knurl_loop_cancel(&timer->item);
+    if (timer != NULL &&
+        knurl_loop_owner(timer->impl->item.loop, NULL) == KNURL_OK)
+        knurl_loop_cancel(&timer->impl->item);
+}
+
+void knurl_timer_receiver_init(knurl_timer *receiver)
+{
+    static const knurl_timer methods = {knurl_timer_cancel, NULL};
+    *receiver = methods;
+    receiver->impl = (struct knurl_timer_impl *)receiver;
 }

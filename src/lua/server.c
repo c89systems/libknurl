@@ -281,7 +281,33 @@ static int l_stop(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
-static int l_validate(lua_State *L)
+static int l_notify_signal(lua_State *L)
+{
+    struct rl_server *s = rl_server(L, 1);
+    knurl_error error;
+    size_t number;
+    if (s == NULL || s->native == NULL)
+        return rl_error(
+            L, (rl_fail(&error, KNURL_STATE, "server is closed"), &error));
+    if (!rl_size(L, 2, &number) || number > INT_MAX)
+        return rl_error(L, (rl_fail(&error, KNURL_INVALID,
+                                    "signal number must fit a nonnegative int"),
+                            &error));
+    s->native->notify_signal(s->native, (int)number);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int l_kore_revision(lua_State *L)
+{
+    struct rl_server *s = rl_server(L, 1);
+    knurl_error error;
+    if (s == NULL || s->native == NULL)
+        return rl_error(
+            L, (rl_fail(&error, KNURL_STATE, "server is closed"), &error));
+    lua_pushstring(L, s->native->kore_revision(s->native));
+    return 1;
+}
+static int validate(lua_State *L, int resources)
 {
     struct rl_server *s = rl_server(L, 1);
     knurl_error e;
@@ -294,7 +320,8 @@ static int l_validate(lua_State *L)
     s->root = luaL_ref(L, LUA_REGISTRYINDEX);
     s->L = L;
     knurl_error_clear(&s->callback_error);
-    status = knurl_server_validate(s->native, &e);
+    status = resources ? s->native->preflight(s->native, &e)
+                       : s->native->validate(s->native, &e);
     luaL_unref(L, LUA_REGISTRYINDEX, s->root);
     s->root = LUA_NOREF;
     if (status == KNURL_OK && s->callback_error.status != KNURL_OK) {
@@ -306,6 +333,8 @@ static int l_validate(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+static int l_validate(lua_State *L) { return validate(L, 0); }
+static int l_preflight(lua_State *L) { return validate(L, 1); }
 static int l_content_type(lua_State *L)
 {
     struct rl_server *s = rl_server(L, 1);
@@ -774,8 +803,11 @@ void rl_servers_open(lua_State *L)
     static const luaL_Reg methods[] = {
         {"run", l_run},
         {"stop", l_stop},
+        {"notify_signal", l_notify_signal},
+        {"kore_revision", l_kore_revision},
         {"close", l_close},
         {"validate", l_validate},
+        {"preflight", l_preflight},
         {"effective_config", l_effective},
         {"content_type", l_content_type},
         {"set_serving", l_serving},

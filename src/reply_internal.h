@@ -8,7 +8,8 @@
 
 knurl_status knurl_reply_failure(knurl_reply *, int, const char *);
 
-struct knurl_reply {
+struct knurl_reply_impl {
+    knurl_reply receiver;
     int selected;
     int status;
     int busy;

@@ -5,7 +5,8 @@
 #include <knurl/websocket.h>
 
 struct knurl_runtime;
-struct knurl_websocket {
+struct knurl_websocket_impl {
+    knurl_websocket receiver;
     knurl_websocket *next;
     struct knurl_runtime *runtime;
     knurl_server *server;

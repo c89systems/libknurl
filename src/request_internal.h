@@ -5,7 +5,8 @@
 #include <knurl/request.h>
 #include <knurl/dispatch.h>
 
-struct knurl_request {
+struct knurl_request_impl {
+    knurl_request receiver;
     void *codec_data;
     void (*codec_cleanup)(void *);
     knurl_server *server;

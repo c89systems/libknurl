@@ -34,7 +34,7 @@ static knurl_status hello(knurl_request *request, knurl_reply *reply,
 {
     (void)request;
     (void)data;
-    return knurl_reply_text(reply, 200, "text/plain", "Hello from libknurl!\n",
+    return reply->text(reply, 200, "text/plain", "Hello from libknurl!\n",
                             error);
 }
 
@@ -45,6 +45,7 @@ int main(void)
     knurl_route_config route;
     knurl_error error;
     knurl_server *server = NULL;
+    knurl_router *router;
     knurl_status status;
 
     knurl_server_config_init(&config);
@@ -60,15 +61,16 @@ int main(void)
     route.path = "/";
     route.method = KNURL_HTTP_GET;
     route.handler = hello;
+    if (status == KNURL_OK) {
+        router = server->router(server);
+        status = router->route(router, &route, NULL, &error);
+    }
     if (status == KNURL_OK)
-        status = knurl_router_route(knurl_server_router(server), &route, NULL,
-                                    &error);
-    if (status == KNURL_OK)
-        status = knurl_server_run(server, NULL, &error);
+        status = server->run(server, NULL, &error);
     if (status != KNURL_OK)
         fprintf(stderr, "%s\n", error.message);
     if (server != NULL)
-        knurl_server_destroy(server, NULL);
+        server->destroy(server, NULL);
     return status == KNURL_OK ? 0 : 1;
 }
 ```

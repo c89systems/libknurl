@@ -461,8 +461,8 @@ knurl_status knurl_reply_json_materialized(knurl_reply *reply, int code,
         return status;
     status = knurl_reply_bytes(reply, code, "application/json", empty, error);
     if (status == KNURL_OK) {
-        reply->body = bytes.data;
-        reply->body_length = bytes.length;
+        reply->impl->body = bytes.data;
+        reply->impl->body_length = bytes.length;
     } else
         knurl_owned_bytes_cleanup(&bytes);
     return status;

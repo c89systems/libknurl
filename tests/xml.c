@@ -35,14 +35,14 @@ static void native_dom(void)
                                    &error) == KNURL_OK);
     memset(input, 'x', sizeof(document));
     free(input);
-    CHECK(knurl_xml_document_root(doc, &root, &error) == KNURL_OK);
-    CHECK(knurl_xml_node_name(root, &name, &error) == KNURL_OK &&
+    CHECK(doc->root(doc, &root, &error) == KNURL_OK);
+    CHECK(root->name(root, &name, &error) == KNURL_OK &&
           strcmp(name.name, "r") == 0 &&
           strcmp(name.namespace_uri, "urn:r") == 0 && name.prefix == NULL);
     namespaces[0].prefix = "q";
     namespaces[0].uri = "urn:q";
-    CHECK(knurl_xml_document_xpath(doc, "//q:x", namespaces, 1u, &result,
-                                   &error) == KNURL_OK &&
+    CHECK(doc->xpath(doc, "//q:x", namespaces, 1u, &result, &error) ==
+              KNURL_OK &&
           result.count == 2u);
     CHECK(knurl_xml_node_attribute(result.nodes[0], "a", NULL, &bytes, &found,
                                    &error) == KNURL_OK &&
@@ -54,60 +54,57 @@ static void native_dom(void)
     old = result.nodes[0];
     result.nodes[0] = NULL;
     knurl_xml_xpath_result_cleanup(&result);
-    CHECK(knurl_xml_document_xpath(doc, "count(//q:x)", namespaces, 1u, &result,
-                                   &error) == KNURL_OK &&
+    CHECK(doc->xpath(doc, "count(//q:x)", namespaces, 1u, &result, &error) ==
+              KNURL_OK &&
           result.kind == KNURL_XML_XPATH_NUMBER && result.number == 2.0);
     knurl_xml_xpath_result_cleanup(&result);
-    CHECK(knurl_xml_document_xpath(doc, "boolean(//q:x)", namespaces, 1u,
-                                   &result, &error) == KNURL_OK &&
+    CHECK(doc->xpath(doc, "boolean(//q:x)", namespaces, 1u, &result, &error) ==
+              KNURL_OK &&
           result.boolean);
     knurl_xml_xpath_result_cleanup(&result);
-    CHECK(knurl_xml_document_xpath(doc, "string(//q:x[2]/@a)", namespaces, 1u,
-                                   &result, &error) == KNURL_OK &&
+    CHECK(doc->xpath(doc, "string(//q:x[2]/@a)", namespaces, 1u, &result,
+                     &error) == KNURL_OK &&
           result.string.length == 1u);
     knurl_xml_xpath_result_cleanup(&result);
-    CHECK(knurl_xml_document_xpath(doc, "//q:x/@a", namespaces, 1u, &result,
-                                   &error) == KNURL_INVALID);
-    CHECK(knurl_xml_document_xpath(doc, "[", NULL, 0u, &result, &error) !=
+    CHECK(doc->xpath(doc, "//q:x/@a", namespaces, 1u, &result, &error) ==
+          KNURL_INVALID);
+    CHECK(doc->xpath(doc, "[", NULL, 0u, &result, &error) != KNURL_OK);
+    CHECK(root->set_attribute(root, "x", "<&", 2u, "urn:q", "q", &error) ==
           KNURL_OK);
-    CHECK(knurl_xml_node_set_attribute(root, "x", "<&", 2u, "urn:q", "q",
-                                       &error) == KNURL_OK);
-    CHECK(knurl_xml_node_name(old, &name, &error) == KNURL_STATE);
-    CHECK(knurl_xml_node_close(old, &error) == KNURL_OK);
-    CHECK(knurl_xml_node_name(root, &name, &error) == KNURL_STATE);
-    CHECK(knurl_xml_node_close(root, &error) == KNURL_OK);
-    CHECK(knurl_xml_document_root(doc, &root, &error) == KNURL_OK);
-    CHECK(knurl_xml_node_attribute(root, "x", "urn:q", &bytes, &found,
-                                   &error) == KNURL_OK &&
+    CHECK(old->name(old, &name, &error) == KNURL_STATE);
+    CHECK(old->close(old, &error) == KNURL_OK);
+    CHECK(root->name(root, &name, &error) == KNURL_STATE);
+    CHECK(root->close(root, &error) == KNURL_OK);
+    CHECK(doc->root(doc, &root, &error) == KNURL_OK);
+    CHECK(root->attribute(root, "x", "urn:q", &bytes, &found, &error) ==
+              KNURL_OK &&
           found && bytes.length == 2u && memcmp(bytes.data, "<&", 2u) == 0);
     knurl_owned_bytes_cleanup(&bytes);
-    CHECK(knurl_xml_node_set_attribute(root, "x", "v", 1u, "urn:other", "q",
-                                       &error) == KNURL_CONFLICT);
-    CHECK(knurl_xml_node_set_attribute(root, "x", "v", 1u, "urn:other", "xml",
-                                       &error) == KNURL_INVALID);
-    CHECK(knurl_xml_node_set_text(root, "\0", 1u, &error) == KNURL_INVALID);
+    CHECK(root->set_attribute(root, "x", "v", 1u, "urn:other", "q", &error) ==
+          KNURL_CONFLICT);
+    CHECK(root->set_attribute(root, "x", "v", 1u, "urn:other", "xml", &error) ==
+          KNURL_INVALID);
+    CHECK(root->set_text(root, "\0", 1u, &error) == KNURL_INVALID);
     memset(&child_config, 0, sizeof(child_config));
     child_config.text = "<&";
     child_config.text_size = 2u;
     child_config.text_present = 1;
-    CHECK(knurl_xml_node_append_child(root, "item", &child_config, &child,
-                                      &error) == KNURL_OK);
-    CHECK(knurl_xml_node_name(child, &name, &error) == KNURL_OK &&
-          strcmp(name.namespace_uri, "urn:r") == 0);
-    CHECK(knurl_xml_node_close(root, &error) == KNURL_OK);
-    CHECK(knurl_xml_node_set_text(child, "literal &value;",
-                                  sizeof("literal &value;") - 1u,
-                                  &error) == KNURL_OK);
-    CHECK(knurl_xml_node_close(child, &error) == KNURL_OK);
-    CHECK(knurl_xml_document_serialize_materialized(doc, 1, &bytes, &error) ==
+    CHECK(root->append_child(root, "item", &child_config, &child, &error) ==
           KNURL_OK);
+    CHECK(child->name(child, &name, &error) == KNURL_OK &&
+          strcmp(name.namespace_uri, "urn:r") == 0);
+    CHECK(root->close(root, &error) == KNURL_OK);
+    CHECK(child->set_text(child, "literal &value;",
+                          sizeof("literal &value;") - 1u, &error) == KNURL_OK);
+    CHECK(child->close(child, &error) == KNURL_OK);
+    CHECK(doc->serialize_materialized(doc, 1, &bytes, &error) == KNURL_OK);
     CHECK(bytes.length > 0u);
     knurl_owned_bytes_cleanup(&bytes);
-    CHECK(knurl_xml_document_root(doc, &root, &error) == KNURL_OK);
-    CHECK(knurl_xml_node_remove(root, &error) == KNURL_INVALID);
-    CHECK(knurl_xml_document_close(doc, &error) == KNURL_OK);
-    CHECK(knurl_xml_node_name(root, &name, &error) == KNURL_STATE);
-    CHECK(knurl_xml_node_close(root, &error) == KNURL_OK);
+    CHECK(doc->root(doc, &root, &error) == KNURL_OK);
+    CHECK(root->remove(root, &error) == KNURL_INVALID);
+    CHECK(doc->close(doc, &error) == KNURL_OK);
+    CHECK(root->name(root, &name, &error) == KNURL_STATE);
+    CHECK(root->close(root, &error) == KNURL_OK);
     CHECK(knurl_xml_document_parse("<r>", 3u, NULL, &doc, &error) != KNURL_OK &&
           doc == NULL);
     CHECK(knurl_xml_document_parse(
@@ -122,9 +119,8 @@ static void native_dom(void)
     config.max_xpath_nodes = 1u;
     CHECK(knurl_xml_document_parse(document, sizeof(document) - 1u, &config,
                                    &doc, &error) == KNURL_OK);
-    CHECK(knurl_xml_document_xpath(doc, "//*", NULL, 0u, &result, &error) ==
-          KNURL_INVALID);
-    CHECK(knurl_xml_document_close(doc, &error) == KNURL_OK);
+    CHECK(doc->xpath(doc, "//*", NULL, 0u, &result, &error) == KNURL_INVALID);
+    CHECK(doc->close(doc, &error) == KNURL_OK);
 }
 typedef struct events {
     knurl_xml_sax *parser;
@@ -146,7 +142,7 @@ static knurl_status start(void *context, const knurl_xml_name *name,
               memcmp(attrs[0].value, "&", 1u) == 0);
     }
     if (state->reenter) {
-        CHECK(knurl_xml_sax_close(state->parser, error) == KNURL_STATE);
+        CHECK(state->parser->close(state->parser, error) == KNURL_STATE);
         return KNURL_OK;
     }
     return state->fail == 2 ? KNURL_AGAIN
@@ -247,9 +243,8 @@ static void *foreign_thread(void *context)
     knurl_xml_document *doc = (knurl_xml_document *)context;
     knurl_xml_node *node = NULL;
     knurl_error error;
-    CHECK(knurl_xml_document_root(doc, &node, &error) == KNURL_STATE &&
-          node == NULL);
-    CHECK(knurl_xml_document_close(doc, &error) == KNURL_STATE);
+    CHECK(doc->root(doc, &node, &error) == KNURL_STATE && node == NULL);
+    CHECK(doc->close(doc, &error) == KNURL_STATE);
     return NULL;
 }
 static void ownership(void)
@@ -271,9 +266,9 @@ static void ownership(void)
     }
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
           WEXITSTATUS(status) == 0);
-    CHECK(knurl_xml_document_root(doc, &node, &error) == KNURL_OK);
-    CHECK(knurl_xml_node_close(node, &error) == KNURL_OK);
-    CHECK(knurl_xml_document_close(doc, &error) == KNURL_OK);
+    CHECK(doc->root(doc, &node, &error) == KNURL_OK);
+    CHECK(node->close(node, &error) == KNURL_OK);
+    CHECK(doc->close(doc, &error) == KNURL_OK);
 }
 static void *worker(void *unused)
 {

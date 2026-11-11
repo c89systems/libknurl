@@ -123,8 +123,9 @@ static int preload_call(lua_State *L)
         lua_pop(L, 1);
     }
     {
-        static const char *base[] = {"type",         "pairs",    "ipairs",
-                                     "setmetatable", "tostring", "error"};
+        static const char *base[] = {"type",         "pairs",        "ipairs",
+                                     "setmetatable", "getmetatable", "tostring",
+                                     "error"};
         for (i = 0; i < (int)(sizeof(base) / sizeof(base[0])); ++i) {
             lua_getglobal(L, base[i]);
             if (!lua_isfunction(L, -1)) {

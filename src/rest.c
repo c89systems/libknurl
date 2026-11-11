@@ -37,13 +37,14 @@ static knurl_status recover(knurl_request *request, struct rest_context *s,
         knurl_fail(&cause, status, "rest", "REST callback failed");
     /* Discard a partial handler payload on the owner loop, retaining headers.
      */
-    if (knurl_reply_status(request->reply, 500, error) != KNURL_OK)
+    if (knurl_reply_status(request->impl->reply, 500, error) != KNURL_OK)
         return KNURL_STATE;
-    request->reply->selected = 0;
+    request->impl->reply->impl->selected = 0;
     if (s->config.on_error != NULL) {
         knurl_error_clear(&handler_error);
-        status = s->config.on_error(request, phase, &cause, request->reply,
-                                    s->config.userdata, &handler_error);
+        status =
+            s->config.on_error(request, phase, &cause, request->impl->reply,
+                               s->config.userdata, &handler_error);
         if (status != KNURL_OK) {
             if (error != NULL) {
                 if (handler_error.status == status)
@@ -54,12 +55,13 @@ static knurl_status recover(knurl_request *request, struct rest_context *s,
             }
             return status;
         }
-        if (status == KNURL_OK && knurl_reply_is_selected(request->reply)) {
+        if (status == KNURL_OK &&
+            knurl_reply_is_selected(request->impl->reply)) {
             knurl_error_clear(error);
             return KNURL_OK;
         }
     }
-    status = knurl_reply_error_json(request->reply,
+    status = knurl_reply_error_json(request->impl->reply,
                                     phase != KNURL_REST_HANDLER &&
                                             (cause.status == KNURL_INVALID ||
                                              cause.status == KNURL_LIMIT ||
@@ -71,7 +73,7 @@ static knurl_status recover(knurl_request *request, struct rest_context *s,
         /* Fixed finite fallback also avoids recursion through application error
          * policy. */
         status = knurl_reply_text(
-            request->reply, 500, "application/json; charset=utf-8",
+            request->impl->reply, 500, "application/json; charset=utf-8",
             "{\"ok\":false,\"error\":{\"kind\":\"json_encode\",\"message\":"
             "\"REST error response JSON encode failed\"}}\n",
             error);
@@ -94,8 +96,8 @@ static knurl_status dispatch(knurl_request *request, knurl_reply *reply,
         return knurl_fail(error, KNURL_NOMEM, "rest",
                           "allocating REST request");
     s->config = *config;
-    request->codec_data = s;
-    request->codec_cleanup = release;
+    request->impl->codec_data = s;
+    request->impl->codec_cleanup = release;
     if (!config->decode_disabled) {
         if (knurl_body_kind(knurl_request_body(request)) == KNURL_BODY_FILE) {
             /* REST decoding is explicitly buffered. Retain a public body copy
@@ -196,7 +198,7 @@ static knurl_status add(knurl_router *router, knurl_route_group *group,
     if (status != KNURL_OK)
         free(copy);
     else {
-        registered->release_userdata = free;
+        registered->impl->release_userdata = free;
         if (out != NULL)
             *out = registered;
     }

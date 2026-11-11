@@ -5,7 +5,8 @@
 #include <knurl/io.h>
 #include "executor.h"
 
-struct knurl_source {
+struct knurl_source_impl {
+    knurl_source receiver;
     knurl_source_config config;
     knurl_u64 position;
     void *owner;

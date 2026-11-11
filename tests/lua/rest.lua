@@ -95,7 +95,7 @@ for _,body in ipairs{'stream','materialized','streaming_upload'} do
   value,problem=rest.route(server,{path='/bad',body=body,handler=function() end})
   failed(value,problem,knurl.status.INVALID)
 end
-ok(rest.route(server,{path='/spill',method='POST',body={mode='buffered',max_bytes=32,memory_buffer_limit_bytes=1},
+ok(server:rest_route({path='/spill',method='POST',body={mode='buffered',max_bytes=32,memory_buffer_limit_bytes=1},
   handler=function(req)
     assert(req.body_spooled and req.body==nil and req.json.n==2)
     spills=spills+1;return req.json
@@ -108,7 +108,8 @@ for _,name in ipairs{'decode','decode_disabled','on_error'} do
   local result,why=rest.route(server,{path='/reserved',handler=function() end,[name]=false})
   failed(result,why,knurl.status.INVALID);assert(server:route_count()==count)
 end
-ok(rest.route(server,{path='/echo',method='POST',openapi={summary='echo'},handler=function(req)
+ok(server:rest_route({path='/echo',method='POST',openapi={summary='echo'},handler=function(req)
+  assert(type(req)=='table' and req.method=='POST')
   calls=calls+1;return {n=req.json.n},{status=202}
 end,after=function(req,reply)
   if req.body=='{' then
@@ -152,7 +153,7 @@ ok(rest.group(server,{path_prefix='/api',method='POST',response={status=201,newl
   before=function() before=before+1 end,after=function(_,reply) after=after+1;assert(reply.body=='{"n":1}') end,
   routes={{path='/one',handler=function(req) return req.json end}}}))
 local group=ok(server:group('/native/'))
-ok(rest.route(group,{path='/r',method='POST',openapi={summary='native'},handler=function() return {} end}))
+ok(group:rest_route({path='/r',method='POST',openapi={summary='native'},handler=function() return {} end}))
 local regex_group=ok(server:group('/v1.0'))
 ok(regex_group:route{path='^/items/[0-9]+$',openapi={summary='regex'},handler=function() end})
 ok(server:json_typed_route{path='/typed-doc',body=false,openapi={summary='typed'},handler=function() end})

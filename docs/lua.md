@@ -30,7 +30,8 @@ above Lua's signed range use `knurl.count`. Method names keep their string
 meaning; SSE retry retains its explicit integer/count requirement.
 
 The [buffered REST facade](rest.md) also lifts Vectis's server-side
-`knurl.rest.route/group/json/error_response` workflow. [OpenAPI](openapi.md)
+`knurl.rest.route/group/json/error_response` workflow. Servers and groups also
+expose `:rest_route{...}` through the same adapter. [OpenAPI](openapi.md)
 binds `server:openapi_doc/openapi` and route annotations to the same public C
 router, with retained public LoneJSON schema owners and bounded JSON/YAML output.
 
@@ -578,6 +579,15 @@ Documents, views and SAX receivers also support Lua 5.5 `<close>` scopes.
 The [ported XML fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/xml.lua) covers those workflows, bounded
 delivery beyond 16 MiB, callbacks/reentry, both collectors, owner release and
 allocation failures.
+
+`server:preflight()` validates declarations and TLS material, then probes startup
+listeners, the configured access log and applicable explicit body spool storage.
+Call it before starting a supervised runtime to receive Core resource errors in
+the caller. It can create an empty access log. `server:validate()` performs
+declaration and material validation. `source:cancelled()` reads the cancellation
+state of a live source. `server:notify_signal(number)` forwards a host-delivered
+signal to Core supervision, and `server:kore_revision()` identifies its runtime
+backend revision.
 
 ## Host providers
 

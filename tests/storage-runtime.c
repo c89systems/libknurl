@@ -90,14 +90,13 @@ static knurl_status native_work(knurl_job *job, knurl_bytes args, void *data,
 {
     struct native_context *c = data;
     struct fixture *f = c->f;
-    const knurl_storage_arguments *a =
-        knurl_storage_operation_arguments(c->operation);
+    const knurl_storage_arguments *a = c->operation->arguments(c->operation);
     knurl_storage_result invalid;
     struct writer *writer;
     size_t n;
     VERIFY(f, !pthread_equal(f->owner, pthread_self()));
     knurl_storage_result_init(&invalid);
-    VERIFY(f, knurl_storage_operation_complete(c->operation, &invalid, error) ==
+    VERIFY(f, c->operation->complete(c->operation, &invalid, error) ==
                   KNURL_STATE);
     if (a->action == KNURL_STORAGE_DELETE && strcmp(a->path, "/late") == 0)
         __atomic_store_n(&f->late_started, 1, __ATOMIC_RELEASE);
@@ -109,7 +108,7 @@ static knurl_status native_work(knurl_job *job, knurl_bytes args, void *data,
     }
     VERIFY(f, args.length == 6 && memcmp(args.data, "copied", 6) == 0);
     if (a->action == KNURL_STORAGE_PUT_WRITE) {
-        writer = knurl_storage_resource_userdata(a->resource);
+        writer = a->resource->userdata(a->resource);
         n = a->bytes.length > 3 ? 3 : a->bytes.length;
         VERIFY(f, writer->size + n <= sizeof(writer->bytes));
         memcpy(writer->bytes + writer->size, a->bytes.data, n);
@@ -121,8 +120,7 @@ static void native_retired(const knurl_job_outcome *outcome, void *data)
 {
     struct native_context *c = data;
     knurl_storage_result result;
-    const knurl_storage_arguments *a =
-        knurl_storage_operation_arguments(c->operation);
+    const knurl_storage_arguments *a = c->operation->arguments(c->operation);
     knurl_error error;
     knurl_status status;
     c->job = NULL;
@@ -137,11 +135,11 @@ static void native_retired(const knurl_job_outcome *outcome, void *data)
             result.has_info = 1;
             result.info.size.low = 7;
         }
-    } else if (!knurl_storage_operation_cancelled(c->operation)) {
+    } else if (!c->operation->cancelled(c->operation)) {
         result.code = KNURL_STORAGE_IO;
         result.error = outcome->error;
     }
-    status = knurl_storage_operation_complete(c->operation, &result, &error);
+    status = c->operation->complete(c->operation, &result, &error);
     VERIFY(c->f, status == KNURL_OK);
 }
 static void close_writer(void *data)
@@ -174,20 +172,19 @@ static knurl_status invoke(knurl_storage_operation *op,
         r.has_info = 1;
         r.info.etag = "\"sync\"";
         r.info.size.low = 4;
-        status = knurl_storage_operation_complete(op, &r, error);
+        status = op->complete(op, &r, error);
         VERIFY(f, status == KNURL_OK);
-        VERIFY(f,
-               knurl_storage_operation_complete(op, &r, error) == KNURL_STATE);
+        VERIFY(f, op->complete(op, &r, error) == KNURL_STATE);
         return status;
     }
     if (a->action == KNURL_STORAGE_STAT && strcmp(a->path, "/bad") == 0)
-        return knurl_storage_operation_complete(op, &r, error);
+        return op->complete(op, &r, error);
     if (a->action == KNURL_STORAGE_COPY) {
         char recovery[64] = "/.vectis-txn/recovery";
         r.code = KNURL_STORAGE_IO;
         r.committed = r.partial = 1;
         r.recovery_path = recovery;
-        status = knurl_storage_operation_complete(op, &r, error);
+        status = op->complete(op, &r, error);
         memset(recovery, 'x', sizeof(recovery));
         return status;
     }
@@ -200,35 +197,34 @@ static knurl_status invoke(knurl_storage_operation *op,
         rc.kind = KNURL_STORAGE_WRITE;
         rc.close = close_writer;
         rc.userdata = writer;
-        status = knurl_storage_resource_new(op, &rc, &resource, error);
+        status = op->resource_new(op, &rc, &resource, error);
         if (status != KNURL_OK) {
             free(writer);
             return status;
         }
         r.resource = resource;
-        status = knurl_storage_operation_complete(op, &r, error);
+        status = op->complete(op, &r, error);
         if (status != KNURL_OK)
-            knurl_storage_resource_close(resource, NULL);
+            resource->close(resource, NULL);
         return status;
     }
     if (a->action == KNURL_STORAGE_PUT_FINISH) {
-        writer = knurl_storage_resource_userdata(a->resource);
+        writer = a->resource->userdata(a->resource);
         VERIFY(f, writer->size == 6 && memcmp(writer->bytes, "abcdef", 6) == 0);
         r.committed = 1;
-        return knurl_storage_operation_complete(op, &r, error);
+        return op->complete(op, &r, error);
     }
     native = calloc(1, sizeof(*native));
     if (native == NULL)
         return KNURL_NOMEM;
     native->f = f;
     native->operation = op;
-    status = knurl_storage_operation_set_userdata(op, native, error);
+    status = op->set_userdata(op, native, error);
     if (status != KNURL_OK) {
         free(native);
         return status;
     }
-    VERIFY(f, knurl_storage_operation_set_userdata(op, native, error) ==
-                  KNURL_STATE);
+    VERIFY(f, op->set_userdata(op, native, error) == KNURL_STATE);
     knurl_job_config_init(&job);
     job.work = native_work;
     job.retired = native_retired;
@@ -246,7 +242,7 @@ static knurl_status cancel(knurl_storage_operation *op,
                            const knurl_storage_arguments *args, void *data,
                            knurl_error *error)
 {
-    struct native_context *native = knurl_storage_operation_userdata(op);
+    struct native_context *native = op->userdata(op);
     (void)data;
     if (native != NULL && native->job != NULL) {
         knurl_job_cancel(native->job, NULL);
@@ -262,7 +258,7 @@ static void provider_retired(knurl_storage_operation *op,
                              const knurl_storage_outcome *outcome, void *data)
 {
     struct fixture *f = data;
-    struct native_context *native = knurl_storage_operation_userdata(op);
+    struct native_context *native = op->userdata(op);
     (void)outcome;
     f->provider_retired++;
     if (native != NULL) {
@@ -276,8 +272,8 @@ static void consumer_interrupted(knurl_storage_operation *op,
 {
     struct client_context *c = data;
     VERIFY(c->f, pthread_equal(c->f->owner, pthread_self()) &&
-                     knurl_storage_operation_cancelled(op) &&
-                     cause == KNURL_TIMEOUT && c->kind == TIMED);
+                     op->cancelled(op) && cause == KNURL_TIMEOUT &&
+                     c->kind == TIMED);
     c->f->interruptions++;
 }
 static void consumer_retired(const knurl_storage_outcome *outcome, void *data)
@@ -336,8 +332,7 @@ static void consumer_completed(knurl_storage_operation *op,
         break;
     case BEGIN:
     case CLOSED_BEGIN:
-        VERIFY(f, knurl_storage_operation_take_resource(op, &resource,
-                                                        &error) == KNURL_OK);
+        VERIFY(f, op->take_resource(op, &resource, &error) == KNURL_OK);
         a.action = KNURL_STORAGE_PUT_WRITE;
         a.resource = resource;
         a.bytes.data = chunk;
@@ -347,11 +342,9 @@ static void consumer_completed(knurl_storage_operation *op,
             VERIFY(f, start(f, WRITE_FIRST, &a) == 0);
         } else {
             VERIFY(f, start(f, CLOSED_WRITE, &a) == 0);
-            VERIFY(f,
-                   knurl_storage_resource_close(resource, &error) == KNURL_OK);
-            VERIFY(f, knurl_storage_operation_start(
-                          f->provider, knurl_storage_operation_loop(op), &a,
-                          NULL, &bad, &error) == KNURL_INVALID &&
+            VERIFY(f, resource->close(resource, &error) == KNURL_OK);
+            VERIFY(f, f->provider->start(f->provider, op->loop(op), &a, NULL,
+                                         &bad, &error) == KNURL_INVALID &&
                           bad == NULL);
         }
         memset(chunk, 'x', 6);
@@ -373,7 +366,7 @@ static void consumer_completed(knurl_storage_operation *op,
     case FINISH:
         VERIFY(f, r->committed);
         f->finished = 1;
-        VERIFY(f, knurl_storage_resource_close(f->writer, &error) == KNURL_OK);
+        VERIFY(f, f->writer->close(f->writer, &error) == KNURL_OK);
         f->writer = NULL;
         break;
     case CLOSED_WRITE:
@@ -383,20 +376,18 @@ static void consumer_completed(knurl_storage_operation *op,
         VERIFY(f, r->has_info && r->info.size.low == 7);
         break;
     case RO_READ:
-        VERIFY(f, knurl_storage_operation_take_asset(op, &asset, &error) ==
-                      KNURL_OK);
+        VERIFY(f, op->take_asset(op, &asset, &error) == KNURL_OK);
         offset.high = length.high = 0;
         offset.low = 3;
         length.low = 2;
-        VERIFY(f, knurl_asset_source_take(asset, offset, length,
-                                          &f->read_source, &error) == KNURL_OK);
-        VERIFY(f, knurl_source_read(f->read_source, bytes, sizeof(bytes), &n,
-                                    &error) == KNURL_OK &&
+        VERIFY(f, asset->source_take(asset, offset, length, &f->read_source,
+                                     &error) == KNURL_OK);
+        VERIFY(f, f->read_source->read(f->read_source, bytes, sizeof(bytes), &n,
+                                       &error) == KNURL_OK &&
                       n == 2 && memcmp(bytes, "lo", 2) == 0);
         break;
     case RO_LIST:
-        VERIFY(f, knurl_storage_operation_take_resource(op, &resource,
-                                                        &error) == KNURL_OK);
+        VERIFY(f, op->take_resource(op, &resource, &error) == KNURL_OK);
         a.action = KNURL_STORAGE_LIST_NEXT;
         a.resource = resource;
         VERIFY(f, start(f, RO_ITEM, &a) == 0);
@@ -406,13 +397,13 @@ static void consumer_completed(knurl_storage_operation *op,
                       r->entry.info.size.low == 7);
         f->listed++;
         a.action = KNURL_STORAGE_LIST_NEXT;
-        a.resource = knurl_storage_operation_arguments(op)->resource;
+        a.resource = op->arguments(op)->resource;
         VERIFY(f, start(f, RO_END, &a) == 0);
         break;
     case RO_END:
         VERIFY(f, r->code == KNURL_STORAGE_END);
-        resource = knurl_storage_operation_arguments(op)->resource;
-        VERIFY(f, knurl_storage_resource_close(resource, &error) == KNURL_OK);
+        resource = op->arguments(op)->resource;
+        VERIFY(f, resource->close(resource, &error) == KNURL_OK);
         break;
     default:
         VERIFY(f, 0);
@@ -440,7 +431,7 @@ static int start(struct fixture *f, int kind, knurl_storage_arguments *args)
         config.timeout_ms = 20;
     status = knurl_storage_operation_start(
         kind >= RO_STAT && kind <= RO_END ? f->readonly : f->provider,
-        knurl_server_loop(f->server), args, &config, &op, &error);
+        f->server->loop(f->server), args, &config, &op, &error);
     if (status != KNURL_OK) {
         fprintf(stderr, "operation %d: %s\n", kind, error.message);
         free(c);
@@ -451,7 +442,7 @@ static int start(struct fixture *f, int kind, knurl_storage_arguments *args)
     if (kind == LATE)
         f->late = op;
     if (kind == CANCEL_ERROR)
-        CHECK(knurl_storage_operation_cancel(op, &error) == KNURL_IO);
+        CHECK(op->cancel(op, &error) == KNURL_IO);
     return 0;
 }
 static void asset_closed(void *data)
@@ -585,7 +576,7 @@ static void pool_closed(void *data)
     struct fixture *f = data;
     f->pools_closed++;
     if (f->pools_closed == 2)
-        knurl_server_request_stop(f->server, NULL);
+        f->server->request_stop(f->server, NULL);
 }
 static void advance(knurl_timer *timer, void *data)
 {
@@ -593,14 +584,14 @@ static void advance(knurl_timer *timer, void *data)
     knurl_error error;
     if (f->abandon) {
         if (__atomic_load_n(&f->late_started, __ATOMIC_ACQUIRE)) {
-            knurl_timer_cancel(timer);
-            knurl_server_request_stop(f->server, NULL);
+            timer->cancel(timer);
+            f->server->request_stop(f->server, NULL);
         }
         return;
     }
     if (__atomic_load_n(&f->failed, __ATOMIC_ACQUIRE)) {
-        knurl_timer_cancel(timer);
-        knurl_server_request_stop(f->server, NULL);
+        timer->cancel(timer);
+        f->server->request_stop(f->server, NULL);
         return;
     }
     if (f->closing || !__atomic_load_n(&f->released, __ATOMIC_ACQUIRE) ||
@@ -610,11 +601,11 @@ static void advance(knurl_timer *timer, void *data)
                   f->timeout_retired == 1 && f->cancel_error_retired == 1 &&
                   f->finished && f->listed == 1 && f->writer_closed == 2);
     f->closing = 1;
-    knurl_timer_cancel(timer);
-    VERIFY(f, knurl_storage_provider_close(f->provider, &error) == KNURL_OK);
-    VERIFY(f, knurl_storage_provider_close(f->readonly, &error) == KNURL_OK);
-    VERIFY(f, knurl_source_destroy(f->read_source, &error) == KNURL_OK);
-    VERIFY(f, knurl_asset_provider_close(f->assets, &error) == KNURL_OK);
+    timer->cancel(timer);
+    VERIFY(f, f->provider->close(f->provider, &error) == KNURL_OK);
+    VERIFY(f, f->readonly->close(f->readonly, &error) == KNURL_OK);
+    VERIFY(f, f->read_source->destroy(f->read_source, &error) == KNURL_OK);
+    VERIFY(f, f->assets->close(f->assets, &error) == KNURL_OK);
     VERIFY(f, f->asset_opened == f->asset_closed);
     VERIFY(f, knurl_executor_close(f->executor, &error) == KNURL_OK &&
                   knurl_executor_close(f->small, &error) == KNURL_OK);
@@ -649,8 +640,8 @@ static knurl_status worker_start(knurl_server *server,
     if (f->abandon) {
         if (submit_probe(f) != 0)
             return KNURL_INVALID;
-        return knurl_loop_timer(knurl_server_loop(server), 1, 1, advance, NULL,
-                                f, &f->tick, error);
+        return knurl_loop_timer(server->loop(server), 1, 1, advance, NULL, f,
+                                &f->tick, error);
     }
     VERIFY(f, submit_probe(f) == 0);
     executor.threads = 1;
@@ -697,23 +688,21 @@ static knurl_status worker_start(knurl_server *server,
     args.path = "/condition";
     args.if_match = "*";
     invoked = f->invoked;
-    VERIFY(f, knurl_storage_operation_start(limited, knurl_server_loop(server),
-                                            &args, NULL, &op,
-                                            error) == KNURL_NOT_SUPPORTED &&
+    VERIFY(f, limited->start(limited, server->loop(server), &args, NULL, &op,
+                             error) == KNURL_NOT_SUPPORTED &&
                   op == NULL && f->invoked == invoked);
-    VERIFY(f, knurl_storage_provider_close(limited, error) == KNURL_OK);
+    VERIFY(f, limited->close(limited, error) == KNURL_OK);
     knurl_asset_provider_config_init(&assets);
     assets.open = asset_open;
     assets.userdata = f;
     status = knurl_asset_provider_new(&assets, &f->assets, error);
     if (status != KNURL_OK)
         return status;
-    status = knurl_storage_provider_assets(f->assets, &f->readonly, error);
+    status = f->assets->storage_provider(f->assets, &f->readonly, error);
     if (status != KNURL_OK)
         return status;
-    VERIFY(f, knurl_storage_operation_start(
-                  f->readonly, knurl_server_loop(server), &args, NULL, &op,
-                  error) == KNURL_NOT_SUPPORTED &&
+    VERIFY(f, f->readonly->start(f->readonly, server->loop(server), &args, NULL,
+                                 &op, error) == KNURL_NOT_SUPPORTED &&
                   op == NULL);
     knurl_storage_arguments_init(&args);
     args.action = KNURL_STORAGE_DELETE;
@@ -747,31 +736,31 @@ static knurl_status worker_start(knurl_server *server,
     args.action = KNURL_STORAGE_LIST_OPEN;
     args.path = "/";
     VERIFY(f, start(f, RO_LIST, &args) == 0);
-    return knurl_loop_timer(knurl_server_loop(server), 1, 1, advance, NULL, f,
+    return knurl_loop_timer(server->loop(server), 1, 1, advance, NULL, f,
                             &f->tick, error);
 }
 static knurl_status handler(knurl_request *request, knurl_reply *reply,
                             void *data, knurl_error *error)
 {
     struct fixture *f = data;
-    const char *path = knurl_request_path(request).data;
+    const char *path = request->path(request).data;
     if (strcmp(path, "/status") == 0)
-        return knurl_reply_text(
-            reply, 200, "text/plain",
-            __atomic_load_n(&f->late_started, __ATOMIC_ACQUIRE) ? "ready"
-                                                                : "waiting",
-            error);
+        return reply->text(reply, 200, "text/plain",
+                           __atomic_load_n(&f->late_started, __ATOMIC_ACQUIRE)
+                               ? "ready"
+                               : "waiting",
+                           error);
     if (strcmp(path, "/cancel-late") == 0) {
-        if (knurl_storage_operation_cancel(f->late, error) != KNURL_OK)
+        if (f->late->cancel(f->late, error) != KNURL_OK)
             return KNURL_STATE;
         VERIFY(f, f->late_retired == 0);
-        return knurl_reply_text(reply, 200, "text/plain", "cancelled", error);
+        return reply->text(reply, 200, "text/plain", "cancelled", error);
     }
     if (strcmp(path, "/release") == 0) {
         __atomic_store_n(&f->released, 1, __ATOMIC_RELEASE);
-        return knurl_reply_text(reply, 200, "text/plain", "released", error);
+        return reply->text(reply, 200, "text/plain", "released", error);
     }
-    return knurl_reply_text(reply, 200, "text/plain", "progress", error);
+    return reply->text(reply, 200, "text/plain", "progress", error);
 }
 static int request(unsigned short port, const char *path, char *body)
 {
@@ -869,19 +858,18 @@ static knurl_status ready(knurl_server *server,
             return KNURL_INVALID;
         knurl_storage_arguments_init(&arguments);
         arguments.path = "/sync";
-        if (knurl_storage_operation_start(provider, knurl_server_loop(server),
-                                          &arguments, NULL, &operation,
-                                          error) != KNURL_STATE ||
+        if (provider->start(provider, server->loop(server), &arguments, NULL,
+                            &operation, error) != KNURL_STATE ||
             operation != NULL)
             return KNURL_INVALID;
-        if (knurl_storage_provider_close(provider, error) != KNURL_OK)
+        if (provider->close(provider, error) != KNURL_OK)
             return KNURL_INVALID;
     }
     if (f->abandon)
         return KNURL_OK;
-    if (knurl_server_listener_at(server, 0, &listener, error) != KNURL_OK)
+    if (server->listener_at(server, 0, &listener, error) != KNURL_OK)
         return KNURL_STATE;
-    if (knurl_server_set_serving(server, 1, error) != KNURL_OK)
+    if (server->set_serving(server, 1, error) != KNURL_OK)
         return KNURL_STATE;
     f->child = fork();
     if (f->child == 0) {
@@ -940,9 +928,9 @@ int main(int argc, char **argv)
     route.method = KNURL_HTTP_GET;
     route.handler = handler;
     route.userdata = &fixture;
-    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
-                             &error) == KNURL_OK);
-    status = knurl_server_run(server, &result, &error);
+    CHECK(knurl_router_route(server->router(server), &route, NULL, &error) ==
+          KNURL_OK);
+    status = server->run(server, &result, &error);
     if (fixture.abandon) {
         CHECK(status == KNURL_OK && result.escalated && result.has_failure &&
               result.last_failure.abandoned &&
@@ -954,7 +942,7 @@ int main(int argc, char **argv)
                 kill(fixture.child, SIGTERM);
                 waitpid(fixture.child, NULL, 0);
             }
-            knurl_server_destroy(server, NULL);
+            server->destroy(server, NULL);
             return 1;
         }
         CHECK(!result.escalated && result.recovered_failures.low == 0 &&
@@ -962,6 +950,6 @@ int main(int argc, char **argv)
         CHECK(waitpid(fixture.child, &child_status, 0) == fixture.child &&
               WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
     }
-    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(server->destroy(server, &error) == KNURL_OK);
     return 0;
 }

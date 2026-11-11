@@ -127,6 +127,53 @@ KNURL_API knurl_status knurl_channel_close(knurl_channel *channel,
                                            knurl_status cause,
                                            knurl_error *error);
 
+struct knurl_error;
+struct knurl_header;
+/** Library-owned channel receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_channel {
+    /** Return the borrowed takeover channel's current HTTP-input/tunnel/closed
+     * phase.
+     */
+    knurl_channel_phase (*state)(const struct knurl_channel *channel);
+    /** Return bytes currently retained in the channel's output queue. */
+    size_t (*queued_bytes)(const struct knurl_channel *channel);
+    /** Copy a bounded input prefix; AGAIN means no input is ready, EOF means
+     * read- half closure.
+     */
+    knurl_status (*read)(struct knurl_channel *channel, void *buffer,
+                         size_t capacity, size_t *received,
+                         struct knurl_error *error);
+    /** HTTP_INPUT cannot write raw bytes. Use its request's managed response.
+     */
+    knurl_status (*write)(struct knurl_channel *channel, const void *data,
+                          size_t length, size_t *accepted,
+                          struct knurl_error *error);
+    /** Change owner-loop event interests; zero suspends notifications. */
+    knurl_status (*interest)(struct knurl_channel *channel,
+                             unsigned int interest, struct knurl_error *error);
+    /** Copies the framer's suffix followed by unread prefetched input, once. */
+    knurl_status (*body_complete)(struct knurl_channel *channel,
+                                  const void *tail, size_t tail_length,
+                                  struct knurl_error *error);
+    /** Validated successful upstream WebSocket handshake; atomically queues
+     * 101. */
+    knurl_status (*upgrade)(struct knurl_channel *channel,
+                            const struct knurl_header *headers, size_t count,
+                            struct knurl_error *error);
+    /** Drain queued output and request orderly write-half closure. */
+    knurl_status (*shutdown_write)(struct knurl_channel *channel,
+                                   struct knurl_error *error);
+    /** OK requires drained output and completed HTTP input; error causes
+     * cancel. Notifications are deferred past the current event callback. */
+    knurl_status (*close)(struct knurl_channel *channel, knurl_status cause,
+                          struct knurl_error *error);
+    /** Private library state; applications must not access it. */
+    struct knurl_channel_impl *impl;
+};
+
 #ifdef __cplusplus
 }
 #endif

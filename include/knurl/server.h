@@ -871,6 +871,144 @@ KNURL_API knurl_status knurl_server_listener_at(const knurl_server *server,
                                                 knurl_bound_listener *out,
                                                 knurl_error *error);
 
+struct knurl_access_log_config;
+struct knurl_bound_listener;
+struct knurl_error;
+struct knurl_loop;
+struct knurl_router;
+struct knurl_run_result;
+struct knurl_server_effective;
+struct knurl_storage_filesystem_config;
+struct knurl_storage_provider;
+struct knurl_supervision_config;
+struct pslog_logger;
+/** Library-owned server receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_server {
+    /** Return the packaged Kore commit string in static storage. */
+    const char *(*kore_revision)(const struct knurl_server *server);
+    /** Active-run view; outside a run returns STATE. An identity with no HTTPS
+     * listener remains pending. The output borrows no backend structures. */
+    knurl_status (*tls_identity_state)(const struct knurl_server *server,
+                                       size_t index,
+                                       knurl_tls_identity_state *out,
+                                       struct knurl_error *error);
+    /** Inert outside-run registration. Both logger pointers are borrowed for
+     * every run; their sinks must support native process callbacks. Rules are
+     * copied. NULL configuration uses trace/warn/error; NULL root uses a
+     * library-owned default logger during run. Without an override, access
+     * derives sub=http. logger_disabled affects structured access only,
+     * independently of file logs.
+     */
+    knurl_status (*set_pslog)(struct knurl_server *, struct pslog_logger *,
+                              const struct knurl_access_log_config *,
+                              struct knurl_error *);
+    /** Borrow the current process's loop during an active server run. Captured
+     * handles cannot cross a fork or run boundary. All operations require the
+     * owner thread except waker_signal and server_request_stop.
+     */
+    struct knurl_loop *(*loop)(struct knurl_server *server);
+    /** Infer a filename's Content-Type using this instance's overrides, then
+     * built-ins, then application/octet-stream. NULL server uses only
+     * built-ins. No filesystem access. Result is borrowed until server
+     * destruction (or has static lifetime for built-ins); path is a
+     * filename/path, not a URL.
+     */
+    const char *(*content_type)(const struct knurl_server *, const char *path);
+    /** Copy normalized settings into a view borrowing server-owned storage;
+     * includes requested timeout choices.
+     */
+    knurl_status (*effective_config)(const struct knurl_server *server,
+                                     struct knurl_server_effective *out,
+                                     struct knurl_error *error);
+    /** Inspect the declared/run/stop lifecycle state without changing it. */
+    knurl_server_state (*get_state)(const struct knurl_server *server);
+    /** Borrow the server-owned route registry until server destruction. */
+    struct knurl_router *(*router)(struct knurl_server *server);
+    /** Replace the server's inert router; transfer ownership only on success.
+     */
+    knurl_status (*router_take)(struct knurl_server *server,
+                                struct knurl_router *router,
+                                struct knurl_error *error);
+    /** Attach host control-FD supervision; successful transfer owns FD cleanup,
+     * failure retains caller ownership.
+     */
+    knurl_status (*supervision_take)(
+        struct knurl_server *server,
+        const struct knurl_supervision_config *config,
+        struct knurl_error *error);
+    /** Change control-descriptor interest on its owner loop; zero suspends
+     * notifications.
+     */
+    knurl_status (*control_interest)(struct knurl_server *server,
+                                     unsigned int interest,
+                                     struct knurl_error *error);
+    /** Destroy an inactive server and owned declarations; rejects active or
+     * reentrant destruction.
+     */
+    knurl_status (*destroy)(struct knurl_server *server,
+                            struct knurl_error *error);
+    /** Validate declarations and TLS material without binding listeners or
+     * forking; material callbacks may run.
+     */
+    knurl_status (*validate)(struct knurl_server *server,
+                             struct knurl_error *error);
+    /** Validate an inactive server and probe its startup resources in the
+     * caller. Opens all configured listeners together, then closes them. Probes
+     * an explicit body spool directory when a declared ordinary handler can
+     * spill and opens the configured access log with the runtime's file rules.
+     * The log may be created. TLS material callbacks may run. Request-time
+     * header callbacks choose their body policy at dispatch. The call leaves
+     * the server inactive and releases probe resources. Resource availability
+     * may change before the subsequent run.
+     */
+    knurl_status (*preflight)(struct knurl_server *server,
+                              struct knurl_error *error);
+    /** Run the server lifecycle until stop/failure; return the run outcome
+     * after worker/native cleanup.
+     */
+    knurl_status (*run)(struct knurl_server *server,
+                        struct knurl_run_result *out,
+                        struct knurl_error *error);
+    /** Request graceful stop of an active run; callable from another thread
+     * while the server remains alive.
+     */
+    knurl_status (*request_stop)(struct knurl_server *server,
+                                 struct knurl_error *error);
+    /** Async-signal-safe during a run; the caller keeps the server alive. */
+    void (*notify_signal)(struct knurl_server *server, int signal_number);
+    /** Open or pause serving on the ready parent owner loop, including from
+     * on_parent_ready. Readiness remains separate. Nonzero opens the gate; a
+     * stop already requested prevents opening it. Other processes/threads or a
+     * server outside READY_PAUSED/SERVING return STATE.
+     */
+    knurl_status (*set_serving)(struct knurl_server *server, int serving,
+                                struct knurl_error *error);
+    /** Borrows addresses acquired by the active run, including ephemeral ports.
+     */
+    knurl_status (*listener_at)(const struct knurl_server *server, size_t index,
+                                struct knurl_bound_listener *out,
+                                struct knurl_error *error);
+    /** Inert declaration over a borrowed server. Filesystem providers share one
+     * bounded executor in that HTTP worker, created on its first operation.
+     * Absolute cache/root paths; NULL root
+     * selects cache_dir/webdav/site_id/content and the existing tombstone tree.
+     * Zero quotas select 16 MiB/file, 128 MiB total and 4096 resources.
+     * PUT transactions are capped by max_file_bytes and admitted by server
+     * limits; native execution uses the worker's bounded queue with
+     * backpressure. Conditions are rechecked with quota accounting under the
+     * mutation lock at finish. No filesystem I/O or threads are started by
+     * construction. Server outlives the provider; bound providers are not
+     * reusable across runs. */
+    knurl_status (*storage_filesystem)(
+        struct knurl_server *, const struct knurl_storage_filesystem_config *,
+        struct knurl_storage_provider **, struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    struct knurl_server_impl *impl;
+};
+
 #ifdef __cplusplus
 }
 #endif

@@ -175,6 +175,71 @@ KNURL_API knurl_status knurl_asset_provider_close(knurl_asset_provider *,
 KNURL_API knurl_status knurl_asset_filesystem_new(const char *,
                                                   knurl_asset_provider **,
                                                   knurl_error *);
+
+struct knurl_asset_entry;
+struct knurl_asset_info;
+struct knurl_error;
+struct knurl_source;
+struct knurl_u64;
+/** Library-owned asset receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_asset {
+    /** Borrow immutable copied metadata until the asset closes. */
+    const struct knurl_asset_info *(*stat)(const struct knurl_asset *);
+    /** Read at an explicit offset into caller storage; AGAIN produces no bytes.
+     * Caller serializes access.
+     */
+    knurl_status (*read)(struct knurl_asset *, struct knurl_u64, void *, size_t,
+                         size_t *, struct knurl_error *);
+    /** One immediate child per call. Entry metadata is borrowed through the
+     * next list call/close. EOF has no entry; AGAIN means retry later. */
+    knurl_status (*list_next)(struct knurl_asset *, struct knurl_asset_entry *,
+                              struct knurl_error *);
+    /** Release an owned opened asset and deliver its close notification. */
+    knurl_status (*close)(struct knurl_asset *, struct knurl_error *);
+    /** Success transfers asset, failure takes nothing; emits only the selected
+     * range, never reads/skips the preceding content. No read at construction.
+     */
+    knurl_status (*source_take)(struct knurl_asset *, struct knurl_u64,
+                                struct knurl_u64, struct knurl_source **,
+                                struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    struct knurl_asset_impl *impl;
+};
+
+struct knurl_asset;
+struct knurl_error;
+struct knurl_storage_provider;
+/** Library-owned asset provider receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_asset_provider {
+    /** Paths are normalized absolute paths, without trailing slash except '/'.
+     * Invalid/ambiguous segments, percent signs and backslashes are rejected.
+     * EOF means missing. Success takes exactly one returned asset; already
+     * opened assets pin their provider through terminal close, even after
+     * provider_close.
+     */
+    knurl_status (*open)(struct knurl_asset_provider *, const char *,
+                         struct knurl_asset **, struct knurl_error *);
+    /** Close the provider owner; opened assets keep it alive through their own
+     * close.
+     */
+    knurl_status (*close)(struct knurl_asset_provider *, struct knurl_error *);
+    /** Read-only adapter over a borrowed asset provider. No new packed format
+     * or Vectis object is introduced. Caller retains the asset provider through
+     * close.
+     */
+    knurl_status (*storage_provider)(struct knurl_asset_provider *,
+                                     struct knurl_storage_provider **,
+                                     struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    struct knurl_asset_provider_impl *impl;
+};
+
 #ifdef __cplusplus
 }
 #endif

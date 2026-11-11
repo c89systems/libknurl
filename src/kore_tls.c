@@ -18,16 +18,16 @@ void knurl_kore_listener_domains(struct knurl_runtime *runtime,
     struct kore_route *route;
     size_t count;
     size_t i;
-    identity =
-        listener->kind == KNURL_LISTENER_HTTPS
-            ? &runtime->server->config.tls.identities[listener->identity_index]
-            : NULL;
+    identity = listener->kind == KNURL_LISTENER_HTTPS
+                   ? &runtime->server->impl->config.tls
+                          .identities[listener->identity_index]
+                   : NULL;
     count = identity != NULL ? identity->domain_count : 1;
     for (i = 0; i < count; ++i) {
         domain = kore_domain_new(identity != NULL ? identity->domains[i] : "*");
         if (!kore_domain_attach(domain, server))
             fatal("cannot attach listener domain");
-        if (runtime->server->config.http.access_log_path != NULL)
+        if (runtime->server->impl->config.http.access_log_path != NULL)
             domain->accesslog = KORE_ACCESSLOG_EXTERNAL;
         if (identity != NULL) {
             runtime->tls_bindings[runtime->tls_binding_count].domain = domain;
@@ -156,22 +156,24 @@ int knurl_kore_redirect(knurl_request *request)
     size_t length;
     size_t bound;
     int status;
-    listener = &request->server->config.listeners[request->listener];
+    listener =
+        &request->impl->server->impl->config.listeners[request->impl->listener];
     status = 400;
     location = NULL;
-    if (authority(request->authority.data, host) &&
-        allowed(
-            &request->server->config.tls.identities[listener->identity_index],
-            host)) {
+    if (authority(request->impl->authority.data, host) &&
+        allowed(&request->impl->server->impl->config.tls
+                     .identities[listener->identity_index],
+                host)) {
         port[0] = '\0';
         if (listener->redirect_https_port != 443)
             (void)snprintf(port, sizeof(port), ":%u",
                            (unsigned int)listener->redirect_https_port);
-        target = request->target.length != 0 &&
-                         ((const char *)request->target.data)[0] == '/'
-                     ? request->target.data
+        target = request->impl->target.length != 0 &&
+                         ((const char *)request->impl->target.data)[0] == '/'
+                     ? request->impl->target.data
                      : "/";
-        bound = request->server->config.limits.max_response_header_bytes;
+        bound = request->impl->server->impl->config.limits
+                    .max_response_header_bytes;
         if (bound == 0)
             bound = (size_t)-1;
         length = 8 + strlen(host) + strlen(port);
@@ -185,22 +187,22 @@ int knurl_kore_redirect(knurl_request *request)
             else {
                 (void)snprintf(location, length + 1, "https://%s%s%s", host,
                                port, target);
-                result = knurl_response_header_add(request->response,
+                result = knurl_response_header_add(request->impl->response,
                                                    "location", location, NULL);
                 status = result == KNURL_OK ? 308 : 500;
             }
         }
     }
     free(location);
-    request->response->close_connection = 1;
-    result = knurl_response_status(request->response, status, NULL);
+    request->impl->response->impl->close_connection = 1;
+    result = knurl_response_status(request->impl->response, status, NULL);
     if (result == KNURL_OK)
-        result =
-            knurl_response_known_length(request->response, length_zero, NULL);
+        result = knurl_response_known_length(request->impl->response,
+                                             length_zero, NULL);
     if (result == KNURL_OK)
-        result = knurl_response_begin(request->response, NULL);
+        result = knurl_response_begin(request->impl->response, NULL);
     if (result == KNURL_OK)
-        result = knurl_response_end(request->response, NULL, 0, NULL);
+        result = knurl_response_end(request->impl->response, NULL, 0, NULL);
     if (result != KNURL_OK)
         knurl_kore_request_fail(request, result, 500);
     return KORE_RESULT_RETRY;

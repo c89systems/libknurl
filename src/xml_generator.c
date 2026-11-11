@@ -1,4 +1,5 @@
 #include "xml_mapping_internal.h"
+#include <knurl/xml.h>
 #include "internal.h"
 #include "reply_internal.h"
 #include <libxml/xmlwriter.h>
@@ -27,7 +28,8 @@ struct xml_frame {
     int kind, stage, boolean;
 };
 enum { FRAME_OBJECT, FRAME_ARRAY, FRAME_ELEMENT, FRAME_ATTRIBUTE, FRAME_TEXT };
-struct knurl_xml_generator {
+struct knurl_xml_generator_impl {
+    knurl_xml_generator receiver;
     knurl_xml_config config;
     lonejson_record_view record;
     xmlTextWriterPtr writer;
@@ -59,13 +61,15 @@ static knurl_status owner(knurl_xml_generator *g, knurl_error *error)
 {
     if (g == NULL)
         return fail(error, KNURL_INVALID, "missing XML generator");
-    if (g->process != getpid() || !pthread_equal(g->thread, pthread_self()))
+    if (g->impl->process != getpid() ||
+        !pthread_equal(g->impl->thread, pthread_self()))
         return fail(error, KNURL_STATE,
                     "XML generator belongs to another process/thread");
-    if (g->busy) {
-        fail(&g->failure, KNURL_STATE, "recursive XML generator operation");
+    if (g->impl->busy) {
+        fail(&g->impl->failure, KNURL_STATE,
+             "recursive XML generator operation");
         if (error != NULL)
-            *error = g->failure;
+            *error = g->impl->failure;
         return KNURL_STATE;
     }
     return KNURL_OK;
@@ -73,14 +77,14 @@ static knurl_status owner(knurl_xml_generator *g, knurl_error *error)
 static int output(void *data, const char *bytes, int length)
 {
     knurl_xml_generator *g = data;
-    if (length < 0 || (size_t)length > XML_PENDING - g->length) {
-        fail(&g->failure, KNURL_LIMIT,
+    if (length < 0 || (size_t)length > XML_PENDING - g->impl->length) {
+        fail(&g->impl->failure, KNURL_LIMIT,
              "XML writer exceeded bounded output unit");
         return -1;
     }
     if (length != 0)
-        memcpy(g->pending + g->length, bytes, (size_t)length);
-    g->length += (size_t)length;
+        memcpy(g->impl->pending + g->impl->length, bytes, (size_t)length);
+    g->impl->length += (size_t)length;
     return length;
 }
 static knurl_status name_check(const char *name, knurl_error *error)
@@ -157,7 +161,7 @@ static knurl_status push(knurl_xml_generator *g, int kind, const char *name,
 {
     struct xml_frame *f;
     knurl_status status;
-    if (depth > g->config.max_depth)
+    if (depth > g->impl->config.max_depth)
         return fail(error, KNURL_INVALID,
                     "XML output nesting exceeds max_depth");
     if (kind != FRAME_TEXT && kind != FRAME_ARRAY) {
@@ -170,7 +174,7 @@ static knurl_status push(knurl_xml_generator *g, int kind, const char *name,
     f = calloc(1, sizeof(*f));
     if (f == NULL)
         return fail(error, KNURL_NOMEM, "allocating XML traversal frame");
-    f->parent = g->frame;
+    f->parent = g->impl->frame;
     f->kind = kind;
     f->name = name;
     f->map = map;
@@ -178,13 +182,13 @@ static knurl_status push(knurl_xml_generator *g, int kind, const char *name,
     f->depth = depth;
     if (field != NULL)
         f->field = *field;
-    g->frame = f;
+    g->impl->frame = f;
     return KNURL_OK;
 }
 static void pop(knurl_xml_generator *g)
 {
-    struct xml_frame *f = g->frame;
-    g->frame = f->parent;
+    struct xml_frame *f = g->impl->frame;
+    g->impl->frame = f->parent;
     free(f);
 }
 static void integer_text(char *out, lonejson_uint64 value, int negative)
@@ -211,34 +215,34 @@ static knurl_status scalar_init(knurl_xml_generator *g,
     lonejson_status code;
     double number;
     int n;
-    g->text = NULL;
-    g->spool = NULL;
-    g->remaining = 0;
-    g->carry = 0;
+    g->impl->text = NULL;
+    g->impl->spool = NULL;
+    g->impl->remaining = 0;
+    g->impl->carry = 0;
     switch (f->field.kind) {
     case LONEJSON_FIELD_KIND_STRING:
-        g->text = f->field.storage == LONEJSON_STORAGE_DYNAMIC
-                      ? *(const unsigned char *const *)base
-                      : base;
-        if (g->text == NULL)
-            g->text = (const unsigned char *)"";
+        g->impl->text = f->field.storage == LONEJSON_STORAGE_DYNAMIC
+                            ? *(const unsigned char *const *)base
+                            : base;
+        if (g->impl->text == NULL)
+            g->impl->text = (const unsigned char *)"";
         if (f->field.storage == LONEJSON_STORAGE_FIXED) {
-            while (g->remaining < f->field.fixed_capacity &&
-                   g->text[g->remaining] != 0)
-                ++g->remaining;
-            if (g->remaining == f->field.fixed_capacity)
+            while (g->impl->remaining < f->field.fixed_capacity &&
+                   g->impl->text[g->impl->remaining] != 0)
+                ++g->impl->remaining;
+            if (g->impl->remaining == f->field.fixed_capacity)
                 return fail(error, KNURL_INVALID,
                             "XML fixed string lacks a terminator");
         } else
-            g->remaining = strlen((const char *)g->text);
+            g->impl->remaining = strlen((const char *)g->impl->text);
         break;
     case LONEJSON_FIELD_KIND_STRING_STREAM:
         if (f->kind == FRAME_ATTRIBUTE)
             return fail(error, KNURL_INVALID,
                         "XML attributes must be scalar fields");
-        g->spool = (lonejson_spooled *)base;
-        g->remaining = lonejson_spooled_size(g->spool);
-        code = lonejson_spooled_rewind(g->spool, &native);
+        g->impl->spool = (lonejson_spooled *)base;
+        g->impl->remaining = lonejson_spooled_size(g->impl->spool);
+        code = lonejson_spooled_rewind(g->impl->spool, &native);
         if (code != LONEJSON_STATUS_OK)
             return knurl_json_error(code, &native, error);
         break;
@@ -247,30 +251,30 @@ static knurl_status scalar_init(knurl_xml_generator *g,
         magnitude = signed_value < 0
                         ? (lonejson_uint64)(-(signed_value + 1)) + 1u
                         : (lonejson_uint64)signed_value;
-        integer_text(g->number, magnitude, signed_value < 0);
+        integer_text(g->impl->number, magnitude, signed_value < 0);
         break;
     case LONEJSON_FIELD_KIND_U64:
-        integer_text(g->number, *(const lonejson_uint64 *)base, 0);
+        integer_text(g->impl->number, *(const lonejson_uint64 *)base, 0);
         break;
     case LONEJSON_FIELD_KIND_F64:
         number = *(const double *)base;
         if (number != number || number > DBL_MAX || number < -DBL_MAX)
             return fail(error, KNURL_INVALID, "non-finite XML scalar");
-        n = snprintf(g->number, sizeof(g->number), "%.17g", number);
-        if (n < 0 || (size_t)n >= sizeof(g->number))
+        n = snprintf(g->impl->number, sizeof(g->impl->number), "%.17g", number);
+        if (n < 0 || (size_t)n >= sizeof(g->impl->number))
             return fail(error, KNURL_STATE, "formatting XML scalar");
         break;
     case LONEJSON_FIELD_KIND_BOOL:
-        strcpy(g->number, *(const int *)base ? "true" : "false");
+        strcpy(g->impl->number, *(const int *)base ? "true" : "false");
         break;
     default:
         return fail(error, KNURL_INVALID, "unsupported XML scalar field");
     }
-    if (g->text == NULL && g->spool == NULL) {
-        g->text = (const unsigned char *)g->number;
-        g->remaining = strlen(g->number);
+    if (g->impl->text == NULL && g->impl->spool == NULL) {
+        g->impl->text = (const unsigned char *)g->impl->number;
+        g->impl->remaining = strlen(g->impl->number);
     }
-    if (g->remaining > g->config.max_text_bytes)
+    if (g->impl->remaining > g->impl->config.max_text_bytes)
         return fail(error, KNURL_INVALID,
                     "XML output text exceeds max_text_bytes");
     return KNURL_OK;
@@ -281,25 +285,28 @@ static knurl_status text_unit(knurl_xml_generator *g, knurl_error *error)
     size_t n, total, i, take;
     int width, cp;
     lonejson_read_result result;
-    n = g->remaining < XML_UNIT - g->carry ? g->remaining : XML_UNIT - g->carry;
-    if (g->spool != NULL) {
-        result = lonejson_spooled_read(g->spool, g->unit + g->carry, n);
+    n = g->impl->remaining < XML_UNIT - g->impl->carry
+            ? g->impl->remaining
+            : XML_UNIT - g->impl->carry;
+    if (g->impl->spool != NULL) {
+        result = lonejson_spooled_read(g->impl->spool,
+                                       g->impl->unit + g->impl->carry, n);
         if (result.error_code != 0)
             return fail(error, KNURL_IO, "reading XML spooled text");
         n = result.bytes_read;
         if (n == 0 && result.would_block)
             return KNURL_AGAIN;
-        if (n == 0 && g->remaining != 0)
+        if (n == 0 && g->impl->remaining != 0)
             return fail(error, KNURL_IO, "XML spooled text ended early");
     } else {
-        memcpy(g->unit + g->carry, g->text, n);
-        g->text += n;
+        memcpy(g->impl->unit + g->impl->carry, g->impl->text, n);
+        g->impl->text += n;
     }
-    g->remaining -= n;
-    total = g->carry + n;
+    g->impl->remaining -= n;
+    total = g->impl->carry + n;
     take = 0;
     for (i = 0; i < total;) {
-        unsigned char c = g->unit[i];
+        unsigned char c = g->impl->unit[i];
         width = c < 128                  ? 1
                 : c >= 0xc2 && c <= 0xdf ? 2
                 : c >= 0xe0 && c <= 0xef ? 3
@@ -309,23 +316,23 @@ static knurl_status text_unit(knurl_xml_generator *g, knurl_error *error)
             return fail(error, KNURL_INVALID, "invalid XML UTF-8 text");
         if (total - i < (size_t)width)
             break;
-        cp = xmlGetUTF8Char(g->unit + i, &width);
+        cp = xmlGetUTF8Char(g->impl->unit + i, &width);
         if (cp < 0 || !xmlIsCharQ(cp))
             return fail(error, KNURL_INVALID, "invalid XML character");
         i += (size_t)width;
         take = i;
     }
-    g->carry = total - take;
-    if (g->remaining == 0 && g->carry != 0)
+    g->impl->carry = total - take;
+    if (g->impl->remaining == 0 && g->impl->carry != 0)
         return fail(error, KNURL_INVALID, "incomplete XML UTF-8 text");
     /* WriteString requires NUL: retain carry separately while emitting. */
     {
         unsigned char tail[4];
-        memcpy(tail, g->unit + take, g->carry);
-        g->unit[take] = 0;
-        if (xmlTextWriterWriteString(g->writer, g->unit) < 0)
+        memcpy(tail, g->impl->unit + take, g->impl->carry);
+        g->impl->unit[take] = 0;
+        if (xmlTextWriterWriteString(g->impl->writer, g->impl->unit) < 0)
             return fail(error, KNURL_BACKEND, "writing XML text");
-        memcpy(g->unit, tail, g->carry);
+        memcpy(g->impl->unit, tail, g->impl->carry);
     }
     return KNURL_OK;
 }
@@ -402,21 +409,21 @@ static knurl_status array_next(knurl_xml_generator *g, struct xml_frame *f,
 }
 static knurl_status step(knurl_xml_generator *g, knurl_error *error)
 {
-    struct xml_frame *f = g->frame;
+    struct xml_frame *f = g->impl->frame;
     const lonejson_field *field;
     const char *name;
     knurl_status status;
     int kind;
     if (f == NULL) {
-        g->eof = 1;
+        g->impl->eof = 1;
         return KNURL_EOF;
     }
     if (f->kind == FRAME_ARRAY)
         return array_next(g, f, error);
     if (f->kind == FRAME_OBJECT) {
         if (f->stage == 0) {
-            if (xmlTextWriterStartElement(g->writer, (const xmlChar *)f->name) <
-                0)
+            if (xmlTextWriterStartElement(g->impl->writer,
+                                          (const xmlChar *)f->name) < 0)
                 goto backend;
             f->stage = 1;
             return KNURL_OK;
@@ -427,7 +434,7 @@ static knurl_status step(knurl_xml_generator *g, knurl_error *error)
                 if (!emit(field, f->value))
                     continue;
                 if (f->stage == 1) {
-                    if (!attribute(field, &g->config, &name))
+                    if (!attribute(field, &g->impl->config, &name))
                         continue;
                     if (array_kind(field) ||
                         field->kind == LONEJSON_FIELD_KIND_OBJECT)
@@ -436,14 +443,15 @@ static knurl_status step(knurl_xml_generator *g, knurl_error *error)
                     return push(g, FRAME_ATTRIBUTE, name, NULL, f->value, field,
                                 f->depth, error);
                 }
-                if (attribute(field, &g->config, NULL))
+                if (attribute(field, &g->impl->config, NULL))
                     continue;
                 kind = array_kind(field) ? FRAME_ARRAY
                        : field->kind == LONEJSON_FIELD_KIND_OBJECT
                            ? FRAME_OBJECT
                            : FRAME_ELEMENT;
-                if (g->config.text_key[0] != 0 && field->json_key != NULL &&
-                    strcmp(field->json_key, g->config.text_key) == 0)
+                if (g->impl->config.text_key[0] != 0 &&
+                    field->json_key != NULL &&
+                    strcmp(field->json_key, g->impl->config.text_key) == 0)
                     kind = FRAME_TEXT;
                 return push(g, kind, field->json_key, field->submap,
                             kind == FRAME_OBJECT
@@ -458,7 +466,7 @@ static knurl_status step(knurl_xml_generator *g, knurl_error *error)
             }
             f->stage = 3;
         }
-        if (xmlTextWriterFullEndElement(g->writer) < 0)
+        if (xmlTextWriterFullEndElement(g->impl->writer) < 0)
             goto backend;
         pop(g);
         return KNURL_OK;
@@ -468,20 +476,23 @@ static knurl_status step(knurl_xml_generator *g, knurl_error *error)
         if (status != KNURL_OK)
             return status;
         if (f->kind == FRAME_ELEMENT &&
-            xmlTextWriterStartElement(g->writer, (const xmlChar *)f->name) < 0)
+            xmlTextWriterStartElement(g->impl->writer,
+                                      (const xmlChar *)f->name) < 0)
             goto backend;
         if (f->kind == FRAME_ATTRIBUTE &&
-            xmlTextWriterStartAttribute(g->writer, (const xmlChar *)f->name) <
-                0)
+            xmlTextWriterStartAttribute(g->impl->writer,
+                                        (const xmlChar *)f->name) < 0)
             goto backend;
         f->stage = 1;
         return KNURL_OK;
     }
-    if (g->remaining != 0 || g->carry != 0)
+    if (g->impl->remaining != 0 || g->impl->carry != 0)
         return text_unit(g, error);
-    if (f->kind == FRAME_ELEMENT && xmlTextWriterFullEndElement(g->writer) < 0)
+    if (f->kind == FRAME_ELEMENT &&
+        xmlTextWriterFullEndElement(g->impl->writer) < 0)
         goto backend;
-    if (f->kind == FRAME_ATTRIBUTE && xmlTextWriterEndAttribute(g->writer) < 0)
+    if (f->kind == FRAME_ATTRIBUTE &&
+        xmlTextWriterEndAttribute(g->impl->writer) < 0)
         goto backend;
     pop(g);
     return KNURL_OK;
@@ -514,26 +525,28 @@ knurl_status knurl_xml_generator_new(const knurl_xml_source_config *config,
     status = knurl_json_schema_check(&config->record->schema, error);
     if (status != KNURL_OK)
         return status;
-    g = calloc(1, sizeof(*g));
+    g = calloc(1, sizeof(struct knurl_xml_generator_impl));
     if (g == NULL)
         return fail(error, KNURL_NOMEM, "allocating XML generator");
-    g->process = getpid();
-    g->thread = pthread_self();
-    g->record = *config->record;
-    status = knurl_xml_effective_config(&config->xml, &g->config, error);
+    knurl_xml_generator_receiver_init(g);
+    g->impl->process = getpid();
+    g->impl->thread = pthread_self();
+    g->impl->record = *config->record;
+    status = knurl_xml_effective_config(&config->xml, &g->impl->config, error);
     if (status == KNURL_OK) {
-        name = g->config.root_element != NULL ? g->config.root_element
-                                              : g->record.schema.map->name;
-        status = push(g, FRAME_OBJECT, name, g->record.schema.map,
-                      g->record.record, NULL, 1, error);
+        name = g->impl->config.root_element != NULL
+                   ? g->impl->config.root_element
+                   : g->impl->record.schema.map->name;
+        status = push(g, FRAME_OBJECT, name, g->impl->record.schema.map,
+                      g->impl->record.record, NULL, 1, error);
     }
     if (status == KNURL_OK) {
         buffer = xmlOutputBufferCreateIO(output, NULL, g, NULL);
         if (buffer == NULL)
             status = fail(error, KNURL_NOMEM, "allocating XML output buffer");
         else {
-            g->writer = xmlNewTextWriter(buffer);
-            if (g->writer == NULL) {
+            g->impl->writer = xmlNewTextWriter(buffer);
+            if (g->impl->writer == NULL) {
                 xmlOutputBufferClose(buffer);
                 status = fail(error, KNURL_NOMEM, "allocating XML writer");
             }
@@ -543,8 +556,8 @@ knurl_status knurl_xml_generator_new(const knurl_xml_source_config *config,
         knurl_xml_generator_destroy(g, NULL);
         return status;
     }
-    g->release = config->release;
-    g->userdata = config->userdata;
+    g->impl->release = config->release;
+    g->impl->userdata = config->userdata;
     *out = g;
     knurl_error_clear(error);
     return KNURL_OK;
@@ -563,46 +576,47 @@ knurl_status knurl_xml_generator_read(knurl_xml_generator *g, void *bytes,
     if (bytes == NULL || capacity == 0 || produced == NULL)
         return fail(error, KNURL_INVALID,
                     "provide a nonempty XML output buffer and count");
-    if (g->failure.status != KNURL_OK) {
+    if (g->impl->failure.status != KNURL_OK) {
         if (error != NULL)
-            *error = g->failure;
-        return g->failure.status;
+            *error = g->impl->failure;
+        return g->impl->failure.status;
     }
-    g->busy = 1;
+    g->impl->busy = 1;
     status = KNURL_OK;
     while (*produced < capacity) {
-        if (g->offset < g->length) {
-            n = g->length - g->offset;
+        if (g->impl->offset < g->impl->length) {
+            n = g->impl->length - g->impl->offset;
             if (n > capacity - *produced)
                 n = capacity - *produced;
-            memcpy((unsigned char *)bytes + *produced, g->pending + g->offset,
-                   n);
+            memcpy((unsigned char *)bytes + *produced,
+                   g->impl->pending + g->impl->offset, n);
             *produced += n;
-            g->offset += n;
+            g->impl->offset += n;
             continue;
         }
-        g->offset = g->length = 0;
-        if (g->eof) {
+        g->impl->offset = g->impl->length = 0;
+        if (g->impl->eof) {
             status = KNURL_EOF;
             break;
         }
-        status = step(g, &g->failure);
+        status = step(g, &g->impl->failure);
         if (status == KNURL_OK || status == KNURL_EOF) {
-            if (xmlTextWriterFlush(g->writer) < 0 &&
-                g->failure.status == KNURL_OK)
-                fail(&g->failure, KNURL_BACKEND, "flushing XML output unit");
-            if (g->failure.status != KNURL_OK) {
-                status = g->failure.status;
+            if (xmlTextWriterFlush(g->impl->writer) < 0 &&
+                g->impl->failure.status == KNURL_OK)
+                fail(&g->impl->failure, KNURL_BACKEND,
+                     "flushing XML output unit");
+            if (g->impl->failure.status != KNURL_OK) {
+                status = g->impl->failure.status;
                 break;
             }
             status = KNURL_OK;
         } else
             break;
     }
-    g->busy = 0;
+    g->impl->busy = 0;
     if (status != KNURL_OK && status != KNURL_EOF && status != KNURL_AGAIN) {
         if (error != NULL)
-            *error = g->failure;
+            *error = g->impl->failure;
         *produced = 0;
         return status;
     }
@@ -620,19 +634,19 @@ knurl_status knurl_xml_generator_destroy(knurl_xml_generator *g,
     status = owner(g, error);
     if (status != KNURL_OK)
         return status;
-    outcome = g->failure.status != KNURL_OK ? g->failure.status
-              : g->eof                      ? KNURL_OK
-                                            : KNURL_CANCELLED;
-    g->busy = 1;
+    outcome = g->impl->failure.status != KNURL_OK ? g->impl->failure.status
+              : g->impl->eof                      ? KNURL_OK
+                                                  : KNURL_CANCELLED;
+    g->impl->busy = 1;
     /* Writer destruction may flush its bounded punctuation; no user callback.
      */
-    g->offset = g->length = 0;
-    if (g->writer != NULL)
-        xmlFreeTextWriter(g->writer);
-    while (g->frame != NULL)
+    g->impl->offset = g->impl->length = 0;
+    if (g->impl->writer != NULL)
+        xmlFreeTextWriter(g->impl->writer);
+    while (g->impl->frame != NULL)
         pop(g);
-    if (g->release != NULL)
-        g->release(g->userdata, outcome);
+    if (g->impl->release != NULL)
+        g->impl->release(g->impl->userdata, outcome);
     free(g);
     knurl_error_clear(error);
     return KNURL_OK;
@@ -646,7 +660,7 @@ static void source_close(void *data, knurl_status outcome)
 {
     knurl_xml_generator *g = data;
     if (outcome != KNURL_OK)
-        fail(&g->failure, outcome, "XML response consumption ended");
+        fail(&g->impl->failure, outcome, "XML response consumption ended");
     knurl_xml_generator_destroy(g, NULL);
 }
 static knurl_status make_source(const knurl_xml_source_config *config,
@@ -684,8 +698,8 @@ knurl_status knurl_source_xml(const knurl_xml_source_config *config,
         *out = NULL;
     status = make_source(config, out, &g, error);
     if (status == KNURL_OK) {
-        g->release = config->release;
-        g->userdata = config->userdata;
+        g->impl->release = config->release;
+        g->impl->userdata = config->userdata;
     }
     return status;
 }
@@ -702,8 +716,8 @@ knurl_status knurl_reply_xml(knurl_reply *reply, int code,
     status =
         knurl_reply_source_take(reply, code, "application/xml", source, error);
     if (status == KNURL_OK) {
-        g->release = config->release;
-        g->userdata = config->userdata;
+        g->impl->release = config->release;
+        g->impl->userdata = config->userdata;
     } else
         knurl_source_destroy(source, NULL);
     return status;
@@ -815,10 +829,18 @@ knurl_status knurl_reply_xml_materialized(knurl_reply *reply, int code,
     empty.length = 0;
     status = knurl_reply_bytes(reply, code, "application/xml", empty, error);
     if (status == KNURL_OK) {
-        free(reply->body);
-        reply->body = bytes.data;
-        reply->body_length = bytes.length;
+        free(reply->impl->body);
+        reply->impl->body = bytes.data;
+        reply->impl->body_length = bytes.length;
     } else
         knurl_owned_bytes_cleanup(&bytes);
     return status;
+}
+
+void knurl_xml_generator_receiver_init(knurl_xml_generator *receiver)
+{
+    static const knurl_xml_generator methods = {
+        knurl_xml_generator_read, knurl_xml_generator_destroy, NULL};
+    *receiver = methods;
+    receiver->impl = (struct knurl_xml_generator_impl *)receiver;
 }

@@ -103,7 +103,7 @@ void knurl_kore_worker_event(void *userdata, const struct kore_worker *child,
         if (event.kind == KNURL_WORKER_EXITED && !expected) {
             runtime->recovery_pending[index] = 1;
             if (!runtime->ready ||
-                runtime->server->config.workers.death_policy ==
+                runtime->server->impl->config.workers.death_policy ==
                     KNURL_WORKER_TERMINATE) {
                 runtime->status = event.error.status;
                 runtime->error = event.error;
@@ -125,8 +125,8 @@ void knurl_kore_worker_event(void *userdata, const struct kore_worker *child,
         }
         runtime->recovery_pending[index] = 0;
     }
-    if (runtime->server->config.callbacks.on_worker_event != NULL)
-        runtime->server->config.callbacks.on_worker_event(
+    if (runtime->server->impl->config.callbacks.on_worker_event != NULL)
+        runtime->server->impl->config.callbacks.on_worker_event(
             runtime->server, &event,
-            runtime->server->config.callbacks.userdata);
+            runtime->server->impl->config.callbacks.userdata);
 }

@@ -31,7 +31,7 @@ static void finalize(struct native_source *b)
         return;
     source = b->source;
     b->source = NULL;
-    source->native = NULL;
+    source->impl->native = NULL;
     knurl_source_release_now(source, b->outcome);
     unref(b);
 }
@@ -43,12 +43,12 @@ static knurl_status work(knurl_job *job, knurl_bytes arguments, void *data,
     (void)error;
     /* Only the copied read declaration and owned chunk enter application code.
      * Response fields are accessed exclusively by owner-loop callbacks. */
-    b->source->native_job = job;
+    b->source->impl->native_job = job;
     b->count = 0;
     knurl_error_clear(&b->error);
     b->status =
         b->read(b->bytes, b->offered, &b->count, b->userdata, &b->error);
-    b->source->native_job = NULL;
+    b->source->impl->native_job = NULL;
     return KNURL_OK;
 }
 static void retired(const knurl_job_outcome *outcome, void *data)
@@ -59,7 +59,7 @@ static void retired(const knurl_job_outcome *outcome, void *data)
         if (!outcome->started || outcome->cancelled ||
             outcome->work_status != KNURL_OK) {
             b->status = outcome->cause != KNURL_OK ? outcome->cause : KNURL_IO;
-            b->source->failure = b->status;
+            b->source->impl->failure = b->status;
             b->error = outcome->error;
         } else
             b->status = knurl_source_validate(b->source, b->offered, b->count,
@@ -69,8 +69,8 @@ static void retired(const knurl_job_outcome *outcome, void *data)
             b->phase = b->wake ? PULL_IDLE : PULL_PAUSED;
         else
             b->phase = PULL_READY;
-        if (b->phase != PULL_PAUSED && b->source->resume != NULL)
-            b->source->resume(b->source->resume_data);
+        if (b->phase != PULL_PAUSED && b->source->impl->resume != NULL)
+            b->source->impl->resume(b->source->impl->resume_data);
     }
     finalize(b);
     unref(b);
@@ -95,8 +95,8 @@ static void admission_retired(void *data)
 {
     struct native_source *b = data;
     b->admission = NULL;
-    if (!b->revoked && b->phase == PULL_IDLE && b->source->resume != NULL)
-        b->source->resume(b->source->resume_data);
+    if (!b->revoked && b->phase == PULL_IDLE && b->source->impl->resume != NULL)
+        b->source->impl->resume(b->source->impl->resume_data);
     unref(b);
 }
 static void admission(knurl_timer *timer, void *data)
@@ -116,9 +116,9 @@ static void admission(knurl_timer *timer, void *data)
         b->error = error;
         b->status = status;
         b->phase = PULL_READY;
-        b->source->failure = status;
-        if (b->source->resume != NULL)
-            b->source->resume(b->source->resume_data);
+        b->source->impl->failure = status;
+        if (b->source->impl->resume != NULL)
+            b->source->impl->resume(b->source->impl->resume_data);
     }
 }
 knurl_status knurl_source_native_pull(knurl_source *source,
@@ -126,26 +126,26 @@ knurl_status knurl_source_native_pull(knurl_source *source,
                                       size_t capacity, size_t *produced,
                                       knurl_error *error)
 {
-    struct native_source *b = source->native;
+    struct native_source *b = source->impl->native;
     knurl_status status;
     size_t n;
     *produced = 0;
-    if (source->eof && b == NULL)
+    if (source->impl->eof && b == NULL)
         return KNURL_EOF;
     if (b == NULL) {
         b = calloc(1, sizeof(*b));
         if (b == NULL)
             return knurl_fail(error, KNURL_NOMEM, "source_native",
                               "allocating native source");
-        b->capacity = response->chunk;
+        b->capacity = response->impl->chunk;
         b->bytes = malloc(b->capacity);
         if (b->bytes == NULL) {
             free(b);
             return knurl_fail(error, KNURL_NOMEM, "source_native",
                               "allocating native chunk");
         }
-        status = knurl_native_io_pool(knurl_request_server(response->request),
-                                      &b->pool, error);
+        status = knurl_native_io_pool(
+            knurl_request_server(response->impl->request), &b->pool, error);
         if (status != KNURL_OK) {
             free(b->bytes);
             free(b);
@@ -153,9 +153,9 @@ knurl_status knurl_source_native_pull(knurl_source *source,
         }
         b->source = source;
         b->references = 1;
-        b->read = source->config.read;
-        b->userdata = source->config.userdata;
-        source->native = b;
+        b->read = source->impl->config.read;
+        b->userdata = source->impl->config.userdata;
+        source->impl->native = b;
     }
     if (b->revoked)
         return KNURL_CANCELLED;
@@ -179,14 +179,14 @@ knurl_status knurl_source_native_pull(knurl_source *source,
         return KNURL_AGAIN;
     b->offered = capacity < b->capacity ? capacity : b->capacity;
     b->wake = 0;
-    source->resume_requested = 0;
+    source->impl->resume_requested = 0;
     status = submit(b, error);
     if (status == KNURL_OK)
         return KNURL_AGAIN;
     if (status != KNURL_AGAIN)
         return status;
-    status = knurl_loop_timer(source->loop, 1, 1, admission, admission_retired,
-                              b, &b->admission, error);
+    status = knurl_loop_timer(source->impl->loop, 1, 1, admission,
+                              admission_retired, b, &b->admission, error);
     if (status != KNURL_OK)
         return status;
     ++b->references;
@@ -194,14 +194,14 @@ knurl_status knurl_source_native_pull(knurl_source *source,
 }
 void knurl_source_native_resume(knurl_source *source)
 {
-    struct native_source *b = source->native;
+    struct native_source *b = source->impl->native;
     b->wake = 1;
     if (b->phase == PULL_PAUSED)
         b->phase = PULL_IDLE;
 }
 void knurl_source_native_revoke(knurl_source *source)
 {
-    struct native_source *b = source->native;
+    struct native_source *b = source->impl->native;
     b->revoked = 1;
     if (b->admission != NULL)
         knurl_timer_cancel(b->admission);
@@ -210,7 +210,7 @@ void knurl_source_native_revoke(knurl_source *source)
 }
 void knurl_source_native_retire(knurl_source *source, knurl_status outcome)
 {
-    struct native_source *b = source->native;
+    struct native_source *b = source->impl->native;
     b->closing = 1;
     b->outcome = outcome;
     knurl_source_native_revoke(source);

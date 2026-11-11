@@ -2,6 +2,7 @@
 #define KNURL_INTERNAL_H
 
 #include <knurl/common.h>
+#include "receivers_internal.h"
 
 knurl_status knurl_fail(knurl_error *error, knurl_status status,
                         const char *operation, const char *message);

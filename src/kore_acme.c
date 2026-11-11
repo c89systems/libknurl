@@ -26,15 +26,17 @@ static void operation(struct knurl_runtime *runtime, const char *domain)
     identity = (size_t)-1;
     name = 0;
     for (i = 0;
-         domain != NULL && i < runtime->server->config.tls.identity_count;
+         domain != NULL && i < runtime->server->impl->config.tls.identity_count;
          ++i) {
-        if (runtime->server->config.tls.identities[i].mode != KNURL_TLS_ACME)
+        if (runtime->server->impl->config.tls.identities[i].mode !=
+            KNURL_TLS_ACME)
             continue;
-        for (j = 0; j < runtime->server->config.tls.identities[i].domain_count;
+        for (j = 0;
+             j < runtime->server->impl->config.tls.identities[i].domain_count;
              ++j)
             if (knurl_text_equal_case(
-                    domain,
-                    runtime->server->config.tls.identities[i].domains[j])) {
+                    domain, runtime->server->impl->config.tls.identities[i]
+                                .domains[j])) {
                 identity = i;
                 name = j;
             }
@@ -45,7 +47,7 @@ static void operation(struct knurl_runtime *runtime, const char *domain)
     __atomic_store_n(&runtime->shared->acme_identity_valid, 1,
                      __ATOMIC_RELEASE);
     kore_library_worker_deadline(
-        (u_int32_t)runtime->server->config.tls.acme.persist_timeout_ms);
+        (u_int32_t)runtime->server->impl->config.tls.acme.persist_timeout_ms);
 }
 
 knurl_status knurl_kore_acme_prepare(struct knurl_runtime *runtime,
@@ -62,7 +64,7 @@ knurl_status knurl_kore_acme_prepare(struct knurl_runtime *runtime,
     struct stat info;
     knurl_status status;
     size_t i;
-    config = &runtime->server->config.tls;
+    config = &runtime->server->impl->config.tls;
     for (i = 0; i < config->identity_count; ++i)
         if (config->identities[i].mode == KNURL_TLS_ACME)
             break;
@@ -141,8 +143,9 @@ void knurl_kore_acme_configure(struct knurl_runtime *runtime)
         return;
     kore_free(acme_email);
     kore_free(acme_provider);
-    acme_email = kore_strdup(runtime->server->config.tls.acme.email);
-    acme_provider = kore_strdup(runtime->server->config.tls.acme.directory_url);
+    acme_email = kore_strdup(runtime->server->impl->config.tls.acme.email);
+    acme_provider =
+        kore_strdup(runtime->server->impl->config.tls.acme.directory_url);
 }
 
 void knurl_kore_acme_clear(struct knurl_runtime *runtime)
@@ -177,10 +180,10 @@ int knurl_kore_acme_persist(void *userdata, const char *domain)
     if (runtime->acme_root == NULL)
         return 1;
     operation(runtime, domain);
-    status =
-        knurl_acme_state_call(&runtime->server->config.tls, runtime->server,
-                              &runtime->server->process, KNURL_ACME_PERSIST,
-                              domain, runtime->acme_root, &runtime->error);
+    status = knurl_acme_state_call(
+        &runtime->server->impl->config.tls, runtime->server,
+        &runtime->server->impl->process, KNURL_ACME_PERSIST, domain,
+        runtime->acme_root, &runtime->error);
     if (status != KNURL_OK)
         return failed(runtime, status);
     kore_library_worker_deadline(0);
@@ -211,8 +214,9 @@ int knurl_kore_acme_request(void *userdata, struct kore_curl *request)
             CURLE_OK)
         return 0;
     timeout =
-        runtime->server->config.http.backend_curl_timeout_seconds != 0
-            ? (long)runtime->server->config.http.backend_curl_timeout_seconds
+        runtime->server->impl->config.http.backend_curl_timeout_seconds != 0
+            ? (long)runtime->server->impl->config.http
+                  .backend_curl_timeout_seconds
             : 8;
     if (curl_easy_setopt(request->handle, CURLOPT_TIMEOUT, timeout) != CURLE_OK)
         return 0;

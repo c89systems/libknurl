@@ -13,8 +13,45 @@ for _,opts in ipairs{{port=0,admission={typo=true}}, {port=0,timeouts={typo=7}},
   assert(value==nil and why.status==knurl.status.INVALID)
 end
 assert(select(1,knurl.server{port=0,tls={version='unknown'}})==nil)
+-- Startup resource checks share Core diagnostics and receiver lifetime rules.
+local probe=ok(knurl.server{port=0,http={access_log_path=fixture.root}})
+for name,method in pairs(getmetatable(probe._native).__index) do
+  if type(method)=='function' and name:sub(1,2)~='__' then
+    assert(type(probe[name])=='function',name..' missing from server receiver')
+  end
+end
+ok(probe:validate())
+local passed,cause=probe:preflight()
+assert(passed==nil and cause.status==knurl.status.IO and cause.operation=='access_log_open' and cause.detail==fixture.root)
+ok(probe:close())
+passed,cause=probe:preflight()
+assert(passed==nil and cause.status==knurl.status.STATE)
+probe=ok(knurl.server{port=0,limits={body_spool_directory=fixture.root..'/missing'}})
+ok(probe:post('/spill',function() return 'ok' end,{body={mode='buffered',max_bytes=32,memory_buffer_limit_bytes=16}}))
+ok(probe:validate())
+passed,cause=probe:preflight()
+assert(passed==nil and cause.status==knurl.status.IO and cause.operation=='body_spool')
+ok(probe:close())
+local source=ok(knurl.source{read=function() return nil,knurl.EOF end})
+assert(source:cancelled()==false)
+ok(source:close())
+local cancelled,closed_error=source:cancelled()
+assert(cancelled==nil and closed_error.status==knurl.status.STATE)
+probe=ok(knurl.server{port=0,signals={mode='host'},workers={count=1,affinity_disabled=true},http={backend_quiet=true},
+  on_parent_ready=function(s) ok(s:notify_signal(15)) end})
+assert(#ok(probe:kore_revision())==40)
+passed,cause=probe:notify_signal(-1)
+assert(passed==nil and cause.status==knurl.status.INVALID)
+local signal_result=ok(probe:run())
+assert(signal_result.signal_number==15 and signal_result.reason==1 and not signal_result.escalated)
+ok(probe:close())
+passed,cause=probe:kore_revision()
+assert(passed==nil and cause.status==knurl.status.STATE)
+passed,cause=probe:notify_signal(15)
+assert(passed==nil and cause.status==knurl.status.STATE)
 -- Fail allocations throughout C registration; the same owner remains usable.
 local native=require('knurl.native')
+assert(knurl.version==native.version and type(knurl.version)=='string')
 for n=0,18 do
   local owner=ok(native.server{listeners={{port=0}}})
   local spec={path='/allocation',method='GET',handler=function() return 'ok' end}
@@ -36,6 +73,8 @@ local server=ok(knurl.server{
     assert(source_closed==2 and spooled_closed==7 and skipped==0)
   end,
 })
+assert(calls==0)
+ok(server:preflight())
 assert(calls==0)
 ok(server:get('/text',function(req)
   calls=calls+1;retained=req

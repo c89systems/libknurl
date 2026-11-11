@@ -19,10 +19,10 @@ void knurl_webdav_config_init(knurl_webdav_config *config)
 knurl_bytes knurl_webdav_request_principal(const knurl_request *request)
 {
     knurl_bytes bytes = {0};
-    if (request != NULL && request->route != NULL &&
-        request->route->config.on_headers == knurl_dav_headers &&
-        request->codec_data != NULL) {
-        const struct dav_request *s = request->codec_data;
+    if (request != NULL && request->impl->route != NULL &&
+        request->impl->route->impl->config.on_headers == knurl_dav_headers &&
+        request->impl->codec_data != NULL) {
+        const struct dav_request *s = request->impl->codec_data;
         bytes.data = s->principal;
         bytes.length = strlen(s->principal);
     }
@@ -72,7 +72,7 @@ static knurl_status add(knurl_router *router, knurl_route_group *group,
     if (out != NULL)
         *out = NULL;
     if (group != NULL)
-        router = group->router;
+        router = group->impl->router;
     if (router == NULL || config == NULL || config->path_prefix == NULL ||
         (!config->auth_disabled && config->auth == NULL) ||
         config->operation_timeout_ms < 0 ||
@@ -91,7 +91,7 @@ static knurl_status add(knurl_router *router, knurl_route_group *group,
                           "mount prefix must be absolute");
     while (n > 1 && prefix[n - 1] == '/')
         --n;
-    group_prefix = group != NULL ? group->config.prefix : "";
+    group_prefix = group != NULL ? group->impl->config.prefix : "";
     g = strcmp(group_prefix, "/") == 0 ? 0 : strlen(group_prefix);
     if (n == 1 && g != 0)
         n = 0;
@@ -127,8 +127,8 @@ static knurl_status add(knurl_router *router, knurl_route_group *group,
     if (config->provider != NULL)
         r->provider = config->provider;
     else {
-        status = knurl_storage_filesystem_new(router->server, &config->storage,
-                                              &r->provider, error);
+        status = knurl_storage_filesystem_new(
+            router->impl->server, &config->storage, &r->provider, error);
         if (status != KNURL_OK) {
             release(r);
             return status;
@@ -160,10 +160,10 @@ static knurl_status add(knurl_router *router, knurl_route_group *group,
         release(r);
         return status;
     }
-    registered->group = group;
-    registered->config.hooks = config->hooks;
-    registered->directory_mount = 1;
-    registered->release_userdata = release;
+    registered->impl->group = group;
+    registered->impl->config.hooks = config->hooks;
+    registered->impl->directory_mount = 1;
+    registered->impl->release_userdata = release;
     if (out != NULL)
         *out = registered;
     return KNURL_OK;

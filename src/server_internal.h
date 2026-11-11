@@ -14,7 +14,8 @@ struct knurl_proxy_worker;
 struct knurl_autoblock;
 struct knurl_logging;
 
-struct knurl_server {
+struct knurl_server_impl {
+    knurl_server receiver;
     knurl_server_config config;
     knurl_timeout_config requested_timeouts;
     size_t requested_worker_count;

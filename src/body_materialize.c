@@ -73,8 +73,8 @@ knurl_request_body_materialize(knurl_request *request,
         return status;
     knurl_body_result_init(&result);
     result.kind = KNURL_BODY_MEMORY;
-    result.length = body->length;
-    fits = knurl_u64_to_size(body->length, &length, NULL) == KNURL_OK;
+    result.length = body->impl->length;
+    fits = knurl_u64_to_size(body->impl->length, &length, NULL) == KNURL_OK;
     memory = NULL;
     chunk = NULL;
     fd = -1;
@@ -84,7 +84,7 @@ knurl_request_body_materialize(knurl_request *request,
         (memory_limit == 0 || memory_limit > config->capacity))
         memory_limit = config->capacity;
     if (memory_limit == 0)
-        memory_limit = body->memory_limit;
+        memory_limit = body->impl->memory_limit;
     directory = config->directory != NULL && config->directory[0] != '\0'
                     ? config->directory
                     : "/tmp";

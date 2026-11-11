@@ -13,6 +13,7 @@ typedef enum knurl_loop_kind {
 } knurl_loop_kind;
 
 struct knurl_loop_item {
+    void *owner;
     knurl_loop *loop;
     knurl_loop_kind kind;
     knurl_retire_fn retired;
@@ -26,7 +27,8 @@ struct knurl_loop_item {
     int cancelled;
 };
 
-struct knurl_watch {
+struct knurl_watch_impl {
+    knurl_watch receiver;
     struct knurl_loop_item item;
     int fd;
     unsigned int interest;
@@ -36,7 +38,8 @@ struct knurl_watch {
     void *backend;
 };
 
-struct knurl_timer {
+struct knurl_timer_impl {
+    knurl_timer receiver;
     struct knurl_loop_item item;
     knurl_u64 due;
     long repeat;
@@ -46,7 +49,8 @@ struct knurl_timer {
     int scheduled;
 };
 
-struct knurl_waker {
+struct knurl_waker_impl {
+    knurl_waker receiver;
     struct knurl_loop_item item;
     knurl_waker_fn callback;
 };
@@ -66,7 +70,8 @@ struct knurl_loop_backend {
 
 struct knurl_executor;
 struct knurl_storage_operation;
-struct knurl_loop {
+struct knurl_loop_impl {
+    knurl_loop receiver;
     unsigned long identity;
     struct knurl_executor *executors;
     struct knurl_executor *storage_executor;
@@ -111,8 +116,9 @@ knurl_status knurl_loop_monotonic(knurl_u64 *out, knurl_error *error);
 void knurl_loop_ready(struct knurl_loop_item *item);
 void knurl_loop_cancel(struct knurl_loop_item *item);
 knurl_status knurl_loop_accept(knurl_loop *loop, struct knurl_loop_item *item,
-                               knurl_loop_kind kind, knurl_retire_fn retired,
-                               void *userdata, knurl_error *error);
+                               void *owner, knurl_loop_kind kind,
+                               knurl_retire_fn retired, void *userdata,
+                               knurl_error *error);
 void knurl_loop_timer_remove(knurl_timer *timer);
 void knurl_loop_timer_schedule(knurl_timer *timer);
 knurl_status knurl_loop_deadline(knurl_u64 now, long delay, knurl_u64 *out,

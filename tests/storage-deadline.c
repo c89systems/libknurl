@@ -33,8 +33,8 @@ static knurl_status invoke(knurl_storage_operation *op,
     (void)args;
     /* Expire while the owner is in invoke, before the loop can dispatch its
      * timer; acknowledgement must still observe the absolute deadline. */
-    if (op->timer != NULL)
-        op->timer->due.high = op->timer->due.low = 0;
+    if (op->impl->timer != NULL)
+        op->impl->timer->impl->due.high = op->impl->timer->impl->due.low = 0;
     if (args->action == KNURL_STORAGE_STAT)
         return knurl_storage_operation_complete(op, NULL, error);
     knurl_storage_result_init(&result);

@@ -40,7 +40,7 @@ static void wake(knurl_loop *loop, void *userdata)
     (void)loop;
     fixture = userdata;
     ++fixture->delivered;
-    (void)knurl_waker_destroy(fixture->waker, NULL);
+    (void)fixture->waker->destroy(fixture->waker, NULL);
 }
 
 static void watch(knurl_watch *handle, unsigned int flags, void *userdata)
@@ -52,18 +52,18 @@ static void watch(knurl_watch *handle, unsigned int flags, void *userdata)
     if ((flags & KNURL_READABLE) && read(fixture->pipe[0], &byte, 1) == 1)
         ++fixture->delivered;
     if (!fixture->replaced) {
-        if (knurl_loop_watch(fixture->loop, fixture->pipe[0], KNURL_READABLE,
-                             watch, retire, fixture, &replacement,
-                             NULL) != KNURL_CONFLICT ||
+        if (fixture->loop->watch(fixture->loop, fixture->pipe[0],
+                                 KNURL_READABLE, watch, retire, fixture,
+                                 &replacement, NULL) != KNURL_CONFLICT ||
             replacement != NULL)
             fixture->failed = 1;
     }
-    knurl_watch_cancel(handle);
+    handle->cancel(handle);
     if (!fixture->replaced) {
         fixture->replaced = 1;
-        if (knurl_loop_watch(fixture->loop, fixture->pipe[0], KNURL_READABLE,
-                             watch, retire, fixture, &replacement,
-                             NULL) != KNURL_OK)
+        if (fixture->loop->watch(fixture->loop, fixture->pipe[0],
+                                 KNURL_READABLE, watch, retire, fixture,
+                                 &replacement, NULL) != KNURL_OK)
             fixture->failed = 1;
     }
 }
@@ -98,19 +98,19 @@ static knurl_status ready(knurl_server *server,
     int i;
     (void)process;
     fixture = userdata;
-    loop = knurl_server_loop(server);
+    loop = server->loop(server);
     fixture->loop = loop;
-    if (knurl_loop_now(loop, &now, error) != KNURL_OK ||
-        knurl_loop_watch(loop, fixture->pipe[0], KNURL_READABLE, watch, retire,
-                         fixture, &fd_watch, error) != KNURL_OK ||
-        knurl_loop_timer(loop, 0, 0, timer, retire, fixture, &clock, error) !=
+    if (loop->now(loop, &now, error) != KNURL_OK ||
+        loop->watch(loop, fixture->pipe[0], KNURL_READABLE, watch, retire,
+                    fixture, &fd_watch, error) != KNURL_OK ||
+        loop->timer(loop, 0, 0, timer, retire, fixture, &clock, error) !=
             KNURL_OK ||
-        knurl_loop_defer(loop, deferred, retire, fixture, error) != KNURL_OK ||
-        knurl_waker_new(loop, wake, retire, fixture, &fixture->waker, error) !=
+        loop->defer(loop, deferred, retire, fixture, error) != KNURL_OK ||
+        loop->waker(loop, wake, retire, fixture, &fixture->waker, error) !=
             KNURL_OK)
         return KNURL_INVALID;
     for (i = 0; i < 100; ++i)
-        if (knurl_waker_signal(fixture->waker, error) != KNURL_OK)
+        if (fixture->waker->signal(fixture->waker, error) != KNURL_OK)
             return KNURL_INVALID;
     return KNURL_OK;
 }
@@ -147,7 +147,7 @@ int main(void)
     config.callbacks.userdata = &fixture;
     if (knurl_server_new(&config, &server, &error) != KNURL_OK)
         return 3;
-    if (knurl_server_run(server, &result, &error) != KNURL_OK) {
+    if (server->run(server, &result, &error) != KNURL_OK) {
         (void)fprintf(stderr, "%s: %s\n", error.operation, error.message);
         return 4;
     }
@@ -156,9 +156,9 @@ int main(void)
         result.reason != KNURL_RUN_REQUESTED_STOP || result.escalated ||
         fcntl(pair[0], F_GETFD) != -1 || fcntl(fixture.pipe[0], F_GETFD) == -1)
         return 5;
-    if (knurl_server_run(server, NULL, &error) != KNURL_STATE)
+    if (server->run(server, NULL, &error) != KNURL_STATE)
         return 6;
-    (void)knurl_server_destroy(server, NULL);
+    (void)server->destroy(server, NULL);
     (void)close(pair[1]);
     (void)close(fixture.pipe[0]);
     (void)close(fixture.pipe[1]);
