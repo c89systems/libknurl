@@ -47,13 +47,26 @@ end
 collectgarbage('collect')
 local server
 local denied,allowed=0,0
+local drain_on_stop,stopped_notification=true,nil
 opts.on_parent_ready=function(s)
   assert(s:state()=='ready_paused')
+  local empty,why,lost=s:autoblock_next()
+  assert(empty==nil and why==knurl.EOF and lost==0)
   ok(s:set_serving(true))
   ok(fixture.spawn_policy(ok(s:listener(1)).port,ok(s:listener(2)).port,ok(s:listener(3)).port))
 end
+opts.on_parent_stopped=function(s)
+  if drain_on_stop then
+    local why,lost
+    stopped_notification,why,lost=s:autoblock_next()
+    assert(stopped_notification and why==nil and lost==0)
+  end
+end
 opts.on_worker_exit=function() assert(allowed==2 and denied==0) end
 server=ok(knurl.server(opts))
+local accepted,notification_error=server:set_autoblock_notifications{queue_capacity=8,callback=function() error('native path entered Lua') end}
+assert(accepted==nil and notification_error.status==knurl.status.INVALID)
+ok(server:set_autoblock_notifications{queue_capacity=8})
 opts.http.mime_types['.MP3']='audio/x-mutated'
 collectgarbage('collect')
 assert(server:state()=='declared')
@@ -120,7 +133,34 @@ ok(server:get('/tls',function(req) assert(req.tls and req.listener_index==2 and 
 ok(server:get('/event',function(req) ok(req.event('policy.test'));return 'event' end))
 ok(server:get('/blocked',function() denied=denied+1;error('autoblock bypass') end))
 ok(server:get('/stop',function() ok(server:stop());return 'stopped' end))
-ok(server:run());ok(fixture.join());ok(server:close());assert(server:state()=='closed')
+ok(server:run());ok(fixture.join())
+assert(stopped_notification:snapshot().name=='policy.test')
+drain_on_stop=false
+ok(server:run());ok(fixture.join())
+-- Both allocation owners exist before the C queue is consumed.
+for n=0,1 do
+  local success=fixture.fail_call(n,function() return server:autoblock_next() end)
+  assert(not success)
+end
+local notification,notification_status,lost=server:autoblock_next()
+assert(notification and notification_status==nil and lost==0)
+for n=0,1 do
+  local success=fixture.fail_call(n,function() return notification:snapshot() end)
+  assert(not success)
+end
+local notification_info=notification:snapshot()
+assert(notification_info.change=='blocked' and notification_info.reason=='application')
+assert(notification_info.address=='198.51.100.7' and notification_info.peer_address=='127.0.0.1')
+assert(notification_info.address_source=='x_forwarded_for' and #notification_info.via==1 and notification_info.via[1]=='127.0.0.1')
+assert(notification_info.name=='policy.test' and notification_info.threshold==2 and notification_info.count==2)
+assert(notification_info.process.role=='http' and notification_info.process.process_id>0)
+assert(notification_info.duration_ms==3600000 and notification_info.expires_at_ms>notification_info.occurred_at_ms)
+local empty,empty_status,empty_lost=server:autoblock_next()
+assert(empty==nil and empty_status==knurl.EOF and empty_lost==0)
+ok(server:close());assert(server:state()=='closed')
+assert(notification:snapshot().address=='198.51.100.7')
+local closed,closed_error=server:autoblock_next()
+assert(closed==nil and closed_error.status==knurl.status.STATE)
 -- Invalid inputs fail before starting the runtime or opening any material.
 for _,bad in ipairs{
   {port=0,timeouts={request_header=-1}},

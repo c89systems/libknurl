@@ -83,7 +83,7 @@ knurl_status knurl_request_event(knurl_request *r, const char *name,
             return knurl_fail(error, KNURL_INVALID, "request_event",
                               "event name contains a control byte");
     knurl_autoblock_note(r->impl->server, r->impl->effective_address,
-                         KNURL_OBSERVE_APPLICATION, 0, name);
+                         KNURL_OBSERVE_APPLICATION, 0, name, r, NULL);
     knurl_policy_observe(r, KNURL_OBSERVE_APPLICATION, name, 0, KNURL_OK);
     knurl_error_clear(error);
     return KNURL_OK;
@@ -163,7 +163,7 @@ void knurl_policy_closed(knurl_request *r)
         return;
     knurl_autoblock_note(r->impl->server, r->impl->effective_address,
                          KNURL_OBSERVE_HTTP_STATUS,
-                         r->impl->outcome.response.status, NULL);
+                         r->impl->outcome.response.status, NULL, r, NULL);
     knurl_policy_observe(r, KNURL_OBSERVE_REQUEST_COMPLETE, NULL,
                          r->impl->outcome.response.status,
                          r->impl->outcome.cause);

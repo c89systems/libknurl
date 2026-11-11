@@ -76,7 +76,7 @@ static void event(void *data, struct connection *connection,
     struct connection_snapshot copy;
     if (snapshot(runtime, connection, &copy)) {
         knurl_autoblock_note(runtime->server, copy.info.peer.address, kind,
-                             status, NULL);
+                             status, NULL, NULL, &copy.info);
         observe(runtime, &copy.info, kind, status, cause);
     }
 }
@@ -98,9 +98,9 @@ void knurl_kore_http_status(void *data, struct http_request *request,
         /* Managed final status is counted once at close. Native 100 Continue
          * still uses the already resolved request identity, never the proxy. */
         if (status < 200)
-            knurl_autoblock_note(managed->impl->server,
-                                 managed->impl->effective_address,
-                                 KNURL_OBSERVE_HTTP_STATUS, status, NULL);
+            knurl_autoblock_note(
+                managed->impl->server, managed->impl->effective_address,
+                KNURL_OBSERVE_HTTP_STATUS, status, NULL, managed, NULL);
         knurl_policy_observe(managed, KNURL_OBSERVE_HTTP_STATUS, NULL, status,
                              KNURL_OK);
         return;

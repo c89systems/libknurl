@@ -40,8 +40,15 @@ static int token(const char *start, const char *end, char out[46])
     out[n] = 0;
     return address(out, bytes) != 0;
 }
+static void via_add(knurl_autoblock_event *event, const char *ip)
+{
+    if (event->via_count < KNURL_AUTOBLOCK_MAX_VIA)
+        strcpy(event->via[event->via_count++], ip);
+    else
+        event->via_truncated = 1;
+}
 static int forwarded(const knurl_client_ip_config *config, knurl_bytes header,
-                     char out[46])
+                     char out[46], knurl_autoblock_event *event)
 {
     const char *start, *end, *value = header.data;
     if (value == NULL || header.length == 0)
@@ -55,6 +62,8 @@ static int forwarded(const knurl_client_ip_config *config, knurl_bytes header,
             return 0;
         if (!trusted(config, out) || start == value)
             return 1;
+        if (event != NULL)
+            via_add(event, out);
         end = start - 1;
     }
     return 0;
@@ -69,17 +78,23 @@ knurl_status knurl_request_identity(knurl_request *r, knurl_error *error)
     char resolved[46];
     int found = 0;
     r->impl->effective_address = r->impl->peer.address;
+    r->impl->address_source = KNURL_CLIENT_ADDRESS_PEER;
     if (r->impl->peer.address.data != NULL &&
         trusted(&config->client_ip, r->impl->peer.address.data)) {
         if (knurl_request_header_first(r, "x-forwarded-for", &header, NULL) ==
             KNURL_OK)
             found = forwarded(&config->client_ip, header,
-                              r->impl->effective_storage);
+                              r->impl->effective_storage, NULL);
+        if (found)
+            r->impl->address_source = KNURL_CLIENT_ADDRESS_FORWARDED_FOR;
         if (!found && knurl_request_header_first(r, "x-real-ip", &header,
-                                                 NULL) == KNURL_OK)
+                                                 NULL) == KNURL_OK) {
             found =
                 token(header.data, (const char *)header.data + header.length,
                       r->impl->effective_storage);
+            if (found)
+                r->impl->address_source = KNURL_CLIENT_ADDRESS_REAL_IP;
+        }
         if (found)
             r->impl->effective_address = knurl_view(r->impl->effective_storage);
     }
@@ -97,6 +112,7 @@ knurl_status knurl_request_identity(knurl_request *r, knurl_error *error)
             return knurl_fail(
                 error, KNURL_INVALID, "client_address",
                 "resolver must return a numeric IPv4 or IPv6 address");
+        r->impl->address_source = KNURL_CLIENT_ADDRESS_RESOLVER;
         memcpy(r->impl->effective_storage, resolved, n + 1);
         r->impl->effective_address = knurl_view(r->impl->effective_storage);
     }
@@ -122,4 +138,38 @@ knurl_status knurl_request_identity(knurl_request *r, knurl_error *error)
     }
     knurl_error_clear(error);
     return KNURL_OK;
+}
+
+void knurl_request_autoblock_context(knurl_request *request,
+                                     knurl_autoblock_event *event)
+{
+    knurl_bytes header;
+    char selected[46], swap[46];
+    size_t i, j;
+    event->address_source =
+        (knurl_client_address_source)request->impl->address_source;
+    event->peer_port = request->impl->peer.port;
+    event->local_port = request->impl->local.port;
+    event->listener_index = request->impl->listener;
+    event->tls = request->impl->tls;
+    event->process = request->impl->server->impl->process;
+    if (request->impl->peer.address.data != NULL)
+        strcpy(event->peer_address, request->impl->peer.address.data);
+    if (request->impl->local.address.data != NULL)
+        strcpy(event->local_address, request->impl->local.address.data);
+    if (event->address_source == KNURL_CLIENT_ADDRESS_FORWARDED_FOR ||
+        (event->address_source != KNURL_CLIENT_ADDRESS_PEER &&
+         strcmp(event->peer_address, event->address) != 0))
+        via_add(event, event->peer_address);
+    if (event->address_source == KNURL_CLIENT_ADDRESS_FORWARDED_FOR &&
+        knurl_request_header_first(request, "x-forwarded-for", &header, NULL) ==
+            KNURL_OK)
+        (void)forwarded(&request->impl->server->impl->config.client_ip, header,
+                        selected, event);
+    for (i = 0; i < event->via_count / 2; ++i) {
+        j = event->via_count - 1 - i;
+        strcpy(swap, event->via[i]);
+        strcpy(event->via[i], event->via[j]);
+        strcpy(event->via[j], swap);
+    }
 }

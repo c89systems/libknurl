@@ -188,6 +188,8 @@
 ---@field close fun(self:knurl.Server): boolean?, knurl.Error? # Destroy inactive server and release retained Lua owners.
 ---@field validate fun(self:knurl.Server): boolean?, knurl.Error? # Checks declarations/materials; may call TLS openers, never binds/forks.
 ---@field preflight fun(self:knurl.Server): boolean?, knurl.Error? # Validate and probe listeners, access log and applicable explicit spool resources before run.
+---@field set_autoblock_notifications fun(self:knurl.Server, options:knurl.AutoblockNotifications): boolean?, knurl.Error? # Inactive registration clears history; producers never enter Lua.
+---@field autoblock_next fun(self:knurl.Server): knurl.AutoblockEvent?, knurl.Error|knurl.Sentinel|nil, knurl.Unsigned? # Consume copied event, or nil/EOF; third result counts losses since last poll.
 ---@field effective_config fun(self:knurl.Server): table?, knurl.Error? # Copied normalized settings; snapshot includes configured TLS memory bytes.
 ---@field content_type fun(self:knurl.Server, path:string): string?, knurl.Error? # Infer from filename using instance overrides and Core defaults; no file access.
 ---@field set_pslog fun(self:knurl.Server, logger:userdata?, access_log?:boolean|table): boolean?, knurl.Error? # Inactive-server registration; failures preserve prior logger owners.
@@ -425,11 +427,14 @@
 ---@field route fun(server:knurl.Server|knurl.Group, options:table): boolean?, knurl.Error? # Bind public C REST decode/validate/handler phases.
 ---@field group fun(server:knurl.Server, options:table): boolean?, knurl.Error? # Copy shared defaults into ordered REST registrations.
 
+---Identity token used for EOF or AGAIN, distinct from numeric status codes.
+---@class knurl.Sentinel
+
 ---Public module loaded into an existing Lua 5.5 VM; owns neither VM nor interpreter.
 ---@class knurl.Module
 ---@field version string # Version of the public C library loaded by the binding.
----@field AGAIN integer # Producer/consumer would block; explicit resume/readiness required.
----@field EOF integer # End of input/output, distinct from ordinary errors.
+---@field AGAIN knurl.Sentinel # Producer/consumer would block; explicit resume/readiness required.
+---@field EOF knurl.Sentinel # End of input/output, distinct from ordinary errors.
 ---@field status knurl.Status # Portable Core status constants, including OK and all failures.
 ---@field control knurl.ControlFlags # READ/WRITE/EOF/ERROR host control FD bits.
 ---@field loop knurl.LoopFlags # READABLE/WRITABLE/READ_CLOSED/ERROR readiness flags.
@@ -507,6 +512,39 @@
 ---@class knurl.ProxyResources
 ---@field active_exchanges? knurl.IntegerInput # Zero inherits 16 active exchanges and four idle connections per pool.
 ---@field idle_connections? knurl.IntegerInput # Per-upstream idle connection capacity; zero selects four.
+
+---Inactive server notification queue settings.
+---@class knurl.AutoblockNotifications
+---@field queue_capacity? knurl.IntegerInput # Zero disables polling; bounded process-shared FIFO overwrites oldest entries.
+
+---Copied event owner, independent of the server lifetime.
+---@class knurl.AutoblockEvent
+---@field snapshot fun(self:knurl.AutoblockEvent): knurl.AutoblockInfo # Materialize a table; allocation failures can be retried with this owner.
+
+---@class knurl.AutoblockInfo
+---@field change 'blocked'|'extended'
+---@field reason 'http_status'|'tcp_stall'|'tls_failure'|'application'
+---@field address_source 'peer'|'x_forwarded_for'|'x_real_ip'|'resolver'
+---@field address string # Blocked numeric client address.
+---@field peer_address string # Actual socket peer.
+---@field local_address string
+---@field peer_port integer
+---@field local_port integer
+---@field listener_index integer # One-based listener, zero if unknown.
+---@field process knurl.Process
+---@field tls boolean
+---@field via string[] # Known proxy path towards server, at most 16 hops.
+---@field via_truncated boolean # Client-side prefix was omitted; nearest-server suffix retained.
+---@field name string # Application event name, at most 256 bytes; empty for other reasons.
+---@field name_truncated boolean
+---@field status integer # Triggering HTTP status, zero otherwise.
+---@field rule_index? integer # One-based status/event rule index; absent for transport rules.
+---@field threshold integer
+---@field count integer
+---@field window_seconds integer
+---@field occurred_at_ms knurl.Unsigned # Monotonic decision time.
+---@field expires_at_ms knurl.Unsigned # Scheduled deadline at this decision.
+---@field duration_ms knurl.Unsigned # Effective hold duration.
 
 ---Shared autoblock rules; event/status vectors are copied by Core.
 ---@class knurl.Autoblock

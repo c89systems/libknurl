@@ -23,7 +23,7 @@ if(CHECK_KIND STREQUAL "memory")
   set(runner "${VALGRIND}" --error-exitcode=99 --leak-check=full
     --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect
     --track-origins=yes --trace-children=yes "--log-file=${CMAKE_BINARY_DIR}/valgrind-%p.log")
-  foreach(name declarations asset mime json access_log_file source_file_test rest-runtime openapi xml-mapped xml_stack kore_json_stack
+  foreach(name declarations asset mime json access_log_file source_file_test rest-runtime openapi xml-mapped xml_stack kore_json_stack autoblock policy-logs-runtime
       storage-filesystem webdav-runtime proxy_framing proxy_http proxy_ws_wire)
     set(program "${KNURL_BUILD}/knurl_${name}")
     if(NOT EXISTS "${program}")
@@ -34,7 +34,7 @@ if(CHECK_KIND STREQUAL "memory")
   endforeach()
   add_test(NAME memory.rest-spill COMMAND ${runner} "${KNURL_BUILD}/knurl_rest-runtime" spill)
   set_tests_properties(memory.rest-spill PROPERTIES TIMEOUT 120 LABELS memory)
-  set(lua_cases foundation rest typed xml)
+  set(lua_cases foundation rest typed xml config)
   set(lua_timeout 120)
 elseif(CHECK_KIND STREQUAL "qemu")
   if(checked_KNURL_TARGET MATCHES "^aarch64-linux-(gnu|musl)$")

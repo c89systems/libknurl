@@ -33,6 +33,7 @@ struct knurl_request_impl {
     char local_address[46];
     char effective_storage[46], correlation_storage[129];
     knurl_bytes effective_address, correlation_id;
+    int address_source;
     int lifecycle_started, observing;
     int disconnect_side;
     knurl_u64 content_length;

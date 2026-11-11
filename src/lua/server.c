@@ -335,6 +335,141 @@ static int validate(lua_State *L, int resources)
 }
 static int l_validate(lua_State *L) { return validate(L, 0); }
 static int l_preflight(lua_State *L) { return validate(L, 1); }
+#define RL_AUTOBLOCK_EVENT "knurl.autoblock_event"
+static int autoblock_snapshot(lua_State *L)
+{
+    const knurl_autoblock_event *e = luaL_checkudata(L, 1, RL_AUTOBLOCK_EVENT);
+    static const char *const reasons[] = {"http_status", "tcp_stall",
+                                          "tls_failure", "application"};
+    static const char *const sources[] = {"peer", "x_forwarded_for",
+                                          "x_real_ip", "resolver"};
+    size_t i;
+    lua_createtable(L, 0, 23);
+#define TEXT(key, value)                                                       \
+    do {                                                                       \
+        lua_pushstring(L, value);                                              \
+        lua_setfield(L, -2, key);                                              \
+    } while (0)
+#define NUMBER(key, value)                                                     \
+    do {                                                                       \
+        lua_pushinteger(L, (lua_Integer)(value));                              \
+        lua_setfield(L, -2, key);                                              \
+    } while (0)
+#define BOOL(key, value)                                                       \
+    do {                                                                       \
+        lua_pushboolean(L, value);                                             \
+        lua_setfield(L, -2, key);                                              \
+    } while (0)
+#define WIDE(key, value)                                                       \
+    do {                                                                       \
+        rl_push_u64(L, value);                                                 \
+        lua_setfield(L, -2, key);                                              \
+    } while (0)
+    TEXT("change",
+         e->change == KNURL_AUTOBLOCK_BLOCKED ? "blocked" : "extended");
+    TEXT("reason", reasons[e->reason]);
+    TEXT("address_source", sources[e->address_source]);
+    TEXT("address", e->address);
+    TEXT("peer_address", e->peer_address);
+    TEXT("local_address", e->local_address);
+    TEXT("name", e->name);
+    NUMBER("peer_port", e->peer_port);
+    NUMBER("local_port", e->local_port);
+    NUMBER("listener_index",
+           e->listener_index == (size_t)-1 ? 0 : e->listener_index + 1);
+    NUMBER("status", e->status);
+    if (e->rule_index != (size_t)-1)
+        NUMBER("rule_index", e->rule_index + 1);
+    NUMBER("threshold", e->threshold);
+    NUMBER("count", e->count);
+    NUMBER("window_seconds", e->window_seconds);
+    BOOL("tls", e->tls);
+    BOOL("via_truncated", e->via_truncated);
+    BOOL("name_truncated", e->name_truncated);
+    WIDE("occurred_at_ms", e->occurred_at_ms);
+    WIDE("expires_at_ms", e->expires_at_ms);
+    WIDE("duration_ms", e->duration_ms);
+#undef TEXT
+#undef NUMBER
+#undef BOOL
+#undef WIDE
+    rl_process_push(L, &e->process);
+    lua_setfield(L, -2, "process");
+    lua_createtable(L, (int)e->via_count, 0);
+    for (i = 0; i < e->via_count; ++i) {
+        lua_pushstring(L, e->via[i]);
+        lua_rawseti(L, -2, (lua_Integer)i + 1);
+    }
+    lua_setfield(L, -2, "via");
+    return 1;
+}
+static int l_autoblock_notifications(lua_State *L)
+{
+    static const char *const fields[] = {"queue_capacity"};
+    struct rl_server *s = rl_server(L, 1);
+    knurl_autoblock_notifications_config config;
+    knurl_error error;
+    if (s == NULL || s->native == NULL)
+        return rl_error(
+            L, (rl_fail(&error, KNURL_STATE, "server is closed"), &error));
+    knurl_autoblock_notifications_config_init(&config);
+    if (!lua_istable(L, 2) ||
+        !rl_fields(L, 2, fields, sizeof(fields) / sizeof(fields[0]), &error))
+        return rl_error(L,
+                        (rl_fail(&error, KNURL_INVALID,
+                                 "notification options require queue_capacity"),
+                         &error));
+    if (!rl_field_size(L, 2, "queue_capacity", &config.queue_capacity))
+        return rl_error(L, (rl_fail(&error, KNURL_INVALID,
+                                    "invalid notification queue capacity"),
+                            &error));
+    if (s->native->set_autoblock_notifications(s->native, &config, &error) !=
+        KNURL_OK)
+        return rl_error(L, &error);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int l_autoblock_next(lua_State *L)
+{
+    struct rl_server *s = rl_server(L, 1);
+    knurl_autoblock_event *event;
+    knurl_u64 *dropped;
+    knurl_status status;
+    knurl_error error;
+    int event_index, count_index;
+    if (s == NULL || s->native == NULL)
+        return rl_error(
+            L, (rl_fail(&error, KNURL_STATE, "server is closed"), &error));
+    /* Allocate the complete returned owners before consuming a queued event.
+     * Snapshot conversion happens later, so allocation failure can be retried.
+     */
+    luaL_checkstack(L, 8, "autoblock notification result");
+    event = lua_newuserdatauv(L, sizeof(*event), 0);
+    event_index = lua_absindex(L, -1);
+    luaL_setmetatable(L, RL_AUTOBLOCK_EVENT);
+    dropped = lua_newuserdatauv(L, sizeof(*dropped), 0);
+    count_index = lua_absindex(L, -1);
+    luaL_setmetatable(L, RL_COUNT);
+    status = s->native->autoblock_next(s->native, event, dropped, &error);
+    if (status != KNURL_OK && status != KNURL_EOF)
+        return rl_error(L, &error);
+    if (status == KNURL_OK)
+        lua_pushvalue(L, event_index);
+    else
+        lua_pushnil(L);
+    if (status == KNURL_EOF)
+        rl_sentinel(L, KNURL_EOF);
+    else
+        lua_pushnil(L);
+    /* The small-count conversion performs no allocation. Large counts already
+     * have their preallocated exact unsigned owner. */
+    if (dropped->high <= 0x7fffffffUL)
+        rl_push_u64(L, *dropped);
+    else
+        lua_pushvalue(L, count_index);
+    return 3;
+}
+
 static int l_content_type(lua_State *L)
 {
     struct rl_server *s = rl_server(L, 1);
@@ -808,6 +943,8 @@ void rl_servers_open(lua_State *L)
         {"close", l_close},
         {"validate", l_validate},
         {"preflight", l_preflight},
+        {"set_autoblock_notifications", l_autoblock_notifications},
+        {"autoblock_next", l_autoblock_next},
         {"effective_config", l_effective},
         {"content_type", l_content_type},
         {"set_serving", l_serving},
@@ -840,6 +977,12 @@ void rl_servers_open(lua_State *L)
         {"tls_identity_state", rl_tls_identity_state},
         {"set_pslog", rl_set_pslog},
         {NULL, NULL}};
+    luaL_newmetatable(L, RL_AUTOBLOCK_EVENT);
+    lua_newtable(L);
+    lua_pushcfunction(L, autoblock_snapshot);
+    lua_setfield(L, -2, "snapshot");
+    lua_setfield(L, -2, "__index");
+    lua_pop(L, 1);
     luaL_newmetatable(L, RL_SERVER);
     lua_pushcfunction(L, l_gc);
     lua_setfield(L, -2, "__gc");

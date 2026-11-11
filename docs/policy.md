@@ -192,8 +192,10 @@ information allows admission and does not invent a block.
 Linux uses a process-shared robust mutex. Recovery after owner death clears the
 potentially partial table before marking the mutex consistent. Darwin retains
 Vectis's process-local mutex plus an unlinked-file POSIX record lock, released
-by the kernel when a worker dies. The parent destroys the mapping after workers
-are reaped. There is no per-address heap allocation on the HTTP loop.
+by the kernel when a worker dies. Without notification polling, the parent destroys
+the mapping after workers are reaped. Polling retains it until the next run,
+notification registration or server destruction. There is no per-address heap
+allocation on the HTTP loop.
 
 `knurl_server_config_init_production_webserver` enables the mechanism with
 Vectis's thresholds: 20 TCP stalls, 10 TLS failures, 10 responses each for
@@ -204,3 +206,94 @@ shared counters, capacity, expiry/window reset, wide duration, saturation,
 worker-death recovery and fresh-table reuse. The
 [public live fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/policy-logs-runtime.c) covers blocking and identity,
 including 100 Continue, with no observer installed.
+
+### Block notifications
+
+Notifications are disabled by default. Configure an inactive server through its
+public C receiver before `run`. Native callbacks and polling are independent.
+
+```c
+static void blocked(knurl_server *server, const knurl_autoblock_event *event,
+                    void *userdata)
+{
+    /* Copy or record event->address, event->via, event->reason and
+       event->duration_ms here. Keep this callback bounded. */
+    (void)server;
+    (void)userdata;
+    (void)event;
+}
+
+/* After creating server, with autoblock enabled in its configuration. */
+knurl_autoblock_notifications_config notifications;
+knurl_autoblock_notifications_config_init(&notifications);
+notifications.callback = blocked;
+notifications.queue_capacity = 256;
+if (server->set_autoblock_notifications(server, &notifications, &error) != KNURL_OK)
+    /* handle error */;
+```
+
+The callback executes in the process applying the block, after releasing the
+shared table lock. Its event is borrowed for that call. Configuration is copied,
+while callback userdata remains caller-owned. Do not enter Lua or recursively
+emit events from this callback. Delivery does not alter the block decision.
+
+Each event identifies a new block or an extension of its scheduled deadline.
+It contains the resolved client address, actual TCP peer and local endpoint,
+listener/process identity, TLS flag, address provenance, known proxy path,
+HTTP/status/application/transport reason, rule index, threshold and count.
+Occurrence, expiry and effective hold duration use exact monotonic milliseconds,
+not wall-clock timestamps. Expiry describes the scheduled deadline at that
+decision, not an eventual unblock notification. Existing fixed-window resets
+still apply. Further matching observations that leave the deadline unchanged do
+not produce notifications.
+
+`via` runs from client towards server, ending at the socket peer. It includes
+only the trusted suffix used by forwarded-address resolution. Untrusted tokens
+before the effective client are excluded. A custom resolver reports its
+provenance and known socket peer without inventing intermediate hops. Transport
+events use the socket peer directly and have no proxy path. At most 16 hops are
+copied; `via_truncated` identifies an omitted client-side prefix. Application
+names retain at most 256 bytes with `name_truncated`. Addresses are numeric IPv4
+or IPv6 strings. Unknown listener indices are `(size_t)-1` in C.
+
+The optional queue is a bounded process-shared FIFO collecting all workers.
+Coordinate one logical consumer across C and Lua, since each poll consumes an
+event. Overflow overwrites the oldest event. `autoblock_next` reports accumulated
+overwrite/recovery losses, including when returning EOF. The loss count resets
+only when the caller requests it. Linux owner-death recovery discards pending
+events along with the partial policy table and counts those discarded events.
+This queue is in memory and has no persistence guarantee across process failure.
+Polling is allowed on the current process's owner loop, in serialized lifecycle
+callbacks, or after `run` returns. Retained events clear on the next run,
+notification registration or destruction.
+
+Lua polls copied event userdata through the same public C surface. No Lua
+callback runs in the producer. For example, a parent-loop timer can drain:
+
+```lua
+assert(server:set_autoblock_notifications { queue_capacity = 256 })
+
+local function drain()
+    while true do
+        local event, err, dropped = server:autoblock_next()
+        if dropped and dropped ~= 0 then
+            print("autoblock notifications lost", tostring(dropped))
+        end
+        if not event then
+            assert(err == knurl.EOF, tostring(err))
+            break
+        end
+        local info = event:snapshot()
+        print(info.address, table.concat(info.via, " -> "), info.reason,
+              tostring(info.duration_ms))
+    end
+end
+```
+
+Call `drain` from the parent owner loop or after `server:run()` returns.
+`autoblock_next` returns `event, nil, dropped` or `nil, knurl.EOF, dropped`.
+The copied userdata remains valid after server closure. Its `snapshot()` builds
+a Lua table and can be retried if allocation fails. Polling allocates the copied
+owner before consuming the queue. Snapshot indices are one-based; an unknown
+listener is zero and a transport event has no `rule_index`. Set
+`queue_capacity=0` to disable polling on an inactive server.

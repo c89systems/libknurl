@@ -696,6 +696,84 @@ typedef struct knurl_autoblock_config {
     size_t event_rule_count;
 } knurl_autoblock_config;
 
+/** Maximum copied trusted-proxy hops in one autoblock notification. */
+#define KNURL_AUTOBLOCK_MAX_VIA 16U
+/** Maximum copied application-event name bytes in a notification. */
+#define KNURL_AUTOBLOCK_NAME_MAX 256U
+/** Address provenance used by the request identity policy. */
+typedef enum knurl_client_address_source {
+    KNURL_CLIENT_ADDRESS_PEER = 0,
+    KNURL_CLIENT_ADDRESS_FORWARDED_FOR,
+    KNURL_CLIENT_ADDRESS_REAL_IP,
+    KNURL_CLIENT_ADDRESS_RESOLVER
+} knurl_client_address_source;
+/** The rule that produced an autoblock decision. */
+typedef enum knurl_autoblock_reason {
+    KNURL_AUTOBLOCK_HTTP_STATUS = 0,
+    KNURL_AUTOBLOCK_TCP_STALL,
+    KNURL_AUTOBLOCK_TLS_FAILURE,
+    KNURL_AUTOBLOCK_APPLICATION
+} knurl_autoblock_reason;
+/** A newly applied block or a change to an existing block's deadline. */
+typedef enum knurl_autoblock_change {
+    KNURL_AUTOBLOCK_BLOCKED = 0,
+    KNURL_AUTOBLOCK_EXTENDED
+} knurl_autoblock_change;
+/** Self-contained copied decision. Address is the blocked numeric client key;
+ * peer is the actual TCP peer. Via lists known trusted proxies from client
+ * towards server. Resolver overrides report the known peer only. Transport
+ * events use peer identity. A truncated via list retains the nearest-server
+ * suffix; a truncated name retains its prefix. Times are monotonic
+ * milliseconds, suitable for duration arithmetic rather than wall-clock
+ * display. Expiry is the engine's scheduled deadline.
+ */
+typedef struct knurl_autoblock_event {
+    knurl_autoblock_change change;
+    knurl_autoblock_reason reason;
+    knurl_client_address_source address_source;
+    char address[46];
+    char peer_address[46];
+    char local_address[46];
+    unsigned short peer_port, local_port;
+    /** Zero-based listener index, or (size_t)-1 when unavailable. */
+    size_t listener_index;
+    knurl_process_context process;
+    int tls;
+    char via[KNURL_AUTOBLOCK_MAX_VIA][46];
+    size_t via_count;
+    int via_truncated;
+    char name[KNURL_AUTOBLOCK_NAME_MAX + 1];
+    int name_truncated;
+    /** Triggering HTTP status, or zero for another reason. */
+    int status;
+    /** Zero-based status/event rule index, or (size_t)-1 for transport rules.
+     */
+    size_t rule_index;
+    unsigned int threshold, count, window_seconds;
+    knurl_u64 occurred_at_ms, expires_at_ms, duration_ms;
+} knurl_autoblock_event;
+/** Native notification in the process that changed the block, after releasing
+ * the shared lock. Event is borrowed during the call. Keep work bounded; do not
+ * enter a Lua VM or recursively emit events. Querying notifications or
+ * requesting server stop is allowed. Callback failure cannot undo the block.
+ */
+typedef void (*knurl_autoblock_fn)(knurl_server *,
+                                   const knurl_autoblock_event *, void *);
+/** Inert notification declaration. Zero queue_capacity disables polling;
+ * callback and queue may be selected independently. The queue overwrites its
+ * oldest event when full and reports that loss on the next poll. The
+ * declaration is copied; callback userdata is borrowed until replaced or server
+ * destruction.
+ */
+typedef struct knurl_autoblock_notifications_config {
+    size_t queue_capacity;
+    knurl_autoblock_fn callback;
+    void *userdata;
+} knurl_autoblock_notifications_config;
+/** Initialize notifications with queue and callback disabled. */
+KNURL_API void knurl_autoblock_notifications_config_init(
+    knurl_autoblock_notifications_config *);
+
 /** Configuration for proxy resource. Use the owning operation's initializer
  * before applying overrides.
  */
@@ -870,6 +948,23 @@ KNURL_API knurl_status knurl_server_listener_at(const knurl_server *server,
                                                 size_t index,
                                                 knurl_bound_listener *out,
                                                 knurl_error *error);
+/** Copy an inactive server's notification declaration. NULL disables delivery.
+ * Registration clears retained history. A run starts a fresh queue, shared by
+ * all workers. Polling history remains available after run returns. */
+KNURL_API knurl_status knurl_server_set_autoblock_notifications(
+    knurl_server *, const knurl_autoblock_notifications_config *,
+    knurl_error *);
+/** Consume one copied notification from the shared FIFO, or return EOF.
+ * Coordinate one logical polling consumer across processes. dropped reports
+ * overwrite/recovery losses since the last poll requesting that count,
+ * including on EOF. Active polling requires the current process owner loop.
+ * Inactive polling is serialized with lifecycle operations. No callback is
+ * invoked by polling. Queue contents last until the next run, notification
+ * registration or server destruction. */
+KNURL_API knurl_status knurl_server_autoblock_next(knurl_server *,
+                                                   knurl_autoblock_event *,
+                                                   knurl_u64 *dropped,
+                                                   knurl_error *);
 
 struct knurl_access_log_config;
 struct knurl_bound_listener;
@@ -1005,6 +1100,14 @@ struct knurl_server {
     knurl_status (*storage_filesystem)(
         struct knurl_server *, const struct knurl_storage_filesystem_config *,
         struct knurl_storage_provider **, struct knurl_error *);
+    /** Configure native callbacks and the shared polling queue while inactive.
+     */
+    knurl_status (*set_autoblock_notifications)(
+        knurl_server *, const knurl_autoblock_notifications_config *,
+        knurl_error *);
+    /** Consume one copied event; EOF still reports any queue losses. */
+    knurl_status (*autoblock_next)(knurl_server *, knurl_autoblock_event *,
+                                   knurl_u64 *, knurl_error *);
     /** Private library state; applications must not access it. */
     struct knurl_server_impl *impl;
 };

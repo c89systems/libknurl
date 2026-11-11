@@ -327,6 +327,12 @@ overrides. `server:effective_config()` copies normalized values and requested
 deadlines; editing the snapshot cannot change the server. It includes configured
 TLS memory bytes, so callers control how that configuration is handled.
 
+For autoblock transitions, configure `server:set_autoblock_notifications` and
+poll `server:autoblock_next()` from the owning Lua thread. Workers enqueue copied
+native events without entering Lua. The [policy guide](policy.md#block-notifications)
+documents the bounded shared queue, loss counts, proxy paths and
+`event:snapshot()` fields and lifetime.
+
 Set `http={server_header="vectis"}` when constructing the server to configure
 the emitted `Server` header (C: `config.http.server_header`). The value defaults
 to `"knurl"`, is copied, and accepts 1..53 bytes valid in an HTTP header value.

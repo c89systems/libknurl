@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "server_internal.h"
+#include "autoblock_internal.h"
 #include <knurl/kore.h>
 #include <knurl/tls.h>
 #include <knurl/pslog.h>
@@ -83,6 +84,10 @@ knurl_status knurl_server_new(const knurl_server_config *input,
     server->impl->loop = NULL;
     server->impl->proxy = NULL;
     server->impl->autoblock = NULL;
+    server->impl->autoblock_history = NULL;
+    knurl_autoblock_notifications_config_init(
+        &server->impl->autoblock_notifications);
+    server->impl->autoblock_notifying = 0;
     server->impl->logging = NULL;
     server->impl->notify_fd = -1;
     server->impl->stop_requested = server->impl->terminating_signal = 0;
@@ -173,10 +178,11 @@ knurl_server_supervision_take(knurl_server *server,
 knurl_status knurl_server_destroy(knurl_server *server, knurl_error *error)
 {
     if (server != NULL) {
-        if (knurl_server_running(server))
+        if (knurl_server_running(server) || server->impl->autoblock_notifying)
             return knurl_fail(
                 error, KNURL_STATE, "server_destroy",
                 "server is running; request stop and wait for run to return");
+        knurl_autoblock_history_clear(server);
         knurl_router_release(server->impl->router);
         if (server->impl->config.supervision.enabled &&
             server->impl->config.supervision.control_fd >= 0)
@@ -191,27 +197,30 @@ knurl_status knurl_server_destroy(knurl_server *server, knurl_error *error)
 
 void knurl_server_receiver_init(knurl_server *receiver)
 {
-    static const knurl_server methods = {knurl_kore_revision,
-                                         knurl_server_tls_identity_state,
-                                         knurl_server_set_pslog,
-                                         knurl_server_loop,
-                                         knurl_server_content_type,
-                                         knurl_server_effective_config,
-                                         knurl_server_get_state,
-                                         knurl_server_router,
-                                         knurl_server_router_take,
-                                         knurl_server_supervision_take,
-                                         knurl_server_control_interest,
-                                         knurl_server_destroy,
-                                         knurl_server_validate,
-                                         knurl_server_preflight,
-                                         knurl_server_run,
-                                         knurl_server_request_stop,
-                                         knurl_server_notify_signal,
-                                         knurl_server_set_serving,
-                                         knurl_server_listener_at,
-                                         knurl_storage_filesystem_new,
-                                         NULL};
+    static const knurl_server methods = {
+        knurl_kore_revision,
+        knurl_server_tls_identity_state,
+        knurl_server_set_pslog,
+        knurl_server_loop,
+        knurl_server_content_type,
+        knurl_server_effective_config,
+        knurl_server_get_state,
+        knurl_server_router,
+        knurl_server_router_take,
+        knurl_server_supervision_take,
+        knurl_server_control_interest,
+        knurl_server_destroy,
+        knurl_server_validate,
+        knurl_server_preflight,
+        knurl_server_run,
+        knurl_server_request_stop,
+        knurl_server_notify_signal,
+        knurl_server_set_serving,
+        knurl_server_listener_at,
+        knurl_storage_filesystem_new,
+        knurl_server_set_autoblock_notifications,
+        knurl_server_autoblock_next,
+        NULL};
     *receiver = methods;
     receiver->impl = (struct knurl_server_impl *)receiver;
 }
