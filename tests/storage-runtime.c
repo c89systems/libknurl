@@ -750,6 +750,9 @@ static knurl_status handler(knurl_request *request, knurl_reply *reply,
                                ? "ready"
                                : "waiting",
                            error);
+    if (strcmp(path, "/timeout-status") == 0)
+        return reply->text(reply, 200, "text/plain",
+                           f->interruptions == 1 ? "ready" : "waiting", error);
     if (strcmp(path, "/cancel-late") == 0) {
         if (f->late->cancel(f->late, error) != KNURL_OK)
             return KNURL_STATE;
@@ -819,7 +822,17 @@ static int client(unsigned short port)
         return 1;
     if (request(port, "/cancel-late", body) || strcmp(body, "cancelled") != 0)
         return 1;
-    (void)poll(NULL, 0, 50);
+    /* Wait for observed timeout delivery, not elapsed client-side time. The
+     * owner loop may process socket readiness before an overdue timer. */
+    for (i = 0; i < 1000; ++i) {
+        if (request(port, "/timeout-status", body))
+            return 1;
+        if (strcmp(body, "ready") == 0)
+            break;
+        (void)poll(NULL, 0, 1);
+    }
+    if (i == 1000)
+        return 1;
     if (request(port, "/ping", body) || strcmp(body, "progress") != 0)
         return 1;
     return request(port, "/release", body) || strcmp(body, "released") != 0;
