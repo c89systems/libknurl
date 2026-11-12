@@ -8,6 +8,13 @@ Actual Vectis cutover and release verification have separate gates.
 See [Testing](testing.md), [Editor setup](editors.md) and
 [Release preparation](releasing.md) for their dedicated workflows.
 
+## Planned extensions
+
+The [SOAP 1.2 server specification](soap12-spec.md) records the future C/Lua
+endpoint contract, namespace-aware XML requirements, streaming and ownership
+rules, fault behavior and acceptance tests. It describes planned work rather
+than an implemented or released capability.
+
 ## Commands
 
 Prerequisites: CMake >= 3.24, Ninja, Git, Make, Bash >= 4.4, curl, tar, flock,
