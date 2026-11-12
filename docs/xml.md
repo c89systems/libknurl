@@ -81,7 +81,7 @@ Mapped input uses an iterative stack of reader frames. Shallow documents use
 small bounded inline storage; deeper mapping grows heap storage geometrically.
 Traversal preserves incremental input, field order, inherited `xml:space` and
 configured depth checks without consuming a native call frame per XML level.
-Allocation failure returns NOMEM. LoneJSON 0.49.0 also uses bounded native stack
+Allocation failure returns NOMEM. LoneJSON 0.50.0 also uses bounded native stack
 space for record lifecycle traversal, with checked heap growth for deep maps.
 Check the status from `lonejson_init`, `lonejson_reset` and `lonejson_cleanup`,
 passing their optional error output. Workspace allocation failure leaves the

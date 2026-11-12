@@ -22,7 +22,7 @@ foreach(prefix "${KNURL_CORE_PREFIX}" "${KNURL_SDK_ROOT}/cpkt" "${KNURL_SDK_ROOT
 endforeach()
 find_package(knurl ${PROJECT_VERSION} EXACT CONFIG REQUIRED COMPONENTS shared)
 find_package(Lua 5.5.1 EXACT CONFIG REQUIRED)
-find_package(lonejson_lua 0.49.0 EXACT CONFIG REQUIRED)
+find_package(lonejson_lua 0.50.0 EXACT CONFIG REQUIRED)
 find_package(pslog_lua 0.13.0 EXACT CONFIG REQUIRED)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/facade.inc"

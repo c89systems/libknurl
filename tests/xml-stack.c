@@ -133,6 +133,62 @@ static void lifecycle_free(void *data, void *old)
     (void)data;
     free(old);
 }
+static lonejson_read_result empty_reader(void *data, unsigned char *buffer,
+                                         size_t capacity)
+{
+    lonejson_read_result result;
+    (void)data;
+    (void)buffer;
+    (void)capacity;
+    memset(&result, 0, sizeof(result));
+    result.eof = 1;
+    return result;
+}
+static void stream_diagnostics(lonejson *runtime, size_t *fail)
+{
+    lonejson_array_stream *stream;
+    lonejson_error *error;
+    size_t attempt;
+    int poisoned;
+    /* 0.49 left auxiliary fields undefined on constructor allocation failure.
+     * Fresh heap storage also lets Valgrind prove every field we consume. */
+    for (poisoned = 0; poisoned < 2; ++poisoned) {
+        for (attempt = 1; attempt < 64; ++attempt) {
+            error = malloc(sizeof(*error));
+            CHECK(error != NULL);
+            if (poisoned)
+                memset(error, 0x5a, sizeof(*error));
+            *fail = attempt;
+            stream = lonejson_array_stream_open_reader(
+                runtime, NULL, empty_reader, NULL, error);
+            *fail = 0;
+            CHECK(error->code == (stream == NULL
+                                      ? LONEJSON_STATUS_ALLOCATION_FAILED
+                                      : LONEJSON_STATUS_OK));
+            CHECK(error->line == 0 && error->column == 0 && error->offset == 0);
+            CHECK(error->system_errno == 0 && error->truncated == 0);
+            CHECK(memchr(error->message, 0, sizeof(error->message)) != NULL);
+            CHECK((error->message[0] == 0) == (stream != NULL));
+            free(error);
+            if (stream != NULL) {
+                lonejson_array_stream_close(stream);
+                break;
+            }
+        }
+        CHECK(attempt > 1 && attempt < 64);
+    }
+    error = malloc(sizeof(*error));
+    CHECK(error != NULL);
+    memset(error, 0x5a, sizeof(*error));
+    stream =
+        lonejson_array_stream_open_reader(runtime, NULL, NULL, NULL, error);
+    CHECK(stream == NULL && error->code == LONEJSON_STATUS_INVALID_ARGUMENT);
+    CHECK(error->line == 0 && error->column == 0 && error->offset == 0);
+    CHECK(error->system_errno == 0 && error->truncated == 0);
+    CHECK(error->message[0] != 0 &&
+          memchr(error->message, 0, sizeof(error->message)) != NULL);
+    free(error);
+}
 static knurl_status unexpected_item(size_t index,
                                     const lonejson_record_view *record,
                                     void *data, knurl_error *error)
@@ -168,6 +224,7 @@ static void lifecycle(void)
     config.allocator = &allocator;
     f.runtime = lonejson_new(&config, &native);
     CHECK(f.runtime != NULL);
+    stream_diagnostics(f.runtime, &fail);
     f.schema.runtime = f.runtime;
     strcpy(f.record.text, "retained");
     fail = 1;

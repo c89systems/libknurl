@@ -12,7 +12,7 @@ Required installed SDKs, for one concrete target:
 
 - libknurl, matching this package's `VERSION`, shared component;
 - cpkt 0.7.0, including Lua 5.5.1 and its shared link closure;
-- LoneJSON 0.49.0 C SDK and its public shared Lua provider;
+- LoneJSON 0.50.0 C SDK and its public shared Lua provider;
 - pslog 0.13.0 C SDK and its public shared Lua provider.
 
 `KNURL_CORE_PREFIX` names the installed libknurl prefix. `KNURL_SDK_ROOT`

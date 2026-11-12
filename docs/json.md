@@ -5,11 +5,14 @@ umbrella remains independent of LoneJSON declarations. CMake consumers link
 `knurl::shared` or `knurl::static`; both expose the matching public LoneJSON
 dependency. Its header and library come from the selected released SDK.
 
-The selected LoneJSON 0.49.0 SDK uses ABI 29. Record lifecycle calls
+The selected LoneJSON 0.50.0 SDK uses ABI 29. Record lifecycle calls
 `lonejson_init`, `lonejson_reset` and `lonejson_cleanup` return a status and take
 an optional error output. Check initialization/reset before using records.
 Deep-map traversal grows checked heap workspaces; allocation failure leaves the
 record unchanged and can be retried after restoring allocator availability.
+Array-stream constructors initialize all diagnostics on success and failure,
+including allocator failures; callers do not need to preinitialize their error
+output.
 
 `knurl_json_validate_cstr` preserves Vectis's standalone validation helper:
 NULL is INVALID, one NUL-terminated value is validated by LoneJSON, and parser

@@ -63,7 +63,6 @@ static knurl_status each(struct array_input *input, const char *selector,
         if (view.schema.runtime == NULL)
             return knurl_json_error(native.code, &native, error);
     }
-    lonejson_error_init(&native);
     stream = lonejson_array_stream_open_reader(view.schema.runtime, selector,
                                                read_input, input, &native);
     if (stream == NULL)

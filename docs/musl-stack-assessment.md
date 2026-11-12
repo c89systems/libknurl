@@ -3,7 +3,7 @@
 This document records the historical diagnosis before the iterative mapper and
 Kore patch 0066. Both local corrections are now implemented; see
 [verification](verification.md) and the [XML manual](xml.md). The adopted
-[LoneJSON 0.49.0](https://github.com/c89systems/lonejson/releases/tag/v0.49.0)
+[LoneJSON 0.50.0](https://github.com/c89systems/lonejson/releases/tag/v0.50.0)
 includes 0.48.0's record-lifecycle and Lua JSON stack corrections. The worker
 regression now exercises the finite 4,097-map lifecycle chain. Dependency
 findings and handoff status below describe the historical 0.47.0 baseline.
