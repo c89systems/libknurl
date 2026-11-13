@@ -57,13 +57,15 @@ static struct knurl_mmdb_page *load(struct knurl_mmdb_cache *cache,
             newest(cache, page);
             return page;
         }
-    if (sizeof(*page) <= cache->heap_limit - cache->heap_used) {
+    if (sizeof(*page) <= cache->heap_limit - cache->heap_used &&
+        sizeof(*page) <= cache->block_limit - cache->block_used) {
         page = (struct knurl_mmdb_page *)malloc(sizeof(*page));
         if (page != NULL) {
             page->older = NULL;
             page->newer = NULL;
             page->valid = 0;
             cache->heap_used += sizeof(*page);
+            cache->block_used += sizeof(*page);
         }
     }
     if (page == NULL) {
@@ -121,15 +123,31 @@ int knurl_mmdb_cache_read(struct knurl_mmdb_cache *cache, size_t offset,
     }
     return 1;
 }
+const unsigned char *knurl_mmdb_cache_view(struct knurl_mmdb_cache *cache,
+                                           size_t offset, size_t length)
+{
+    struct knurl_mmdb_page *page;
+    size_t within = offset & (KNURL_MMDB_PAGE_SIZE - 1);
+    if (cache->failure != KNURL_OK || length == 0 || offset > cache->size ||
+        length > cache->size - offset || length > KNURL_MMDB_PAGE_SIZE - within)
+        return NULL;
+    page = load(cache, offset - within);
+    return page == NULL ? NULL : page->bytes + within;
+}
 void knurl_mmdb_cache_clear(struct knurl_mmdb_cache *cache)
 {
     struct knurl_mmdb_page *page, *next;
     for (page = cache->head; page != NULL; page = next) {
         next = page->older;
         cache->heap_used -= sizeof(*page);
+        cache->block_used -= sizeof(*page);
         free(page);
     }
     cache->head = NULL;
     cache->tail = NULL;
     memset(cache->buckets, 0, sizeof(cache->buckets));
+}
+size_t knurl_mmdb_cache_page_size(void)
+{
+    return sizeof(struct knurl_mmdb_page);
 }

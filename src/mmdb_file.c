@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "mmdb_internal.h"
 #include "mmdb_decode.h"
+#include "mmdb_prefix.h"
 #include <knurl/mmdb.h>
 #include <pthread.h>
 #include <sys/stat.h>
@@ -12,6 +13,7 @@
 
 struct file_db {
     struct knurl_mmdb_cache cache;
+    struct knurl_mmdb_prefix prefix;
     pthread_mutex_t mutex;
     int mutex_ready;
     struct knurl_mmdb_section data;
@@ -36,6 +38,7 @@ static knurl_status corrupt(struct file_db *db, knurl_error *error)
 static void close_db(void *userdata)
 {
     struct file_db *db = (struct file_db *)userdata;
+    knurl_mmdb_prefix_clear(&db->prefix);
     knurl_mmdb_cache_clear(&db->cache);
     close(db->cache.fd);
     if (db->mutex_ready)
@@ -46,21 +49,29 @@ static unsigned long branch(struct file_db *db, unsigned long node,
                             unsigned int bit)
 {
     unsigned char bytes_read[8];
-    const unsigned char *p = bytes_read;
-    unsigned long result = 0;
-    unsigned int i, bytes = db->width / 8;
-    if (!knurl_mmdb_cache_read(&db->cache, (size_t)node * (db->width / 4),
-                               bytes_read, db->width / 4))
-        return 0;
+    size_t offset = (size_t)node * (db->width / 4);
+    const unsigned char *p =
+        knurl_mmdb_cache_view(&db->cache, offset, db->width / 4);
+    unsigned long high;
+    if (p == NULL) {
+        if (!knurl_mmdb_cache_read(&db->cache, offset, bytes_read,
+                                   db->width / 4))
+            return 0;
+        p = bytes_read;
+    }
     if (db->width == 28) {
-        result = bit ? p[3] & 15 : p[3] >> 4;
+        high = bit ? p[3] & 15 : p[3] >> 4;
         p += bit ? 4 : 0;
-        bytes = 3;
-    } else
-        p += bit * bytes;
-    for (i = 0; i < bytes; ++i)
-        result = (result << 8) | p[i];
-    return result;
+        return (high << 24) | ((unsigned long)p[0] << 16) |
+               ((unsigned long)p[1] << 8) | p[2];
+    }
+    if (db->width == 24) {
+        p += bit * 3;
+        return ((unsigned long)p[0] << 16) | ((unsigned long)p[1] << 8) | p[2];
+    }
+    p += bit * 4;
+    return ((unsigned long)p[0] << 24) | ((unsigned long)p[1] << 16) |
+           ((unsigned long)p[2] << 8) | p[3];
 }
 static int unique_map(const struct knurl_mmdb_section *section,
                       const struct knurl_mmdb_value *map, int strings,
@@ -185,18 +196,20 @@ static int metadata(struct file_db *db)
 }
 static knurl_status query(const knurl_mmdb_address *address,
                           knurl_mmdb_country *country, void *userdata,
-                          knurl_error *error)
+                          unsigned int *prefix_bits, knurl_error *error)
 {
     struct file_db *db = (struct file_db *)userdata;
     struct knurl_mmdb_value root, selected;
     unsigned long node, offset, budget = 65536UL;
     unsigned int bit;
     int found;
+    *prefix_bits = 0;
     if (address->size == 16 && db->ip_version == 4)
         return KNURL_EOF;
     node = address->size == 4 ? db->ipv4 : 0;
     for (bit = 0; bit < address->size * 8 && node < db->nodes; ++bit)
         node = branch(db, node, (address->bytes[bit / 8] >> (7 - bit % 8)) & 1);
+    *prefix_bits = bit;
     if (node == db->nodes)
         return KNURL_EOF;
     if (node < db->nodes || node - db->nodes < 16)
@@ -217,6 +230,9 @@ static knurl_status query(const knurl_mmdb_address *address,
     if (!knurl_mmdb_read(&db->data, root.payload, country->code, 2))
         return corrupt(db, error);
     country->code[2] = 0;
+    if (country->code[0] < 'A' || country->code[0] > 'Z' ||
+        country->code[1] < 'A' || country->code[1] > 'Z')
+        return corrupt(db, error);
     return KNURL_OK;
 }
 static knurl_status lookup(const knurl_mmdb_address *address,
@@ -225,14 +241,20 @@ static knurl_status lookup(const knurl_mmdb_address *address,
 {
     struct file_db *db = (struct file_db *)userdata;
     knurl_status status;
+    unsigned int prefix_bits;
     if (pthread_mutex_lock(&db->mutex) != 0)
         return knurl_fail(error, KNURL_BACKEND, "mmdb.lookup",
                           "cache lock failed");
     db->cache.failure = KNURL_OK;
     db->cache.native_error = 0;
-    status = query(address, country, userdata, error);
-    if (db->cache.failure != KNURL_OK)
-        status = corrupt(db, error);
+    if (!knurl_mmdb_prefix_get(&db->prefix, address, country, &status)) {
+        status = query(address, country, userdata, &prefix_bits, error);
+        if (db->cache.failure != KNURL_OK)
+            status = corrupt(db, error);
+        if (status == KNURL_OK || status == KNURL_EOF)
+            knurl_mmdb_prefix_put(&db->prefix, address, prefix_bits, country,
+                                  status);
+    }
     if (pthread_mutex_unlock(&db->mutex) != 0)
         return knurl_fail(error, KNURL_BACKEND, "mmdb.lookup",
                           "cache unlock failed");
@@ -297,6 +319,11 @@ knurl_status knurl_mmdb_open(const char *path,
     db->cache.size = (size_t)info.st_size;
     db->cache.heap_limit = limit;
     db->cache.heap_used = fixed;
+    db->cache.block_limit = (limit - fixed) / 4;
+    if (db->cache.block_limit < knurl_mmdb_cache_page_size())
+        db->cache.block_limit = knurl_mmdb_cache_page_size();
+    db->prefix.heap = &db->cache;
+    db->prefix.limit = limit - fixed - db->cache.block_limit;
     if (pthread_mutex_init(&db->mutex, NULL) != 0) {
         close_db(db);
         return knurl_fail(error, KNURL_BACKEND, "mmdb.open",

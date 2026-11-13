@@ -3,6 +3,7 @@
 #include <stddef.h>
 struct knurl_mmdb_probe_stats {
     size_t live, peak, reads;
+    size_t prefix_hits, prefix_misses;
 };
 void knurl_mmdb_probe_start(void);
 void knurl_mmdb_probe_enable(int);

@@ -10,6 +10,26 @@
 #include <unistd.h>
 #ifdef KNURL_MMDB_BENCHMARK_PROBE
 #include "mmdb-probe.h"
+#include "../src/mmdb_prefix.h"
+int __real_knurl_mmdb_prefix_get(struct knurl_mmdb_prefix *,
+                                 const knurl_mmdb_address *,
+                                 knurl_mmdb_country *, knurl_status *);
+int __wrap_knurl_mmdb_prefix_get(struct knurl_mmdb_prefix *,
+                                 const knurl_mmdb_address *,
+                                 knurl_mmdb_country *, knurl_status *);
+static size_t prefix_hits, prefix_misses;
+int __wrap_knurl_mmdb_prefix_get(struct knurl_mmdb_prefix *cache,
+                                 const knurl_mmdb_address *address,
+                                 knurl_mmdb_country *country,
+                                 knurl_status *status)
+{
+    int hit = __real_knurl_mmdb_prefix_get(cache, address, country, status);
+    if (hit)
+        ++prefix_hits;
+    else
+        ++prefix_misses;
+    return hit;
+}
 #endif
 #ifdef KNURL_MMDB_PREAD64
 #define MMDB_REAL_PREAD __real_pread64
@@ -35,9 +55,31 @@ struct allocation {
     void *pointer;
     size_t size;
 };
-static struct allocation allocations[4096];
+#define ALLOCATION_SLOTS 262144u
+static struct allocation allocations[ALLOCATION_SLOTS];
 static size_t live, peak, calls, attempts, fail_at, reads;
 static int measuring, deny_all, io_mode;
+static size_t allocation_hash(void *pointer)
+{
+    size_t value = (size_t)pointer;
+    return ((value >> 4) ^ (value >> 17)) & (ALLOCATION_SLOTS - 1);
+}
+static size_t allocation_find(void *pointer)
+{
+    size_t slot, i;
+    if (pointer == NULL)
+        return ALLOCATION_SLOTS;
+    slot = allocation_hash(pointer);
+    for (i = 0; i < ALLOCATION_SLOTS; ++i) {
+        if (allocations[slot].pointer == pointer)
+            return slot;
+        if (allocations[slot].pointer == NULL &&
+            allocations[slot].size != (size_t)-1)
+            return ALLOCATION_SLOTS;
+        slot = (slot + 1) & (ALLOCATION_SLOTS - 1);
+    }
+    return ALLOCATION_SLOTS;
+}
 static int reject(void)
 {
     if (!measuring)
@@ -47,31 +89,31 @@ static int reject(void)
 }
 static void forget(void *pointer)
 {
-    size_t i;
-    if (pointer == NULL)
-        return;
-    for (i = 0; i < 4096; ++i)
-        if (allocations[i].pointer == pointer) {
-            live -= allocations[i].size;
-            allocations[i].pointer = NULL;
-            return;
-        }
+    size_t slot = allocation_find(pointer);
+    if (slot < ALLOCATION_SLOTS) {
+        live -= allocations[slot].size;
+        allocations[slot].pointer = NULL;
+        allocations[slot].size = (size_t)-1;
+    }
 }
 static void *remember(void *pointer, size_t size)
 {
-    size_t i;
+    size_t i, slot;
     if (!measuring || pointer == NULL)
         return pointer;
-    for (i = 0; i < 4096; ++i)
-        if (allocations[i].pointer == NULL) {
-            allocations[i].pointer = pointer;
-            allocations[i].size = size;
+    slot = allocation_hash(pointer);
+    for (i = 0; i < ALLOCATION_SLOTS; ++i) {
+        if (allocations[slot].pointer == NULL) {
+            allocations[slot].pointer = pointer;
+            allocations[slot].size = size;
             live += size;
             if (live > peak)
                 peak = live;
             ++calls;
             return pointer;
         }
+        slot = (slot + 1) & (ALLOCATION_SLOTS - 1);
+    }
     abort();
     return NULL;
 }
@@ -85,18 +127,16 @@ void *__wrap_calloc(size_t count, size_t size)
 }
 void *__wrap_realloc(void *pointer, size_t size)
 {
-    size_t index = 4096;
+    size_t index;
     void *result;
     if (reject())
         return NULL;
-    if (pointer != NULL)
-        for (index = 0; index < 4096; ++index)
-            if (allocations[index].pointer == pointer)
-                break;
+    index = allocation_find(pointer);
     result = __real_realloc(pointer, size);
-    if ((result != NULL || size == 0) && index < 4096) {
+    if ((result != NULL || size == 0) && index < ALLOCATION_SLOTS) {
         live -= allocations[index].size;
         allocations[index].pointer = NULL;
+        allocations[index].size = (size_t)-1;
     }
     return remember(result, size);
 }
@@ -141,6 +181,7 @@ void knurl_mmdb_probe_start(void)
 {
     assert(live == 0);
     peak = calls = attempts = reads = fail_at = 0;
+    prefix_hits = prefix_misses = 0;
     deny_all = io_mode = 0;
     measuring = 1;
 }
@@ -150,6 +191,8 @@ void knurl_mmdb_probe_stat(struct knurl_mmdb_probe_stats *out)
     out->live = live;
     out->peak = peak;
     out->reads = reads;
+    out->prefix_hits = prefix_hits;
+    out->prefix_misses = prefix_misses;
 }
 #else
 static void query(knurl_mmdb *db, unsigned int index)
@@ -230,6 +273,17 @@ int main(int argc, char **argv)
     deny_all = 0;
     db->close(db, NULL);
     assert(live == 0);
+    for (fault = 1; fault <= 6; ++fault) {
+        assert(knurl_mmdb_open(argv[1], &config, &db, &error) == KNURL_OK);
+        query(db, 0);
+        attempts = 0;
+        fail_at = fault;
+        for (i = 1; i < 16; ++i)
+            query(db, (unsigned int)i);
+        fail_at = 0;
+        db->close(db, NULL);
+        assert(live == 0 && peak <= limit);
+    }
 
     for (fault = 1; fault <= 4; ++fault) {
         io_mode = (int)fault;
@@ -254,6 +308,32 @@ int main(int argc, char **argv)
     assert(country.code[0] == 0 && error.native_code == EIO);
     io_mode = 0;
     query(db, 64);
+    db->close(db, NULL);
+    assert(live == 0 && peak <= limit);
+    /* A one-page block cache cannot retain both these records. A different
+     * address in query 0's /24 must reuse the resolved country fact. */
+    config.max_heap_bytes = KNURL_MMDB_HEAP_MIN;
+    assert(knurl_mmdb_open(argv[1], &config, &db, &error) == KNURL_OK);
+    query(db, 0);
+    query(db, 127);
+    before = reads;
+    assert(knurl_mmdb_address_parse("100.0.0.200", &address, &error) ==
+           KNURL_OK);
+    io_mode = 3;
+    assert(db->lookup(db, &address, &country, &error) == KNURL_OK);
+    assert(strcmp(country.code, "US") == 0 && reads == before);
+    io_mode = 0;
+    assert(knurl_mmdb_address_parse("100.0.128.1", &address, &error) ==
+           KNURL_OK);
+    assert(db->lookup(db, &address, &country, &error) == KNURL_EOF);
+    query(db, 127);
+    before = reads;
+    assert(knurl_mmdb_address_parse("100.0.200.1", &address, &error) ==
+           KNURL_OK);
+    io_mode = 3;
+    assert(db->lookup(db, &address, &country, &error) == KNURL_EOF);
+    assert(country.code[0] == 0 && reads == before);
+    io_mode = 0;
     db->close(db, NULL);
     assert(live == 0 && peak <= limit);
     measuring = 0;

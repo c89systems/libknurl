@@ -171,6 +171,16 @@ for index in range(128):
     data[offset:offset + len(record)] = record
     networks.append((f"100.0.{index}.0/24", offset))
 write("cache", version=4, data=bytes(data), networks=networks)
+changed = bytearray(data)
+for index in range(128):
+    record = mapping([("country", mapping([("iso_code", string("US" if index % 2 else "SE"))]))])
+    changed[index * 4096:index * 4096 + len(record)] = record
+write("cache-new", version=4, data=bytes(changed), networks=networks)
+us = mapping([("country", mapping([("iso_code", string("US"))]))])
+se = mapping([("country", mapping([("iso_code", string("SE"))]))])
+data = us + bytes(64 - len(us)) + se
+write("prefix-4", version=4, data=data, networks=[("1.2.3.4/32", 0), ("1.2.3.5/32", 64), ("2.3.4.0/25", 0)])
+write("prefix-6", data=data, networks=[("2001:db8::1/128", 0), ("2001:db8::2/128", 64), ("2001:db8:1::/127", 0)])
 empty = database(version=4, data=b"")
 base = empty.index(b"\xab\xcd\xefMaxMind.com")
 for name, in_record in [("boundary-control", 0), ("boundary-code", country.index(b"US"))]:

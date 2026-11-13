@@ -148,6 +148,43 @@ static void cache_test(void)
     expect(db, "1.2.3.4", "US", KNURL_OK);
     db->close(db, NULL);
 }
+static void prefix_test(void)
+{
+    knurl_mmdb *a, *b;
+    size_t i;
+    open_fixture("prefix-4", &a);
+    for (i = 0; i < 3; ++i) {
+        expect(a, "1.2.3.4", "US", KNURL_OK);
+        expect(a, "1.2.3.5", "SE", KNURL_OK);
+        expect(a, "1.2.3.6", "", KNURL_EOF);
+        expect(a, "2.3.4.0", "US", KNURL_OK);
+        expect(a, "2.3.4.127", "US", KNURL_OK);
+        expect(a, "2.3.4.128", "", KNURL_EOF);
+        expect(a, "::ffff:1.2.3.5", "SE", KNURL_OK);
+        expect(a, "2001:db8::1", "", KNURL_EOF);
+        expect(a, "2001:db8::2", "", KNURL_EOF);
+    }
+    a->close(a, NULL);
+    open_fixture("prefix-6", &a);
+    for (i = 0; i < 3; ++i) {
+        expect(a, "2001:db8::1", "US", KNURL_OK);
+        expect(a, "2001:db8::2", "SE", KNURL_OK);
+        expect(a, "2001:db8::3", "", KNURL_EOF);
+        expect(a, "2001:db8:1::", "US", KNURL_OK);
+        expect(a, "2001:db8:1::1", "US", KNURL_OK);
+        expect(a, "2001:db8:1::2", "", KNURL_EOF);
+        expect(a, "1.2.3.4", "", KNURL_EOF);
+    }
+    a->close(a, NULL);
+    open_fixture("cache", &a);
+    open_fixture("cache-new", &b);
+    expect(a, "100.0.0.1", "US", KNURL_OK);
+    expect(b, "100.0.0.1", "SE", KNURL_OK);
+    expect(a, "100.0.0.255", "US", KNURL_OK);
+    b->close(b, NULL);
+    expect(a, "100.0.0.0", "US", KNURL_OK);
+    a->close(a, NULL);
+}
 int main(int argc, char **argv)
 {
     knurl_mmdb *db;
@@ -168,6 +205,7 @@ int main(int argc, char **argv)
     root = argv[1];
     provider_test();
     cache_test();
+    prefix_test();
     for (width = 24; width <= 32; width += 4)
         for (version = 4; version <= 6; version += 2) {
             sprintf(name, "valid-%u-%u", width, version);
@@ -209,6 +247,7 @@ int main(int argc, char **argv)
     for (i = 0; i < sizeof(bad_lookup) / sizeof(bad_lookup[0]); ++i) {
         open_fixture(bad_lookup[i], &db);
         expect(db, "1.2.3.4", "", KNURL_BACKEND);
+        expect(db, "1.2.3.5", "", KNURL_BACKEND);
         db->close(db, NULL);
     }
     for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {

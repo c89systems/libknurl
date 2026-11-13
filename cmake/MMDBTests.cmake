@@ -18,6 +18,12 @@ target_compile_definitions(knurl_mmdb_benchmark PRIVATE
   $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
 knurl_c89(knurl_mmdb_benchmark)
 knurl_local_runtime(knurl_mmdb_benchmark)
+add_executable(knurl_mmdb_benchmark_static tests/mmdb-benchmark.c)
+target_link_libraries(knurl_mmdb_benchmark_static PRIVATE knurl::static)
+target_compile_definitions(knurl_mmdb_benchmark_static PRIVATE
+  $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+knurl_c89(knurl_mmdb_benchmark_static)
+knurl_local_runtime(knurl_mmdb_benchmark_static)
 add_executable(knurl_mmdb_corpus tests/mmdb-corpus.c)
 target_link_libraries(knurl_mmdb_corpus PRIVATE knurl::shared)
 knurl_c89(knurl_mmdb_corpus)
@@ -46,6 +52,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   endif()
   target_link_libraries(knurl_mmdb_benchmark_probe PRIVATE knurl::static)
   target_link_options(knurl_mmdb_benchmark_probe PRIVATE
+    -Wl,--wrap=knurl_mmdb_prefix_get
     -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free
     ${mmdb_io_wrappers})
   knurl_c89(knurl_mmdb_benchmark_probe)
@@ -58,8 +65,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     "-DPROBE=$<TARGET_FILE:knurl_mmdb_benchmark_probe>"
     "-DDATABASE=${mmdb_fixtures}/valid-28-6.mmdb"
     "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tests/mmdb-sweep"
-    -DHEAP_LIMITS=65536 -DROUNDS=1 -DADDRESS_COUNT=257
-    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/MMDBPerformance.cmake")
+    -DHEAP_LIMITS=0 -DROUNDS=1 -DADDRESS_COUNT=257
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/MMDBPerformanceDefaults.cmake")
   knurl_c89(knurl_mmdb_memory)
   knurl_local_runtime(knurl_mmdb_memory)
   add_dependencies(knurl_mmdb_memory knurl_mmdb_fixtures)

@@ -7,17 +7,24 @@ there is no embedded or external libmaxminddb dependency.
 
 Files are read with bounded `pread` operations, never `mmap`. A lazy LRU cache
 retains only 4 KiB file blocks actually accessed, including search-tree nodes
-and encoded record bytes. It does not cache decoded country results by IP or
-network prefix; even a lookup with no file reads traverses and decodes its data.
+and encoded record bytes. A second LRU cache retains exact resolved network
+prefixes with copied country codes or valid unknown results. Separate IPv4/IPv6
+compressed prefix trees serve hits without database traversal, decoding or file
+reads. IPv4-mapped IPv6 normalizes before caching. Errors are never cached;
+invalid country codes are rejected before insertion.
+
 `knurl_mmdb_file_config.max_heap_bytes`
 limits all reader-owned requested heap bytes, including its provider, file state,
-cache indexes and page bookkeeping. Zero selects 64 KiB; the minimum is 8 KiB.
+both cache indexes and bookkeeping. Zero selects 512 KiB; the minimum is 8 KiB.
 Allocator bookkeeping, bounded stack storage and the OS's shared file cache are
 outside this heap limit. The reader does not reserve or allocate the complete
-configured limit at open. It allocates individual cache pages on demand and
-reuses the least recently used page when another allocation would exceed the
-limit. Cache lookup uses a hash index. A failed growth allocation can reuse an
-existing page; failure to allocate the first page returns NOMEM.
+configured limit at open. After fixed state, one quarter of the budget is reserved
+for file blocks and three quarters for prefix results, with room guaranteed for
+at least one file block. These internal quotas share the total ceiling. Each
+layer allocates lazily and reuses its least recently used entries at its bound.
+File blocks use a hash index; prefix nodes are recycled without steady eviction
+allocation. Optional growth failures reuse existing storage or skip result
+caching; failure to allocate the first file block returns NOMEM.
 
 Opening synchronously validates metadata and pins a regular file descriptor.
 Lookup may issue synchronous file reads on a cache miss. Concurrent calls on
@@ -42,7 +49,7 @@ knurl_error error;
 knurl_status status;
 
 knurl_mmdb_file_config_init(&config);
-config.max_heap_bytes = 64u * 1024u;
+config.max_heap_bytes = 512u * 1024u;
 if (knurl_mmdb_open("country.mmdb", &config, &db, &error) != KNURL_OK)
     return 1;
 status = knurl_mmdb_address_parse("1.2.3.4", &address, &error);
@@ -66,13 +73,19 @@ iterative and does not expand unselected pointer targets. A shared budget of
 65,536 decoded values bounds metadata decoding or a lookup; metadata and
 description maps each permit 64 keys. Opening does not certify unselected data.
 
+Each reader owns its cache generation; opening a replacement database constructs
+fresh caches. Country facts remain independent of route admission decisions.
+
 Synthetic tests cover node and pointer widths, address/subnet boundaries,
 missing and malformed records, cache growth and eviction, concurrent reads and
 deep skipped fields. A deterministic corpus checks results against an independent
 prefix oracle. Optional local real-data tests can compare every result against
 a captured three-byte-per-result oracle; no database or oracle is shipped.
 Linux allocator/I/O probes prove lazy growth, the configured heap bound, bounded
-read requests, eviction reuse and cleanup.
+read requests, eviction reuse and cleanup. Forced read failures after file-block
+eviction verify that another address in a cached prefix still returns its country
+or valid unknown result without I/O. Exact-address and partial-byte prefix
+boundaries, independent database generations and failed cache growth are covered.
 
 After `make build CONFIG=release`, measure cache budgets with:
 
@@ -98,13 +111,15 @@ database bytes and process RSS. Checksums must agree across heap limits.
 On Linux the optional `PROBE` target runs the identical corpus separately,
 tracking reader-owned requested heap and pread calls through linker wrappers.
 Its output goes to `heap.txt`; its instrumented timings are not performance
-results. `comparison.txt` contains timings from the uninstrumented shared-library
-consumer. Both executables must produce identical result checksums. The probe
-also checks the heap limit and zero retained reader heap after close. The address
-array and measurement machinery are excluded from reader heap accounting.
+results. `comparison.txt` contains timings from the uninstrumented consumer.
+Use `knurl_mmdb_benchmark_static` to retain a baseline executable independent of
+later shared-library changes. Both consumers and the probe use the same corpus
+and must produce identical result checksums. The probe also reports prefix hits
+and misses, checks the heap limit and zero retained reader heap after close.
+The address array and measurement machinery are excluded from reader heap accounting.
 Peak heap is distinct from the configured limit: a hot working set can stop
-growing well below a large limit. Prefix-result caching would be a separate
-optimization requiring its own comparison against these file-block results.
+growing well below a large limit. Compare against a saved file-block-only
+baseline at the same total heap limit when measuring the prefix-cache benefit.
 Existing OS cache state is retained; results are not cold-disk measurements.
 Earlier mmap/reference-backend measurements describe the superseded memory
 model and must not be presented as the bounded reader's performance.

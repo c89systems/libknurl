@@ -179,19 +179,25 @@ int main(int argc, char **argv)
     knurl_mmdb_probe_stat(&at_close);
     knurl_mmdb_probe_enable(0);
     if (at_close.live != 0 ||
+        (at_end.prefix_hits - at_first.prefix_hits) +
+                (at_end.prefix_misses - at_first.prefix_misses) !=
+            8 * count ||
         at_end.peak > (config.max_heap_bytes ? config.max_heap_bytes
                                              : KNURL_MMDB_HEAP_DEFAULT))
         abort();
     printf("instrumented=1 opened_heap=%lu reader_live_heap=%lu "
            "reader_peak_heap=%lu "
            "first_preads=%lu warm_preads=%lu warm_preads_per_lookup=%.6f "
-           "retained_after_close=%lu\n",
+           "retained_after_close=%lu warm_prefix_hits=%lu "
+           "warm_prefix_misses=%lu\n",
            (unsigned long)at_open.live, (unsigned long)at_end.live,
            (unsigned long)at_end.peak,
            (unsigned long)(at_first.reads - at_open.reads),
            (unsigned long)(at_end.reads - at_first.reads),
            (double)(at_end.reads - at_first.reads) / (8.0 * count),
-           (unsigned long)at_close.live);
+           (unsigned long)at_close.live,
+           (unsigned long)(at_end.prefix_hits - at_first.prefix_hits),
+           (unsigned long)(at_end.prefix_misses - at_first.prefix_misses));
 #endif
     return 0;
 }

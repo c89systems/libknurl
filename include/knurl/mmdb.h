@@ -47,19 +47,21 @@ KNURL_API knurl_status knurl_mmdb_lookup(knurl_mmdb *,
 /** Release the file/cache and provider context. NULL is accepted. */
 KNURL_API knurl_status knurl_mmdb_close(knurl_mmdb *, knurl_error *);
 /** Default reader-owned requested heap limit, including cache bookkeeping. */
-#define KNURL_MMDB_HEAP_DEFAULT 65536u
+#define KNURL_MMDB_HEAP_DEFAULT 524288u
 /** Minimum supported requested heap limit in bytes. */
 #define KNURL_MMDB_HEAP_MIN 8192u
 /** File-reader settings; zero values select defaults. */
 typedef struct knurl_mmdb_file_config {
-    /** Total requested reader heap bytes. Zero selects 64 KiB; minimum 8 KiB.
+    /** Total requested reader heap bytes. Zero selects 512 KiB; minimum 8 KiB.
      * Includes handle/context/cache metadata, excludes allocator overhead and
-     * kernel file cache. Pages allocate lazily and evict at this bound. */
+     * kernel file cache. File blocks and prefix results allocate lazily and
+     * evict within this shared bound. */
     size_t max_heap_bytes;
 } knurl_mmdb_file_config;
 /** Initialize zero/default file-reader settings. */
 KNURL_API void knurl_mmdb_file_config_init(knurl_mmdb_file_config *);
-/** Open an immutable regular file with bounded pread and a lazy LRU cache.
+/** Open an immutable regular file with bounded pread and lazy LRU caches for
+ * file blocks and resolved country/unknown network prefixes.
  * NULL config selects defaults. Uses no mmap or eager whole-file staging.
  * Cache misses may block. Concurrent lookups serialize on this handle; close
  * only after readers finish. Does not require server initialization. */
