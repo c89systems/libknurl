@@ -36,11 +36,12 @@ if(CHECK_KIND STREQUAL "memory")
   add_test(NAME memory.rest-spill COMMAND ${runner} "${KNURL_BUILD}/knurl_rest-runtime" spill)
   set_tests_properties(memory.rest-spill PROPERTIES TIMEOUT 120 LABELS memory)
   set(lua_cases foundation input rest typed xml config events)
-  foreach(backend maxmind native)
-    add_test(NAME memory.mmdb-${backend} COMMAND ${runner}
-      "${KNURL_BUILD}/knurl_mmdb_test" ${backend} "${KNURL_BUILD}/tests/mmdb-fixtures")
-    set_tests_properties(memory.mmdb-${backend} PROPERTIES TIMEOUT 120 LABELS memory)
-  endforeach()
+  add_test(NAME memory.mmdb COMMAND ${runner}
+    "${KNURL_BUILD}/knurl_mmdb_test" "${KNURL_BUILD}/tests/mmdb-fixtures")
+  set_tests_properties(memory.mmdb PROPERTIES TIMEOUT 120 LABELS memory)
+  add_test(NAME memory.mmdb-heap COMMAND ${runner}
+    "${KNURL_BUILD}/knurl_mmdb_memory" "${KNURL_BUILD}/tests/mmdb-fixtures/cache.mmdb" 65536)
+  set_tests_properties(memory.mmdb-heap PROPERTIES TIMEOUT 120 LABELS memory)
   set(lua_timeout 120)
 elseif(CHECK_KIND STREQUAL "qemu")
   if(checked_KNURL_TARGET MATCHES "^aarch64-linux-(gnu|musl)$")
@@ -68,17 +69,13 @@ elseif(CHECK_KIND STREQUAL "qemu")
     set_tests_properties(qemu.${name} PROPERTIES TIMEOUT 20 LABELS qemu)
   endforeach()
   set(lua_cases target-smoke)
-  foreach(backend maxmind native)
-    add_test(NAME qemu.mmdb-${backend} COMMAND ${runner}
-      "${KNURL_BUILD}/knurl_mmdb_test" ${backend} "${KNURL_BUILD}/tests/mmdb-fixtures")
-    add_test(NAME qemu.mmdb-memory-${backend} COMMAND ${runner}
-      "${KNURL_BUILD}/knurl_mmdb_memory" ${backend} "${KNURL_BUILD}/tests/mmdb-fixtures/valid-28-6.mmdb")
-    set_tests_properties(qemu.mmdb-${backend} qemu.mmdb-memory-${backend}
-      PROPERTIES TIMEOUT 30 LABELS qemu)
-  endforeach()
-  add_test(NAME qemu.mmdb-differential COMMAND ${runner}
-    "${KNURL_BUILD}/knurl_mmdb_differential" "${KNURL_BUILD}/tests/mmdb-fixtures/valid-28-6.mmdb" 65536)
-  set_tests_properties(qemu.mmdb-differential PROPERTIES TIMEOUT 30 LABELS qemu)
+  add_test(NAME qemu.mmdb COMMAND ${runner}
+    "${KNURL_BUILD}/knurl_mmdb_test" "${KNURL_BUILD}/tests/mmdb-fixtures")
+  add_test(NAME qemu.mmdb-memory COMMAND ${runner}
+    "${KNURL_BUILD}/knurl_mmdb_memory" "${KNURL_BUILD}/tests/mmdb-fixtures/cache.mmdb" 65536)
+  add_test(NAME qemu.mmdb-corpus COMMAND ${runner}
+    "${KNURL_BUILD}/knurl_mmdb_corpus" "${KNURL_BUILD}/tests/mmdb-fixtures/valid-28-6.mmdb" 65536)
+  set_tests_properties(qemu.mmdb qemu.mmdb-memory qemu.mmdb-corpus PROPERTIES TIMEOUT 30 LABELS qemu)
   set(lua_timeout 20)
 else()
   message(FATAL_ERROR "CHECK_KIND must be memory or qemu")

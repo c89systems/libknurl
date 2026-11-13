@@ -104,10 +104,9 @@ acceptance and the implementation cadence.
 
 ## Source ownership
 
-The standalone [MMDB country API](mmdb.md) embeds pristine libmaxminddb library
-sources under `vendor/libmaxminddb/`, pinned by `vendor/libmaxminddb.origin`.
-`cmake/MMDB.cmake` confines C99 to those vendor objects, prefixes private symbols,
-and ships upstream LICENSE/NOTICE. Knurl's adapter and native reader remain C89.
+The standalone [MMDB country API](mmdb.md) uses Knurl's C89 reader exclusively.
+Its lazy file cache uses bounded pread operations and enforces a configurable
+total requested heap limit, including cache bookkeeping. It does not use mmap.
 Python 3 generates synthetic MMDB fixtures during test builds; no test downloads
 data. Optional real DB-IP tests keep the downloaded database under ignored build
 storage and record its attribution/checksum; no database enters an SDK.

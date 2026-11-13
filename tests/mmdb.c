@@ -6,8 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef knurl_status (*opener)(const char *, knurl_mmdb **, knurl_error *);
-static opener open_db = knurl_mmdb_maxmind_open;
+static knurl_status open_db(const char *path, knurl_mmdb **out,
+                            knurl_error *error)
+{
+    return knurl_mmdb_open(path, NULL, out, error);
+}
 static const char *root;
 static void open_fixture(const char *name, knurl_mmdb **out)
 {
@@ -95,6 +98,56 @@ static void *thread_skip(void *userdata)
     expect((knurl_mmdb *)userdata, "1.2.3.4", "DE", KNURL_OK);
     return NULL;
 }
+static void *thread_cache(void *userdata)
+{
+    unsigned int i;
+    char ip[32];
+    for (i = 0; i < 256; ++i) {
+        assert(snprintf(ip, sizeof(ip), "100.0.%u.1", i % 128) <
+               (int)sizeof(ip));
+        expect((knurl_mmdb *)userdata, ip, i % 2 ? "SE" : "US", KNURL_OK);
+    }
+    return NULL;
+}
+static void cache_test(void)
+{
+    knurl_mmdb_file_config config;
+    knurl_mmdb *db;
+    knurl_error error;
+    char path[1024], ip[32];
+    size_t limits[] = {8192u, 65536u, 262144u};
+    size_t n;
+    unsigned int i, round, index;
+    pthread_t a, b;
+    knurl_mmdb_file_config_init(&config);
+    assert(config.max_heap_bytes == 0);
+    config.max_heap_bytes = KNURL_MMDB_HEAP_MIN - 1;
+    assert(knurl_mmdb_open("unused", &config, &db, &error) == KNURL_INVALID &&
+           db == NULL);
+    assert(snprintf(path, sizeof(path), "%s/cache.mmdb", root) <
+           (int)sizeof(path));
+    for (n = 0; n < sizeof(limits) / sizeof(limits[0]); ++n) {
+        config.max_heap_bytes = limits[n];
+        assert(knurl_mmdb_open(path, &config, &db, &error) == KNURL_OK);
+        for (round = 0; round < 3; ++round)
+            for (i = 0; i < 128; ++i) {
+                index = round % 2 ? 127 - i : i;
+                assert(snprintf(ip, sizeof(ip), "100.0.%u.1", index) <
+                       (int)sizeof(ip));
+                expect(db, ip, index % 2 ? "SE" : "US", KNURL_OK);
+            }
+        assert(pthread_create(&a, NULL, thread_cache, db) == 0);
+        assert(pthread_create(&b, NULL, thread_cache, db) == 0);
+        assert(pthread_join(a, NULL) == 0 && pthread_join(b, NULL) == 0);
+        db->close(db, NULL);
+    }
+    assert(snprintf(path, sizeof(path), "%s/boundary-code.mmdb", root) <
+           (int)sizeof(path));
+    config.max_heap_bytes = KNURL_MMDB_HEAP_MIN;
+    assert(knurl_mmdb_open(path, &config, &db, &error) == KNURL_OK);
+    expect(db, "1.2.3.4", "US", KNURL_OK);
+    db->close(db, NULL);
+}
 int main(int argc, char **argv)
 {
     knurl_mmdb *db;
@@ -111,13 +164,10 @@ int main(int argc, char **argv)
                              "bad-version", "missing-metadata"};
     const char *bad_lookup[] = {"bad-code", "bad-type", "bad-case",
                                 "bad-pointer", "pointer-cycle"};
-    assert(argc == 3);
-    if (strcmp(argv[1], "native") == 0)
-        open_db = knurl_mmdb_native_open;
-    else
-        assert(strcmp(argv[1], "maxmind") == 0);
-    root = argv[2];
+    assert(argc == 2);
+    root = argv[1];
     provider_test();
+    cache_test();
     for (width = 24; width <= 32; width += 4)
         for (version = 4; version <= 6; version += 2) {
             sprintf(name, "valid-%u-%u", width, version);
@@ -169,7 +219,7 @@ int main(int argc, char **argv)
     assert(open_db(NULL, &db, &error) == KNURL_INVALID && db == NULL);
     assert(open_db("/knurl-no-such-mmdb", &db, &error) == KNURL_IO &&
            db == NULL);
-    if (open_db == knurl_mmdb_native_open) {
+    {
         const char *native_bad[] = {"duplicate-metadata",
                                     "duplicate-description", "bad-separator",
                                     "many-metadata"};
@@ -199,8 +249,9 @@ int main(int argc, char **argv)
         assert(open_db(path, &db, &error) == KNURL_BACKEND && db == NULL);
     }
     {
-        const char *extra[] = {"high-28", "high-32", "root-pointer",
-                               "key-pointer"};
+        const char *extra[] = {"high-28",          "high-32",
+                               "root-pointer",     "key-pointer",
+                               "boundary-control", "boundary-code"};
         for (i = 0; i < sizeof(extra) / sizeof(extra[0]); ++i) {
             open_fixture(extra[i], &db);
             expect(db, "1.2.3.4", "US", KNURL_OK);

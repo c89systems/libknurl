@@ -1,39 +1,57 @@
 #define _POSIX_C_SOURCE 200809L
 #include "internal.h"
+#include "mmdb_internal.h"
 #include "mmdb_decode.h"
 #include <knurl/mmdb.h>
-#include <sys/mman.h>
+#include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 
-struct native_db {
-    void *mapping;
-    size_t size;
+struct file_db {
+    struct knurl_mmdb_cache cache;
+    pthread_mutex_t mutex;
+    int mutex_ready;
     struct knurl_mmdb_section data;
     unsigned long nodes, ipv4;
     unsigned int width, ip_version;
 };
-static knurl_status corrupt(knurl_error *error)
+static knurl_status corrupt(struct file_db *db, knurl_error *error)
 {
-    return knurl_fail(error, KNURL_BACKEND, "mmdb.native",
-                      "invalid or unsupported MMDB country data");
+    knurl_status status = db->cache.failure;
+    if (status == KNURL_OK)
+        return knurl_fail(error, KNURL_BACKEND, "mmdb.read",
+                          "invalid or unsupported MMDB country data");
+    knurl_fail(error, status, "mmdb.read",
+               status == KNURL_NOMEM ? "cache page allocation failed"
+                                     : "database file read failed");
+    if (error != NULL && status == KNURL_IO) {
+        error->source = KNURL_ERROR_SYSTEM;
+        error->native_code = db->cache.native_error;
+    }
+    return status;
 }
 static void close_db(void *userdata)
 {
-    struct native_db *db = (struct native_db *)userdata;
-    munmap(db->mapping, db->size);
+    struct file_db *db = (struct file_db *)userdata;
+    knurl_mmdb_cache_clear(&db->cache);
+    close(db->cache.fd);
+    if (db->mutex_ready)
+        pthread_mutex_destroy(&db->mutex);
     free(db);
 }
-static unsigned long branch(const struct native_db *db, unsigned long node,
+static unsigned long branch(struct file_db *db, unsigned long node,
                             unsigned int bit)
 {
-    const unsigned char *p =
-        (const unsigned char *)db->mapping + (size_t)node * (db->width / 4);
+    unsigned char bytes_read[8];
+    const unsigned char *p = bytes_read;
     unsigned long result = 0;
     unsigned int i, bytes = db->width / 8;
+    if (!knurl_mmdb_cache_read(&db->cache, (size_t)node * (db->width / 4),
+                               bytes_read, db->width / 4))
+        return 0;
     if (db->width == 28) {
         result = bit ? p[3] & 15 : p[3] >> 4;
         p += bit ? 4 : 0;
@@ -61,8 +79,7 @@ static int unique_map(const struct knurl_mmdb_section *section,
             return 0;
         for (j = 0; j < i; ++j)
             if (key.size == keys[j].size &&
-                memcmp(section->data + key.payload, section->data + keys[j].at,
-                       key.size) == 0)
+                knurl_mmdb_same(section, key.payload, keys[j].at, key.size))
                 return 0;
         keys[i].at = key.payload;
         keys[i].size = key.size;
@@ -75,7 +92,7 @@ static int unique_map(const struct knurl_mmdb_section *section,
     }
     return 1;
 }
-static int metadata(struct native_db *db)
+static int metadata(struct file_db *db)
 {
     static const unsigned char marker[] = {171, 205, 239, 'M', 'a', 'x', 'M',
                                            'i', 'n', 'd', '.', 'c', 'o', 'm'};
@@ -87,27 +104,32 @@ static int metadata(struct native_db *db)
                                   "binary_format_minor_version",
                                   "build_epoch"};
     static const unsigned int types[] = {6, 5, 5, 2, 5, 5, 9};
-    const unsigned char *bytes = (const unsigned char *)db->mapping;
+    static const unsigned char zeros[16] = {0};
+    struct knurl_mmdb_section whole;
     struct knurl_mmdb_section section;
     struct knurl_mmdb_value map, value;
     size_t at, end, lower, tree;
     unsigned long budget = 65536UL, number;
     unsigned int i;
     int found;
-    if (db->size < sizeof(marker))
+    whole.cache = &db->cache;
+    whole.base = 0;
+    whole.size = db->cache.size;
+    if (db->cache.size < sizeof(marker))
         return 0;
-    lower = db->size > 131072 ? db->size - 131072 : 0;
-    at = db->size - sizeof(marker);
+    lower = db->cache.size > 131072 ? db->cache.size - 131072 : 0;
+    at = db->cache.size - sizeof(marker);
     for (;;) {
-        if (memcmp(bytes + at, marker, sizeof(marker)) == 0)
+        if (knurl_mmdb_equal(&whole, at, marker, sizeof(marker)))
             break;
-        if (at == lower)
+        if (db->cache.failure != KNURL_OK || at == lower)
             return 0;
         --at;
     }
     end = at;
-    section.data = bytes + at + sizeof(marker);
-    section.size = db->size - at - sizeof(marker);
+    section.cache = &db->cache;
+    section.base = at + sizeof(marker);
+    section.size = db->cache.size - at - sizeof(marker);
     if (!knurl_mmdb_decode(&section, 0, &map, &budget, 1) ||
         !unique_map(&section, &map, 0, &budget))
         return 0;
@@ -148,10 +170,10 @@ static int metadata(struct native_db *db)
     tree = (size_t)db->nodes * (db->width / 4);
     if (tree > end || end - tree < 16)
         return 0;
-    for (i = 0; i < 16; ++i)
-        if (bytes[tree + i] != 0)
-            return 0;
-    db->data.data = bytes + tree + 16;
+    if (!knurl_mmdb_equal(&whole, tree, zeros, sizeof(zeros)))
+        return 0;
+    db->data.cache = &db->cache;
+    db->data.base = tree + 16;
     db->data.size = end - tree - 16;
     if (db->data.size > 0xffffffffUL)
         return 0;
@@ -161,11 +183,11 @@ static int metadata(struct native_db *db)
             db->ipv4 = branch(db, db->ipv4, 0);
     return 1;
 }
-static knurl_status lookup(const knurl_mmdb_address *address,
-                           knurl_mmdb_country *country, void *userdata,
-                           knurl_error *error)
+static knurl_status query(const knurl_mmdb_address *address,
+                          knurl_mmdb_country *country, void *userdata,
+                          knurl_error *error)
 {
-    struct native_db *db = (struct native_db *)userdata;
+    struct file_db *db = (struct file_db *)userdata;
     struct knurl_mmdb_value root, selected;
     unsigned long node, offset, budget = 65536UL;
     unsigned int bit;
@@ -178,38 +200,69 @@ static knurl_status lookup(const knurl_mmdb_address *address,
     if (node == db->nodes)
         return KNURL_EOF;
     if (node < db->nodes || node - db->nodes < 16)
-        return corrupt(error);
+        return corrupt(db, error);
     offset = node - db->nodes - 16;
     if (!knurl_mmdb_decode(&db->data, (size_t)offset, &root, &budget, 1))
-        return corrupt(error);
+        return corrupt(db, error);
     found = knurl_mmdb_select(&db->data, &root, "country", &selected, &budget);
     if (found == 0)
         return KNURL_EOF;
     if (found < 0)
-        return corrupt(error);
+        return corrupt(db, error);
     found = knurl_mmdb_select(&db->data, &selected, "iso_code", &root, &budget);
     if (found == 0)
         return KNURL_EOF;
     if (found < 0 || root.type != 2 || root.size != 2)
-        return corrupt(error);
-    memcpy(country->code, db->data.data + root.payload, 2);
+        return corrupt(db, error);
+    if (!knurl_mmdb_read(&db->data, root.payload, country->code, 2))
+        return corrupt(db, error);
     country->code[2] = 0;
     return KNURL_OK;
 }
-knurl_status knurl_mmdb_native_open(const char *path, knurl_mmdb **out,
-                                    knurl_error *error)
+static knurl_status lookup(const knurl_mmdb_address *address,
+                           knurl_mmdb_country *country, void *userdata,
+                           knurl_error *error)
+{
+    struct file_db *db = (struct file_db *)userdata;
+    knurl_status status;
+    if (pthread_mutex_lock(&db->mutex) != 0)
+        return knurl_fail(error, KNURL_BACKEND, "mmdb.lookup",
+                          "cache lock failed");
+    db->cache.failure = KNURL_OK;
+    db->cache.native_error = 0;
+    status = query(address, country, userdata, error);
+    if (db->cache.failure != KNURL_OK)
+        status = corrupt(db, error);
+    if (pthread_mutex_unlock(&db->mutex) != 0)
+        return knurl_fail(error, KNURL_BACKEND, "mmdb.lookup",
+                          "cache unlock failed");
+    return status;
+}
+void knurl_mmdb_file_config_init(knurl_mmdb_file_config *config)
+{
+    if (config != NULL)
+        memset(config, 0, sizeof(*config));
+}
+knurl_status knurl_mmdb_open(const char *path,
+                             const knurl_mmdb_file_config *file_config,
+                             knurl_mmdb **out, knurl_error *error)
 {
     struct stat info;
-    struct native_db *db;
+    struct file_db *db;
     knurl_mmdb_config config;
     knurl_status status;
-    void *mapping;
+    size_t limit = file_config == NULL || file_config->max_heap_bytes == 0
+                       ? KNURL_MMDB_HEAP_DEFAULT
+                       : file_config->max_heap_bytes;
+    size_t fixed = sizeof(struct file_db) + sizeof(struct knurl_mmdb_impl);
     int fd, flags = O_RDONLY | O_NONBLOCK;
     if (out != NULL)
         *out = NULL;
-    if (path == NULL || path[0] == 0 || out == NULL)
-        return knurl_fail(error, KNURL_INVALID, "mmdb.open",
-                          "path and output required");
+    if (path == NULL || path[0] == 0 || out == NULL ||
+        limit < KNURL_MMDB_HEAP_MIN || fixed > limit - KNURL_MMDB_PAGE_SIZE)
+        return knurl_fail(
+            error, KNURL_INVALID, "mmdb.open",
+            "path, output and heap limit of at least 8192 bytes required");
 #ifdef O_CLOEXEC
     flags |= O_CLOEXEC;
 #endif
@@ -232,23 +285,28 @@ knurl_status knurl_mmdb_native_open(const char *path, knurl_mmdb **out,
     if (!S_ISREG(info.st_mode) || info.st_size <= 0 ||
         (off_t)(size_t)info.st_size != info.st_size) {
         close(fd);
-        return corrupt(error);
+        return knurl_fail(error, KNURL_BACKEND, "mmdb.open",
+                          "invalid database file size or type");
     }
-    mapping = mmap(NULL, (size_t)info.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-    close(fd);
-    if (mapping == MAP_FAILED)
-        return knurl_fail(error, KNURL_IO, "mmdb.open",
-                          "cannot map database file");
-    db = (struct native_db *)calloc(1, sizeof(*db));
+    db = (struct file_db *)calloc(1, sizeof(*db));
     if (db == NULL) {
-        munmap(mapping, (size_t)info.st_size);
+        close(fd);
         return knurl_fail(error, KNURL_NOMEM, "mmdb.open", "allocation failed");
     }
-    db->mapping = mapping;
-    db->size = (size_t)info.st_size;
-    if (!metadata(db)) {
+    db->cache.fd = fd;
+    db->cache.size = (size_t)info.st_size;
+    db->cache.heap_limit = limit;
+    db->cache.heap_used = fixed;
+    if (pthread_mutex_init(&db->mutex, NULL) != 0) {
         close_db(db);
-        return corrupt(error);
+        return knurl_fail(error, KNURL_BACKEND, "mmdb.open",
+                          "cache mutex initialization failed");
+    }
+    db->mutex_ready = 1;
+    if (!metadata(db) || db->cache.failure != KNURL_OK) {
+        status = corrupt(db, error);
+        close_db(db);
+        return status;
     }
     knurl_mmdb_config_init(&config);
     config.lookup = lookup;

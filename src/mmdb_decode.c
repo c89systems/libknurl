@@ -1,20 +1,74 @@
 #include "mmdb_decode.h"
 #include <string.h>
 
+int knurl_mmdb_read(const struct knurl_mmdb_section *section, size_t at,
+                    void *out, size_t length)
+{
+    if (at > section->size || length > section->size - at)
+        return 0;
+    return knurl_mmdb_cache_read(section->cache, section->base + at, out,
+                                 length);
+}
+int knurl_mmdb_equal(const struct knurl_mmdb_section *section, size_t at,
+                     const void *expected, size_t length)
+{
+    unsigned char bytes[64];
+    const unsigned char *want = (const unsigned char *)expected;
+    size_t count;
+    while (length != 0) {
+        count = length < sizeof(bytes) ? length : sizeof(bytes);
+        if (!knurl_mmdb_read(section, at, bytes, count) ||
+            memcmp(bytes, want, count) != 0)
+            return 0;
+        at += count;
+        want += count;
+        length -= count;
+    }
+    return 1;
+}
+int knurl_mmdb_same(const struct knurl_mmdb_section *section, size_t a,
+                    size_t b, size_t length)
+{
+    unsigned char bytes[64];
+    size_t count;
+    while (length != 0) {
+        count = length < sizeof(bytes) ? length : sizeof(bytes);
+        if (!knurl_mmdb_read(section, a, bytes, count) ||
+            !knurl_mmdb_equal(section, b, bytes, count))
+            return 0;
+        a += count;
+        b += count;
+        length -= count;
+    }
+    return 1;
+}
+static int octet(const struct knurl_mmdb_section *section, size_t at,
+                 unsigned int *out)
+{
+    unsigned char byte;
+    if (!knurl_mmdb_read(section, at, &byte, 1))
+        return 0;
+    *out = byte;
+    return 1;
+}
+
 static int raw(const struct knurl_mmdb_section *section, size_t at,
                struct knurl_mmdb_value *value, unsigned long *budget)
 {
-    unsigned int control, type, width, i;
+    unsigned int control, type, width, i, byte;
     unsigned long size, pointer;
     if (*budget == 0 || at >= section->size)
         return 0;
     --*budget;
-    control = section->data[at++];
+    if (!octet(section, at++, &control))
+        return 0;
     type = control >> 5;
     if (type == 0) {
         if (at >= section->size)
             return 0;
-        type = section->data[at++] + 7;
+        if (!octet(section, at++, &type))
+            return 0;
+        type += 7;
     }
     size = control & 31;
     value->type = type;
@@ -23,8 +77,11 @@ static int raw(const struct knurl_mmdb_section *section, size_t at,
         if (width > section->size - at)
             return 0;
         pointer = width == 4 ? 0 : control & 7;
-        for (i = 0; i < width; ++i)
-            pointer = (pointer << 8) | section->data[at++];
+        for (i = 0; i < width; ++i) {
+            if (!octet(section, at++, &byte))
+                return 0;
+            pointer = (pointer << 8) | byte;
+        }
         if (width == 2)
             pointer += 2048UL;
         if (width == 3)
@@ -41,8 +98,11 @@ static int raw(const struct knurl_mmdb_section *section, size_t at,
         if (width > section->size - at)
             return 0;
         size = 0;
-        for (i = 0; i < width; ++i)
-            size = (size << 8) | section->data[at++];
+        for (i = 0; i < width; ++i) {
+            if (!octet(section, at++, &byte))
+                return 0;
+            size = (size << 8) | byte;
+        }
         size += width == 1 ? 29UL : width == 2 ? 285UL : 65821UL;
     }
     value->size = size;
@@ -114,7 +174,7 @@ int knurl_mmdb_select(const struct knurl_mmdb_section *section,
             return -1;
         at = key.next;
         if (key.size == length &&
-            memcmp(section->data + key.payload, name, length) == 0)
+            knurl_mmdb_equal(section, key.payload, name, length))
             return knurl_mmdb_decode(section, at, out, budget, 1) ? 1 : -1;
         if (!knurl_mmdb_skip(section, &at, budget))
             return -1;
@@ -125,7 +185,11 @@ unsigned long knurl_mmdb_integer(const struct knurl_mmdb_section *section,
                                  const struct knurl_mmdb_value *value)
 {
     unsigned long result = 0, i;
-    for (i = 0; i < value->size; ++i)
-        result = (result << 8) | section->data[value->payload + i];
+    unsigned int byte;
+    for (i = 0; i < value->size; ++i) {
+        if (!octet(section, value->payload + i, &byte))
+            return 0;
+        result = (result << 8) | byte;
+    }
     return result;
 }

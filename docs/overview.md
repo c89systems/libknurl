@@ -37,9 +37,9 @@ support direct I/O integrations, with an explicit [Kore](https://kore.io/)
 backend escape hatch.
 Public headers support C89 and C++ consumers; library and backend code use
 strict `-std=c89`.
-The standalone [MMDB country readers](mmdb.md) provide free functions and receiver
-methods without starting a server. The embedded libmaxminddb reference backend
-keeps its upstream C99 dialect isolated; Knurl's own reader remains C89.
+The standalone [MMDB country reader](mmdb.md) provides free functions and receiver
+methods without starting a server. Its C89 implementation reads bounded file
+blocks through a lazy cache with a configurable total reader heap limit.
 
 The `knurl` Lua module provides an ergonomic facade over a C binding of the
 public shared library. It runs in the host's Lua 5.5.1 state, including embedded
@@ -69,7 +69,6 @@ ownership, streaming and lifecycle behavior.
 | cpkt | OpenSSL, curl, nghttp2 and libxml2 packages and their native link dependencies |
 | LoneJSON | Typed JSON records, parsing, serialization and generators |
 | libpslog | Structured runtime and access logging |
-| libmaxminddb 1.14.1 (embedded) | Private reference MMDB reader; no consumer installation required |
 | Lua 5.5.1 | Host runtime for the Lua module |
 
 Dependency SDKs and Lua providers come from `github.com/c89systems/`.

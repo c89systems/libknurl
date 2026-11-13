@@ -154,11 +154,11 @@ compatible closure. Current pins are cpkt 0.7.0, LoneJSON 0.50.0 and pslog 0.13.
 cpkt provides OpenSSL/curl/nghttp2/libxml2 and the Lua runtime/link closure.
 No sibling checkout is a build input or writable under this task.
 The standalone [MMDB country reader contract](mmdb.md) adds a public provider,
-free functions and receiver shell independent of server initialization. Embed
-pinned libmaxminddb behind that boundary with isolated vendor C99 objects and
-private prefixed symbols; retain C89 for the native reader and all owned code.
-Neither consumer headers nor link metadata depend on libmaxminddb. Ship its
-Apache-2.0 LICENSE/NOTICE, and exclude downloaded GeoIP data from all products.
+free functions and receiver shell independent of server initialization. Use only
+Knurl's C89 implementation, with bounded pread and lazy cache allocation under a
+configurable total requested heap limit. Never mmap the database. Include cache
+bookkeeping in the bound, retain thread-safe access and exclude downloaded GeoIP
+data and local test oracles from all products.
 
 Follow pkt-systems-cmake-lifecycle: explicit selected toolchains, serial operations,
 static/shared installed SDKs and relocated consumers for x86_64-linux-gnu,

@@ -1,5 +1,0 @@
-version=1.14.1
-url=https://codeload.github.com/maxmind/libmaxminddb/tar.gz/refs/tags/1.14.1
-sha256=e22fa9c30d19e17e25a94841e0e9af5b2f932b9e0fa530be7f1ad44328086c82
-Only pristine library sources, headers, LICENSE and NOTICE are retained.
-Build configuration and symbol prefixing are owned by cmake/MMDB.cmake.

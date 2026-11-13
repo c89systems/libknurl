@@ -1,13 +1,10 @@
 #include "internal.h"
+#include "mmdb_internal.h"
 #include <knurl/mmdb.h>
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <string.h>
 
-struct knurl_mmdb_impl {
-    knurl_mmdb receiver;
-    knurl_mmdb_config config;
-};
 void knurl_mmdb_config_init(knurl_mmdb_config *config)
 {
     if (config != NULL)

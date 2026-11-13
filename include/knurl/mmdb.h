@@ -15,8 +15,8 @@ typedef struct knurl_mmdb_address {
 typedef struct knurl_mmdb_country {
     char code[3];
 } knurl_mmdb_country;
-/** Thread-safe synchronous lookup; EOF means absent record/country, never a
- * database error. No DNS or whole-database decoding on this path. */
+/** Synchronous lookup; EOF means absent record/country, never a database error.
+ * No DNS or whole-database decoding on this path. */
 typedef knurl_status (*knurl_mmdb_lookup_fn)(const knurl_mmdb_address *,
                                              knurl_mmdb_country *, void *,
                                              knurl_error *);
@@ -40,20 +40,32 @@ KNURL_API knurl_status knurl_mmdb_address_parse(const char *,
                                                 knurl_mmdb_address *,
                                                 knurl_error *);
 /** Copy country; EOF/errors clear output. Concurrent calls require a
- * thread-safe provider callback (both built-in readers qualify). */
+ * thread-safe provider callback (the built-in file reader qualifies). */
 KNURL_API knurl_status knurl_mmdb_lookup(knurl_mmdb *,
                                          const knurl_mmdb_address *,
                                          knurl_mmdb_country *, knurl_error *);
-/** Release mapping and provider context. NULL is accepted. */
+/** Release the file/cache and provider context. NULL is accepted. */
 KNURL_API knurl_status knurl_mmdb_close(knurl_mmdb *, knurl_error *);
-/** Open a read-only immutable MMDB using embedded libmaxminddb. File I/O and
- * lazy mapping faults may block. Never modify a mapped file in place. */
-KNURL_API knurl_status knurl_mmdb_maxmind_open(const char *, knurl_mmdb **,
-                                               knurl_error *);
-/** Open with Knurl's standalone C89 country reader. Same lifetime and lookup
- * contract as maxmind_open; neither constructor requires a webserver. */
-KNURL_API knurl_status knurl_mmdb_native_open(const char *, knurl_mmdb **,
-                                              knurl_error *);
+/** Default reader-owned requested heap limit, including cache bookkeeping. */
+#define KNURL_MMDB_HEAP_DEFAULT 65536u
+/** Minimum supported requested heap limit in bytes. */
+#define KNURL_MMDB_HEAP_MIN 8192u
+/** File-reader settings; zero values select defaults. */
+typedef struct knurl_mmdb_file_config {
+    /** Total requested reader heap bytes. Zero selects 64 KiB; minimum 8 KiB.
+     * Includes handle/context/cache metadata, excludes allocator overhead and
+     * kernel file cache. Pages allocate lazily and evict at this bound. */
+    size_t max_heap_bytes;
+} knurl_mmdb_file_config;
+/** Initialize zero/default file-reader settings. */
+KNURL_API void knurl_mmdb_file_config_init(knurl_mmdb_file_config *);
+/** Open an immutable regular file with bounded pread and a lazy LRU cache.
+ * NULL config selects defaults. Uses no mmap or eager whole-file staging.
+ * Cache misses may block. Concurrent lookups serialize on this handle; close
+ * only after readers finish. Does not require server initialization. */
+KNURL_API knurl_status knurl_mmdb_open(const char *,
+                                       const knurl_mmdb_file_config *,
+                                       knurl_mmdb **, knurl_error *);
 /** Library-owned receiver. Pass this handle as first argument. Do not copy,
  * initialize or modify the shell or impl. */
 struct knurl_mmdb {

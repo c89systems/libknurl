@@ -7,6 +7,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <errno.h>
 
 static double now(void)
 {
@@ -45,6 +46,9 @@ static long rss(void)
 int main(int argc, char **argv)
 {
     knurl_mmdb *db;
+    knurl_mmdb_file_config config;
+    unsigned long requested;
+    char *end;
     knurl_mmdb_address *addresses;
     knurl_mmdb_country country;
     knurl_error error;
@@ -54,27 +58,35 @@ int main(int argc, char **argv)
     double start, opened, first = 0, seconds, samples[8], value;
     long initial_rss, open_rss;
     struct stat info;
-    int hot, native;
-    if (argc != 4 ||
-        (strcmp(argv[1], "maxmind") != 0 && strcmp(argv[1], "native") != 0) ||
-        (strcmp(argv[3], "hot") != 0 && strcmp(argv[3], "random") != 0)) {
+    int hot;
+    if ((argc != 3 && argc != 4) ||
+        (strcmp(argv[2], "hot") != 0 && strcmp(argv[2], "random") != 0)) {
         fprintf(stderr,
-                "usage: mmdb-benchmark maxmind|native DATABASE hot|random\n");
+                "usage: mmdb-benchmark DATABASE hot|random [HEAP_BYTES]\n");
         return 2;
     }
-    hot = strcmp(argv[3], "hot") == 0;
-    native = strcmp(argv[1], "native") == 0;
+    knurl_mmdb_file_config_init(&config);
+    if (argc == 4) {
+        errno = 0;
+        requested = strtoul(argv[3], &end, 10);
+        if (errno != 0 || end == argv[3] || *end != 0 ||
+            (size_t)requested != requested) {
+            fprintf(stderr, "HEAP_BYTES must be an unsigned byte count\n");
+            return 2;
+        }
+        config.max_heap_bytes = (size_t)requested;
+    }
+    hot = strcmp(argv[2], "hot") == 0;
     initial_rss = rss();
     start = now();
-    status = native ? knurl_mmdb_native_open(argv[2], &db, &error)
-                    : knurl_mmdb_maxmind_open(argv[2], &db, &error);
+    status = knurl_mmdb_open(argv[1], &config, &db, &error);
     opened = now() - start;
     if (status != KNURL_OK) {
         fprintf(stderr, "%s\n", error.message);
         return 1;
     }
     open_rss = rss();
-    if (stat(argv[2], &info) != 0)
+    if (stat(argv[1], &info) != 0)
         abort();
     addresses = (knurl_mmdb_address *)calloc(count, sizeof(*addresses));
     if (addresses == NULL)
@@ -110,10 +122,14 @@ int main(int argc, char **argv)
                     samples[j] = samples[j - 1];
                 samples[j] = value;
             }
-            printf("%s %s open_us=%.1f first_ns=%.1f warm_ns=%.1f checksum=%lu "
-                   "mapped_bytes=%.0f initial_rss_kib=%ld open_rss_kib=%ld "
+            printf("heap=%lu %s open_us=%.1f first_ns=%.1f warm_ns=%.1f "
+                   "checksum=%lu "
+                   "database_bytes=%.0f initial_rss_kib=%ld open_rss_kib=%ld "
                    "final_rss_kib=%ld corpus_bytes=%lu\n",
-                   argv[1], argv[3], opened * 1e6, first * 1e9 / count,
+                   (unsigned long)(config.max_heap_bytes
+                                       ? config.max_heap_bytes
+                                       : KNURL_MMDB_HEAP_DEFAULT),
+                   argv[2], opened * 1e6, first * 1e9 / count,
                    (samples[3] + samples[4]) * 0.5e9 / count, checksum,
                    (double)info.st_size, initial_rss, open_rss, rss(),
                    (unsigned long)(count * sizeof(*addresses)));

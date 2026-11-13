@@ -42,13 +42,14 @@ def pointer(value, width):
     return b"\x38" + value.to_bytes(4, "big")
 
 
-def database(width=24, version=6, data=None, target=0, metadata=None, node_transform=None, separator=None):
+def database(width=24, version=6, data=None, target=0, metadata=None, node_transform=None, separator=None, networks=None):
     if data is None:
         data = mapping([("country", mapping([("iso_code", string("US"))]))])
     nodes = [[None, None]]
-    networks = [("1.2.3.0/24", target), ("128.0.0.0/1", target)]
-    if version == 6:
-        networks.append(("2001:db8::/32", target))
+    if networks is None:
+        networks = [("1.2.3.0/24", target), ("128.0.0.0/1", target)]
+        if version == 6:
+            networks.append(("2001:db8::/32", target))
     for text, offset in networks:
         network = ipaddress.ip_network(text)
         bits = network.prefixlen + (96 if version == 6 and network.version == 4 else 0)
@@ -162,3 +163,16 @@ for name, value in [("skip-scalars", mixed),
                     ("skip-depth", header(11, 1) * 256 + string("leaf"))]:
     write(name, data=mapping([("unused", value),
                              ("country", mapping([("iso_code", string("DE"))]))]))
+data = bytearray(128 * 4096 + 256)
+networks = []
+for index in range(128):
+    record = mapping([("country", mapping([("iso_code", string("SE" if index % 2 else "US"))]))])
+    offset = index * 4096
+    data[offset:offset + len(record)] = record
+    networks.append((f"100.0.{index}.0/24", offset))
+write("cache", version=4, data=bytes(data), networks=networks)
+empty = database(version=4, data=b"")
+base = empty.index(b"\xab\xcd\xefMaxMind.com")
+for name, in_record in [("boundary-control", 0), ("boundary-code", country.index(b"US"))]:
+    padding = (4095 - base - in_record) % 4096
+    write(name, version=4, target=padding, data=bytes(padding) + country)

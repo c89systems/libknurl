@@ -56,7 +56,7 @@ foreach(record IN LISTS records)
   string(LENGTH "${digest}" length)
   if(NOT length EQUAL 64 OR IS_ABSOLUTE "${path}" OR path MATCHES "(^|/)[.][.](/|$)" OR
       (NOT path IN_LIST sdk_docs AND
-       NOT path MATCHES "^(include/knurl/[a-z_]+[.]h|lib/(libknurl[^/]+|cmake/knurl/[^/]+[.]cmake|pkgconfig/knurl[.]pc)|share/(licenses/knurl/((kore|libmaxminddb)/)?[^/]+|knurl/(SDK|DEPENDENCIES|BACKEND|examples/(README[.]md|server[.]c|CMakeLists[.]txt))))$"))
+       NOT path MATCHES "^(include/knurl/[a-z_]+[.]h|lib/(libknurl[^/]+|cmake/knurl/[^/]+[.]cmake|pkgconfig/knurl[.]pc)|share/(licenses/knurl/(kore/)?[^/]+|knurl/(SDK|DEPENDENCIES|BACKEND|examples/(README[.]md|server[.]c|CMakeLists[.]txt))))$"))
     message(FATAL_ERROR "Unexpected SDK payload: ${path}")
   endif()
   list(APPEND expected "${path}")
@@ -82,7 +82,6 @@ endif()
 foreach(required include/knurl/knurl.h include/knurl/kore.h lib/libknurl.a
     lib/pkgconfig/knurl.pc lib/cmake/knurl/knurlConfig.cmake
     share/licenses/knurl/LICENSE share/licenses/knurl/kore/LICENSE
-    share/licenses/knurl/libmaxminddb/LICENSE share/licenses/knurl/libmaxminddb/NOTICE
     share/licenses/knurl/BSD-queue.txt share/knurl/DEPENDENCIES share/knurl/BACKEND
     share/knurl/examples/README.md)
   if(NOT EXISTS "${prefix}/${required}")
@@ -99,9 +98,8 @@ file(READ "${BUILD_DIR}/SDK" configured_identity)
 if(NOT identity STREQUAL configured_identity)
   message(FATAL_ERROR "Incorrect SDK identity")
 endif()
-foreach(license LICENSE vendor/kore/LICENSE LICENSES/BSD-queue.txt
-    vendor/libmaxminddb/LICENSE vendor/libmaxminddb/NOTICE)
-  if(license MATCHES "^vendor/(kore|libmaxminddb)/")
+foreach(license LICENSE vendor/kore/LICENSE LICENSES/BSD-queue.txt)
+  if(license MATCHES "^vendor/kore/")
     string(REGEX REPLACE "^vendor/" "" installed_license "${license}")
   else()
     get_filename_component(installed_license "${license}" NAME)
