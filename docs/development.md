@@ -10,6 +10,11 @@ See [Testing](testing.md), [Editor setup](editors.md) and
 
 ## Planned extensions
 
+The [HTTP and input completeness specification](http-completeness-spec.md)
+defines the current implementation goal for validation helpers, static ranges
+and compression, managed chunked input and WebSocket protocol completeness.
+HTTP/2 and HTTP/3 listeners are outside that goal.
+
 The [SOAP 1.2 server specification](soap12-spec.md) records the future C/Lua
 endpoint contract, namespace-aware XML requirements, streaming and ownership
 rules, fault behavior and acceptance tests. It describes planned work rather
