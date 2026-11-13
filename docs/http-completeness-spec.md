@@ -185,6 +185,10 @@ consumer failure and pending retries. Exclude framing, trailers and pipeline
 tails, and never count a retained suffix twice.
 Transport loss with incomplete managed input reports IO consistently across
 request-release and response-queue notification orderings.
+Native-reader upload handlers must observe EOF for chunked bodies, including
+zero-payload bodies. Only genuinely unframed input can use the zero-position
+empty-body completion shortcut. Reject unread or partially consumed chunked
+input promptly even when its payload exceeds the bounded reader queue.
 Honor existing pause/partial consumption/resume semantics at every chunk split.
 Zero chunk plus the complete trailer block establishes EOF. Bytes beyond that
 boundary belong to the next pipelined request and must be preserved exactly once.

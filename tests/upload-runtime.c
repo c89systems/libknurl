@@ -236,8 +236,10 @@ static knurl_status native_reader(const knurl_upload_metadata *m,
     int coding = 0;
     __atomic_add_fetch(&f->native_started, 1u, __ATOMIC_RELEASE);
     VERIFY(f, !pthread_equal(f->owner, pthread_self()));
-    VERIFY(f, m->method == KNURL_HTTP_POST &&
-                  !memcmp(m->method_token.data, "POST", 4));
+    VERIFY(f, (m->method == KNURL_HTTP_POST &&
+               !memcmp(m->method_token.data, "POST", 4)) ||
+                  (m->method == KNURL_HTTP_DELETE &&
+                   !memcmp(m->method_token.data, "DELETE", 6)));
     VERIFY(f, m->param_count == 1 && !strcmp(m->params[0].name.data, "id"));
     VERIFY(f, m->peer.address.length != 0 && m->local.address.length != 0 &&
                   m->listener_index == 0 && !m->tls);
@@ -253,7 +255,8 @@ static knurl_status native_reader(const knurl_upload_metadata *m,
         if (!strcasecmp(m->headers[i].name.data, "Transfer-Encoding"))
             coding = 1;
     }
-    VERIFY(f, m->has_content_length == !coding);
+    VERIFY(f,
+           m->has_content_length == (!coding && m->method == KNURL_HTTP_POST));
     VERIFY(f, duplicates == 2);
     VERIFY(f, knurl_source_destroy(reader, NULL) == KNURL_STATE &&
                   knurl_source_reset(reader, NULL) == KNURL_STATE);
@@ -283,6 +286,13 @@ static knurl_status native_reader(const knurl_upload_metadata *m,
     }
     if (!strcmp(id, "no-read")) {
         status = knurl_reply_text(reply, 201, "text/plain", "early", error);
+        goto done;
+    }
+    if (!strcmp(id, "one-read")) {
+        status = knurl_source_read(reader, bytes, 1, &count, error);
+        VERIFY(f, status == KNURL_OK && count == 1 && bytes[0] == 'a');
+        if (status == KNURL_OK)
+            status = knurl_reply_text(reply, 201, "text/plain", "early", error);
         goto done;
     }
     for (;;) {
@@ -386,6 +396,11 @@ static int send_request(unsigned short port, const char *path, int length,
                  "chunked\r\nX-Dup: one\r\nX-Dup: two\r\nConnection: "
                  "close\r\n\r\n%s",
                  path, body);
+    else if (length == -3)
+        snprintf(request, sizeof(request),
+                 "DELETE %s HTTP/1.1\r\nHost: localhost\r\nX-Dup: one\r\n"
+                 "X-Dup: two\r\nConnection: close\r\n\r\n",
+                 path);
     else if (length < 0)
         snprintf(
             request, sizeof(request),
@@ -501,6 +516,20 @@ static int native_cases(unsigned short port, const struct fixture *f)
                    "", 0) == 0);
     CHECK(exchange(port, "/api/reader/no-read", 19, "abcdefghijklmnopqrs", 500,
                    "", 0) == 0);
+    CHECK(exchange(port, "/api/reader/no-read", 0, "", 201, "early", 1) == 0);
+    CHECK(exchange(port, "/api/reader/no-read", -3, "", 201, "early", 1) == 0);
+    CHECK(exchange(port, "/api/reader/empty", -2, "0\r\n\r\n", 201, "0", 1) ==
+          0);
+    CHECK(exchange(port, "/api/reader/no-read", -2, "1\r\na\r\n0\r\n\r\n", 500,
+                   "", 0) == 0);
+    CHECK(exchange(port, "/api/reader/no-read", -2,
+                   "13\r\nabcdefghijklmnopqrs\r\n0\r\n\r\n", 500, "", 0) == 0);
+    CHECK(exchange(port, "/api/reader/no-read", -2, "0\r\n\r\n", 500, "", 0) ==
+          0);
+    CHECK(exchange(port, "/api/reader/one-read", -2, "1\r\na\r\n0\r\n\r\n", 500,
+                   "", 0) == 0);
+    CHECK(exchange(port, "/api/reader/one-read", -2,
+                   "13\r\nabcdefghijklmnopqrs\r\n0\r\n\r\n", 500, "", 0) == 0);
     CHECK(exchange(port, "/api/reader/no-reply", 3, "abc", 204, "", 1) == 0);
     for (i = 0; i < 36; ++i) {
         queued[i] =
@@ -624,9 +653,9 @@ static int exited(knurl_server *server, const knurl_process_context *process,
     (void)process;
     if (f->failed || f->opened != 9 || f->closed != f->opened ||
         f->finished != 6 || f->resumed != 1 || f->aborted != 1 ||
-        f->after != 49 || f->source_closed != 1 ||
-        __atomic_load_n(&f->native_started, __ATOMIC_ACQUIRE) != 46 ||
-        __atomic_load_n(&f->native_done, __ATOMIC_ACQUIRE) != 46 ||
+        f->after != 52 || f->source_closed != 1 ||
+        __atomic_load_n(&f->native_started, __ATOMIC_ACQUIRE) != 54 ||
+        __atomic_load_n(&f->native_done, __ATOMIC_ACQUIRE) != 54 ||
         __atomic_load_n(&f->late_done, __ATOMIC_ACQUIRE) != 2) {
         fprintf(stderr,
                 "upload counts: failed=%d opened=%d closed=%d finished=%d "
@@ -723,6 +752,10 @@ int main(void)
           KNURL_OK);
     CHECK(knurl_route_group_upload_reader(group, &reader, NULL, &error) ==
           KNURL_CONFLICT);
+    reader.method = KNURL_HTTP_DELETE;
+    CHECK(knurl_route_group_upload_reader(group, &reader, NULL, &error) ==
+          KNURL_OK);
+    reader.method = KNURL_HTTP_POST;
     reader.handler = NULL;
     CHECK(knurl_router_upload_reader(knurl_server_router(server), &reader, NULL,
                                      &error) == KNURL_INVALID);

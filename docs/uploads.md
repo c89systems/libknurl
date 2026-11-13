@@ -74,9 +74,11 @@ There is no complete-body buffer or hidden file spool.
 Only the native handler may call `knurl_source_read` on its borrowed reader.
 It can wait for incremental input there and query `knurl_source_cancelled`.
 Reset, destroy and ownership transfer of this reader return STATE. Consume all
-admitted input. An unselected successful reply becomes 204. EOF is supported; a parser that finishes at
-exactly the declared length need not add a redundant EOF read. Early return
-without consuming the input or a callback error fails the
+admitted input. An unselected successful reply becomes 204. A parser that finishes
+at exactly the declared length need not add a redundant EOF read. Chunked input
+requires EOF, including an empty chunked body. A missing Content-Length alone
+does not establish an empty body; an unframed request is known empty and need
+not be read. Early return without consuming the input or a callback error fails the
 request. After acknowledgement, the owner runs after hooks and submits the
 result. Reader/result views expire when the handler returns. Copied metadata
 remains valid through request cleanup and native acknowledgement (and the

@@ -30,7 +30,7 @@ struct reader_upload {
     knurl_waker *waker;
     knurl_timer *admission;
     size_t references, queued, capacity;
-    int pipe[2], started, body_end, done, failed, published;
+    int pipe[2], started, body_end, done, failed, published, unframed;
 };
 static void unref(void *data)
 {
@@ -202,8 +202,7 @@ static knurl_status work(knurl_job *job, knurl_bytes arguments, void *data,
         (s->metadata.has_content_length &&
          s->reader->impl->position.high == s->metadata.content_length.high &&
          s->reader->impl->position.low == s->metadata.content_length.low) ||
-        (!s->metadata.has_content_length &&
-         s->reader->impl->position.high == 0 &&
+        (s->unframed && s->reader->impl->position.high == 0 &&
          s->reader->impl->position.low == 0);
     if (status == KNURL_OK && s->reader->impl->failure != KNURL_OK)
         status = s->reader->impl->failure;
@@ -432,6 +431,7 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
         return knurl_fail(error, KNURL_NOMEM, "upload_reader",
                           "allocating upload context");
     s->request = request;
+    s->unframed = !request->impl->has_length && !request->impl->has_coding;
     s->config = route->config;
     s->codec = route->codec;
     s->references = 1;
