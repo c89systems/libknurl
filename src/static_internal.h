@@ -30,7 +30,7 @@ struct knurl_static_ranges {
     size_t count;
     int requested, satisfiable;
 };
-int knurl_http_tag_matches(const char *, const char *, int, int);
+int knurl_http_tag_matches(const char *, const char *, int, int, size_t *);
 time_t knurl_static_date(const char *);
 int knurl_static_if_range(const char *, const knurl_asset_info *);
 void knurl_static_range_parse(const char *, knurl_u64,

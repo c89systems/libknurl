@@ -221,6 +221,8 @@ static int exchange(unsigned short port, const char *method, const char *path,
               strstr(metadata, "vary: Accept-Encoding\r\n") != NULL);
     if (code >= 400)
         CHECK(strstr(metadata, "content-encoding:") == NULL);
+    if (headers != NULL && strcmp(headers, "Accept-Encoding: \r\n") == 0)
+        CHECK(strstr(metadata, "content-encoding:") == NULL);
     if (expected_header != NULL) {
         if (strstr(metadata, expected_header) == NULL)
             fprintf(stderr, "%s headers: %s\n", path, metadata);
@@ -320,6 +322,7 @@ static int client(unsigned short port)
                                         "/files/movie.mp4"};
     static const char *const codings[] = {"gzip", "gzip", "br"};
     char etag[256], headers[1024];
+    char empty[34];
     size_t i;
     for (i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
         snprintf(headers, sizeof(headers),
@@ -341,6 +344,18 @@ static int client(unsigned short port)
                        NULL) == 0);
         return 0;
     }
+    CHECK(exchange(port, "GET", "/files/data.txt", "Accept-Encoding: \r\n", "",
+                   200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt", "X-Empty:\t \r\n", "", 200,
+                   "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt", "Host: \r\n", "", 400, "",
+                   NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt", "No-Colon\r\n", "", 400, "",
+                   NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt", ": empty-name\r\n", "", 400,
+                   "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt", "X-Control: \vbad\r\n", "",
+                   400, "", NULL, NULL) == 0);
     CHECK(exchange(port, "GET", "/files/song.MP3", "Accept-Encoding: gzip\r\n",
                    "", 200, "abcdef", "content-encoding: gzip\r\n", etag) == 0);
     snprintf(headers, sizeof(headers),
@@ -566,6 +581,57 @@ static int client(unsigned short port)
     CHECK(exchange(port, "GET", "/packed/data",
                    "If-None-Match: W/\"packed\"\r\n", "", 304, "", NULL,
                    NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-None-Match: , , W/\"packed\",,\r\n", "", 304, "", NULL,
+                   NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data", "If-Match: , \"packed\", ,\r\n",
+                   "", 200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data", "If-Match: , ,\r\n", "", 412,
+                   "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data", "If-Match: \r\n", "", 412, "",
+                   NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data", "If-None-Match: \r\n", "", 200,
+                   "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-None-Match: , ,\r\n"
+                   "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+                   "", 200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Match: \"different\"\r\nIf-Match: \"packed\"\r\n", "",
+                   200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-None-Match: \"different\"\r\n"
+                   "If-None-Match: \"packed\"\r\n",
+                   "", 304, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-None-Match: \"packed\"\r\nIf-None-Match: bad\r\n", "",
+                   400, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Match: *\r\nIf-Match: \"packed\"\r\n", "", 400, "", NULL,
+                   NULL) == 0);
+    memset(empty, ',', 33);
+    empty[32] = 0;
+    snprintf(headers, sizeof(headers), "If-None-Match: %s\"packed\"\r\n",
+             empty);
+    CHECK(exchange(port, "GET", "/packed/data", headers, "", 304, "", NULL,
+                   NULL) == 0);
+    snprintf(headers, sizeof(headers), "If-None-Match: %s,\"packed\"\r\n",
+             empty);
+    CHECK(exchange(port, "GET", "/packed/data", headers, "", 400, "", NULL,
+                   NULL) == 0);
+    empty[16] = 0;
+    snprintf(
+        headers, sizeof(headers),
+        "If-None-Match: %s\"different\"\r\nIf-None-Match: %s\"packed\"\r\n",
+        empty, empty);
+    CHECK(exchange(port, "GET", "/packed/data", headers, "", 304, "", NULL,
+                   NULL) == 0);
+    strcat(headers, "If-None-Match: \r\n");
+    CHECK(exchange(port, "GET", "/packed/data", headers, "", 400, "", NULL,
+                   NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt",
+                   "Range: bytes=,0-1,,3-4,\r\n", "", 206, NULL,
+                   "content-type: multipart/byteranges; boundary=", NULL) == 0);
     CHECK(exchange(port, "GET", "/packed-raw/untyped.html", NULL, "", 200,
                    "packed-index", "content-type: text/html; charset=utf-8",
                    NULL) == 0);

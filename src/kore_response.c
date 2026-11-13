@@ -345,7 +345,15 @@ static void advance(struct knurl_delivery *delivery)
          connection->state == CONN_STATE_DISCONNECTING) &&
         response->impl->phase < KNURL_RESPONSE_COMPLETE) {
         request->impl->disconnect_side = KNURL_DISCONNECT_DOWNSTREAM;
-        (void)knurl_response_abort(response, KNURL_CANCELLED, NULL);
+        (void)knurl_response_abort(
+            response,
+            !request->impl->outcome.body_complete &&
+                    request->impl->channel == NULL &&
+                    (connection == NULL ||
+                     connection->state == CONN_STATE_DISCONNECTING)
+                ? KNURL_IO
+                : KNURL_CANCELLED,
+            NULL);
     }
     if (response->impl->phase == KNURL_RESPONSE_COMPLETE &&
         (connection == NULL || connection->state == CONN_STATE_DISCONNECTING)) {

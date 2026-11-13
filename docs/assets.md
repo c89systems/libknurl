@@ -179,6 +179,9 @@ Assets default to no-cache and a `not found\n` 404 with
 no-store; filesystem 404 replies are empty unless configured otherwise. Cache
 and not-found policies are explicit. ETag/If-Match/If-None-Match checks validate
 complete lists, including malformed tails, and distinguish weak/strong comparison.
+Repeated If-Match/If-None-Match fields are evaluated as one ordered list. Up to
+32 empty members per conditional list, including repeated fields, are ignored;
+larger counts and mixed wildcard/tag lists are invalid. Empty lists do not match.
 Last-Modified uses the same opened metadata, formats English HTTP dates
 independently of locale, and returns 304 for If-Modified-Since dates at or after
 Last-Modified when If-None-Match is absent. Live HTTP handling uses
@@ -193,7 +196,8 @@ suffix/open-ended forms. Unsatisfiable
 members are dropped when another member is satisfiable. One selected member
 uses 206 Content-Range; several use streamed multipart/byteranges with per-part
 types/ranges and a checked complete length. Request order and overlaps are
-preserved. Malformed, excessive or wholly unsatisfiable lists return 416;
+preserved. Up to 32 empty list members are ignored and do not consume the
+16-range budget. Malformed, excessive or wholly unsatisfiable lists return 416;
 unknown units are ignored. If-Range accepts strong ETags or exact matching dates
 when the provider explicitly sets `last_modified_strong`. Filesystem timestamps
 alone do not assert that strength.

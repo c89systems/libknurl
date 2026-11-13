@@ -106,6 +106,14 @@ returns 412 for GET and HEAD. Ignore invalid dates or unavailable modification
 metadata; If-Match takes precedence even when its condition succeeds.
 Accept the three HTTP-date forms and ignore repeated modification-date fields
 or date lists. Repeated or invalid If-Range selects the complete response.
+Apply the [HTTP recipient list rules](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.1.2)
+to range and ETag lists: ignore up to 32 empty members per list, combine repeated
+If-Match/If-None-Match fields, and still validate every nonempty member. Empty
+ETag lists do not match; mixed wildcards remain invalid. Empty range members do
+not consume the 16-range budget.
+Admit syntactically valid empty header values through the backend, including
+empty Accept-Encoding and conditional lists. Keep empty names, missing colons,
+invalid controls and empty Host values rejected.
 
 ### Negotiated compression
 
@@ -172,6 +180,11 @@ codings as a side effect of transfer decoding.
 Callbacks and stored bodies receive decoded payload bytes only. Enforce route
 and server byte limits on decoded bytes as they arrive; body-rate accounting is
 based on payload progress, so metadata-only traffic cannot defeat the deadline.
+Count received decoded bytes independently of consumer acceptance, including
+consumer failure and pending retries. Exclude framing, trailers and pipeline
+tails, and never count a retained suffix twice.
+Transport loss with incomplete managed input reports IO consistently across
+request-release and response-queue notification orderings.
 Honor existing pause/partial consumption/resume semantics at every chunk split.
 Zero chunk plus the complete trailer block establishes EOF. Bytes beyond that
 boundary belong to the next pipelined request and must be preserved exactly once.

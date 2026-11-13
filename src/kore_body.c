@@ -15,6 +15,8 @@ struct knurl_input {
     const unsigned char *surplus;
     size_t surplus_length;
     knurl_http_body_framer framer;
+    knurl_http_body_framer *received_framer;
+    u_int64_t receive_remaining;
     u_int64_t received;
     u_int64_t started;
     u_int64_t paused_at;
@@ -34,6 +36,49 @@ static void counter(u_int64_t value, knurl_u64 *out)
 {
     out->high = (unsigned long)(value >> 32);
     out->low = (unsigned long)(value & 0xffffffffUL);
+}
+
+static size_t count_payload(void *data, const unsigned char *bytes,
+                            size_t count)
+{
+    struct knurl_input *input = data;
+    (void)bytes;
+    if ((u_int64_t)count > (u_int64_t)-1 - input->received) {
+        input->failure = KNURL_LIMIT;
+        input->failure_code = 413;
+        return 0;
+    }
+    input->received += count;
+    counter(input->received,
+            &input->request->impl->outcome.received_body_bytes);
+    return count;
+}
+
+static int count_trailer(void *data, const char *name, const char *value)
+{
+    (void)data;
+    (void)name;
+    (void)value;
+    return 1;
+}
+
+/* Observe each new transport span once, independently of consumer retries.
+ * Chunked input needs only a second bounded framing cursor, never payload
+ * storage. Fixed input uses a scalar remainder and excludes pipeline bytes. */
+static void count_received(struct knurl_input *input, const void *bytes,
+                           size_t length)
+{
+    size_t consumed;
+    if (input->received_framer != NULL) {
+        (void)knurl_http_body_framer_feed(input->received_framer, bytes, length,
+                                          &consumed, count_payload,
+                                          count_trailer, input);
+    } else {
+        if ((u_int64_t)length > input->receive_remaining)
+            length = (size_t)input->receive_remaining;
+        (void)count_payload(input, bytes, length);
+        input->receive_remaining -= length;
+    }
 }
 
 static void stop_read(knurl_request *request)
@@ -63,15 +108,24 @@ knurl_status knurl_kore_body_create(knurl_request *request, const void *data,
         return knurl_fail(error, KNURL_NOMEM, "body_start",
                           "cannot allocate bounded input state");
     input->request = request;
-    if (request->impl->has_coding)
+    if (request->impl->has_coding) {
+        input->received_framer = malloc(sizeof(*input->received_framer));
+        if (input->received_framer == NULL) {
+            free(input);
+            return knurl_fail(error, KNURL_NOMEM, "body_start",
+                              "cannot allocate bounded receive framing");
+        }
         knurl_http_body_framer_chunked(&input->framer);
-    else
+        knurl_http_body_framer_chunked(input->received_framer);
+    } else {
         knurl_http_body_framer_fixed(
             &input->framer,
             request->impl->has_length
                 ? ((u_int64_t)request->impl->content_length.high << 32) |
                       request->impl->content_length.low
                 : 0);
+        input->receive_remaining = input->framer.remaining;
+    }
     available = length;
     if (!request->impl->has_coding &&
         (u_int64_t)available > input->framer.remaining)
@@ -84,6 +138,7 @@ knurl_status knurl_kore_body_create(knurl_request *request, const void *data,
     input->started = kore_time_ms();
     counter(input->received, &request->impl->outcome.received_body_bytes);
     request->impl->input = input;
+    count_received(input, data, available);
     native = request->impl->native;
     native->owner->http_timeout = 0;
     return KNURL_OK;
@@ -137,6 +192,7 @@ static int received(struct netbuf *buffer)
     request = input->request;
     input->pending = buffer->buf;
     input->pending_length = buffer->s_off;
+    count_received(input, input->pending, input->pending_length);
     input->waiting = 0;
     stop_read(request);
     request->impl->response->impl->schedule(request->impl->response);
@@ -292,8 +348,6 @@ static size_t accept_payload(void *data, const unsigned char *bytes,
         input->failure_code = 413;
         return 0;
     }
-    input->received += consumed;
-    counter(input->received, &request->impl->outcome.received_body_bytes);
     request->impl->outcome.delivered_body_bytes =
         request->impl->body_store->impl->length;
     if (consumed < count) {
@@ -484,6 +538,7 @@ void knurl_kore_body_timeout(knurl_request *request)
 
 void knurl_kore_request_closed(knurl_request *request)
 {
+    struct knurl_input *input;
     if (request->impl->close_notified)
         return;
     request->impl->close_notified = 1;
@@ -498,6 +553,9 @@ void knurl_kore_request_closed(knurl_request *request)
         request->impl->plan.on_close(request, &request->impl->outcome,
                                      request->impl->plan.userdata);
     knurl_policy_closed(request);
-    free(request->impl->input);
+    input = request->impl->input;
+    if (input != NULL)
+        free(input->received_framer);
+    free(input);
     request->impl->input = NULL;
 }

@@ -28,6 +28,33 @@ static const char *single_header(knurl_request *request, const char *name)
     }
     return value;
 }
+static int tag_headers(knurl_request *request, const char *name,
+                       const char *etag, int strong, int *present)
+{
+    knurl_header h;
+    const char *value;
+    size_t i, fields = 0, empty = 0;
+    int match, matched = 0, star = 0;
+    *present = 0;
+    for (i = 0; i < knurl_request_header_count(request); ++i) {
+        (void)knurl_request_header_at(request, i, &h, NULL);
+        if (!knurl_text_equal_case(h.name.data, name))
+            continue;
+        *present = 1;
+        ++fields;
+        value = h.value.data;
+        while (*value == ' ' || *value == '\t')
+            ++value;
+        if (*value == '*')
+            star = 1;
+        match = knurl_http_tag_matches(value, etag, 1, strong, &empty);
+        if (match < 0 || (star && fields > 1))
+            return -1;
+        if (match)
+            matched = 1;
+    }
+    return matched;
+}
 knurl_status knurl_static_reply_asset(const knurl_static_config *config,
                                       int custom, knurl_request *request,
                                       knurl_reply *reply,
@@ -48,7 +75,7 @@ knurl_status knurl_static_reply_asset(const knurl_static_config *config,
     size_t written;
     knurl_source *source, *compressed;
     knurl_status status = KNURL_OK;
-    int match, code = 200;
+    int match, present, code = 200;
     time_t modified, since_time;
     type = knurl_mime_resolve(knurl_request_server(request), config, path,
                               info->content_type);
@@ -77,9 +104,8 @@ knurl_status knurl_static_reply_asset(const knurl_static_config *config,
     if (status == KNURL_OK && info->last_modified != NULL)
         status = knurl_reply_header_set(reply, "last-modified",
                                         info->last_modified, error);
-    value = header(request, "if-match");
-    if (status == KNURL_OK && value != NULL) {
-        match = knurl_http_tag_matches(value, info->etag, 1, 1);
+    match = tag_headers(request, "if-match", info->etag, 1, &present);
+    if (status == KNURL_OK && present) {
         if (match != 1) {
             code = match < 0 ? 400 : 412;
             goto empty;
@@ -96,15 +122,14 @@ knurl_status knurl_static_reply_asset(const knurl_static_config *config,
             goto empty;
         }
     }
-    value = header(request, "if-none-match");
-    if (status == KNURL_OK && value != NULL) {
-        match = knurl_http_tag_matches(value, info->etag, 1, 0);
+    match = tag_headers(request, "if-none-match", info->etag, 0, &present);
+    if (status == KNURL_OK && present) {
         if (match != 0) {
             code = match < 0 ? 400 : 304;
             goto empty;
         }
     }
-    if (status == KNURL_OK && value == NULL && info->last_modified != NULL) {
+    if (status == KNURL_OK && !present && info->last_modified != NULL) {
         const char *since = single_header(request, "if-modified-since");
         since_time = knurl_static_date(since);
         modified = since_time != (time_t)-1

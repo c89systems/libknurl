@@ -83,10 +83,11 @@ static void paths(char *text)
     knurl_u64 end;
     int order;
     struct knurl_static_ranges range;
+    size_t empty = 0;
     length.high = 1;
     length.low = 0;
     (void)knurl_route_path_validate(text, KNURL_PATH_LITERAL, NULL);
-    (void)knurl_http_tag_matches(text, "\"tag\"", 1, 0);
+    (void)knurl_http_tag_matches(text, "\"tag\"", 1, 0, &empty);
     knurl_static_range_parse(text, length, &range);
     if (range.satisfiable && range.requested) {
         assert(range.parts[0].length.high || range.parts[0].length.low);

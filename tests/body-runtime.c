@@ -124,9 +124,11 @@ static knurl_status consume(knurl_request *request, const void *data,
         *consumed = 1;
         return KNURL_AGAIN;
     }
-    if (is(c, "/body-error"))
+    if (is(c, "/body-error") ||
+        (c->calls > 1 && (is(c, "/pause-error") || is(c, "/again-error"))))
         return KNURL_IO;
-    if (c->calls == 1 && (is(c, "/stream") || is(c, "/again"))) {
+    if (c->calls == 1 && (is(c, "/stream") || is(c, "/again") ||
+                          is(c, "/pause-error") || is(c, "/again-error"))) {
         if (is(c, "/stream")) {
             count = 0;
             OBSERVE(knurl_response_write(request->response(request), "r", 1,
@@ -136,7 +138,7 @@ static knurl_status consume(knurl_request *request, const void *data,
         if (knurl_loop_timer(request->loop(request), is(c, "/again") ? 1100 : 5,
                              0, resumed, NULL, c, &c->timer, error) != KNURL_OK)
             return KNURL_IO;
-        if (is(c, "/again"))
+        if (is(c, "/again") || is(c, "/again-error"))
             return KNURL_AGAIN;
         *consumed = 1;
     } else {
@@ -155,6 +157,7 @@ static void closed(knurl_request *request, const knurl_request_outcome *out,
                    void *userdata)
 {
     struct context *c;
+    int previous_failures = failures;
     c = userdata;
     ++closed_count;
     OBSERVE(pthread_equal(c->owner, pthread_self()));
@@ -173,7 +176,8 @@ static void closed(knurl_request *request, const knurl_request_outcome *out,
                is(c, "/chunk-limit")) {
         OBSERVE(!out->body_complete && out->body_cause != KNURL_OK &&
                 !c->ended);
-    } else if (is(c, "/body-error") || is(c, "/truncated")) {
+    } else if (is(c, "/body-error") || is(c, "/pause-error") ||
+               is(c, "/again-error") || is(c, "/truncated")) {
         OBSERVE(!out->body_complete && out->body_cause == KNURL_IO &&
                 !c->ended);
     } else if (is(c, "/idle")) {
@@ -191,6 +195,25 @@ static void closed(knurl_request *request, const knurl_request_outcome *out,
     if (is(c, "/stream") || is(c, "/again"))
         OBSERVE(c->delivered == 64 && out->delivered_body_bytes.low == 64 &&
                 out->received_body_bytes.low == 64);
+    if (is(c, "/body-error") || is(c, "/pause-error") ||
+        is(c, "/again-error") || is(c, "/invalid")) {
+        OBSERVE(out->received_body_bytes.high == 0 &&
+                out->received_body_bytes.low == 3 &&
+                out->delivered_body_bytes.high == 0 &&
+                out->delivered_body_bytes.low ==
+                    (unsigned long)(is(c, "/pause-error") ? 1 : 0));
+    }
+    if (is(c, "/chunk-stream") || is(c, "/chunk-buffer") ||
+        is(c, "/chunk-spill"))
+        OBSERVE(out->received_body_bytes.low == 5 &&
+                out->delivered_body_bytes.low == 5);
+    if (is(c, "/chunk-limit"))
+        OBSERVE(out->received_body_bytes.low == 5 &&
+                out->delivered_body_bytes.low == 0);
+    if (failures != previous_failures)
+        fprintf(
+            stderr, "body close %s: cause=%d body=%d complete=%d ended=%d\n",
+            c->path, out->cause, out->body_cause, out->body_complete, c->ended);
     if (c->timer != NULL)
         c->timer->cancel(c->timer);
     free(c);
@@ -554,7 +577,7 @@ static int progressive(unsigned short port, const char *pattern)
     return 0;
 }
 
-static int truncated(unsigned short port)
+static int truncated(unsigned short port, int early)
 {
     char response[512];
     const char *request = "POST /truncated HTTP/1.1\r\nHost: "
@@ -565,6 +588,15 @@ static int truncated(unsigned short port)
     fd = connect_to(port);
     CHECK(fd >= 0 &&
           write(fd, request, strlen(request)) == (ssize_t)strlen(request));
+    if (early) {
+        CHECK(shutdown(fd, SHUT_WR) == 0);
+        do {
+            count = read(fd, response, sizeof(response));
+            CHECK(count >= 0);
+        } while (count != 0);
+        CHECK(close(fd) == 0);
+        return 0;
+    }
     used = 0;
     do {
         count = read(fd, response + used, sizeof(response) - used - 1);
@@ -696,6 +728,19 @@ static int client(unsigned short port)
                    500, "") == 0);
     CHECK(exchange(port, "POST", "/body-error", "Content-Length: 3\r\n", "abc",
                    500, "") == 0);
+    CHECK(exchange(port, "POST", "/body-error",
+                   "Transfer-Encoding: chunked\r\n",
+                   "1\r\na\r\n2\r\nbc\r\n0\r\n\r\n", 500, "") == 0);
+    CHECK(exchange(port, "POST", "/pause-error", "Content-Length: 3\r\n", "abc",
+                   500, "") == 0);
+    CHECK(exchange(port, "POST", "/again-error", "Content-Length: 3\r\n", "abc",
+                   500, "") == 0);
+    CHECK(exchange(port, "POST", "/pause-error",
+                   "Transfer-Encoding: chunked\r\n",
+                   "2\r\nab\r\n1\r\nc\r\n0\r\n\r\n", 500, "") == 0);
+    CHECK(exchange(port, "POST", "/again-error",
+                   "Transfer-Encoding: chunked\r\n",
+                   "2\r\nab\r\n1\r\nc\r\n0\r\n\r\n", 500, "") == 0);
     CHECK(exchange(port, "POST", "/early",
                    "Expect: 100-continue\r\nContent-Length: 64\r\n", "", 403,
                    "denied") == 0);
@@ -714,7 +759,8 @@ static int client(unsigned short port)
     CHECK(exchange(port, "GET", "/deadline", "", "", 500, "") == 0);
     CHECK(exchange(port, "POST", "/idle", "Content-Length: 3\r\n", "", 408,
                    "") == 0);
-    CHECK(truncated(port) == 0);
+    CHECK(truncated(port, 0) == 0);
+    CHECK(truncated(port, 1) == 0);
     CHECK(exchange(port, "GET", "/route", "", "", 200, "routed") == 0);
     CHECK(exchange(port, "GET", "/raw", "", "", 200, "ok") == 0);
     for (i = 0; i < sizeof(method) / sizeof(method[0]); ++i)

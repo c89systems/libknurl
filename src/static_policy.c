@@ -50,7 +50,7 @@ time_t knurl_static_date(const char *text)
 /* Preserve Vectis's complete-list validation, including malformed tails, with
  * weak comparison on both sides for If-None-Match. */
 int knurl_http_tag_matches(const char *p, const char *etag, int exists,
-                           int strong)
+                           int strong, size_t *empty)
 {
     const char *start, *actual = etag;
     size_t length;
@@ -71,6 +71,16 @@ int knurl_http_tag_matches(const char *p, const char *etag, int exists,
         return *p == 0 ? exists : -1;
     }
     for (;;) {
+        while (*p == ' ' || *p == '\t')
+            ++p;
+        if (*p == 0 || *p == ',') {
+            if (++*empty > 32)
+                return -1;
+            if (*p == 0)
+                return matched;
+            ++p;
+            continue;
+        }
         weak = p[0] == 'W' && p[1] == '/';
         if (weak)
             p += 2;
@@ -147,7 +157,7 @@ void knurl_static_range_parse(const char *input, knurl_u64 size,
     const char *p;
     knurl_u64 start, end, suffix, one;
     struct knurl_static_range_part part;
-    size_t members = 0;
+    size_t members = 0, empty = 0;
     int available;
     memset(out, 0, sizeof(*out));
     if (input == NULL || strlen(input) < 6 ||
@@ -162,10 +172,18 @@ void knurl_static_range_parse(const char *input, knurl_u64 size,
     one.low = 1;
     p = input + 6;
     for (;;) {
-        if (++members > KNURL_STATIC_MAX_RANGES)
-            goto invalid;
         while (*p == ' ' || *p == '\t')
             ++p;
+        if (*p == 0 || *p == ',') {
+            if (++empty > 32)
+                goto invalid;
+            if (*p == 0)
+                break;
+            ++p;
+            continue;
+        }
+        if (++members > KNURL_STATIC_MAX_RANGES)
+            goto invalid;
         available = size.high != 0 || size.low != 0;
         if (*p == '-') {
             ++p;

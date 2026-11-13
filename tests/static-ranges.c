@@ -41,8 +41,6 @@ static int parser(void)
     static const char *const invalid[] = {
         "bytes=",
         "bytes=1-0",
-        "bytes=0-1,",
-        "bytes=0-1,,3-4",
         "bytes=bad",
         "bytes=-0",
         "bytes=6-",
@@ -51,10 +49,25 @@ static int parser(void)
          "0,"
          "0-0")};
     size_t i;
+    char list[96];
     knurl_static_range_parse("bytes=0-1,99-,-2", length, &ranges);
     CHECK(ranges.requested && ranges.satisfiable && ranges.count == 2);
     CHECK(ranges.parts[0].start.low == 0 && ranges.parts[0].length.low == 2);
     CHECK(ranges.parts[1].start.low == 4 && ranges.parts[1].length.low == 2);
+    knurl_static_range_parse("bytes=,0-1,,3-4,", length, &ranges);
+    CHECK(ranges.satisfiable && ranges.count == 2 &&
+          ranges.parts[0].start.low == 0 && ranges.parts[1].start.low == 3);
+    knurl_static_range_parse("bytes=0-1,", length, &ranges);
+    CHECK(ranges.satisfiable && ranges.count == 1);
+    memcpy(list, "bytes=", 6);
+    memset(list + 6, ',', 33);
+    memcpy(list + 38, "0-1", 4);
+    knurl_static_range_parse(list, length, &ranges);
+    CHECK(ranges.satisfiable && ranges.count == 1);
+    memcpy(list + 39, "0-1", 4);
+    list[38] = ',';
+    knurl_static_range_parse(list, length, &ranges);
+    CHECK(!ranges.satisfiable && ranges.count == 0);
     for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
         knurl_static_range_parse(invalid[i], length, &ranges);
         CHECK(ranges.requested && !ranges.satisfiable && ranges.count == 0);
@@ -192,12 +205,43 @@ static int dates(void)
     CHECK(!knurl_static_if_range("\"tag\"", &info));
     return 0;
 }
+static int tags(void)
+{
+    size_t empty;
+    char list[48];
+#define TAG(input, actual, exists, strong, expected)                           \
+    do {                                                                       \
+        empty = 0;                                                             \
+        CHECK(knurl_http_tag_matches(input, actual, exists, strong, &empty) == \
+              expected);                                                       \
+    } while (0)
+    TAG(", ,\"tag\",,", "\"tag\"", 1, 1, 1);
+    TAG("", "\"tag\"", 1, 1, 0);
+    TAG(",,", "\"tag\"", 1, 0, 0);
+    TAG(",W/\"tag\",", "\"tag\"", 1, 0, 1);
+    TAG(",W/\"tag\",", "\"tag\"", 1, 1, 0);
+    TAG("\"ta,g\"", "\"ta,g\"", 1, 1, 1);
+    TAG("\"tag\",, bad", "\"tag\"", 1, 0, -1);
+    TAG("*,", "\"tag\"", 1, 0, -1);
+    TAG(",*", "\"tag\"", 1, 0, -1);
+    TAG("*", NULL, 1, 1, 1);
+    TAG("*", NULL, 0, 1, 0);
+    memset(list, ',', 33);
+    memcpy(list + 32, "\"tag\"", 6);
+    TAG(list, "\"tag\"", 1, 1, 1);
+    memcpy(list + 33, "\"tag\"", 6);
+    list[32] = ',';
+    TAG(list, "\"tag\"", 1, 1, -1);
+#undef TAG
+    return 0;
+}
 int main(void)
 {
     CHECK(parser() == 0);
     CHECK(source(0) == 0);
     CHECK(source(1) == 0);
     CHECK(dates() == 0);
+    CHECK(tags() == 0);
     CHECK(wide_total() == 0);
     return 0;
 }
