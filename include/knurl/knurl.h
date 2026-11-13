@@ -7,6 +7,7 @@
 
 #include <knurl/common.h>
 #include <knurl/input.h>
+#include <knurl/mmdb.h>
 #include <knurl/http.h>
 #include <knurl/io.h>
 #include <knurl/reply.h>

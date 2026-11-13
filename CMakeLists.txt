@@ -74,6 +74,9 @@ add_library(knurl_objects OBJECT src/common.c src/u64.c src/input.c src/input_re
   src/tls.c src/tls_material.c src/kore_tls.c src/kore_process.c
   src/acme_state.c src/kore_acme.c src/kore_tls_state.c)
 target_sources(knurl_objects PRIVATE src/static_gzip.c src/static_encoding.c)
+target_sources(knurl_objects PRIVATE src/mmdb.c src/mmdb_maxmind.c)
+target_sources(knurl_objects PRIVATE src/mmdb_decode.c src/mmdb_native.c)
+include(cmake/MMDB.cmake)
 target_include_directories(knurl_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(knurl_objects PRIVATE "${kore_source_dir}/include/kore")
 target_link_libraries(knurl_objects PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::LibXml2 lonejson::lonejson pslog::pslog_shared)
@@ -98,7 +101,7 @@ knurl_c89(knurl_objects)
 set(KNURL_ABI_VERSION 0)
 foreach(variant static shared)
   string(TOUPPER "${variant}" kind)
-  add_library(knurl_${variant} ${kind} $<TARGET_OBJECTS:knurl_objects> $<TARGET_OBJECTS:knurl_kore>)
+  add_library(knurl_${variant} ${kind} $<TARGET_OBJECTS:knurl_objects> $<TARGET_OBJECTS:knurl_kore> $<TARGET_OBJECTS:knurl_mmdb_vendor>)
   add_library(knurl::${variant} ALIAS knurl_${variant})
   set_target_properties(knurl_${variant} PROPERTIES OUTPUT_NAME knurl
     EXPORT_NAME ${variant} VERSION ${PROJECT_VERSION} SOVERSION ${KNURL_ABI_VERSION}
@@ -123,7 +126,7 @@ target_link_libraries(knurl_static PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::L
   pslog::pslog_static Threads::Threads)
 target_link_libraries(knurl_static PUBLIC lonejson::lonejson_static)
 target_link_libraries(knurl_static PRIVATE ZLIB::ZLIB)
-set(knurl_core_headers include/knurl/common.h include/knurl/input.h include/knurl/http.h include/knurl/knurl.h
+set(knurl_core_headers include/knurl/mmdb.h include/knurl/common.h include/knurl/input.h include/knurl/http.h include/knurl/knurl.h
   include/knurl/io.h include/knurl/reply.h include/knurl/tls.h
   include/knurl/server.h include/knurl/pslog.h include/knurl/openapi.h include/knurl/router.h include/knurl/request.h include/knurl/kore.h
   include/knurl/loop.h include/knurl/response.h include/knurl/dispatch.h
@@ -157,6 +160,7 @@ endif()
 include(cmake/SDK.cmake)
 
 if(BUILD_TESTING)
+  include(cmake/MMDBTests.cmake)
   add_test(NAME knurl.receiver-surface COMMAND "${CMAKE_COMMAND}"
     "-DKNURL_ROOT=${CMAKE_CURRENT_SOURCE_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ReceiverSurface.cmake")
   include(cmake/DebugTestStacks.cmake)

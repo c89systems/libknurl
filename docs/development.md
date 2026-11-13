@@ -23,8 +23,8 @@ than an implemented or released capability.
 ## Commands
 
 Prerequisites: CMake >= 3.24, Ninja, Git, Make, Bash >= 4.4, curl, tar, flock,
-SHA-256 tools and clang-format. Host lifecycle checks also use Python 3 solely to
-serve a small local archive fixture; Bash/CMake drive and assert those checks.
+SHA-256 tools and clang-format. Python 3 serves a small local archive fixture and
+generates binary MMDB fixtures; Bash/CMake/C executables drive and assert checks.
 Linux compilation uses the lifecycle's pinned
 Bootlin GCC/binutils/sysroot collection, with no host compiler fallback.
 
@@ -103,6 +103,14 @@ compile/link/artifact evidence. The [contract](server-api-spec.md) defines runti
 acceptance and the implementation cadence.
 
 ## Source ownership
+
+The standalone [MMDB country API](mmdb.md) embeds pristine libmaxminddb library
+sources under `vendor/libmaxminddb/`, pinned by `vendor/libmaxminddb.origin`.
+`cmake/MMDB.cmake` confines C99 to those vendor objects, prefixes private symbols,
+and ships upstream LICENSE/NOTICE. Knurl's adapter and native reader remain C89.
+Python 3 generates synthetic MMDB fixtures during test builds; no test downloads
+data. Optional real DB-IP tests keep the downloaded database under ignored build
+storage and record its attribution/checksum; no database enters an SDK.
 
 - `vendor/kore/` is an unmodified upstream source export, including its license.
 - `vendor/kore.revision` and `vendor/kore.url` identify its exact upstream commit

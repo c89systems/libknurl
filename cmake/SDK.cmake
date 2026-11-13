@@ -17,6 +17,10 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/vendor/kore.revision"
   "${KNURL_SDK_ROOT}/manifest.txt")
 set(sdk_dependencies "External SDK inputs (not bundled):\n${dependency_manifest}")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/vendor/libmaxminddb.origin" mmdb_origin)
+string(APPEND sdk_dependencies "\nEmbedded private reader (Apache-2.0):\n${mmdb_origin}\n")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/libmaxminddb.origin")
 string(APPEND sdk_dependencies "\nLinked cpkt components, from its selected package manifest:\n")
 file(READ "${KNURL_SDK_ROOT}/cpkt/share/cpkt/packages/core.json" cpkt_manifest)
 string(JSON component_count LENGTH "${cpkt_manifest}" components)

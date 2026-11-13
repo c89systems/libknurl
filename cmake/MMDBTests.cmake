@@ -1,0 +1,42 @@
+find_program(KNURL_FIXTURE_PYTHON python3 REQUIRED)
+set(mmdb_fixtures "${CMAKE_CURRENT_BINARY_DIR}/tests/mmdb-fixtures")
+add_custom_command(OUTPUT "${mmdb_fixtures}/ready"
+  COMMAND "${KNURL_FIXTURE_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/mmdb-fixtures.py" "${mmdb_fixtures}"
+  COMMAND "${CMAKE_COMMAND}" -E touch "${mmdb_fixtures}/ready"
+  DEPENDS tests/mmdb-fixtures.py VERBATIM)
+add_custom_target(knurl_mmdb_fixtures DEPENDS "${mmdb_fixtures}/ready")
+add_executable(knurl_mmdb_test tests/mmdb.c)
+target_link_libraries(knurl_mmdb_test PRIVATE knurl::shared Threads::Threads)
+knurl_c89(knurl_mmdb_test)
+knurl_local_runtime(knurl_mmdb_test)
+add_dependencies(knurl_mmdb_test knurl_mmdb_fixtures)
+foreach(backend maxmind native)
+  add_test(NAME knurl.mmdb.${backend} COMMAND knurl_mmdb_test ${backend} "${mmdb_fixtures}")
+  set_tests_properties(knurl.mmdb.${backend} PROPERTIES TIMEOUT 20)
+endforeach()
+add_executable(knurl_mmdb_benchmark tests/mmdb-benchmark.c)
+target_link_libraries(knurl_mmdb_benchmark PRIVATE knurl::shared)
+target_compile_definitions(knurl_mmdb_benchmark PRIVATE
+  $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+knurl_c89(knurl_mmdb_benchmark)
+knurl_local_runtime(knurl_mmdb_benchmark)
+add_executable(knurl_mmdb_differential tests/mmdb-differential.c)
+target_link_libraries(knurl_mmdb_differential PRIVATE knurl::shared)
+knurl_c89(knurl_mmdb_differential)
+knurl_local_runtime(knurl_mmdb_differential)
+add_dependencies(knurl_mmdb_differential knurl_mmdb_fixtures)
+add_test(NAME knurl.mmdb.differential COMMAND knurl_mmdb_differential
+  "${mmdb_fixtures}/valid-28-6.mmdb" 65536)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(knurl_mmdb_memory tests/mmdb-memory.c)
+  target_link_libraries(knurl_mmdb_memory PRIVATE knurl::static)
+  target_link_options(knurl_mmdb_memory PRIVATE
+    -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free)
+  knurl_c89(knurl_mmdb_memory)
+  knurl_local_runtime(knurl_mmdb_memory)
+  add_dependencies(knurl_mmdb_memory knurl_mmdb_fixtures)
+  foreach(backend maxmind native)
+    add_test(NAME knurl.mmdb.memory.${backend} COMMAND knurl_mmdb_memory ${backend}
+      "${mmdb_fixtures}/valid-28-6.mmdb")
+  endforeach()
+endif()

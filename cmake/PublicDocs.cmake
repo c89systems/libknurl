@@ -8,6 +8,7 @@ set(knurl_public_docs
   docs/editors.md
   docs/json.md
   docs/input.md
+  docs/mmdb.md
   docs/logging.md
   docs/lua.md
   docs/openapi.md
