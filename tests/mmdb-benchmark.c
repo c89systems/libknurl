@@ -8,6 +8,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+#include "mmdb-probe.h"
+#endif
 
 static double now(void)
 {
@@ -43,12 +46,22 @@ static long rss(void)
 #endif
 #endif
 }
+static int parse_size(const char *text, size_t *out)
+{
+    unsigned long value;
+    char *end;
+    errno = 0;
+    value = strtoul(text, &end, 10);
+    if (errno != 0 || text[0] < '0' || text[0] > '9' || *end != 0 ||
+        (size_t)value != value)
+        return 0;
+    *out = (size_t)value;
+    return 1;
+}
 int main(int argc, char **argv)
 {
     knurl_mmdb *db;
     knurl_mmdb_file_config config;
-    unsigned long requested;
-    char *end;
     knurl_mmdb_address *addresses;
     knurl_mmdb_country country;
     knurl_error error;
@@ -59,25 +72,31 @@ int main(int argc, char **argv)
     long initial_rss, open_rss;
     struct stat info;
     int hot;
-    if ((argc != 3 && argc != 4) ||
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+    struct knurl_mmdb_probe_stats at_open, at_first, at_end, at_close;
+#endif
+    if (argc < 3 || argc > 5 ||
         (strcmp(argv[2], "hot") != 0 && strcmp(argv[2], "random") != 0)) {
-        fprintf(stderr,
-                "usage: mmdb-benchmark DATABASE hot|random [HEAP_BYTES]\n");
+        fprintf(stderr, "usage: mmdb-benchmark DATABASE hot|random [HEAP_BYTES "
+                        "[ADDRESS_COUNT]]\n");
         return 2;
     }
     knurl_mmdb_file_config_init(&config);
-    if (argc == 4) {
-        errno = 0;
-        requested = strtoul(argv[3], &end, 10);
-        if (errno != 0 || end == argv[3] || *end != 0 ||
-            (size_t)requested != requested) {
-            fprintf(stderr, "HEAP_BYTES must be an unsigned byte count\n");
-            return 2;
-        }
-        config.max_heap_bytes = (size_t)requested;
+    if (argc >= 4 && !parse_size(argv[3], &config.max_heap_bytes)) {
+        fprintf(stderr, "HEAP_BYTES must be an unsigned byte count\n");
+        return 2;
+    }
+    if (argc == 5 && (!parse_size(argv[4], &count) || count == 0 ||
+                      count > (size_t)-1 / sizeof(*addresses))) {
+        fprintf(stderr,
+                "ADDRESS_COUNT must be positive and fit the address array\n");
+        return 2;
     }
     hot = strcmp(argv[2], "hot") == 0;
     initial_rss = rss();
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+    knurl_mmdb_probe_start();
+#endif
     start = now();
     status = knurl_mmdb_open(argv[1], &config, &db, &error);
     opened = now() - start;
@@ -85,6 +104,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "%s\n", error.message);
         return 1;
     }
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+    knurl_mmdb_probe_stat(&at_open);
+    knurl_mmdb_probe_enable(0);
+#endif
     open_rss = rss();
     if (stat(argv[1], &info) != 0)
         abort();
@@ -96,6 +119,9 @@ int main(int argc, char **argv)
         for (j = 0; j < addresses[i].size; ++j)
             addresses[i].bytes[j] = (unsigned char)(next(&state) >> 24);
     }
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+    knurl_mmdb_probe_enable(1);
+#endif
     for (round = 0; round < 9; ++round) {
         start = now();
         for (i = 0; i < count; ++i) {
@@ -111,9 +137,12 @@ int main(int argc, char **argv)
                 0xffffffffUL;
         }
         seconds = now() - start;
-        if (round == 0)
+        if (round == 0) {
             first = seconds;
-        else
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+            knurl_mmdb_probe_stat(&at_first);
+#endif
+        } else
             samples[round - 1] = seconds;
         if (round == 8) {
             for (i = 1; i < 8; ++i) {
@@ -122,20 +151,47 @@ int main(int argc, char **argv)
                     samples[j] = samples[j - 1];
                 samples[j] = value;
             }
-            printf("heap=%lu %s open_us=%.1f first_ns=%.1f warm_ns=%.1f "
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+            knurl_mmdb_probe_stat(&at_end);
+            knurl_mmdb_probe_enable(0);
+#endif
+            printf("heap=%lu %s address_count=%lu open_us=%.1f first_ns=%.1f "
+                   "warm_ns=%.1f "
                    "checksum=%lu "
                    "database_bytes=%.0f initial_rss_kib=%ld open_rss_kib=%ld "
                    "final_rss_kib=%ld corpus_bytes=%lu\n",
                    (unsigned long)(config.max_heap_bytes
                                        ? config.max_heap_bytes
                                        : KNURL_MMDB_HEAP_DEFAULT),
-                   argv[2], opened * 1e6, first * 1e9 / count,
+                   argv[2], (unsigned long)count, opened * 1e6,
+                   first * 1e9 / count,
                    (samples[3] + samples[4]) * 0.5e9 / count, checksum,
                    (double)info.st_size, initial_rss, open_rss, rss(),
                    (unsigned long)(count * sizeof(*addresses)));
         }
     }
     free(addresses);
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+    knurl_mmdb_probe_enable(1);
+#endif
     db->close(db, NULL);
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+    knurl_mmdb_probe_stat(&at_close);
+    knurl_mmdb_probe_enable(0);
+    if (at_close.live != 0 ||
+        at_end.peak > (config.max_heap_bytes ? config.max_heap_bytes
+                                             : KNURL_MMDB_HEAP_DEFAULT))
+        abort();
+    printf("instrumented=1 opened_heap=%lu reader_live_heap=%lu "
+           "reader_peak_heap=%lu "
+           "first_preads=%lu warm_preads=%lu warm_preads_per_lookup=%.6f "
+           "retained_after_close=%lu\n",
+           (unsigned long)at_open.live, (unsigned long)at_end.live,
+           (unsigned long)at_end.peak,
+           (unsigned long)(at_first.reads - at_open.reads),
+           (unsigned long)(at_end.reads - at_first.reads),
+           (double)(at_end.reads - at_first.reads) / (8.0 * count),
+           (unsigned long)at_close.live);
+#endif
     return 0;
 }

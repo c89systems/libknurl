@@ -6,7 +6,10 @@ without initializing a server, router or loop. Knurl is the sole implementation;
 there is no embedded or external libmaxminddb dependency.
 
 Files are read with bounded `pread` operations, never `mmap`. A lazy LRU cache
-retains only blocks actually accessed. `knurl_mmdb_file_config.max_heap_bytes`
+retains only 4 KiB file blocks actually accessed, including search-tree nodes
+and encoded record bytes. It does not cache decoded country results by IP or
+network prefix; even a lookup with no file reads traverses and decodes its data.
+`knurl_mmdb_file_config.max_heap_bytes`
 limits all reader-owned requested heap bytes, including its provider, file state,
 cache indexes and page bookkeeping. Zero selects 64 KiB; the minimum is 8 KiB.
 Allocator bookkeeping, bounded stack storage and the OS's shared file cache are
@@ -75,15 +78,33 @@ After `make build CONFIG=release`, measure cache budgets with:
 
 ```sh
 cmake -DBENCHMARK="$PWD/build/release/knurl_mmdb_benchmark" \
+  -DPROBE="$PWD/build/release/knurl_mmdb_benchmark_probe" \
   -DDATABASE="$PWD/build/mmdb/dbip-country-lite-2026-11.mmdb" \
+  '-DHEAP_LIMITS=65536;131072;262144;524288;1048576;2097152;4194304;8388608' \
   -DOUTPUT_DIR="$PWD/build/mmdb-cache/performance" -P tests/MMDBPerformance.cmake
 build/release/knurl_mmdb_memory build/release/tests/mmdb-fixtures/cache.mmdb 65536
 ```
 
 Timing tools use the same deterministic address corpus for each heap limit.
+The default mixed corpus contains 65,536 addresses, half IPv4 and half IPv6;
+the hot profile repeats its first 16 addresses. Each process runs one first pass
+and eight warm passes; the timing is their median, followed by five independent
+trials with reversed heap-limit order on alternate trials. The runner accepts
+`ROUNDS`, `ADDRESS_COUNT` and `PATTERNS` (a list of `random` and/or `hot`) for
+controlled follow-up experiments. For example, use `-DADDRESS_COUNT=1048576
+-DPATTERNS=random -DROUNDS=3` to check a broader mixed-address working set.
 They report open time, first pass, median warm lookup time, result checksum,
 database bytes and process RSS. Checksums must agree across heap limits.
-Heap probes report requested reader bytes separately from process RSS.
+On Linux the optional `PROBE` target runs the identical corpus separately,
+tracking reader-owned requested heap and pread calls through linker wrappers.
+Its output goes to `heap.txt`; its instrumented timings are not performance
+results. `comparison.txt` contains timings from the uninstrumented shared-library
+consumer. Both executables must produce identical result checksums. The probe
+also checks the heap limit and zero retained reader heap after close. The address
+array and measurement machinery are excluded from reader heap accounting.
+Peak heap is distinct from the configured limit: a hot working set can stop
+growing well below a large limit. Prefix-result caching would be a separate
+optimization requiring its own comparison against these file-block results.
 Existing OS cache state is retained; results are not cold-disk measurements.
 Earlier mmap/reference-backend measurements describe the superseded memory
 model and must not be presented as the bounded reader's performance.

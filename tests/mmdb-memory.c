@@ -8,6 +8,9 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+#include "mmdb-probe.h"
+#endif
 #ifdef KNURL_MMDB_PREAD64
 #define MMDB_REAL_PREAD __real_pread64
 #define MMDB_WRAP_PREAD __wrap_pread64
@@ -133,6 +136,22 @@ void *MMDB_WRAP_MMAP(void *address, size_t length, int protection, int flags,
     assert(0 && "MMDB must not use mmap");
     return MAP_FAILED;
 }
+#ifdef KNURL_MMDB_BENCHMARK_PROBE
+void knurl_mmdb_probe_start(void)
+{
+    assert(live == 0);
+    peak = calls = attempts = reads = fail_at = 0;
+    deny_all = io_mode = 0;
+    measuring = 1;
+}
+void knurl_mmdb_probe_enable(int enabled) { measuring = enabled; }
+void knurl_mmdb_probe_stat(struct knurl_mmdb_probe_stats *out)
+{
+    out->live = live;
+    out->peak = peak;
+    out->reads = reads;
+}
+#else
 static void query(knurl_mmdb *db, unsigned int index)
 {
     knurl_mmdb_address address;
@@ -245,3 +264,4 @@ int main(int argc, char **argv)
            (unsigned long)live);
     return 0;
 }
+#endif

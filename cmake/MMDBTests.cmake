@@ -38,6 +38,28 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(knurl_mmdb_memory PRIVATE
     -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free
     ${mmdb_io_wrappers})
+  add_executable(knurl_mmdb_benchmark_probe tests/mmdb-benchmark.c tests/mmdb-memory.c)
+  target_compile_definitions(knurl_mmdb_benchmark_probe PRIVATE
+    KNURL_MMDB_BENCHMARK_PROBE=1 _FILE_OFFSET_BITS=64)
+  if(KNURL_TARGET MATCHES "-linux-gnu$")
+    target_compile_definitions(knurl_mmdb_benchmark_probe PRIVATE KNURL_MMDB_PREAD64=1)
+  endif()
+  target_link_libraries(knurl_mmdb_benchmark_probe PRIVATE knurl::static)
+  target_link_options(knurl_mmdb_benchmark_probe PRIVATE
+    -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free
+    ${mmdb_io_wrappers})
+  knurl_c89(knurl_mmdb_benchmark_probe)
+  knurl_local_runtime(knurl_mmdb_benchmark_probe)
+  add_dependencies(knurl_mmdb_benchmark_probe knurl_mmdb_fixtures)
+  add_test(NAME knurl.mmdb.benchmark-probe COMMAND knurl_mmdb_benchmark_probe
+    "${mmdb_fixtures}/cache.mmdb" random 65536)
+  add_test(NAME knurl.mmdb.benchmark-sweep COMMAND "${CMAKE_COMMAND}"
+    "-DBENCHMARK=$<TARGET_FILE:knurl_mmdb_benchmark>"
+    "-DPROBE=$<TARGET_FILE:knurl_mmdb_benchmark_probe>"
+    "-DDATABASE=${mmdb_fixtures}/valid-28-6.mmdb"
+    "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tests/mmdb-sweep"
+    -DHEAP_LIMITS=65536 -DROUNDS=1 -DADDRESS_COUNT=257
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/MMDBPerformance.cmake")
   knurl_c89(knurl_mmdb_memory)
   knurl_local_runtime(knurl_mmdb_memory)
   add_dependencies(knurl_mmdb_memory knurl_mmdb_fixtures)
