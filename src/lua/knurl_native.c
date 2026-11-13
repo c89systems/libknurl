@@ -31,6 +31,7 @@ int luaopen_knurl_native(lua_State *L)
     rl_logging_open(L);
     rl_servers_open(L);
     rl_requests_open(L);
+    rl_input_open(L);
     rl_sources_open(L);
     rl_codecs_open(L);
     rl_rest_open(L);

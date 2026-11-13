@@ -233,6 +233,7 @@ static knurl_status native_reader(const knurl_upload_metadata *m,
     const char *id;
     char bytes[2], text[32];
     size_t total = 0, count, i, duplicates = 0;
+    int coding = 0;
     __atomic_add_fetch(&f->native_started, 1u, __ATOMIC_RELEASE);
     VERIFY(f, !pthread_equal(f->owner, pthread_self()));
     VERIFY(f, m->method == KNURL_HTTP_POST &&
@@ -244,12 +245,15 @@ static knurl_status native_reader(const knurl_upload_metadata *m,
                   !memcmp(m->effective_address.data, m->peer.address.data,
                           m->peer.address.length) &&
                   m->correlation_id.length == 0);
-    VERIFY(f, m->has_content_length && m->content_length.high == 0 &&
-                  m->version.length == 8);
+    VERIFY(f, m->content_length.high == 0 && m->version.length == 8);
     id = m->params[0].value.data;
-    for (i = 0; i < m->header_count; ++i)
+    for (i = 0; i < m->header_count; ++i) {
         if (!strcasecmp(m->headers[i].name.data, "X-Dup"))
             ++duplicates;
+        if (!strcasecmp(m->headers[i].name.data, "Transfer-Encoding"))
+            coding = 1;
+    }
+    VERIFY(f, m->has_content_length == !coding);
     VERIFY(f, duplicates == 2);
     VERIFY(f, knurl_source_destroy(reader, NULL) == KNURL_STATE &&
                   knurl_source_reset(reader, NULL) == KNURL_STATE);
@@ -376,7 +380,13 @@ static int send_request(unsigned short port, const char *path, int length,
         close(fd);
         return -1;
     }
-    if (length < 0)
+    if (length == -2)
+        snprintf(request, sizeof(request),
+                 "POST %s HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: "
+                 "chunked\r\nX-Dup: one\r\nX-Dup: two\r\nConnection: "
+                 "close\r\n\r\n%s",
+                 path, body);
+    else if (length < 0)
         snprintf(
             request, sizeof(request),
             "POST %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
@@ -477,6 +487,11 @@ static int native_cases(unsigned short port, const struct fixture *f)
     struct stat info;
     CHECK(exchange(port, "/api/reader/good?q=&q=b", 19, "abcdefghijklmnopqrs",
                    201, "19", 1) == 0);
+    CHECK(
+        exchange(
+            port, "/api/reader/good?q=&q=b", -2,
+            "3\r\nabc\r\n10\r\ndefghijklmnopqrs\r\n0\r\nX-Trace: done\r\n\r\n",
+            201, "19", 1) == 0);
     CHECK(exchange(port, "/api/reader/replace", 3, "abc", 202, "replaced", 1) ==
           0);
     CHECK(exchange(port, "/api/reader/empty", 0, "", 201, "0", 1) == 0);
@@ -609,9 +624,9 @@ static int exited(knurl_server *server, const knurl_process_context *process,
     (void)process;
     if (f->failed || f->opened != 9 || f->closed != f->opened ||
         f->finished != 6 || f->resumed != 1 || f->aborted != 1 ||
-        f->after != 48 || f->source_closed != 1 ||
-        __atomic_load_n(&f->native_started, __ATOMIC_ACQUIRE) != 45 ||
-        __atomic_load_n(&f->native_done, __ATOMIC_ACQUIRE) != 45 ||
+        f->after != 49 || f->source_closed != 1 ||
+        __atomic_load_n(&f->native_started, __ATOMIC_ACQUIRE) != 46 ||
+        __atomic_load_n(&f->native_done, __ATOMIC_ACQUIRE) != 46 ||
         __atomic_load_n(&f->late_done, __ATOMIC_ACQUIRE) != 2) {
         fprintf(stderr,
                 "upload counts: failed=%d opened=%d closed=%d finished=%d "

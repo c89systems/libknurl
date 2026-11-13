@@ -36,6 +36,11 @@ typedef struct knurl_static_config {
     /** Number of entries in mime_types; zero inherits instance/default types.
      */
     size_t mime_type_count;
+    /** Nonzero disables negotiated static compression; false enables streamed
+     * gzip and fresh br/gzip sidecars when Accept-Encoding permits them. */
+    int compression_disabled;
+    /** Nonzero disables compressed sidecar lookup, preserving streamed gzip. */
+    int precompressed_disabled;
     /** Copied Cache-Control header value. */
     const char *cache_control;
     /** Directory index filename; only used when indexing is enabled. */

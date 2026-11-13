@@ -63,6 +63,8 @@
 ---@field index_file? string # Directory index name.
 ---@field content_type? string # RFC 9110 media-type override, with valid token/quoted parameters. Malformed syntax, wildcards, controls and header injection fail.
 ---@field mime_types? table<string,string> # Copied extension overrides for static routes; optional leading dot, ASCII case-insensitive. Explicit content_type wins, then route mappings, then instance mappings, then asset metadata/default inference.
+---@field compression_disabled? boolean # Disable negotiated static compression; default false.
+---@field precompressed_disabled? boolean # Disable .br/.gz sidecars; default false.
 ---@field cache_control? string # Copied Cache-Control value.
 ---@field status? knurl.IntegerInput # Fixed reply/SSE status; status_code takes precedence except zero aliases.
 ---@field status_code? knurl.IntegerInput # HTTP response status, 100..599.
@@ -101,13 +103,14 @@
 ---@field on_error? fun(cause:table): knurl.Response|nil # Uncommitted proxy gateway-error response.
 ---@field on_exchange? fun(exchange:knurl.ProxyExchange) # Exactly once per admitted proxy exchange; copied terminal accounting.
 ---@field connect? fun(ws:knurl.WebSocket) # WebSocket opened; original HTTP request has expired.
----@field message? fun(ws:knurl.WebSocket, opcode:integer, payload:string): boolean|nil, any # nil, AGAIN holds this whole frame.
+---@field message? fun(ws:knurl.WebSocket, opcode:integer, payload:string, final:boolean): boolean|nil, any # nil, AGAIN holds this frame; fragments are never assembled.
 ---@field disconnect? fun(ws:knurl.WebSocket, outcome:table) # Last callback; handle expires on return.
 ---@field writable? fun(ws:knurl.WebSocket) # Retry an atomic frame after capacity returns.
 ---@field protocol? string # Selected WebSocket subprotocol.
 ---@field headers? knurl.Headers # Ordered pairs preserve repeated fields.
 ---@field max_frame_bytes? knurl.IntegerInput # WebSocket receive payload ceiling.
----@field output_queue_bytes? knurl.IntegerInput # Zero preserves Kore send behavior; positive selects a budget.
+---@field max_message_bytes? knurl.IntegerInput # Total payload across fragments; zero inherits frame limit.
+---@field output_queue_bytes? knurl.IntegerInput # Zero selects frame limit plus 14 bytes, minimum 127.
 ---@field close_timeout_ms? knurl.IntegerInput # WebSocket closing-handshake deadline.
 ---@field cache_dir? string # Explicit absolute managed WebDAV cache base; no XDG selection.
 ---@field site_id? string # Managed WebDAV site name.
@@ -222,6 +225,7 @@
 ---@field principal? string # Host auth principal, refreshed after WebDAV mount authorization.
 ---@field headers {name:string,value:string}[] # Ordered copied headers, including repeats.
 ---@field queries {name:string,value:string}[] # Ordered decoded query pairs, including empty values.
+---@field trailers? {name:string,value:string}[] # Separate ordered trailers, available after body completion.
 ---@field body? string # Completed memory body; nil for live/file-backed input.
 ---@field body_path? string # Request-scoped spool path, removed at request close.
 ---@field query_string string # Original raw query, separate from the query lookup helper.
@@ -236,6 +240,13 @@
 ---@field header fun(name:string): string?, knurl.Error? # First field lookup; nil absence, empty query values remain distinct.
 ---@field query fun(name:string): string?, knurl.Error? # First decoded query value.
 ---@field param fun(name:string): string?, knurl.Error? # Decoded named route capture.
+---@field trailer fun(name:string): string?, knurl.Error? # First separate trailer; STATE before completed body.
+---@field query_long fun(name:string, min?:integer, max?:integer): integer?, knurl.Error? # Exact decimal, no duplicate names; EOF if absent.
+---@field param_long fun(name:string, min?:integer, max?:integer): integer?, knurl.Error? # Exact decimal path capture; EOF if absent.
+---@field query_u64 fun(name:string, min?:knurl.UnsignedInput, max?:knurl.UnsignedInput): knurl.Unsigned?, knurl.Error? # Exact unsigned decimal; duplicate query names fail.
+---@field param_u64 fun(name:string, min?:knurl.UnsignedInput, max?:knurl.UnsignedInput): knurl.Unsigned?, knurl.Error? # Exact unsigned path capture.
+---@field query_boolean fun(name:string): boolean?, knurl.Error? # Exactly true/false/1/0; false is success.
+---@field param_boolean fun(name:string): boolean?, knurl.Error? # Exactly true/false/1/0 path capture.
 ---@field body_bytes fun(): string?, knurl.Error? # Completed memory bytes only; never reads a spool into memory.
 ---@field body_reader fun(): knurl.Source?, knurl.Error? # Bounded reader expires with the request, even if retained in Lua.
 ---@field body_materialize fun(options?:table): knurl.BodyResult?, knurl.Error? # Explicit independent completed-body copy; may block.
@@ -347,8 +358,9 @@
 
 ---Connection handle valid through disconnect; all operations use the owner loop.
 ---@class knurl.WebSocket
+---@field send_frame fun(self:knurl.WebSocket, opcode:integer, final:boolean, payload?:string): boolean?, any # Validated fragment; AGAIN leaves message state unchanged.
 ---@field send fun(self:knurl.WebSocket, opcode:integer, payload:string): boolean?, any # Atomic frame copy; nil, AGAIN queues nothing.
----@field send_text fun(self:knurl.WebSocket, payload:string): boolean?, any # Kore text-byte behavior, no new encoder.
+---@field send_text fun(self:knurl.WebSocket, payload:string): boolean?, any # Complete valid UTF-8 text frame.
 ---@field send_binary fun(self:knurl.WebSocket, payload:string): boolean?, any # Binary-safe atomic frame send.
 ---@field resume fun(self:knurl.WebSocket): boolean?, knurl.Error? # Redeliver the held whole frame later.
 ---@field close fun(self:knurl.WebSocket, code?:integer, reason?:string): boolean?, knurl.Error? # No args sends empty close; explicit reason at most 123 UTF-8 bytes.
@@ -430,8 +442,22 @@
 ---Identity token used for EOF or AGAIN, distinct from numeric status codes.
 ---@class knurl.Sentinel
 
+---Exact input validation; no trimming, repair or universal sanitization.
+---@class knurl.Input
+---@field parse_long fun(value:string, min?:integer, max?:integer): integer?, knurl.Error?
+---@field parse_u64 fun(value:string, min?:knurl.UnsignedInput, max?:knurl.UnsignedInput): knurl.Unsigned?, knurl.Error?
+---@field boolean fun(value:string): boolean?, knurl.Error? # Exactly true/false/1/0.
+---@field text fun(value:string, min?:integer, max?:integer, reject_controls?:boolean): boolean?, knurl.Error? # UTF-8 byte bounds; defaults 0..1 MiB.
+---@field allowlist fun(value:string, allowed:string, min?:integer, max?:integer): boolean?, knurl.Error?
+---@field choice fun(value:string, choices:string[]): boolean?, knurl.Error?
+---@field email fun(value:string): boolean?, knurl.Error? # ASCII dot-atom mailbox and DNS domain subset.
+---@field http_url fun(value:string): boolean?, knurl.Error? # HTTP(S), no credentials/controls/whitespace, no network activity.
+---@field filename fun(value:string): boolean?, knurl.Error? # Single ASCII component; no filesystem confinement promise.
+---@field html_escape fun(value:string, max_bytes?:integer): string?, knurl.Error? # HTML text/quoted attribute escaping; zero selects 1 MiB.
+
 ---Public module loaded into an existing Lua 5.5 VM; owns neither VM nor interpreter.
 ---@class knurl.Module
+---@field input knurl.Input # Exact span validators and context-specific HTML escaping.
 ---@field version string # Version of the public C library loaded by the binding.
 ---@field AGAIN knurl.Sentinel # Producer/consumer would block; explicit resume/readiness required.
 ---@field EOF knurl.Sentinel # End of input/output, distinct from ordinary errors.

@@ -35,6 +35,7 @@ target_sources(knurl_lua PRIVATE ../src/lua/rest.c ../src/lua/openapi.c ../src/l
 target_sources(knurl_lua PRIVATE ../src/lua/tls.c)
 target_sources(knurl_lua PRIVATE ../src/lua/logging.c)
 target_sources(knurl_lua PRIVATE ../src/lua/providers.c)
+target_sources(knurl_lua PRIVATE ../src/lua/input.c)
 # Link the shipped search paths directly, including with osxcross where an
 # install_name_tool may be unavailable. Embedding/test hosts resolve the shared
 # SDK closure; the module does not retain workstation paths.
@@ -103,6 +104,10 @@ if(BUILD_TESTING)
       "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:knurl_lua_${mode}_host>"
       "-DSCRIPT=${knurl_root}/tests/lua/foundation.lua" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
     set_tests_properties(knurl.lua-${mode} PROPERTIES TIMEOUT 10)
+    add_test(NAME knurl.lua-input-${mode} COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
+      "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:knurl_lua_${mode}_host>"
+      "-DSCRIPT=${knurl_root}/tests/lua/input.lua" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
+    set_tests_properties(knurl.lua-input-${mode} PROPERTIES TIMEOUT 10)
     add_test(NAME knurl.lua-config-${mode} COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
       "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:knurl_lua_${mode}_host>"
       "-DSCRIPT=${knurl_root}/tests/lua/config.lua" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")

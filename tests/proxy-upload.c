@@ -9,7 +9,7 @@ static void test_fixed_backpressure(void)
 {
     knurl_proxy_upload_buffer upload;
     knurl_proxy_headers headers;
-    knurl_proxy_frame_result result;
+    knurl_http_frame_result result;
     knurl_error error;
     unsigned char *body;
     char chunk[8192];
@@ -27,7 +27,7 @@ static void test_fixed_backpressure(void)
                 CURL_READFUNC_PAUSE);
     PROXY_CHECK(!knurl_proxy_upload_can_resume(&upload));
     result = knurl_proxy_upload_feed(&upload, body, 8197u, &consumed);
-    PROXY_CHECK(result == KNURL_PROXY_FRAME_PAUSED && consumed == 8192u);
+    PROXY_CHECK(result == KNURL_HTTP_FRAME_PAUSED && consumed == 8192u);
     PROXY_CHECK(knurl_proxy_upload_full(&upload));
     PROXY_CHECK(knurl_proxy_upload_can_resume(&upload));
     knurl_proxy_upload_resumed(&upload);
@@ -35,7 +35,7 @@ static void test_fixed_backpressure(void)
     PROXY_CHECK(amount == 4096u);
     PROXY_CHECK(memcmp(chunk, body, amount) == 0);
     result = knurl_proxy_upload_feed(&upload, body + consumed, 5u, &consumed);
-    PROXY_CHECK(result == KNURL_PROXY_FRAME_COMPLETE && consumed == 5u);
+    PROXY_CHECK(result == KNURL_HTTP_FRAME_COMPLETE && consumed == 5u);
     PROXY_CHECK(upload.complete && !knurl_proxy_upload_full(&upload));
     amount = knurl_proxy_upload_read(chunk, 1u, sizeof(chunk), &upload);
     PROXY_CHECK(amount == 4101u);
@@ -53,7 +53,7 @@ static void test_chunked_trailers(void)
         "3\r\nabc\r\n0\r\nX-Trace: done\r\n\r\nGET /next";
     knurl_proxy_upload_buffer upload;
     knurl_proxy_headers headers;
-    knurl_proxy_frame_result result;
+    knurl_http_frame_result result;
     knurl_error error;
     struct curl_slist *sent_trailers;
     char chunk[8];
@@ -66,7 +66,7 @@ static void test_chunked_trailers(void)
                                         &error) == KNURL_OK);
     result = knurl_proxy_upload_feed(&upload, (const unsigned char *)wire,
                                      sizeof(wire) - 1u, &consumed);
-    PROXY_CHECK(result == KNURL_PROXY_FRAME_COMPLETE);
+    PROXY_CHECK(result == KNURL_HTTP_FRAME_COMPLETE);
     PROXY_CHECK(consumed == sizeof(wire) - sizeof("GET /next"));
     PROXY_CHECK(knurl_proxy_upload_read(chunk, 1u, sizeof(chunk), &upload) ==
                 3u);
@@ -89,7 +89,7 @@ static void test_chunked_trailers(void)
     result = knurl_proxy_upload_feed(
         &upload, (const unsigned char *)"0\r\nX-Other: bad\r\n\r\n", 19u,
         &consumed);
-    PROXY_CHECK(result == KNURL_PROXY_FRAME_INVALID);
+    PROXY_CHECK(result == KNURL_HTTP_FRAME_INVALID);
     knurl_proxy_upload_cleanup(&upload);
     knurl_proxy_headers_cleanup(&headers);
 }
@@ -110,7 +110,7 @@ static void test_fixed_direct_receive(void)
     PROXY_CHECK(space != NULL && capacity == 8192u);
     memset(space, 'a', capacity);
     PROXY_CHECK(knurl_proxy_upload_commit_fixed(&upload, capacity) ==
-                KNURL_PROXY_FRAME_MORE);
+                KNURL_HTTP_FRAME_MORE);
     PROXY_CHECK(knurl_proxy_upload_full(&upload));
     PROXY_CHECK(knurl_proxy_upload_reserve_fixed(&upload, &capacity) == NULL);
     PROXY_CHECK(capacity == 0u);
@@ -124,7 +124,7 @@ static void test_fixed_direct_receive(void)
     PROXY_CHECK(knurl_proxy_upload_reserve_fixed(&upload, &capacity) == space);
     PROXY_CHECK(capacity == 5u);
     PROXY_CHECK(knurl_proxy_upload_commit_fixed(&upload, capacity) ==
-                KNURL_PROXY_FRAME_COMPLETE);
+                KNURL_HTTP_FRAME_COMPLETE);
     PROXY_CHECK(upload.complete);
     PROXY_CHECK(knurl_proxy_upload_read(chunk, 1u, sizeof(chunk), &upload) ==
                 5u);
@@ -151,8 +151,7 @@ static void test_body_limit(void)
                                         &error) == KNURL_OK);
     upload.body_limit = 3u;
     PROXY_CHECK(knurl_proxy_upload_feed(&upload, chunked, sizeof(chunked) - 1u,
-                                        &consumed) ==
-                KNURL_PROXY_FRAME_INVALID);
+                                        &consumed) == KNURL_HTTP_FRAME_INVALID);
     PROXY_CHECK(upload.failure == KNURL_LIMIT && upload.body_accepted == 0u &&
                 !upload.complete && consumed == 3u);
     PROXY_CHECK(knurl_proxy_upload_read(&byte, 1u, 1u, &upload) ==
@@ -166,7 +165,7 @@ static void test_body_limit(void)
     PROXY_CHECK(space != NULL && capacity == 5u);
     memset(space, 'a', capacity);
     PROXY_CHECK(knurl_proxy_upload_commit_fixed(&upload, capacity) ==
-                KNURL_PROXY_FRAME_INVALID);
+                KNURL_HTTP_FRAME_INVALID);
     PROXY_CHECK(upload.failure == KNURL_LIMIT && upload.end == 0u &&
                 upload.body_accepted == 0u && !upload.complete);
     knurl_proxy_upload_cleanup(&upload);
@@ -176,7 +175,7 @@ static void test_body_limit(void)
     upload.body_limit = 3u;
     PROXY_CHECK(knurl_proxy_upload_feed(&upload, (const unsigned char *)"abc",
                                         3u, &consumed) ==
-                KNURL_PROXY_FRAME_COMPLETE);
+                KNURL_HTTP_FRAME_COMPLETE);
     PROXY_CHECK(upload.body_accepted == 3u && consumed == 3u);
     knurl_proxy_upload_cleanup(&upload);
     knurl_proxy_headers_cleanup(&headers);

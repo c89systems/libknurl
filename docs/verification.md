@@ -1,5 +1,52 @@
 # Extraction verification
 
+## HTTP completeness (2026-11-13)
+
+The [implementation specification](http-completeness-spec.md) is delivered:
+shared C/Lua validators and HTML escaping with typed request receivers; bounded
+multipart ranges and date conditions; negotiated gzip/Brotli sidecars and true
+incremental gzip; shared proxy/managed chunk framing with separate trailers;
+application WebSocket fragmentation, incremental UTF-8, validated close handling
+and transactional fragment sends. The public guides and LuaLS declarations match
+the new interfaces. ABI 1 advances once from released v0.1.0's ABI 0. Darwin's
+install name and compatibility/current versions track ABI independently of the
+development release identity.
+
+The focused cases prove malformed/duplicate/NUL/overflow input, allocation
+failures without ownership loss, multipart offsets and complete lengths above
+4 GiB, exact wire bytes and resets, encoding negotiation/freshness/validators,
+HEAD and source replacement, and first gzip output before full source
+consumption. Delivered gzip is independently inflated. The Brotli wire fixture
+was generated and independently decoded through the public Brotli APIs; Brotli
+is not a product/runtime test dependency. Chunked cases cover metadata splits,
+extensions/trailers, prefix/AGAIN resume, pipelining, decoded limits, invalid
+framing and metadata-only rate stalls. Native-reader and XML tests consume
+decoded input; XML parsing acknowledges progress before the final chunk arrives.
+WebSocket wire cases cover HTTP/HTTPS fragments, interleaved controls, split
+UTF-8, exact protocol close codes, close deadlines and retry state invariance.
+
+Completed serial gates:
+
+| Gate | Evidence |
+| --- | --- |
+| GNU Release Core / Lua | 130 / 38 passing tests, including installed static/shared consumers and proxy HTTP/2. |
+| Native musl Release Core / Lua | 115 / 37 passing tests. |
+| GNU Debug Core / Lua | 132 / 38 passing tests, with constrained worker/thread stack and guard controls. |
+| Valgrind | 44 passing C/Lua checks, including allocation failures, static compression, managed bodies, WebSockets and uploads. |
+| Seven Release target Core/Lua builds | Both native Linux targets, four ARM Linux targets and arm64 Darwin. |
+| Four ARM QEMU suites | 10 checks each, including wide multipart arithmetic, gzip, protocol validation and both Lua loading modes. |
+| Seven SDK archives | Final checksums/inventories, public symbols, architecture/ABI, documentation, and four relocated CMake/pkg-config static/shared consumers per target. |
+| Editors | Seven ordinary clangd checks report zero errors; live LSP hovers and receiver completions pass. LuaLS accepts ordinary require/facade usage and rejects an invented validator in the negative control. |
+
+Darwin evidence is cross-build/package/consumer compilation, not native execution.
+Final public-comment edits preserve preprocessed declarations. Formatting,
+documentation relative links and diff checks pass. Raw logs and editor fixtures
+are under `build/http-completeness/`; memory logs are also under
+`build/release/checks/memory/`. The existing parser fixture was migrated and
+syntax-checked without running a fuzz campaign. SOAP, listener HTTP/2/3, sibling
+consumer edits, release publication and pushes remain excluded. Vectis consumer
+cutover and release remain separately governed work.
+
 ## First-release readiness repair (2026-11-10)
 
 The first 0.1.0 release attempt stopped during an added GNU Debug pass, before

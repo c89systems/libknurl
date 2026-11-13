@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <knurl/knurl.h>
 #include <knurl/lonejson.h>
+#include <zlib.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -25,6 +26,9 @@ struct fixture {
     int opened, closed;
 };
 static int stopped;
+/* Generated with the Brotli public encoder and independently decoded to
+ * "abcdef" with the Brotli public decoder. No Brotli runtime dependency. */
+static const char brotli_fixture[] = "\213\002\200abcdef\003";
 static knurl_status stop(knurl_request *request, knurl_reply *reply, void *data,
                          knurl_error *error)
 {
@@ -95,6 +99,7 @@ static knurl_status packed_open(const char *path, knurl_asset **out, void *data,
     c.userdata = f;
     c.info.etag = "\"packed\"";
     c.info.last_modified = "Sun, 06 Nov 1994 08:49:37 GMT";
+    c.info.last_modified_strong = 1;
     if (strcmp(path, "/") == 0) {
         c.info.kind = KNURL_ASSET_DIRECTORY;
         c.next = empty_list;
@@ -163,7 +168,9 @@ static int exchange(unsigned short port, const char *method, const char *path,
 {
     struct sockaddr_in address;
     struct timeval timeout;
-    char metadata[4096], request[2048], result[1024], ending[2];
+    char metadata[4096], request[2048], result[1024], ending[2], boundary[64],
+        inflated[1024];
+    z_stream decoder;
     char *length, *tag, *end;
     size_t used = 0, total = 0, count;
     ssize_t n;
@@ -236,7 +243,45 @@ static int exchange(unsigned short port, const char *method, const char *path,
     CHECK(count < sizeof(result) - total &&
           read_all(fd, result + total, count) == 0);
     total += count;
+    if (strcmp(method, "HEAD") != 0 && total != 0 &&
+        strstr(metadata, "content-encoding: gzip\r\n") != NULL) {
+        memset(&decoder, 0, sizeof(decoder));
+        CHECK(inflateInit2(&decoder, MAX_WBITS + 16) == Z_OK);
+        decoder.next_in = (Bytef *)result;
+        decoder.avail_in = (uInt)total;
+        decoder.next_out = (Bytef *)inflated;
+        decoder.avail_out = sizeof(inflated);
+        CHECK(inflate(&decoder, Z_FINISH) == Z_STREAM_END &&
+              decoder.avail_in == 0);
+        total = (size_t)decoder.total_out;
+        CHECK(inflateEnd(&decoder) == Z_OK && total < sizeof(result));
+        memcpy(result, inflated, total);
+    }
+    if (code == 201)
+        CHECK(strstr(metadata, "content-encoding:") == NULL &&
+              strstr(metadata, "etag:") == NULL);
+    if (strcmp(method, "HEAD") == 0 &&
+        strstr(metadata, "content-encoding: gzip") != NULL)
+        CHECK(strstr(metadata, "content-length:") == NULL);
     result[total] = 0;
+    if (expected == NULL) {
+        tag = strstr(metadata, "boundary=");
+        CHECK(tag != NULL);
+        tag += 9;
+        end = strstr(tag, "\r\n");
+        CHECK(end != NULL && (size_t)(end - tag) < sizeof(boundary));
+        memcpy(boundary, tag, (size_t)(end - tag));
+        boundary[end - tag] = 0;
+        CHECK(strstr(metadata, "\r\ncontent-range:") == NULL);
+        snprintf(
+            request, sizeof(request),
+            "--%s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Range: "
+            "bytes 0-1/6\r\n\r\nab\r\n"
+            "--%s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Range: "
+            "bytes 3-4/6\r\n\r\nde\r\n--%s--\r\n",
+            boundary, boundary, boundary);
+        expected = request;
+    }
     if (strcmp(result, expected) != 0)
         fprintf(stderr, "%s body: %s\n", path, result);
     CHECK(strcmp(result, expected) == 0);
@@ -248,6 +293,32 @@ static int exchange(unsigned short port, const char *method, const char *path,
 static int client(unsigned short port)
 {
     char etag[256], headers[1024];
+    CHECK(exchange(port, "GET", "/files/song.MP3", "Accept-Encoding: gzip\r\n",
+                   "", 200, "abcdef", "content-encoding: gzip\r\n", NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/movie.mp4",
+                   "Accept-Encoding: br,gzip\r\n", "", 200, brotli_fixture,
+                   "content-encoding: br\r\n", etag) == 0);
+    CHECK(strstr(etag, "br:") != NULL);
+    CHECK(exchange(port, "GET", "/files/data.txt", "Accept-Encoding: gzip\r\n",
+                   "", 200, "abcdef", "content-encoding: gzip\r\n", etag) == 0);
+    CHECK(strncmp(etag, "W/\"gzip:", 8) == 0);
+    snprintf(headers, sizeof(headers),
+             "Accept-Encoding: gzip\r\nIf-None-Match: %s\r\n", etag);
+    CHECK(exchange(port, "GET", "/files/data.txt", headers, "", 304, "",
+                   "content-encoding: gzip\r\n", NULL) == 0);
+    CHECK(exchange(port, "HEAD", "/files/data.txt", "Accept-Encoding: gzip\r\n",
+                   "", 200, "", "content-encoding: gzip\r\n", NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt",
+                   "Accept-Encoding: br,identity;q=0\r\n", "", 406, "", NULL,
+                   NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt",
+                   "Accept-Encoding: gzip\r\nRange: bytes=0-1\r\n", "", 206,
+                   "ab", "content-range: bytes 0-1/6", NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt",
+                   "Accept-Encoding: gzip,identity;q=0\r\nRange: bytes=0-1\r\n",
+                   "", 406, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/replaced", "Accept-Encoding: gzip\r\n", "",
+                   201, "replaced", NULL, NULL) == 0);
     CHECK(exchange(port, "GET", "/files/song.MP3", "Range: bytes=2-4\r\n", "",
                    206, "cde", "content-type: audio/mpeg", NULL) == 0);
     CHECK(exchange(port, "HEAD", "/files/movie.mp4", NULL, "", 200, "",
@@ -281,10 +352,13 @@ static int client(unsigned short port)
                    206, "ef", NULL, NULL) == 0);
     CHECK(exchange(port, "GET", "/files/data.txt", "Range: bytes=4-\r\n", "",
                    206, "ef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt", "Range: bytes=0-1,3-4\r\n",
+                   "", 206, NULL,
+                   "content-type: multipart/byteranges; boundary=", NULL) == 0);
     CHECK(exchange(port, "GET", "/files/data.txt", "Range: bytes=6-\r\n", "",
                    416, "", "content-range: bytes */6", NULL) == 0);
-    CHECK(exchange(port, "GET", "/files/data.txt", "Range: bytes=0-1,3-4\r\n",
-                   "", 416, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt", "Range: bytes=0-1,99-\r\n",
+                   "", 206, "ab", "content-range: bytes 0-1/6", NULL) == 0);
     CHECK(exchange(port, "GET", "/files/data.txt", "Range: bytes=bad\r\n", "",
                    416, "", NULL, NULL) == 0);
     CHECK(exchange(port, "GET", "/files/data.txt", "Range: items=1-3\r\n", "",
@@ -347,6 +421,17 @@ static int client(unsigned short port)
     CHECK(exchange(port, "GET", "/packed/data",
                    "If-Modified-Since: invalid\r\n", "", 200, "abcdef", NULL,
                    NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Modified-Since: Mon, 07 Nov 1994 08:49:37 GMT\r\n", "",
+                   304, "", NULL, NULL) == 0);
+    CHECK(exchange(
+              port, "GET", "/packed/data",
+              "Range: bytes=1-3\r\nIf-Range: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+              "", 206, "bcd", NULL, NULL) == 0);
+    CHECK(exchange(
+              port, "GET", "/packed/data",
+              "Range: bytes=1-3\r\nIf-Range: Sun, 06 Nov 1994 08:49:36 GMT\r\n",
+              "", 200, "abcdef", NULL, NULL) == 0);
     CHECK(exchange(port, "GET", "/packed/data",
                    "If-None-Match: \"different\"\r\nIf-Modified-Since: Sun, 06 "
                    "Nov 1994 08:49:37 GMT\r\n",
@@ -455,6 +540,7 @@ int main(void)
     int child_status;
     char root[256], file[512], path[512], sub[512], space[512], secret[256];
     char markdown[512];
+    gzFile gzip;
     memset(&fixture, 0, sizeof(fixture));
     fixture.child = -1;
     strcpy(fixture.directory, "static-fixture-XXXXXX");
@@ -471,6 +557,12 @@ int main(void)
     CHECK(put(path, "abcdef"));
     snprintf(path, sizeof(path), "%s/movie.mp4", root);
     CHECK(put(path, "abcdef"));
+    snprintf(path, sizeof(path), "%s/song.MP3.gz", root);
+    gzip = gzopen(path, "wb");
+    CHECK(gzip != NULL && gzwrite(gzip, "abcdef", 6) == 6 &&
+          gzclose(gzip) == Z_OK);
+    snprintf(path, sizeof(path), "%s/movie.mp4.br", root);
+    CHECK(put(path, brotli_fixture));
     snprintf(path, sizeof(path), "%s/data.global", root);
     CHECK(put(path, "abcdef"));
     snprintf(path, sizeof(path), "%s/index.html", root);
@@ -619,6 +711,10 @@ int main(void)
           knurl_asset_provider_close(provider, &error) == KNURL_OK);
     CHECK(unlink(file) == 0);
     CHECK(unlink(markdown) == 0);
+    snprintf(path, sizeof(path), "%s/song.MP3.gz", root);
+    CHECK(unlink(path) == 0);
+    snprintf(path, sizeof(path), "%s/movie.mp4.br", root);
+    CHECK(unlink(path) == 0);
     snprintf(path, sizeof(path), "%s/song.MP3", root);
     CHECK(unlink(path) == 0);
     snprintf(path, sizeof(path), "%s/movie.mp4", root);

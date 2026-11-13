@@ -5,6 +5,16 @@
 #include <knurl/websocket.h>
 
 struct knurl_runtime;
+struct knurl_websocket_message {
+    size_t bytes;
+    int kind;
+    unsigned int need;
+    unsigned long value, minimum;
+};
+int knurl_websocket_message_check(struct knurl_websocket_message *,
+                                  knurl_websocket_opcode, int,
+                                  const unsigned char *, size_t, size_t);
+int knurl_websocket_close_check(const unsigned char *, size_t);
 struct knurl_websocket_impl {
     knurl_websocket receiver;
     knurl_websocket *next;
@@ -21,6 +31,8 @@ struct knurl_websocket_impl {
     size_t payload_used;
     size_t payload_length;
     knurl_websocket_opcode opcode;
+    int final;
+    struct knurl_websocket_message incoming, outgoing;
     int frame_ready;
     int paused;
     int resume_requested;

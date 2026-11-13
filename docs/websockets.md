@@ -35,10 +35,10 @@ implicitly run. Applications can perform policy there through public APIs.
 
 ```c
 static knurl_status echo(knurl_websocket *ws, knurl_websocket_opcode opcode,
-                          knurl_bytes frame, void *data, knurl_error *error)
+                          int final, knurl_bytes frame, void *data, knurl_error *error)
 {
     (void)data;
-    return knurl_websocket_send(ws, opcode, frame.data, frame.length, error);
+    return ws->send_frame(ws, opcode, final, frame.data, frame.length, error);
 }
 
 static void retry(knurl_websocket *ws, void *data)
@@ -57,7 +57,9 @@ route.websocket.on_writable = retry;
 knurl_router_websocket(knurl_server_router(server), &route, NULL, &error);
 ```
 
-TEXT and BINARY callbacks receive one complete bounded frame. OK consumes it.
+TEXT and BINARY start messages; CONTINUATION carries subsequent fragments.
+The callback's final flag identifies the last frame. Each callback receives one
+complete bounded frame, never an assembled message. OK consumes it.
 AGAIN consumes nothing, holds the same bytes and pauses input. Explicit resume
 redelivers that frame before any later frame; resume inside a callback schedules
 later delivery. A send returning AGAIN queues nothing and arms `on_writable`
@@ -66,43 +68,47 @@ AGAIN again. The example uses that notification to resume its held input frame.
 
 Each accepted output frame is copied atomically into a finite queue, including
 its 2/4/10-byte wire header. LIMIT means the frame can never fit the selected
-queue bound. The receive payload limit does not restrict outgoing frames.
+queue bound. Both directions enforce frame and total message limits.
 A partial transport write retains its allocation across
 plain/TLS retries. Its full allocation remains charged until released, even
 after a partial write; `queued_bytes` reports that retained wire storage.
-Zero receive size inherits the server's frame limit. Zero output budget retains
-Kore's send behavior (SIZE_MAX); an explicit budget must hold at least a maximum
-control frame (127 bytes).
+Zero frame size inherits the server's frame limit; zero `max_message_bytes`
+inherits that resolved frame size. Zero output budget selects frame size plus
+14 bytes with checked arithmetic and a 127-byte control minimum. An explicit
+budget must hold at least a maximum control frame (127 bytes).
 Inbound storage holds one configured maximum frame, a small header and the
 bounded channel input queue. Output budgets are independent of the server's
 ordinary HTTP queue bound. No message assembly is introduced.
 
-The receiver retains Kore's masking, reserved bits/opcodes, receive payload
-limit and control-frame FIN/length checks. Extended nonminimal lengths are
-accepted. Text bytes and peer close payloads are not UTF-8/code validated.
-Ping queues a bounded pong;
-input pauses if control output cannot yet fit. Pong is consumed internally.
-TEXT/BINARY callbacks receive each frame even without FIN; frames are not
-assembled. Sending CONTINUATION is accepted and sets FIN, as does Kore's sender.
-Receiving continuation, malformed frames or oversized input disconnects without
-inventing a protocol close reply. Unsupported extensions/reserved bits are rejected. Transparent
-[channel tunnels](channels.md) remain opaque to framing and fragmentation.
+The receiver validates masking, reserved bits/opcodes, minimal length encoding,
+64-bit length high bits, control FIN/length, fragment sequence and UTF-8 across
+text fragments. Control frames can interleave with a fragmented message. Binary
+messages permit arbitrary bytes. Ping queues a bounded pong; input pauses if
+control output cannot yet fit. Pong is consumed internally. Invalid framing or
+close codes queue close 1002, invalid text/close-reason UTF-8 queues 1007, and
+frame/message size excess queues 1009. Rejected data never reaches the callback.
+Transparent [channel tunnels](channels.md) remain opaque to framing.
 
-`send(CLOSE)` only queues a raw frame: it leaves the connection open, with no
-new deadline or send restrictions, matching Vectis. Lua's no-argument `close()`
-uses that operation. The explicit `close(code, reason)` helper instead
-initiates an idempotent bounded handshake, retaining at most 125 bytes of pending
-control data while accepted output drains. Code zero sends an empty close.
-The explicit close helper validates its supplied code/reason; raw send retains
-Kore's byte behavior. The default deadline is 5000 ms, capped during worker
-shutdown. Peer close receives an empty close reply; both frames must drain for
-`clean` to be true. Abrupt EOF,
+`send_frame(opcode, final, bytes, length)` validates outgoing sequencing and
+UTF-8, updating state only after atomic queue acceptance. AGAIN leaves that state
+unchanged. `send`, `send_text` and `send_binary` select final=true. Sending CLOSE
+validates its payload and starts the same closing handshake as `close`; further
+data sends return STATE. The close helper retains at most 125 bytes of pending
+control data while accepted output drains. Code zero sends an empty close;
+otherwise the reason is at most 123 valid UTF-8 bytes. Repeated close is harmless.
+The default deadline is 5000 ms, capped during worker shutdown. Peer close echoes
+the valid code/reason; both frames must drain for `clean` to be true. Abrupt EOF,
 protocol errors and deadline expiration remain distinguishable in the outcome.
 A missing peer close reports code 1006 locally; that code is never transmitted.
 Worker stopping sends 1001 and retains CANCELLED as the lifecycle cause.
 WebSocket idle uses `timeouts.websocket_idle`; managed HTTP request and native
 keepalive timers expire with the handshake request. Output write-idle bounds
 continue to apply.
+
+Lua `message(ws, opcode, payload, final)` receives the equivalent frame and final
+flag. Use `ws:send_frame(opcode, final, payload)` to echo fragments, preserving
+their boundaries. `ws:close()` starts an empty closing handshake. Configuration
+fields and their defaults match C; the binding adds no message assembly.
 
 The [runtime fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/websocket-runtime.c) exercises the public API over
 HTTP and HTTPS: route configuration copies, failed transactional acceptance,

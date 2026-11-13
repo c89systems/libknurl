@@ -6,6 +6,7 @@ docs/assets.md
 docs/channels.md
 docs/editors.md
 docs/json.md
+docs/input.md
 docs/logging.md
 docs/lua.md
 docs/openapi.md
@@ -45,6 +46,7 @@ lua/cmake/Embed.cmake
 lua/cmake/Package.cmake
 lua/cmake/knurl_luaConfig.cmake.in
 src/lua/auth.c
+src/lua/input.c
 src/lua/binding.h
 src/lua/body.c
 src/lua/codec.c

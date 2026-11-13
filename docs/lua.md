@@ -1,5 +1,11 @@
 # Lua server facade
 
+`knurl.input` provides [exact validation and HTML escaping](input.md), including
+typed request query/path lookups. Managed routes accept HTTP/1.1 chunked input
+through their existing body policy, with separate completed trailers; see
+[requests](requests.md). Static routes expose `compression_disabled` and
+`precompressed_disabled` with the [shared C policy](assets.md).
+
 Editor types and per-operation hover comments ship in
 [`knurl.meta.lua`](https://github.com/c89systems/libknurl/blob/trunk/lua/knurl.meta.lua); the [facade source](https://github.com/c89systems/libknurl/blob/trunk/lua/knurl.lua)
 attaches them to the exported module and dynamically registered methods. Add the
@@ -204,23 +210,24 @@ the binding adds no second mount auth gate. Request principal metadata refreshes
 after mount authorization and retains the WebDAV public 254-byte bound. Native
 storage work never accesses Lua. Route hooks may inspect/replace staged results.
 
-`server:websocket{path=..., connect=..., message=..., disconnect=...}` retains
-Vectis's callback shape; `handler` aliases `message`. Message is required.
+`server:websocket{path=..., connect=..., message=..., disconnect=...}` registers
+connection callbacks; `handler` aliases `message`. Message is required.
 The binding registers a GET headers handler and calls public
 `knurl_websocket_accept`, rooting connection userdata before acceptance. Failed
 acceptance releases that root; successful acceptance keeps it until terminal
-close. Path kind, protocol, copied handshake headers, maximum frame/output queue
+close. Path kind, protocol, copied handshake headers, maximum frame/message/output queue
 sizes and close timeout map to the public WebSocket configuration. The path kind
 defaults to literal. This raw headers route does not implicitly run ordinary
 auth/before/after middleware, matching the public C route contract.
 
-The connection exposes `send(opcode, payload)`, `send_text`, `send_binary`,
+The connection exposes `send(opcode, payload)`, `send_frame(opcode, final, payload)`, `send_text`, `send_binary`,
 `close()`, explicit `close(code, reason)`, `resume`, `state` and `queued_bytes`.
-No-argument close queues the baseline empty frame; explicit code/reason selects
-the bounded close-handshake helper. Constants are under
+Both close forms start the bounded closing handshake; no arguments select an
+empty close payload. Constants are under
 `knurl.websocket`. Sends accept an entire frame or return `nil, knurl.AGAIN`
 without queuing it. Optional `writable(ws)` retries after native capacity becomes
-available. `message(ws, opcode, payload)` consumes on nil/true, or holds the
+available. Fragment send state changes only on acceptance; UTF-8 and sequencing
+are validated by Core. `message(ws, opcode, payload, final)` consumes on nil/true, or holds the
 complete frame on `nil, knurl.AGAIN`; `resume()` schedules redelivery.
 `disconnect(ws, outcome)` retains the legacy first argument and adds the copied
 public terminal outcome, including any first callback error. The same userdata

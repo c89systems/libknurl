@@ -12,4 +12,7 @@ void knurl_asset_info_clear(knurl_asset_info *);
 knurl_status knurl_asset_claim(knurl_asset *, void *, knurl_retire_fn, void *,
                                knurl_error *);
 void knurl_asset_unclaim(knurl_asset *, void *);
+knurl_status knurl_asset_source_claim(knurl_asset *, void *, knurl_error *);
+knurl_status knurl_asset_read_owned(knurl_asset *, void *, knurl_u64, void *,
+                                    size_t, size_t *, knurl_error *);
 #endif

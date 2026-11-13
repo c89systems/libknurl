@@ -71,6 +71,13 @@ size_t knurl_request_query_count(const knurl_request *request)
     return request != NULL ? request->impl->query_count : 0;
 }
 
+size_t knurl_request_trailer_count(const knurl_request *request)
+{
+    return request != NULL && request->impl->outcome.body_complete
+               ? request->impl->trailer_count
+               : 0;
+}
+
 static knurl_status pair_at(const knurl_request *request,
                             const knurl_header *pairs, size_t count,
                             size_t index, knurl_header *out, knurl_error *error)
@@ -93,6 +100,21 @@ knurl_status knurl_request_header_at(const knurl_request *request, size_t index,
 {
     return pair_at(request, request != NULL ? request->impl->headers : NULL,
                    knurl_request_header_count(request), index, out, error);
+}
+
+knurl_status knurl_request_trailer_at(const knurl_request *request,
+                                      size_t index, knurl_header *out,
+                                      knurl_error *error)
+{
+    if (out != NULL) {
+        out->name = knurl_view(NULL);
+        out->value = knurl_view(NULL);
+    }
+    if (request != NULL && !request->impl->outcome.body_complete)
+        return knurl_fail(error, KNURL_STATE, "request_trailers",
+                          "body trailers require completed input");
+    return pair_at(request, request != NULL ? request->impl->trailers : NULL,
+                   knurl_request_trailer_count(request), index, out, error);
 }
 
 knurl_status knurl_request_query_at(const knurl_request *request, size_t index,
@@ -160,6 +182,19 @@ knurl_status knurl_request_query_first(const knurl_request *request,
 {
     return first(request, request != NULL ? request->impl->queries : NULL,
                  knurl_request_query_count(request), name, 0, out, error);
+}
+
+knurl_status knurl_request_trailer_first(const knurl_request *request,
+                                         const char *name, knurl_bytes *out,
+                                         knurl_error *error)
+{
+    if (out != NULL)
+        *out = knurl_view(NULL);
+    if (request != NULL && !request->impl->outcome.body_complete)
+        return knurl_fail(error, KNURL_STATE, "request_trailers",
+                          "body trailers require completed input");
+    return first(request, request != NULL ? request->impl->trailers : NULL,
+                 knurl_request_trailer_count(request), name, 1, out, error);
 }
 
 knurl_status knurl_request_path_param(const knurl_request *request,
@@ -256,11 +291,20 @@ void knurl_request_cleanup(knurl_request *request)
     free(request->impl->queries);
     free(request->impl->params);
     free(request->impl->headers);
+    for (i = 0; i < request->impl->trailer_count; ++i)
+        free((void *)request->impl->trailers[i].name.data);
+    free(request->impl->trailers);
 }
 
 void knurl_request_receiver_init(knurl_request *receiver)
 {
-    static const knurl_request methods = {knurl_kore_request,
+    static const knurl_request methods = {knurl_request_query_long,
+                                          knurl_request_param_long,
+                                          knurl_request_query_u64,
+                                          knurl_request_param_u64,
+                                          knurl_request_query_boolean,
+                                          knurl_request_param_boolean,
+                                          knurl_kore_request,
                                           knurl_websocket_accept,
                                           knurl_request_xml_into,
                                           knurl_request_json_into,
@@ -279,6 +323,9 @@ void knurl_request_receiver_init(knurl_request *receiver)
                                           knurl_request_authority,
                                           knurl_request_listener_index,
                                           knurl_request_header_count,
+                                          knurl_request_trailer_count,
+                                          knurl_request_trailer_at,
+                                          knurl_request_trailer_first,
                                           knurl_request_header_at,
                                           knurl_request_header_first,
                                           knurl_request_query_count,

@@ -7,6 +7,7 @@ set(knurl_public_docs
   docs/channels.md
   docs/editors.md
   docs/json.md
+  docs/input.md
   docs/logging.md
   docs/lua.md
   docs/openapi.md

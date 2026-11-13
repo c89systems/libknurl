@@ -18,6 +18,17 @@ and regressions specify existing defaults, accepted inputs, errors and lifetimes
 The [integration contract](https://github.com/c89systems/libknurl/blob/trunk/docs/vectis-integration-contract.md) identifies the sources.
 A discrepancy is resolved by tracing that baseline, not by inventing a new default.
 
+The authorized HTTP completeness extension supersedes that baseline for exact
+C/Lua input helpers, managed chunked bodies and separate trailers, static
+multipart ranges/date conditions/negotiated compression, and application
+WebSocket fragmentation/UTF-8/close validation. This includes the explicit final
+callback argument, bounded default output and transactional fragment sending.
+The corresponding public guides define these delivered interfaces:
+[input](input.md), [requests](requests.md), [assets](assets.md) and
+[WebSockets](websockets.md). These changes use shared-library ABI 1, advanced once
+from released ABI 0. HTTP/2/3 listeners and SOAP remain excluded; proxy upstream
+HTTP/2 remains supported. Other extraction behavior retains its baseline.
+
 Vectis retains its app/service graph, outer supervision, business handlers,
 credentials/sessions, application admission/proxy decisions, metrics aggregation,
 packed-asset lookup, Lockd/Pouch/durable-storage clients, XDG path selection,

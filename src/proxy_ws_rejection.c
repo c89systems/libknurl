@@ -239,13 +239,13 @@ knurl_proxy_ws_rejection_head(knurl_proxy_ws_rejection *rejection,
         rejection->mode = KNURL_PROXY_WS_REJECTION_COMPLETE;
     } else if (rejection->response.chunked) {
         rejection->mode = KNURL_PROXY_WS_REJECTION_CHUNKED;
-        knurl_proxy_body_framer_chunked(&rejection->framer);
+        knurl_http_body_framer_chunked(&rejection->framer);
     } else if (rejection->response.has_content_length) {
         rejection->mode = rejection->response.content_length == 0u
                               ? KNURL_PROXY_WS_REJECTION_COMPLETE
                               : KNURL_PROXY_WS_REJECTION_FIXED;
-        knurl_proxy_body_framer_fixed(&rejection->framer,
-                                      rejection->response.content_length);
+        knurl_http_body_framer_fixed(&rejection->framer,
+                                     rejection->response.content_length);
     } else {
         rejection->mode = KNURL_PROXY_WS_REJECTION_CLOSE;
     }
@@ -300,7 +300,7 @@ knurl_status knurl_proxy_ws_rejection_feed(knurl_proxy_ws_rejection *rejection,
                                            size_t *written, knurl_error *error)
 {
     knurl_proxy_ws_rejection_sink sink;
-    knurl_proxy_frame_result result;
+    knurl_http_frame_result result;
 
     if (consumed != NULL)
         *consumed = 0u;
@@ -332,13 +332,13 @@ knurl_status knurl_proxy_ws_rejection_feed(knurl_proxy_ws_rejection *rejection,
             sink.failed = 1;
         *consumed = amount;
     } else {
-        result = knurl_proxy_body_framer_feed(
+        result = knurl_http_body_framer_feed(
             &rejection->framer, input, input_length, consumed,
             knurl_proxy_ws_rejection_body, knurl_proxy_ws_rejection_trailer,
             &sink);
-        if (result == KNURL_PROXY_FRAME_INVALID)
+        if (result == KNURL_HTTP_FRAME_INVALID)
             sink.failed = 1;
-        else if (result == KNURL_PROXY_FRAME_COMPLETE)
+        else if (result == KNURL_HTTP_FRAME_COMPLETE)
             rejection->mode = KNURL_PROXY_WS_REJECTION_COMPLETE;
     }
     if (sink.failed) {

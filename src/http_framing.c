@@ -1,9 +1,9 @@
-#include "proxy_framing.h"
+#include "http_framing.h"
 
 #include <stdint.h>
 #include <string.h>
 
-static int knurl_proxy_token_char(unsigned char c)
+static int knurl_http_token_char(unsigned char c)
 {
     if (c == 0u) {
         return 0;
@@ -15,8 +15,8 @@ static int knurl_proxy_token_char(unsigned char c)
     return strchr("!#$%&'*+-.^_`|~", c) != NULL;
 }
 
-static int knurl_proxy_chunk_quoted(const char *line, size_t length,
-                                    size_t *offset)
+static int knurl_http_chunk_quoted(const char *line, size_t length,
+                                   size_t *offset)
 {
     unsigned char c;
 
@@ -44,8 +44,8 @@ static int knurl_proxy_chunk_quoted(const char *line, size_t length,
     return 0;
 }
 
-static int knurl_proxy_chunk_extensions(const char *line, size_t length,
-                                        size_t offset)
+static int knurl_http_chunk_extensions(const char *line, size_t length,
+                                       size_t offset)
 {
     size_t start;
 
@@ -63,7 +63,7 @@ static int knurl_proxy_chunk_extensions(const char *line, size_t length,
         }
         start = offset;
         while (offset < length &&
-               knurl_proxy_token_char((unsigned char)line[offset])) {
+               knurl_http_token_char((unsigned char)line[offset])) {
             offset++;
         }
         if (offset == start) {
@@ -80,13 +80,13 @@ static int knurl_proxy_chunk_extensions(const char *line, size_t length,
                 offset++;
             }
             if (offset < length && line[offset] == '"') {
-                if (!knurl_proxy_chunk_quoted(line, length, &offset)) {
+                if (!knurl_http_chunk_quoted(line, length, &offset)) {
                     return 0;
                 }
             } else {
                 start = offset;
                 while (offset < length &&
-                       knurl_proxy_token_char((unsigned char)line[offset])) {
+                       knurl_http_token_char((unsigned char)line[offset])) {
                     offset++;
                 }
                 if (offset == start) {
@@ -98,23 +98,42 @@ static int knurl_proxy_chunk_extensions(const char *line, size_t length,
     return 1;
 }
 
-int knurl_proxy_trailer_field_allowed(const char *name, size_t length)
+int knurl_http_trailer_field_allowed(const char *name, size_t length)
 {
     static const char *const forbidden[] = {"authorization",
+                                            "authentication-info",
+                                            "cache-control",
                                             "connection",
+                                            "content-disposition",
                                             "content-encoding",
+                                            "content-language",
                                             "content-length",
+                                            "content-location",
                                             "content-range",
                                             "content-type",
+                                            "cookie",
+                                            "expect",
+                                            "expires",
                                             "host",
+                                            "if-match",
+                                            "if-modified-since",
+                                            "if-none-match",
+                                            "if-range",
+                                            "if-unmodified-since",
                                             "keep-alive",
+                                            "max-forwards",
+                                            "pragma",
                                             "proxy-authenticate",
+                                            "proxy-authentication-info",
                                             "proxy-authorization",
                                             "proxy-connection",
+                                            "range",
+                                            "set-cookie",
                                             "te",
                                             "trailer",
                                             "transfer-encoding",
-                                            "upgrade"};
+                                            "upgrade",
+                                            "www-authenticate"};
     size_t i;
     size_t j;
 
@@ -122,7 +141,7 @@ int knurl_proxy_trailer_field_allowed(const char *name, size_t length)
         return 0;
     }
     for (j = 0u; j < length; ++j) {
-        if (!knurl_proxy_token_char((unsigned char)name[j])) {
+        if (!knurl_http_token_char((unsigned char)name[j])) {
             return 0;
         }
     }
@@ -147,7 +166,7 @@ int knurl_proxy_trailer_field_allowed(const char *name, size_t length)
     return 1;
 }
 
-static int knurl_proxy_parse_size(knurl_proxy_body_framer *framer)
+static int knurl_http_parse_size(knurl_http_body_framer *framer)
 {
     const char *line;
     size_t i;
@@ -180,19 +199,19 @@ static int knurl_proxy_parse_size(knurl_proxy_body_framer *framer)
         return 0;
     }
     if (i < framer->line_length) {
-        if (!knurl_proxy_chunk_extensions(line, framer->line_length, i)) {
+        if (!knurl_http_chunk_extensions(line, framer->line_length, i)) {
             return 0;
         }
     }
     framer->remaining = value;
     framer->phase =
-        value == 0u ? KNURL_PROXY_PHASE_TRAILERS : KNURL_PROXY_PHASE_CHUNK_DATA;
+        value == 0u ? KNURL_HTTP_PHASE_TRAILERS : KNURL_HTTP_PHASE_CHUNK_DATA;
     return 1;
 }
 
-static int knurl_proxy_parse_trailer(knurl_proxy_body_framer *framer,
-                                     knurl_proxy_trailer_accept_fn callback,
-                                     void *userdata)
+static int knurl_http_parse_trailer(knurl_http_body_framer *framer,
+                                    knurl_http_trailer_accept_fn callback,
+                                    void *userdata)
 {
     char *line;
     size_t i;
@@ -200,15 +219,15 @@ static int knurl_proxy_parse_trailer(knurl_proxy_body_framer *framer,
     char *value;
 
     if (framer->line_length == 0u) {
-        framer->phase = KNURL_PROXY_PHASE_COMPLETE;
+        framer->phase = KNURL_HTTP_PHASE_COMPLETE;
         return 1;
     }
-    if (++framer->trailer_count > KNURL_PROXY_TRAILER_COUNT_LIMIT) {
+    if (++framer->trailer_count > KNURL_HTTP_TRAILER_COUNT_LIMIT) {
         return 0;
     }
     line = framer->line;
     for (i = 0u; i < framer->line_length && line[i] != ':'; ++i) {
-        if (!knurl_proxy_token_char((unsigned char)line[i])) {
+        if (!knurl_http_token_char((unsigned char)line[i])) {
             return 0;
         }
     }
@@ -216,7 +235,7 @@ static int knurl_proxy_parse_trailer(knurl_proxy_body_framer *framer,
         return 0;
     }
     line[i++] = '\0';
-    if (!knurl_proxy_trailer_field_allowed(line, strlen(line))) {
+    if (!knurl_http_trailer_field_allowed(line, strlen(line))) {
         return 0;
     }
     for (; i < framer->line_length && (line[i] == ' ' || line[i] == '\t');
@@ -237,8 +256,8 @@ static int knurl_proxy_parse_trailer(knurl_proxy_body_framer *framer,
     return callback != NULL && callback(userdata, line, value);
 }
 
-void knurl_proxy_body_framer_fixed(knurl_proxy_body_framer *framer,
-                                   uint64_t length)
+void knurl_http_body_framer_fixed(knurl_http_body_framer *framer,
+                                  uint64_t length)
 {
     if (framer == NULL) {
         return;
@@ -246,22 +265,22 @@ void knurl_proxy_body_framer_fixed(knurl_proxy_body_framer *framer,
     memset(framer, 0, sizeof(*framer));
     framer->remaining = length;
     framer->phase =
-        length == 0u ? KNURL_PROXY_PHASE_COMPLETE : KNURL_PROXY_PHASE_FIXED;
+        length == 0u ? KNURL_HTTP_PHASE_COMPLETE : KNURL_HTTP_PHASE_FIXED;
 }
 
-void knurl_proxy_body_framer_chunked(knurl_proxy_body_framer *framer)
+void knurl_http_body_framer_chunked(knurl_http_body_framer *framer)
 {
     if (framer == NULL) {
         return;
     }
     memset(framer, 0, sizeof(*framer));
-    framer->phase = KNURL_PROXY_PHASE_CHUNK_SIZE;
+    framer->phase = KNURL_HTTP_PHASE_CHUNK_SIZE;
 }
 
-knurl_proxy_frame_result knurl_proxy_body_framer_feed(
-    knurl_proxy_body_framer *framer, const unsigned char *data, size_t length,
-    size_t *consumed, knurl_proxy_body_accept_fn body,
-    knurl_proxy_trailer_accept_fn trailer, void *userdata)
+knurl_http_frame_result knurl_http_body_framer_feed(
+    knurl_http_body_framer *framer, const unsigned char *data, size_t length,
+    size_t *consumed, knurl_http_body_accept_fn body,
+    knurl_http_trailer_accept_fn trailer, void *userdata)
 {
     size_t pos;
     size_t offer;
@@ -274,18 +293,18 @@ knurl_proxy_frame_result knurl_proxy_body_framer_feed(
         *consumed = 0u;
     }
     if (framer == NULL || consumed == NULL || (data == NULL && length != 0u)) {
-        return KNURL_PROXY_FRAME_INVALID;
+        return KNURL_HTTP_FRAME_INVALID;
     }
-    if (framer->phase == KNURL_PROXY_PHASE_INVALID) {
-        return KNURL_PROXY_FRAME_INVALID;
+    if (framer->phase == KNURL_HTTP_PHASE_INVALID) {
+        return KNURL_HTTP_FRAME_INVALID;
     }
-    if (framer->phase == KNURL_PROXY_PHASE_COMPLETE) {
-        return KNURL_PROXY_FRAME_COMPLETE;
+    if (framer->phase == KNURL_HTTP_PHASE_COMPLETE) {
+        return KNURL_HTTP_FRAME_COMPLETE;
     }
     pos = 0u;
     while (pos < length) {
-        if (framer->phase == KNURL_PROXY_PHASE_FIXED ||
-            framer->phase == KNURL_PROXY_PHASE_CHUNK_DATA) {
+        if (framer->phase == KNURL_HTTP_PHASE_FIXED ||
+            framer->phase == KNURL_HTTP_PHASE_CHUNK_DATA) {
             offer = length - pos;
             if (framer->remaining < (uint64_t)offer) {
                 offer = (size_t)framer->remaining;
@@ -300,48 +319,48 @@ knurl_proxy_frame_result knurl_proxy_body_framer_feed(
             pos += accepted;
             framer->remaining -= (uint64_t)accepted;
             if (framer->remaining == 0u) {
-                framer->phase = framer->phase == KNURL_PROXY_PHASE_FIXED
-                                    ? KNURL_PROXY_PHASE_COMPLETE
-                                    : KNURL_PROXY_PHASE_CHUNK_DATA_CR;
+                framer->phase = framer->phase == KNURL_HTTP_PHASE_FIXED
+                                    ? KNURL_HTTP_PHASE_COMPLETE
+                                    : KNURL_HTTP_PHASE_CHUNK_DATA_CR;
             }
-            if (framer->phase == KNURL_PROXY_PHASE_COMPLETE) {
+            if (framer->phase == KNURL_HTTP_PHASE_COMPLETE) {
                 *consumed = pos;
-                return KNURL_PROXY_FRAME_COMPLETE;
+                return KNURL_HTTP_FRAME_COMPLETE;
             }
             if (accepted < offer) {
                 *consumed = pos;
-                return KNURL_PROXY_FRAME_PAUSED;
+                return KNURL_HTTP_FRAME_PAUSED;
             }
             continue;
         }
         c = data[pos++];
-        if (framer->phase == KNURL_PROXY_PHASE_CHUNK_DATA_CR) {
+        if (framer->phase == KNURL_HTTP_PHASE_CHUNK_DATA_CR) {
             if (c != '\r') {
                 goto invalid;
             }
-            framer->phase = KNURL_PROXY_PHASE_CHUNK_DATA_LF;
+            framer->phase = KNURL_HTTP_PHASE_CHUNK_DATA_LF;
             continue;
         }
-        if (framer->phase == KNURL_PROXY_PHASE_CHUNK_DATA_LF) {
+        if (framer->phase == KNURL_HTTP_PHASE_CHUNK_DATA_LF) {
             if (c != '\n') {
                 goto invalid;
             }
-            framer->phase = KNURL_PROXY_PHASE_CHUNK_SIZE;
+            framer->phase = KNURL_HTTP_PHASE_CHUNK_SIZE;
             continue;
         }
-        if (framer->phase != KNURL_PROXY_PHASE_CHUNK_SIZE &&
-            framer->phase != KNURL_PROXY_PHASE_TRAILERS) {
+        if (framer->phase != KNURL_HTTP_PHASE_CHUNK_SIZE &&
+            framer->phase != KNURL_HTTP_PHASE_TRAILERS) {
             goto invalid;
         }
-        if (framer->phase == KNURL_PROXY_PHASE_TRAILERS) {
-            if (framer->trailer_bytes == KNURL_PROXY_TRAILER_BLOCK_LIMIT) {
+        if (framer->phase == KNURL_HTTP_PHASE_TRAILERS) {
+            if (framer->trailer_bytes == KNURL_HTTP_TRAILER_BLOCK_LIMIT) {
                 goto invalid;
             }
             framer->trailer_bytes++;
         }
-        limit = framer->phase == KNURL_PROXY_PHASE_CHUNK_SIZE
-                    ? KNURL_PROXY_CHUNK_LINE_LIMIT
-                    : KNURL_PROXY_TRAILER_LINE_LIMIT;
+        limit = framer->phase == KNURL_HTTP_PHASE_CHUNK_SIZE
+                    ? KNURL_HTTP_CHUNK_LINE_LIMIT
+                    : KNURL_HTTP_TRAILER_LINE_LIMIT;
         line_complete = 0;
         if (framer->line_cr) {
             if (c != '\n') {
@@ -358,27 +377,27 @@ knurl_proxy_frame_result knurl_proxy_body_framer_feed(
         }
         if (line_complete) {
             framer->line[framer->line_length] = '\0';
-            if (framer->phase == KNURL_PROXY_PHASE_CHUNK_SIZE) {
-                if (!knurl_proxy_parse_size(framer)) {
+            if (framer->phase == KNURL_HTTP_PHASE_CHUNK_SIZE) {
+                if (!knurl_http_parse_size(framer)) {
                     goto invalid;
                 }
-            } else if (!knurl_proxy_parse_trailer(framer, trailer, userdata)) {
+            } else if (!knurl_http_parse_trailer(framer, trailer, userdata)) {
                 goto invalid;
             }
             framer->line_length = 0u;
         }
-        if (framer->phase == KNURL_PROXY_PHASE_COMPLETE) {
+        if (framer->phase == KNURL_HTTP_PHASE_COMPLETE) {
             *consumed = pos;
-            return KNURL_PROXY_FRAME_COMPLETE;
+            return KNURL_HTTP_FRAME_COMPLETE;
         }
     }
     *consumed = pos;
-    if (framer->phase == KNURL_PROXY_PHASE_COMPLETE) {
-        return KNURL_PROXY_FRAME_COMPLETE;
+    if (framer->phase == KNURL_HTTP_PHASE_COMPLETE) {
+        return KNURL_HTTP_FRAME_COMPLETE;
     }
-    return KNURL_PROXY_FRAME_MORE;
+    return KNURL_HTTP_FRAME_MORE;
 invalid:
     *consumed = pos;
-    framer->phase = KNURL_PROXY_PHASE_INVALID;
-    return KNURL_PROXY_FRAME_INVALID;
+    framer->phase = KNURL_HTTP_PHASE_INVALID;
+    return KNURL_HTTP_FRAME_INVALID;
 }

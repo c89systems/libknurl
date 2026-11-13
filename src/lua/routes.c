@@ -2,13 +2,24 @@
 #define N(a) (sizeof(a) / sizeof((a)[0]))
 static int static_route(lua_State *L, int kind)
 {
-    static const char *const fields[] = {
-        "path",          "file_path",      "root_dir",
-        "content_type",  "cache_control",  "index_file",
-        "index_enabled", "not_found_body", "not_found_content_type",
-        "method",        "methods",        "auth",
-        "before",        "after",          "provider",
-        "mime_types"};
+    static const char *const fields[] = {"path",
+                                         "file_path",
+                                         "root_dir",
+                                         "content_type",
+                                         "cache_control",
+                                         "index_file",
+                                         "index_enabled",
+                                         "not_found_body",
+                                         "not_found_content_type",
+                                         "method",
+                                         "methods",
+                                         "auth",
+                                         "before",
+                                         "after",
+                                         "provider",
+                                         "mime_types",
+                                         "compression_disabled",
+                                         "precompressed_disabled"};
     struct rl_rule *rule;
     knurl_static_config config;
     knurl_error error;
@@ -38,6 +49,10 @@ static int static_route(lua_State *L, int kind)
         !rl_field_string(L, 2, "not_found_content_type",
                          &config.not_found_content_type) ||
         !rl_field_bool(L, 2, "index_enabled", &config.index_enabled) ||
+        !rl_field_bool(L, 2, "compression_disabled",
+                       &config.compression_disabled) ||
+        !rl_field_bool(L, 2, "precompressed_disabled",
+                       &config.precompressed_disabled) ||
         !rl_methods(L, 2, config.methods, &config.methods))
         return rl_error(L, (rl_fail(&error, KNURL_INVALID,
                                     "invalid static declaration value"),

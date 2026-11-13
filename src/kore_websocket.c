@@ -84,8 +84,16 @@ knurl_status knurl_websocket_accept(knurl_request *request,
     if (resolved.max_frame_bytes == 0)
         resolved.max_frame_bytes = request->impl->server->impl->config.limits
                                        .websocket_max_frame_bytes;
-    if (resolved.output_queue_bytes == 0)
-        resolved.output_queue_bytes = (size_t)-1;
+    if (resolved.max_message_bytes == 0)
+        resolved.max_message_bytes = resolved.max_frame_bytes;
+    if (resolved.output_queue_bytes == 0) {
+        if (resolved.max_frame_bytes > (size_t)-1 - 14)
+            return knurl_fail(error, KNURL_LIMIT, "websocket_accept",
+                              "frame limit cannot fit finite wire budget");
+        resolved.output_queue_bytes = resolved.max_frame_bytes + 14;
+        if (resolved.output_queue_bytes < 127)
+            resolved.output_queue_bytes = 127;
+    }
     if (resolved.close_timeout_ms == 0)
         resolved.close_timeout_ms = 5000;
     if (resolved.max_frame_bytes > request->impl->server->impl->config.limits

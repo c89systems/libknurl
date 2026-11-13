@@ -19,12 +19,12 @@ find_package(knurl ${version} EXACT CONFIG REQUIRED COMPONENTS static)
 # Instrument the owned parsers, reusing the ordinary installed SDK for support
 # operations. Do not rebuild/instrument Kore or dependency SDKs for this lane.
 add_executable(knurl_fuzz parsers.c
-  "${root}/src/proxy_framing.c" "${root}/src/proxy_headers.c"
+  "${root}/src/http_framing.c" "${root}/src/proxy_headers.c"
   "${root}/src/proxy_http.c" "${root}/src/proxy_ws_wire.c"
   "${root}/src/static_policy.c" "${root}/src/route_path.c"
-  "${root}/src/websocket_frame.c" "${root}/src/websocket.c")
+  "${root}/src/websocket_frame.c" "${root}/src/websocket_protocol.c" "${root}/src/websocket.c")
 target_include_directories(knurl_fuzz PRIVATE "${root}/src")
-target_link_libraries(knurl_fuzz PRIVATE knurl::static)
+target_link_libraries(knurl_fuzz PRIVATE knurl::static CURL::libcurl)
 set_target_properties(knurl_fuzz PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
 target_compile_options(knurl_fuzz PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -UNDEBUG)
 file(GLOB loaders "${CMAKE_SYSROOT}/lib/ld-linux*.so*")

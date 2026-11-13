@@ -15,7 +15,7 @@
 enum ws_phase { WS_CONNECT, WS_SEND, WS_HEAD, WS_REJECTION, WS_TUNNEL };
 struct knurl_proxy_ws {
     knurl_proxy_headers inbound;
-    knurl_proxy_body_framer framer;
+    knurl_http_body_framer framer;
     knurl_watch *watch;
     knurl_timer *retry;
     curl_socket_t fd;
@@ -305,9 +305,9 @@ static knurl_status parse_head(struct proxy_exchange *x, int *complete)
             s->chunked = x->upstream.response.chunked;
             s->fixed = x->upstream.response.has_content_length;
             if (s->chunked)
-                knurl_proxy_body_framer_chunked(&s->framer);
+                knurl_http_body_framer_chunked(&s->framer);
             else if (s->fixed)
-                knurl_proxy_body_framer_fixed(
+                knurl_http_body_framer_fixed(
                     &s->framer, x->upstream.response.content_length);
             if (!x->upstream.response.body_allowed ||
                 (s->fixed && x->upstream.response.content_length == 0))
@@ -353,7 +353,7 @@ static int rejection_trailer(void *data, const char *name, const char *value)
 static knurl_status rejection_step(struct proxy_exchange *x)
 {
     struct knurl_proxy_ws *s;
-    knurl_proxy_frame_result frame;
+    knurl_http_frame_result frame;
     CURLcode code;
     size_t amount;
     size_t consumed;
@@ -364,12 +364,12 @@ static knurl_status rejection_step(struct proxy_exchange *x)
         return KNURL_OK;
     if (s->head_length != 0) {
         if (s->fixed || s->chunked) {
-            frame = knurl_proxy_body_framer_feed(
+            frame = knurl_http_body_framer_feed(
                 &s->framer, s->head, s->head_length, &consumed, rejection_body,
                 rejection_trailer, x);
-            if (frame == KNURL_PROXY_FRAME_INVALID)
+            if (frame == KNURL_HTTP_FRAME_INVALID)
                 return KNURL_INVALID;
-            if (frame == KNURL_PROXY_FRAME_COMPLETE)
+            if (frame == KNURL_HTTP_FRAME_COMPLETE)
                 x->up_done = 1;
         } else
             consumed = rejection_body(x, s->head, s->head_length);

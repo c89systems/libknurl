@@ -16,6 +16,7 @@ struct ws_call {
     knurl_websocket_opcode opcode;
     knurl_bytes bytes;
     int phase;
+    int final;
     knurl_status status;
     knurl_error *error;
 };
@@ -28,13 +29,14 @@ static struct ws_view *checked(lua_State *L, knurl_error *error)
     }
     return view;
 }
-static int send_frame(lua_State *L, int opcode, int explicit_opcode)
+static int send_value(lua_State *L, int opcode, int explicit_opcode)
 {
     knurl_error error;
     struct ws_view *view = checked(L, &error);
     const char *bytes = NULL;
     size_t length = 0, value;
-    int index = explicit_opcode ? 3 : 2;
+    int index = explicit_opcode == 2 ? 4 : explicit_opcode ? 3 : 2;
+    int final = 1;
     knurl_status status;
     if (view == NULL)
         return rl_error(L, &error);
@@ -43,14 +45,20 @@ static int send_frame(lua_State *L, int opcode, int explicit_opcode)
             goto invalid;
         opcode = (int)value;
     }
+    if (explicit_opcode == 2) {
+        if (lua_type(L, 3) != LUA_TBOOLEAN)
+            goto invalid;
+        final = lua_toboolean(L, 3);
+    }
     if (!lua_isnoneornil(L, index)) {
         if (!lua_isstring(L, index))
             goto invalid;
         bytes = lua_tolstring(L, index, &length);
     } else if (!explicit_opcode)
         goto invalid;
-    status = knurl_websocket_send(view->native, (knurl_websocket_opcode)opcode,
-                                  bytes, length, &error);
+    status =
+        knurl_websocket_send_frame(view->native, (knurl_websocket_opcode)opcode,
+                                   final, bytes, length, &error);
     if (status == KNURL_AGAIN) {
         lua_pushnil(L);
         rl_sentinel(L, status);
@@ -65,14 +73,15 @@ invalid:
                                 "valid opcode and binary string required"),
                         &error));
 }
-static int send(lua_State *L) { return send_frame(L, 0, 1); }
+static int send(lua_State *L) { return send_value(L, 0, 1); }
+static int send_frame(lua_State *L) { return send_value(L, 0, 2); }
 static int send_text(lua_State *L)
 {
-    return send_frame(L, KNURL_WEBSOCKET_TEXT, 0);
+    return send_value(L, KNURL_WEBSOCKET_TEXT, 0);
 }
 static int send_binary(lua_State *L)
 {
-    return send_frame(L, KNURL_WEBSOCKET_BINARY, 0);
+    return send_value(L, KNURL_WEBSOCKET_BINARY, 0);
 }
 static int close_ws(lua_State *L)
 {
@@ -91,11 +100,8 @@ static int close_ws(lua_State *L)
                 goto invalid;
             reason.data = lua_tolstring(L, 3, &reason.length);
         }
-        status = lua_isnoneornil(L, 2) && lua_isnoneornil(L, 3)
-                     ? knurl_websocket_send(view->native, KNURL_WEBSOCKET_CLOSE,
-                                            NULL, 0, &error)
-                     : knurl_websocket_close(view->native, (unsigned short)code,
-                                             reason, &error);
+        status = knurl_websocket_close(view->native, (unsigned short)code,
+                                       reason, &error);
         if (status == KNURL_AGAIN) {
             lua_pushnil(L);
             rl_sentinel(L, status);
@@ -158,7 +164,8 @@ static int callback_trampoline(lua_State *L)
         lua_pushinteger(L, call->opcode);
         lua_pushlstring(L, call->bytes.data == NULL ? "" : call->bytes.data,
                         call->bytes.length);
-        arguments = 3;
+        lua_pushboolean(L, call->final);
+        arguments = 4;
     } else if (call->phase == 3) {
         lua_createtable(L, 0, 7);
         lua_pushinteger(L, call->outcome->cause);
@@ -221,8 +228,8 @@ static knurl_status opened(knurl_websocket *native, void *data,
     return call_ws(&call);
 }
 static knurl_status frame(knurl_websocket *native,
-                          knurl_websocket_opcode opcode, knurl_bytes bytes,
-                          void *data, knurl_error *error)
+                          knurl_websocket_opcode opcode, int final,
+                          knurl_bytes bytes, void *data, knurl_error *error)
 {
     struct ws_call call;
     (void)native;
@@ -232,6 +239,7 @@ static knurl_status frame(knurl_websocket *native,
     call.phase = 1;
     call.opcode = opcode;
     call.bytes = bytes;
+    call.final = final;
     return call_ws(&call);
 }
 static void writable(knurl_websocket *native, void *data)
@@ -342,6 +350,7 @@ int rl_websocket(lua_State *L)
                                          "writable",
                                          "disconnect",
                                          "max_frame_bytes",
+                                         "max_message_bytes",
                                          "output_queue_bytes",
                                          "close_timeout_ms",
                                          "protocol",
@@ -381,6 +390,8 @@ int rl_websocket(lua_State *L)
         !rl_field_string(L, 2, "path_kind", &kind) ||
         !rl_field_size(L, 2, "max_frame_bytes",
                        &declaration->config.max_frame_bytes) ||
+        !rl_field_size(L, 2, "max_message_bytes",
+                       &declaration->config.max_message_bytes) ||
         !rl_field_size(L, 2, "output_queue_bytes",
                        &declaration->config.output_queue_bytes) ||
         !rl_field_size(L, 2, "close_timeout_ms", &timeout) ||
@@ -432,6 +443,7 @@ invalid:
 void rl_websockets_open(lua_State *L)
 {
     static const luaL_Reg methods[] = {{"send", send},
+                                       {"send_frame", send_frame},
                                        {"send_text", send_text},
                                        {"send_binary", send_binary},
                                        {"close", close_ws},

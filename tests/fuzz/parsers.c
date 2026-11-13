@@ -1,11 +1,12 @@
 #define _GNU_SOURCE 1
-#include "proxy_framing.h"
+#include "http_framing.h"
 #include "proxy_http.h"
 #include "proxy_ws_wire.h"
 #include "static_internal.h"
 #include "websocket_internal.h"
 #include "server_internal.h" /* IWYU pragma: keep (fixture's server layout) */
 #include "loop_internal.h"
+#include "receivers_internal.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,23 +30,22 @@ static int accept_trailer(void *data, const char *name, const char *value)
 }
 static void framing(const unsigned char *data, size_t length)
 {
-    knurl_proxy_body_framer *framer = malloc(sizeof(*framer));
+    knurl_http_body_framer *framer = malloc(sizeof(*framer));
     size_t at = 0, count, chunk;
-    knurl_proxy_frame_result status;
+    knurl_http_frame_result status;
     if (framer == NULL)
         abort();
-    knurl_proxy_body_framer_chunked(framer);
+    knurl_http_body_framer_chunked(framer);
     while (at < length) {
         chunk = (data[at] & 31) + 1;
         if (chunk > length - at)
             chunk = length - at;
-        status =
-            knurl_proxy_body_framer_feed(framer, data + at, chunk, &count,
-                                         accept_body, accept_trailer, NULL);
+        status = knurl_http_body_framer_feed(framer, data + at, chunk, &count,
+                                             accept_body, accept_trailer, NULL);
         assert(count <= chunk);
         at += count;
-        if (status == KNURL_PROXY_FRAME_COMPLETE ||
-            status == KNURL_PROXY_FRAME_INVALID)
+        if (status == KNURL_HTTP_FRAME_COMPLETE ||
+            status == KNURL_HTTP_FRAME_INVALID)
             break;
         assert(count > 0);
     }
@@ -82,16 +82,16 @@ static void paths(char *text)
     knurl_u64 length;
     knurl_u64 end;
     int order;
-    struct knurl_static_range range;
+    struct knurl_static_ranges range;
     length.high = 1;
     length.low = 0;
     (void)knurl_route_path_validate(text, KNURL_PATH_LITERAL, NULL);
     (void)knurl_http_tag_matches(text, "\"tag\"", 1, 0);
     knurl_static_range_parse(text, length, &range);
     if (range.satisfiable && range.requested) {
-        assert(range.length.high || range.length.low);
-        assert(knurl_u64_add(range.start, range.length, &end, NULL) ==
-               KNURL_OK);
+        assert(range.parts[0].length.high || range.parts[0].length.low);
+        assert(knurl_u64_add(range.parts[0].start, range.parts[0].length, &end,
+                             NULL) == KNURL_OK);
         assert(knurl_u64_compare(end, length, &order, NULL) == KNURL_OK &&
                order <= 0);
     }
@@ -113,45 +113,50 @@ static void noop(knurl_channel *channel) { (void)channel; }
 static void wake(void *data) { (void)data; }
 static void websocket(const unsigned char *data, size_t length)
 {
-    knurl_websocket *ws = calloc(1, sizeof(*ws));
-    knurl_channel *channel = calloc(1, sizeof(*channel));
+    knurl_websocket *ws = calloc(1, sizeof(struct knurl_websocket_impl));
+    knurl_channel *channel = calloc(1, sizeof(struct knurl_channel_impl));
     struct knurl_channel_chunk *chunk;
-    knurl_server *server = calloc(1, sizeof(*server));
-    knurl_loop *loop = calloc(1, sizeof(*loop));
+    knurl_server *server = calloc(1, sizeof(struct knurl_server_impl));
+    knurl_loop *loop = calloc(1, sizeof(struct knurl_loop_impl));
     if (ws == NULL || channel == NULL || server == NULL || loop == NULL)
         abort();
-    server->loop = loop;
-    server->config.io.chunk_bytes = 32;
-    loop->owner = pthread_self();
-    loop->process_id = (long)getpid();
-    loop->backend.wake = wake;
-    ws->server = channel->server = server;
-    ws->channel = channel;
-    ws->phase = KNURL_WEBSOCKET_OPEN;
-    knurl_websocket_config_init(&ws->config);
-    ws->config.max_frame_bytes = 4096;
-    ws->payload = malloc(4096);
-    channel->receive = malloc(FUZZ_INPUT_BYTES);
-    if (ws->payload == NULL || channel->receive == NULL)
+    knurl_websocket_receiver_init(ws);
+    knurl_channel_receiver_init(channel);
+    knurl_server_receiver_init(server);
+    knurl_loop_receiver_init(loop);
+    server->impl->loop = loop;
+    server->impl->config.io.chunk_bytes = 32;
+    loop->impl->owner = pthread_self();
+    loop->impl->process_id = (long)getpid();
+    loop->impl->backend.wake = wake;
+    ws->impl->server = channel->impl->server = server;
+    ws->impl->channel = channel;
+    ws->impl->phase = KNURL_WEBSOCKET_OPEN;
+    knurl_websocket_config_init(&ws->impl->config);
+    ws->impl->config.max_frame_bytes = 4096;
+    ws->impl->config.max_message_bytes = 4096;
+    ws->impl->payload = malloc(4096);
+    channel->impl->receive = malloc(FUZZ_INPUT_BYTES);
+    if (ws->impl->payload == NULL || channel->impl->receive == NULL)
         abort();
-    memcpy(channel->receive, data, length);
-    channel->receive_length = length;
-    channel->phase = KNURL_CHANNEL_TUNNEL;
-    channel->config.send_bytes = 4096;
-    channel->config.receive_bytes = FUZZ_INPUT_BYTES;
-    channel->ops.read = empty_read;
-    channel->ops.interest = noop;
-    channel->schedule = noop;
+    memcpy(channel->impl->receive, data, length);
+    channel->impl->receive_length = length;
+    channel->impl->phase = KNURL_CHANNEL_TUNNEL;
+    channel->impl->config.send_bytes = 4096;
+    channel->impl->config.receive_bytes = FUZZ_INPUT_BYTES;
+    channel->impl->ops.read = empty_read;
+    channel->impl->ops.interest = noop;
+    channel->impl->schedule = noop;
     knurl_websocket_reset_frame(ws);
     knurl_websocket_step(ws);
-    while ((chunk = channel->head) != NULL) {
-        channel->head = chunk->next;
+    while ((chunk = channel->impl->head) != NULL) {
+        channel->impl->head = chunk->next;
         free(chunk->data);
         free(chunk);
     }
-    free(channel->receive);
+    free(channel->impl->receive);
     free(channel);
-    free(ws->payload);
+    free(ws->impl->payload);
     free(ws);
     free(loop);
     free(server);

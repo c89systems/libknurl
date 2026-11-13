@@ -6,6 +6,7 @@ local M = { version = native.version, AGAIN = native.AGAIN, EOF = native.EOF, co
 M.websocket,M.loop,M.sse_encode=native.websocket,native.loop,native.sse_encode
 ---Host-control FD readiness constants; see Server:control_interest.
 M.control=native.control
+M.input=native.input
 local Server, Group = {}, {}
 Server.__index, Group.__index = Server, Group
 local requests = setmetatable({}, {__mode='k'})
@@ -29,6 +30,7 @@ local function request(handle,early)
       if not early then
         for key,value in pairs(fresh) do out[key]=value end
         out.body,out.body_path=fresh.body,fresh.body_path
+        out.trailers=handle:trailers()
         request_ready[handle]=true
       end
     end
@@ -40,10 +42,18 @@ local function request(handle,early)
   out._native=handle
   out.headers=handle:headers()
   out.queries=handle:queries()
+  if not early then out.trailers=handle:trailers() end
   local function lookup(name)
     return function(a,b) return handle[name](handle,b or a) end
   end
   out.header,out.query,out.param=lookup('header'),lookup('query'),lookup('param')
+  out.trailer=lookup('trailer')
+  for _,name in ipairs{'query_long','query_u64','query_boolean','param_long','param_u64','param_boolean'} do
+    out[name]=function(a,...)
+      if a==out then return handle[name](handle,...) end
+      return handle[name](handle,a,...)
+    end
+  end
   out.body_bytes=function() return handle:body_bytes() end
   for _,name in ipairs{'body_reader','body_materialize','body_spill','body_copy','json_record','json_array_each','xml_record'} do
     out[name]=function(a,b)

@@ -1,7 +1,7 @@
 #ifndef KNURL_PROXY_UPLOAD_H
 #define KNURL_PROXY_UPLOAD_H
 
-#include "proxy_framing.h"
+#include "http_framing.h"
 #include "proxy_headers.h"
 
 #include <curl/curl.h>
@@ -11,7 +11,7 @@
  * byte is consumed unless it fits this queue. Request trailers are retained
  * separately under the framer's bounded trailer limit. */
 typedef struct knurl_proxy_upload_buffer {
-    knurl_proxy_body_framer framer;
+    knurl_http_body_framer framer;
     knurl_proxy_headers declared;
     knurl_proxy_headers trailers;
     unsigned char *bytes;
@@ -40,7 +40,7 @@ void knurl_proxy_upload_cleanup(knurl_proxy_upload_buffer *upload);
 
 /* consumed reports exactly the prefix accepted from this input span. A
  * PAUSED result leaves the remaining bytes with the caller until resume. */
-knurl_proxy_frame_result
+knurl_http_frame_result
 knurl_proxy_upload_feed(knurl_proxy_upload_buffer *upload,
                         const unsigned char *data, size_t length,
                         size_t *consumed);
@@ -50,7 +50,7 @@ knurl_proxy_upload_feed(knurl_proxy_upload_buffer *upload,
 unsigned char *
 knurl_proxy_upload_reserve_fixed(knurl_proxy_upload_buffer *upload,
                                  size_t *capacity);
-knurl_proxy_frame_result
+knurl_http_frame_result
 knurl_proxy_upload_commit_fixed(knurl_proxy_upload_buffer *upload,
                                 size_t length);
 

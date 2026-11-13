@@ -1,6 +1,6 @@
 # HTTP framing and proxy core
 
-Proxy framing stays private in [proxy_framing.c](https://github.com/c89systems/libknurl/blob/trunk/src/proxy_framing.c), lifted
+Proxy framing stays private in [http_framing.c](https://github.com/c89systems/libknurl/blob/trunk/src/http_framing.c), lifted
 from Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19` under the repository's
 [MIT license](https://github.com/c89systems/libknurl/blob/trunk/LICENSE). Callers register proxy routes through the public proxy API;
 their adapters own fixed/chunked body decoding, backpressure and trailers.

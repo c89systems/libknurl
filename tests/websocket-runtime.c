@@ -94,14 +94,17 @@ static void resume(knurl_timer *timer, void *data)
 }
 
 static knurl_status frame(knurl_websocket *ws, knurl_websocket_opcode opcode,
-                          knurl_bytes bytes, void *data, knurl_error *error)
+                          int final, knurl_bytes bytes, void *data,
+                          knurl_error *error)
 {
     struct context *c;
     c = data;
     OBSERVE(c->request_closed && c->opens == 1 &&
             pthread_equal(c->owner, pthread_self()));
     if (strcmp(c->path, "/protocol") == 0)
-        return ws->send(ws, opcode, bytes.data, bytes.length, error);
+        return ws->send_frame(ws, opcode, final, bytes.data, bytes.length,
+                              error);
+    OBSERVE(final);
     if (bytes.length == 256) {
         OBSERVE(opcode == KNURL_WEBSOCKET_BINARY && c->frames++ == 2);
         return ws->send_text(ws, "wide", 4, error);
@@ -152,6 +155,10 @@ static knurl_status open_ws(knurl_websocket *ws, void *data, knurl_error *error)
         OBSERVE(queued == 124);
         OBSERVE(ws->send_binary(ws, output, sizeof(output), error) ==
                 KNURL_AGAIN);
+        OBSERVE(ws->send_frame(ws, KNURL_WEBSOCKET_TEXT, 0, "hold", 4, error) ==
+                KNURL_AGAIN);
+        OBSERVE(ws->send_frame(ws, KNURL_WEBSOCKET_CONTINUATION, 1, "x", 1,
+                               error) == KNURL_INVALID);
         {
             const unsigned char closing[2] = {3, 232};
             OBSERVE(ws->send(ws, KNURL_WEBSOCKET_CLOSE, closing, 2, error) ==
@@ -159,6 +166,15 @@ static knurl_status open_ws(knurl_websocket *ws, void *data, knurl_error *error)
             OBSERVE(ws->state(ws) == KNURL_WEBSOCKET_OPEN);
         }
         OBSERVE(ws->queued_bytes(ws) == queued);
+    } else if (strcmp(c->path, "/protocol") == 0) {
+        const unsigned char invalid_close[2] = {3, 237};
+        OBSERVE(ws->send(ws, KNURL_WEBSOCKET_CONTINUATION, "x", 1, error) ==
+                KNURL_INVALID);
+        OBSERVE(ws->send_text(ws, "\300\257", 2, error) == KNURL_INVALID);
+        OBSERVE(ws->send(ws, KNURL_WEBSOCKET_CLOSE, invalid_close, 2, error) ==
+                KNURL_INVALID);
+        OBSERVE(ws->send_frame(ws, KNURL_WEBSOCKET_PING, 0, "x", 1, error) ==
+                KNURL_INVALID);
     } else if (strcmp(c->path, "/timeout") == 0) {
         OBSERVE(ws->close(ws, 1005, view(""), error) == KNURL_INVALID);
         OBSERVE(ws->close(ws, 1000, view("bye"), error) == KNURL_OK);
@@ -440,13 +456,13 @@ static int send_frame(struct client *c, unsigned int first, const void *data,
     return write_all(c, wire, at + length);
 }
 
-static int expect_frame(struct client *c, unsigned int opcode, const void *data,
-                        size_t length)
+static int expect_fragment(struct client *c, unsigned int opcode, int final,
+                           const void *data, size_t length)
 {
     unsigned char wire[260];
     size_t size;
-    CHECK(read_exact(c, wire, 2) == 0 && wire[0] == (128 | opcode) &&
-          !(wire[1] & 128));
+    CHECK(read_exact(c, wire, 2) == 0 &&
+          wire[0] == ((final ? 128 : 0) | opcode) && !(wire[1] & 128));
     size = wire[1];
     if (size == 126) {
         CHECK(read_exact(c, wire, 2) == 0);
@@ -458,6 +474,11 @@ static int expect_frame(struct client *c, unsigned int opcode, const void *data,
     return 0;
 }
 
+static int expect_frame(struct client *c, unsigned int opcode, const void *data,
+                        size_t length)
+{
+    return expect_fragment(c, opcode, 1, data, length);
+}
 static int expect_close(struct client *c, unsigned short code)
 {
     unsigned char head[2];
@@ -498,16 +519,22 @@ static int client(unsigned short port, int tls)
     CHECK(send_frame(&c, 130, large, 256, 1) == 0 &&
           expect_frame(&c, 1, "wide", 4) == 0);
     CHECK(send_frame(&c, 136, close_data, sizeof(close_data), 1) == 0 &&
-          expect_frame(&c, 8, "", 0) == 0);
+          expect_frame(&c, 8, close_data, sizeof(close_data)) == 0);
     disconnect(&c);
-    for (i = 0; i < 11; ++i) {
+    for (i = 0; i < 18; ++i) {
         CHECK(connect_to(&c, port, tls, "/protocol", 1) == 0);
         if (i == 0)
             CHECK(send_frame(&c, 129, "x", 1, 0) == 0);
         if (i == 1)
             CHECK(send_frame(&c, 128, "x", 1, 1) == 0);
-        if (i == 2)
-            CHECK(send_frame(&c, 1, "x", 1, 1) == 0);
+        if (i == 2) {
+            CHECK(send_frame(&c, 1, "x", 1, 1) == 0 &&
+                  expect_fragment(&c, 1, 0, "x", 1) == 0);
+            CHECK(send_frame(&c, 137, "p", 1, 1) == 0 &&
+                  expect_frame(&c, 10, "p", 1) == 0);
+            CHECK(send_frame(&c, 128, "y", 1, 1) == 0 &&
+                  expect_frame(&c, 0, "y", 1) == 0);
+        }
         if (i == 3)
             CHECK(send_frame(&c, 129, invalid, 2, 1) == 0);
         if (i == 4)
@@ -528,21 +555,44 @@ static int client(unsigned short port, int tls)
             CHECK(send_frame(&c, 193, "x", 1, 1) == 0);
         if (i == 10)
             CHECK(send_frame(&c, 137, large, 126, 1) == 0);
-        if (i == 2 || i == 3 || i == 7) {
-            CHECK(expect_frame(
-                      &c, 1, i == 3 ? (const void *)invalid : (const void *)"x",
-                      i == 3 ? 2 : 1) == 0);
+        if (i == 11)
+            CHECK(send_frame(&c, 1, "x", 1, 1) == 0 &&
+                  expect_fragment(&c, 1, 0, "x", 1) == 0 &&
+                  send_frame(&c, 129, "y", 1, 1) == 0);
+        if (i == 12)
+            CHECK(send_frame(&c, 129, "\342", 1, 1) == 0);
+        if (i == 13)
+            CHECK(send_frame(&c, 1, "\342", 1, 1) == 0 &&
+                  expect_fragment(&c, 1, 0, "\342", 1) == 0 &&
+                  send_frame(&c, 128, "x", 1, 1) == 0);
+        if (i == 14) {
+            CHECK(send_frame(&c, 2, large, 100, 1) == 0 &&
+                  expect_fragment(&c, 2, 0, large, 100) == 0);
+            CHECK(send_frame(&c, 0, large, 100, 1) == 0 &&
+                  expect_fragment(&c, 0, 0, large, 100) == 0);
+            CHECK(send_frame(&c, 128, large, 100, 1) == 0);
+        }
+        if (i == 15) {
+            const unsigned char bad_close[4] = {3, 232, 0xc0, 0xaf};
+            CHECK(send_frame(&c, 136, bad_close, 4, 1) == 0);
+        }
+        if (i == 16)
+            CHECK(send_frame(&c, 9, "p", 1, 1) == 0);
+        if (i == 17)
+            CHECK(send_frame(&c, 1, "\342", 1, 1) == 0 &&
+                  expect_fragment(&c, 1, 0, "\342", 1) == 0 &&
+                  send_frame(&c, 128, "\202\254", 2, 1) == 0 &&
+                  expect_frame(&c, 0, "\202\254", 2) == 0);
+        if (i == 2 || i == 17) {
             CHECK(send_frame(&c, 136, "", 0, 1) == 0 &&
                   expect_frame(&c, 8, "", 0) == 0);
-        } else if (i == 4 || i == 5)
-            CHECK(expect_frame(&c, 8, "", 0) == 0);
-        else {
-            unsigned char byte;
-            int count;
-            count = c.ssl != NULL ? SSL_read(c.ssl, &byte, 1)
-                                  : (int)read(c.fd, &byte, 1);
-            CHECK(count <= 0);
-        }
+        } else
+            CHECK(
+                expect_close(
+                    &c, (unsigned short)(i == 3 || i == 12 || i == 13 || i == 15
+                                             ? 1007
+                                         : i == 6 || i == 14 ? 1009
+                                                             : 1002)) == 0);
         disconnect(&c);
     }
     CHECK(connect_to(&c, port, tls, "/open-error", 1) == 0 &&
@@ -604,7 +654,7 @@ static int exited(knurl_server *s, const knurl_process_context *p, void *data)
     (void)s;
     (void)p;
     (void)data;
-    OBSERVE(failed_accepts == 1 && closes == 16);
+    OBSERVE(failed_accepts == 1 && closes == 23);
     return failures ? 1 : 0;
 }
 

@@ -113,7 +113,7 @@ int knurl_lua_test_exchange(unsigned short port, const char *method,
             goto done;
     }
     framing[0] = 0;
-    if (!omit_length)
+    if (!omit_length && strstr(request_headers, "Transfer-Encoding:") == NULL)
         snprintf(framing, sizeof(framing), "Content-Length: %lu\r\n",
                  (unsigned long)length);
     snprintf(head, sizeof(head),
@@ -228,6 +228,10 @@ static int drive(unsigned short port)
     REQ("GET", "/text", "", 0, 200, "hello", 5);
     REQ("GET", "/nil", "", 0, 204, "", 0);
     REQ("POST", "/echo", "A\0B", 3, 201, "A\0B", 3);
+    request_headers = "Transfer-Encoding: chunked\r\n";
+    REQ("POST", "/echo", "3\r\nA\0B\r\n0\r\nX-Trace: done\r\n\r\n", 28, 201,
+        "A\0B", 3);
+    request_headers = "";
     REQ("GET", "/group/value/42?x=&x=two", "", 0, 200, "42", 2);
     REQ("GET", "/before", "", 0, 403, "blocked", 7);
     REQ("GET", "/after", "", 0, 202, "changed", 7);

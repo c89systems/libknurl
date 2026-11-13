@@ -1,6 +1,6 @@
 #include "proxy_http.h"
 
-#include "proxy_framing.h"
+#include "http_framing.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -101,7 +101,7 @@ static int knurl_proxy_http_trailer_declaration(const char *value)
             length--;
         }
         if (length == 0u || ++count > KNURL_PROXY_HEADER_COUNT_LIMIT ||
-            !knurl_proxy_trailer_field_allowed(start, length)) {
+            !knurl_http_trailer_field_allowed(start, length)) {
             return 0;
         }
         for (i = 0u; i < length; ++i) {
@@ -344,7 +344,7 @@ knurl_proxy_header_status knurl_proxy_http_response_header(
     memcpy(value_copy, value, value_length);
     value_copy[value_length] = '\0';
     if (response->phase == KNURL_PROXY_HTTP_READING_TRAILERS &&
-        !knurl_proxy_trailer_field_allowed(name_copy, name_length)) {
+        !knurl_http_trailer_field_allowed(name_copy, name_length)) {
         free(name_copy);
         free(value_copy);
         if (reason != NULL)

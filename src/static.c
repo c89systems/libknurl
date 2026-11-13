@@ -101,7 +101,7 @@ static knurl_status serve(knurl_request *request, knurl_reply *reply,
             return not_found(r, reply, error);
         }
         return knurl_static_reply_asset(&r->config, r->custom, request, reply,
-                                        asset, r->file, error);
+                                        r->provider, asset, r->file, error);
     }
     prefix = strlen(r->prefix);
     relative = strcmp(r->prefix, "/") == 0 ? path : path + prefix;
@@ -138,7 +138,7 @@ static knurl_status serve(knurl_request *request, knurl_reply *reply,
             return redirect(request, reply, error);
         }
         status = knurl_static_reply_asset(&r->config, r->custom, request, reply,
-                                          asset, copy, error);
+                                          r->provider, asset, copy, error);
         free(copy);
         return status;
     }
@@ -182,7 +182,7 @@ static knurl_status serve(knurl_request *request, knurl_reply *reply,
         return redirect(request, reply, error);
     }
     status = knurl_static_reply_asset(&r->config, r->custom, request, reply,
-                                      selected, index, error);
+                                      r->provider, selected, index, error);
     free(index);
     return status;
 }
@@ -324,6 +324,8 @@ static knurl_status add_route(knurl_router *router, knurl_route_group *group,
                             ? config->methods
                             : KNURL_HTTP_METHODS_GET | KNURL_HTTP_METHODS_HEAD;
     r->config.index_enabled = config->index_enabled;
+    r->config.compression_disabled = config->compression_disabled;
+    r->config.precompressed_disabled = config->precompressed_disabled;
     status = knurl_mime_copy(config->mime_types, config->mime_type_count,
                              &r->config.mime_types, error);
     if (status != KNURL_OK) {

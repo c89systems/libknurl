@@ -16,8 +16,8 @@ void knurl_websocket_reset_frame(knurl_websocket *ws)
 static void protocol_error(knurl_websocket *ws, knurl_status cause,
                            unsigned short code)
 {
-    (void)code;
-    knurl_channel_finish(ws->impl->channel, cause);
+    knurl_websocket_stop(ws, cause, code);
+    ws->impl->read_failed = 1;
 }
 
 static knurl_status receive(knurl_websocket *ws, void *data, size_t need,
@@ -40,6 +40,7 @@ static int frame(knurl_websocket *ws)
     size_t extra;
     size_t i;
     unsigned int opcode;
+    int code;
     while (!ws->impl->frame_ready) {
         if (ws->impl->header_used < ws->impl->header_need) {
             if (receive(ws, ws->impl->header + ws->impl->header_used,
@@ -63,11 +64,8 @@ static int frame(knurl_websocket *ws)
                 protocol_error(ws, KNURL_INVALID, 1002);
                 return 0;
             }
-            if (opcode == 0) {
-                protocol_error(ws, KNURL_NOT_SUPPORTED, 1003);
-                return 0;
-            }
             ws->impl->opcode = (knurl_websocket_opcode)opcode;
+            ws->impl->final = (ws->impl->header[0] & 128) != 0;
             extra = ws->impl->header[1] & 127;
             ws->impl->header_need =
                 6 + (extra < 126 ? 0 : (extra == 126 ? 2 : 8));
@@ -89,8 +87,14 @@ static int frame(knurl_websocket *ws)
                     }
                     length = length * 256 + ws->impl->header[at];
                 }
+                if ((extra == 126 && length < 126) ||
+                    (extra == 127 && length <= 65535)) {
+                    protocol_error(ws, KNURL_INVALID, 1002);
+                    return 0;
+                }
             }
-            if (length > ws->impl->config.max_frame_bytes) {
+            if (ws->impl->opcode < KNURL_WEBSOCKET_CLOSE &&
+                length > ws->impl->config.max_frame_bytes) {
                 protocol_error(ws, KNURL_LIMIT, 1009);
                 return 0;
             }
@@ -107,6 +111,20 @@ static int frame(knurl_websocket *ws)
         for (i = 0; i < ws->impl->payload_length; ++i)
             ws->impl->payload[i] ^=
                 ws->impl->header[ws->impl->header_need - 4 + (i & 3)];
+        code = 0;
+        if (ws->impl->opcode < KNURL_WEBSOCKET_CLOSE)
+            code = knurl_websocket_message_check(
+                &ws->impl->incoming, ws->impl->opcode, ws->impl->final,
+                ws->impl->payload, ws->impl->payload_length,
+                ws->impl->config.max_message_bytes);
+        else if (ws->impl->opcode == KNURL_WEBSOCKET_CLOSE)
+            code = knurl_websocket_close_check(ws->impl->payload,
+                                               ws->impl->payload_length);
+        if (code != 0) {
+            protocol_error(ws, code == 1009 ? KNURL_LIMIT : KNURL_INVALID,
+                           (unsigned short)code);
+            return 0;
+        }
         ws->impl->frame_ready = 1;
     }
     return 1;
@@ -141,7 +159,13 @@ static int control(knurl_websocket *ws)
             ws->impl->payload_length > 2 ? ws->impl->payload_length - 2 : 0;
         ws->impl->peer_closed = 1;
         if (!ws->impl->close_started) {
-            knurl_websocket_stop(ws, KNURL_OK, 0);
+            knurl_websocket_stop(ws, KNURL_OK, code == 1005 ? 0 : code);
+            if (code != 1005) {
+                memcpy(ws->impl->close_payload, ws->impl->peer_payload,
+                       ws->impl->outcome.peer_reason.length + 2);
+                ws->impl->close_length =
+                    ws->impl->outcome.peer_reason.length + 2;
+            }
         }
     }
     knurl_websocket_reset_frame(ws);
@@ -208,7 +232,8 @@ void knurl_websocket_step(knurl_websocket *ws)
             ws->impl->in_frame = 1;
             knurl_error_clear(&error);
             status = ws->impl->config.on_frame(
-                ws, ws->impl->opcode, bytes, ws->impl->config.userdata, &error);
+                ws, ws->impl->opcode, ws->impl->final, bytes,
+                ws->impl->config.userdata, &error);
             ws->impl->in_frame = 0;
             if (ws->impl->phase == KNURL_WEBSOCKET_OPEN &&
                 status == KNURL_AGAIN) {

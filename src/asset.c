@@ -120,6 +120,9 @@ knurl_status knurl_asset_info_copy(const knurl_asset_info *input,
         (input->kind != KNURL_ASSET_FILE &&
          input->kind != KNURL_ASSET_DIRECTORY) ||
         !knurl_u64_valid(input->size) ||
+        (input->has_modification_time &&
+         (!knurl_u64_valid(input->modification_seconds) ||
+          input->modification_nanoseconds >= 1000000000UL)) ||
         !bounded(input->etag, KNURL_ASSET_ETAG_MAX) ||
         !bounded(input->content_type, KNURL_ASSET_TYPE_MAX) ||
         !bounded(input->last_modified, KNURL_ASSET_DATE_MAX) ||
@@ -203,9 +206,18 @@ static knurl_status access(knurl_asset *a, void *owner, knurl_error *error)
     knurl_error_clear(error);
     return KNURL_OK;
 }
-static knurl_status read_at(knurl_asset *a, void *owner, knurl_u64 offset,
-                            void *bytes, size_t capacity, size_t *produced,
-                            knurl_error *error)
+knurl_status knurl_asset_source_claim(knurl_asset *a, void *owner,
+                                      knurl_error *error)
+{
+    knurl_status status = access(a, NULL, error);
+    if (status == KNURL_OK)
+        a->impl->owner = owner;
+    return status;
+}
+knurl_status knurl_asset_read_owned(knurl_asset *a, void *owner,
+                                    knurl_u64 offset, void *bytes,
+                                    size_t capacity, size_t *produced,
+                                    knurl_error *error)
 {
     knurl_u64 remaining;
     size_t count = 0, bound;
@@ -254,7 +266,8 @@ knurl_status knurl_asset_read(knurl_asset *a, knurl_u64 offset, void *bytes,
                               size_t capacity, size_t *produced,
                               knurl_error *error)
 {
-    return read_at(a, NULL, offset, bytes, capacity, produced, error);
+    return knurl_asset_read_owned(a, NULL, offset, bytes, capacity, produced,
+                                  error);
 }
 knurl_status knurl_asset_list_next(knurl_asset *a, knurl_asset_entry *out,
                                    knurl_error *error)
@@ -365,7 +378,8 @@ static knurl_status source_read(void *bytes, size_t capacity, size_t *produced,
     if (knurl_u64_to_size(s->remaining, &bound, NULL) == KNURL_OK &&
         capacity > bound)
         capacity = bound;
-    status = read_at(s->asset, s, s->offset, bytes, capacity, produced, error);
+    status = knurl_asset_read_owned(s->asset, s, s->offset, bytes, capacity,
+                                    produced, error);
     if (status != KNURL_OK)
         return status;
     knurl_u64_from_size(*produced, &amount, NULL);

@@ -3,6 +3,7 @@
 #include "response_internal.h"
 #include "body_internal.h"
 #include "policy_internal.h"
+#include "http_framing.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +14,7 @@ struct knurl_input {
     size_t pending_length;
     const unsigned char *surplus;
     size_t surplus_length;
-    u_int64_t remaining;
+    knurl_http_body_framer framer;
     u_int64_t received;
     u_int64_t started;
     u_int64_t paused_at;
@@ -25,6 +26,8 @@ struct knurl_input {
     int end_called;
     int in_callback;
     int resume_requested;
+    knurl_status failure;
+    int failure_code;
 };
 
 static void counter(u_int64_t value, knurl_u64 *out)
@@ -60,18 +63,21 @@ knurl_status knurl_kore_body_create(knurl_request *request, const void *data,
         return knurl_fail(error, KNURL_NOMEM, "body_start",
                           "cannot allocate bounded input state");
     input->request = request;
-    input->remaining =
-        request->impl->has_length
-            ? ((u_int64_t)request->impl->content_length.high << 32) |
-                  request->impl->content_length.low
-            : 0;
+    if (request->impl->has_coding)
+        knurl_http_body_framer_chunked(&input->framer);
+    else
+        knurl_http_body_framer_fixed(
+            &input->framer,
+            request->impl->has_length
+                ? ((u_int64_t)request->impl->content_length.high << 32) |
+                      request->impl->content_length.low
+                : 0);
     available = length;
-    if ((u_int64_t)available > input->remaining)
-        available = (size_t)input->remaining;
+    if (!request->impl->has_coding &&
+        (u_int64_t)available > input->framer.remaining)
+        available = (size_t)input->framer.remaining;
     input->pending = data;
     input->pending_length = available;
-    input->remaining -= available;
-    input->received = available;
     input->surplus =
         length > available ? (const unsigned char *)data + available : NULL;
     input->surplus_length = length - available;
@@ -131,9 +137,6 @@ static int received(struct netbuf *buffer)
     request = input->request;
     input->pending = buffer->buf;
     input->pending_length = buffer->s_off;
-    input->remaining -= buffer->s_off;
-    input->received += buffer->s_off;
-    counter(input->received, &request->impl->outcome.received_body_bytes);
     input->waiting = 0;
     stop_read(request);
     request->impl->response->impl->schedule(request->impl->response);
@@ -152,8 +155,9 @@ static void arm_read(struct knurl_input *input)
     capacity = request->impl->server->impl->config.io.chunk_bytes;
     if (capacity > request->impl->server->impl->config.io.input_queue_bytes)
         capacity = request->impl->server->impl->config.io.input_queue_bytes;
-    if ((u_int64_t)capacity > input->remaining)
-        capacity = (size_t)input->remaining;
+    if (!request->impl->has_coding &&
+        (u_int64_t)capacity > input->framer.remaining)
+        capacity = (size_t)input->framer.remaining;
     net_recv_reset(connection, capacity, received);
     connection->rnb->extra = input;
     connection->rnb->flags |= NETBUF_CALL_CB_ALWAYS;
@@ -234,13 +238,108 @@ knurl_status knurl_kore_body_empty_reply(knurl_request *request,
     return KNURL_OK;
 }
 
+static size_t accept_payload(void *data, const unsigned char *bytes,
+                             size_t count)
+{
+    struct knurl_input *input = data;
+    knurl_request *request = input->request;
+    knurl_u64 next, amount;
+    knurl_status status;
+    knurl_error error;
+    size_t consumed;
+    int order;
+    if (request->impl->response->impl->phase >= KNURL_RESPONSE_FINISHING)
+        return 0;
+    if (count > request->impl->server->impl->config.io.chunk_bytes)
+        count = request->impl->server->impl->config.io.chunk_bytes;
+    if (count > request->impl->server->impl->config.io.input_queue_bytes)
+        count = request->impl->server->impl->config.io.input_queue_bytes;
+    (void)knurl_u64_from_size(count, &amount, NULL);
+    status = knurl_u64_add(request->impl->body_store->impl->length, amount,
+                           &next, &error);
+    order = 1;
+    if (status == KNURL_OK)
+        (void)knurl_u64_compare(
+            next, request->impl->body_store->impl->policy.max_bytes, &order,
+            NULL);
+    if (status != KNURL_OK || order > 0) {
+        input->failure = KNURL_LIMIT;
+        input->failure_code = 413;
+        return 0;
+    }
+    consumed = count;
+    knurl_error_clear(&error);
+    if (request->impl->plan.body.mode == KNURL_BODY_STREAM) {
+        consumed = 0;
+        input->in_callback = 1;
+        status =
+            request->impl->plan.on_body(request, bytes, count, &consumed,
+                                        request->impl->plan.userdata, &error);
+        input->in_callback = 0;
+        if ((status != KNURL_OK && status != KNURL_AGAIN) || consumed > count ||
+            (status == KNURL_AGAIN && consumed != 0)) {
+            input->failure = status > KNURL_EOF && status <= KNURL_BACKEND
+                                 ? status
+                                 : KNURL_INVALID;
+            input->failure_code = 500;
+            return 0;
+        }
+    }
+    status =
+        knurl_body_append(request->impl->body_store, bytes, consumed, &error);
+    if (status != KNURL_OK) {
+        input->failure = status;
+        input->failure_code = 413;
+        return 0;
+    }
+    input->received += consumed;
+    counter(input->received, &request->impl->outcome.received_body_bytes);
+    request->impl->outcome.delivered_body_bytes =
+        request->impl->body_store->impl->length;
+    if (consumed < count) {
+        input->paused = !input->resume_requested;
+        input->paused_at = kore_time_ms();
+    }
+    input->resume_requested = 0;
+    return consumed;
+}
+
+static int accept_trailer(void *data, const char *name, const char *value)
+{
+    struct knurl_input *input = data;
+    knurl_request *request = input->request;
+    size_t n = strlen(name), v = strlen(value),
+           count = request->impl->trailer_count;
+    knurl_header *headers;
+    char *copy;
+    copy = malloc(n + v + 2);
+    if (copy == NULL)
+        goto nomem;
+    headers = realloc(request->impl->trailers, (count + 1) * sizeof(*headers));
+    if (headers == NULL) {
+        free(copy);
+        goto nomem;
+    }
+    memcpy(copy, name, n + 1);
+    memcpy(copy + n + 1, value, v + 1);
+    request->impl->trailers = headers;
+    headers[count].name = knurl_view(copy);
+    headers[count].value = knurl_view(copy + n + 1);
+    request->impl->trailer_count = count + 1;
+    return 1;
+nomem:
+    input->failure = KNURL_NOMEM;
+    input->failure_code = 500;
+    return 0;
+}
+
 void knurl_kore_body_step(knurl_request *request)
 {
     struct knurl_input *input;
     knurl_status status;
     knurl_error error;
-    size_t count;
     size_t consumed;
+    knurl_http_frame_result framed;
     input = request->impl->input;
     if (input == NULL || input->dead || request->impl->outcome.body_complete)
         return;
@@ -256,59 +355,40 @@ void knurl_kore_body_step(knurl_request *request)
         return;
     }
     if (input->pending_length != 0) {
-        count = input->pending_length;
-        if (count > request->impl->server->impl->config.io.chunk_bytes)
-            count = request->impl->server->impl->config.io.chunk_bytes;
-        if (count > request->impl->server->impl->config.io.input_queue_bytes)
-            count = request->impl->server->impl->config.io.input_queue_bytes;
-        consumed = count;
-        knurl_error_clear(&error);
-        if (request->impl->plan.body.mode == KNURL_BODY_STREAM) {
-            consumed = 0;
-            input->in_callback = 1;
-            status = request->impl->plan.on_body(
-                request, input->pending, count, &consumed,
-                request->impl->plan.userdata, &error);
-            input->in_callback = 0;
-            if ((status != KNURL_OK && status != KNURL_AGAIN) ||
-                consumed > count || (status == KNURL_AGAIN && consumed != 0)) {
-                knurl_kore_request_fail(request,
-                                        status > KNURL_EOF &&
-                                                status <= KNURL_BACKEND
-                                            ? status
-                                            : KNURL_INVALID,
-                                        500);
-                return;
-            }
+        framed = knurl_http_body_framer_feed(
+            &input->framer, input->pending, input->pending_length, &consumed,
+            accept_payload, accept_trailer, input);
+        if (input->failure != KNURL_OK) {
+            knurl_kore_request_fail_message(
+                request, input->failure, input->failure_code,
+                input->failure_code == 413 ? "failed to stream request body"
+                                           : NULL);
+            return;
         }
-        status = knurl_body_append(request->impl->body_store, input->pending,
-                                   consumed, &error);
-        if (status != KNURL_OK) {
-            knurl_kore_request_fail_message(request, status, 413,
-                                            "failed to stream request body");
+        if (framed == KNURL_HTTP_FRAME_INVALID) {
+            knurl_kore_request_fail_message(request, KNURL_INVALID, 400,
+                                            "malformed request body framing");
             return;
         }
         input->pending += consumed;
         input->pending_length -= consumed;
-        request->impl->outcome.delivered_body_bytes =
-            request->impl->body_store->impl->length;
-        if (consumed < count) {
-            input->paused = !input->resume_requested;
-            input->resume_requested = 0;
-            input->paused_at = kore_time_ms();
+        if (input->paused)
             return;
-        }
-        input->resume_requested = 0;
         if (request->impl->response->impl->phase >= KNURL_RESPONSE_FINISHING) {
             request->impl->response->impl->schedule(request->impl->response);
             return;
         }
-        if (input->pending_length != 0) {
+        if (framed == KNURL_HTTP_FRAME_COMPLETE && input->pending_length != 0) {
+            input->surplus = input->pending;
+            input->surplus_length = input->pending_length;
+            input->pending = NULL;
+            input->pending_length = 0;
+        } else if (input->pending_length != 0) {
             request->impl->response->impl->schedule(request->impl->response);
             return;
         }
     }
-    if (input->remaining != 0) {
+    if (input->framer.phase != KNURL_HTTP_PHASE_COMPLETE) {
         arm_read(input);
         return;
     }

@@ -93,14 +93,14 @@ static void disconnect(struct peer *peer)
     SSL_free(peer->ssl);
     close(peer->fd);
 }
-static int send_frame(struct peer *peer, unsigned int opcode, const void *data,
-                      size_t length)
+static int send_fragment(struct peer *peer, unsigned int opcode, int final,
+                         const void *data, size_t length)
 {
     unsigned char buffer[512];
     const unsigned char *bytes = data;
     size_t offset = 2, i;
     CHECK(length <= 256);
-    buffer[0] = (unsigned char)(0x80U | opcode);
+    buffer[0] = (unsigned char)((final ? 0x80U : 0) | opcode);
     if (length <= 125)
         buffer[1] = (unsigned char)(0x80U | (unsigned int)length);
     else {
@@ -115,13 +115,19 @@ static int send_frame(struct peer *peer, unsigned int opcode, const void *data,
         buffer[offset + i] = bytes[i] ^ 0x37U;
     return write_all(peer, buffer, offset + length);
 }
-static int expect_frame(struct peer *peer, unsigned int opcode,
-                        const void *data, size_t length)
+static int send_frame(struct peer *peer, unsigned int opcode, const void *data,
+                      size_t length)
+{
+    return send_fragment(peer, opcode, 1, data, length);
+}
+static int expect_fragment(struct peer *peer, unsigned int opcode, int final,
+                           const void *data, size_t length)
 {
     unsigned char head[2], bytes[512];
     size_t received;
     CHECK(read_all(peer, head, 2) == 0 &&
-          head[0] == (unsigned char)(0x80U | opcode) && !(head[1] & 0x80U));
+          head[0] == (unsigned char)((final ? 0x80U : 0) | opcode) &&
+          !(head[1] & 0x80U));
     received = head[1];
     if (received == 126) {
         CHECK(read_all(peer, head, 2) == 0);
@@ -131,35 +137,47 @@ static int expect_frame(struct peer *peer, unsigned int opcode,
           read_all(peer, bytes, received) == 0 && !memcmp(bytes, data, length));
     return 0;
 }
+static int expect_frame(struct peer *peer, unsigned int opcode,
+                        const void *data, size_t length)
+{
+    return expect_fragment(peer, opcode, 1, data, length);
+}
 static int finish(struct peer *peer, unsigned short code)
 {
     unsigned char bytes[2];
     bytes[0] = (unsigned char)(code >> 8);
     bytes[1] = (unsigned char)code;
     CHECK(send_frame(peer, 8, bytes, 2) == 0 &&
-          expect_frame(peer, 8, "", 0) == 0);
+          expect_frame(peer, 8, bytes, 2) == 0);
     disconnect(peer);
     return 0;
 }
 static int echo(unsigned short port, SSL_CTX *context)
 {
     struct peer peer;
-    char large[512];
+    char large[256];
+    unsigned char closing[2] = {3, 232};
     memset(large, 'w', sizeof(large));
     CHECK(connect_ws(&peer, port, context, "/ws") == 0 &&
           expect_frame(&peer, 1, "ready", 5) == 0);
-    CHECK(expect_frame(&peer, 0, "", 0) == 0 &&
-          expect_frame(&peer, 1, "\xc0\xaf", 2) == 0 &&
-          expect_frame(&peer, 2, large, sizeof(large)) == 0);
-    CHECK(expect_frame(&peer, 8, "", 0) == 0 &&
-          expect_frame(&peer, 1, "after-close", 11) == 0);
+    CHECK(expect_frame(&peer, 2, large, sizeof(large)) == 0);
     CHECK(send_frame(&peer, 1, "pause", 5) == 0 &&
           expect_frame(&peer, 1, "pause", 5) == 0);
     CHECK(send_frame(&peer, 2, "A\0B", 3) == 0 &&
           expect_frame(&peer, 2, "A\0B", 3) == 0);
     CHECK(send_frame(&peer, 9, "p", 1) == 0 &&
           expect_frame(&peer, 10, "p", 1) == 0);
-    return finish(&peer, 1000);
+    CHECK(send_fragment(&peer, 1, 0, "\342", 1) == 0 &&
+          expect_fragment(&peer, 1, 0, "\342", 1) == 0);
+    CHECK(send_frame(&peer, 9, "p", 1) == 0 &&
+          expect_frame(&peer, 10, "p", 1) == 0);
+    CHECK(send_frame(&peer, 0, "\202\254", 2) == 0 &&
+          expect_frame(&peer, 0, "\202\254", 2) == 0);
+    CHECK(send_frame(&peer, 1, "close", 5) == 0 &&
+          expect_frame(&peer, 8, "", 0) == 0);
+    CHECK(send_frame(&peer, 8, closing, 2) == 0);
+    disconnect(&peer);
+    return 0;
 }
 int knurl_lua_test_events(unsigned short http, unsigned short tls,
                           SSL_CTX *context, int notify)

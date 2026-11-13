@@ -194,10 +194,11 @@ static int lookup(lua_State *L, int kind)
     if (memchr(name, 0, length))
         return rl_error(
             L, (rl_fail(&e, KNURL_INVALID, "lookup name contains NUL"), &e));
-    status = kind == 0 ? knurl_request_header_first(r->native, name, &value, &e)
-             : kind == 1
-                 ? knurl_request_query_first(r->native, name, &value, &e)
-                 : knurl_request_path_param(r->native, name, &value, &e);
+    status =
+        kind == 0   ? knurl_request_header_first(r->native, name, &value, &e)
+        : kind == 1 ? knurl_request_query_first(r->native, name, &value, &e)
+        : kind == 2 ? knurl_request_path_param(r->native, name, &value, &e)
+                    : knurl_request_trailer_first(r->native, name, &value, &e);
     if (status == KNURL_EOF) {
         lua_pushnil(L);
         return 1;
@@ -210,19 +211,29 @@ static int lookup(lua_State *L, int kind)
 static int header(lua_State *L) { return lookup(L, 0); }
 static int query(lua_State *L) { return lookup(L, 1); }
 static int param(lua_State *L) { return lookup(L, 2); }
+static int trailer(lua_State *L) { return lookup(L, 3); }
 static int pairs_list(lua_State *L, int queries)
 {
     struct rl_request *r;
     knurl_error e;
     size_t i, n;
     knurl_header value;
+    knurl_bytes probe;
     if (!valid(L, &r, &e))
         return rl_error(L, &e);
-    n = queries ? knurl_request_query_count(r->native)
-                : knurl_request_header_count(r->native);
+    if (queries == 2) {
+        if (knurl_request_trailer_first(r->native, "", &probe, &e) ==
+            KNURL_STATE)
+            return rl_error(L, &e);
+        n = knurl_request_trailer_count(r->native);
+    } else
+        n = queries ? knurl_request_query_count(r->native)
+                    : knurl_request_header_count(r->native);
     lua_createtable(L, (int)n, 0);
     for (i = 0; i < n; ++i) {
-        if (queries)
+        if (queries == 2)
+            knurl_request_trailer_at(r->native, i, &value, NULL);
+        else if (queries)
             knurl_request_query_at(r->native, i, &value, NULL);
         else
             knurl_request_header_at(r->native, i, &value, NULL);
@@ -235,6 +246,7 @@ static int pairs_list(lua_State *L, int queries)
 }
 static int headers(lua_State *L) { return pairs_list(L, 0); }
 static int queries(lua_State *L) { return pairs_list(L, 1); }
+static int trailers(lua_State *L) { return pairs_list(L, 2); }
 static int request_body(lua_State *L)
 {
     struct rl_request *r;
@@ -614,6 +626,8 @@ void rl_requests_open(lua_State *L)
         {"header", header},
         {"query", query},
         {"param", param},
+        {"trailer", trailer},
+        {"trailers", trailers},
         {"headers", headers},
         {"queries", queries},
         {"body_bytes", request_body},
@@ -632,5 +646,6 @@ void rl_requests_open(lua_State *L)
     lua_pushvalue(L, -1);
     lua_setfield(L, -2, "__index");
     luaL_setfuncs(L, methods, 0);
+    rl_input_requests_open(L);
     lua_pop(L, 1);
 }

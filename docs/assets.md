@@ -98,7 +98,8 @@ office documents, ebooks and web/data formats. `.md`/`.markdown` remain
 The checked-in [catalogue](https://github.com/c89systems/libknurl/blob/trunk/src/mime.c) uses registered
 [media types](https://www.iana.org/assignments/media-types/) where available and
 conventional types otherwise. Extension inference never reads or sniffs content.
-Compression suffixes do not set Content-Encoding or decompress the payload.
+Compression suffixes alone do not set Content-Encoding or decompress payloads.
+Negotiated sidecars follow the policy below.
 
 Resolution precedence, for GET/HEAD and ranged responses alike:
 
@@ -179,15 +180,50 @@ no-store; filesystem 404 replies are empty unless configured otherwise. Cache
 and not-found policies are explicit. ETag/If-Match/If-None-Match checks validate
 complete lists, including malformed tails, and distinguish weak/strong comparison.
 Last-Modified uses the same opened metadata, formats English HTTP dates
-independently of locale, and preserves the existing equal-timestamp
-If-Modified-Since response when If-None-Match is absent. Live HTTP handling uses
+independently of locale, and returns 304 for If-Modified-Since dates at or after
+Last-Modified when If-None-Match is absent. Live HTTP handling uses
 libcurl's public [date parser](https://curl.se/libcurl/c/curl_getdate.html); asset
 construction does not initialize curl or perform network work. Only GET applies
-Range. Preserve one `bytes` range, suffix/open-ended forms,
-If-Range's strong validator rule, 206 Content-Range and 416 unsatisfiable results.
-Multiple/malformed byte ranges are unsatisfiable; unknown range units are ignored.
+Range. Up to 16 `bytes` ranges support suffix/open-ended forms. Unsatisfiable
+members are dropped when another member is satisfiable. One selected member
+uses 206 Content-Range; several use streamed multipart/byteranges with per-part
+types/ranges and a checked complete length. Request order and overlaps are
+preserved. Malformed, excessive or wholly unsatisfiable lists return 416;
+unknown units are ignored. If-Range accepts strong ETags or exact matching dates
+when the provider explicitly sets `last_modified_strong`. Filesystem timestamps
+alone do not assert that strength.
 HEAD retains representation length without reading content. Counters remain wide
 on armhf, including ranges beyond 4 GiB.
+
+Static configuration enables negotiated compression by default. Set
+`compression_disabled=true` to disable it, or `precompressed_disabled=true` to
+disable sidecar lookup while retaining dynamic gzip. The same fields exist in C
+and Lua. Missing Accept-Encoding selects identity. Explicit weights, wildcard and
+identity exclusions determine selection; equal quality prefers Brotli sidecar,
+gzip sidecar, dynamic gzip, then identity. Malformed qvalues fail; no acceptable
+available representation returns 406. Vary includes Accept-Encoding without
+discarding other Vary fields. Range selects identity, returning 406 if identity
+is excluded; Cache-Control no-transform suppresses transformations.
+
+Sidecars `original.br` and `original.gz` are opened through the same confined
+provider. They must be regular files at least as fresh as the original. Filesystem
+providers supply precise modification metadata. Custom providers can set
+`has_modification_time`, `modification_seconds` and `modification_nanoseconds`;
+otherwise both Last-Modified values must explicitly assert strength. Missing or
+stale sidecars fall back to another acceptable representation. All unused opened
+assets close; the selected asset stays pinned through delivery. MIME inference
+uses the original path/type, encoding has a distinct ETag, and sidecar length is
+known. A sidecar extension served directly still does not imply Content-Encoding.
+
+Dynamic gzip uses bounded input/output chunks from the pinned zlib dependency,
+with deterministic headers, reset and normal source ownership. It never reads
+the full asset, compresses to determine its length, or stages a temporary file.
+Eligible types are text/*, JSON/+json, XML/+xml, JavaScript and WASM. Empty assets
+and already compressed binary types skip dynamic compression. Its validator is
+distinct and weak; compressed Content-Length is unknown. HEAD selects normally
+but never reads/compresses content. Brotli generation is not provided. Replacing
+a static payload in an after-hook retires its source and drops automatic
+representation encoding/validator/range metadata.
 
 The [asset fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/asset.c) covers ownership transfer, provider retention,
 source pause/reset, invalid counts, premature EOF, reentry, path/symlink/special-

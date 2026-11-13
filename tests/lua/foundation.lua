@@ -80,15 +80,29 @@ ok(server:get('/text',function(req)
   calls=calls+1;retained=req
   assert(req.method=='GET' and req.path=='/text' and req.ip=='127.0.0.1')
   assert(req.header('absent')==nil and req.header('X-Test')=='value')
+  local value,cause=req.query_long('absent')
+  assert(value==nil and cause.status==knurl.status.EOF)
   assert(#req.headers>=3 and req.body=='')
   assert(req.body_spooled==false)
   return 'hello'
 end))
 ok(server:get('/nil',function() end))
-ok(server:post('/echo',function(req) assert(req.body_size==3);return {status=201.0,body=req.body} end,{body={mode='buffered',max_bytes='16.0'}}))
+ok(server:post('/echo',function(req)
+  assert(req.body_size==3)
+  if req.header('transfer-encoding') then
+    assert(req.trailer('x-trace')=='done' and #req.trailers==1)
+    assert(req.header('x-trace')==nil)
+  else assert(#req.trailers==0 and req.trailer('x-trace')==nil) end
+  return {status=201.0,body=req.body}
+end,{body={mode='buffered',max_bytes='16.0'}}))
 local group=ok(server:group('/group',{before=function(req) req.group_seen=true end}))
 ok(group:get('/value/:id',function(req)
   assert(req.group_seen and req.query('x')=='' and #req.queries==2)
+  local value,cause=req.query_boolean('x')
+  assert(value==nil and cause.status==knurl.status.INVALID)
+  value,cause=req:param_long('id')
+  assert(value==42 and cause==nil)
+  assert(req.param_u64('id')==42)
   return req.param('id')
 end))
 local value,why=server:route{path='/literal/:value',path_kind='literal',handler=function() end}

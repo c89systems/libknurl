@@ -172,16 +172,14 @@ static knurl_status admit(knurl_request *request, knurl_error *error)
         }
         return KNURL_OK;
     }
-    if (request->impl->has_coding)
-        return knurl_fail(error, KNURL_NOT_SUPPORTED, "request_plan",
-                          "chunked bodies require connection takeover");
-    if (!request->impl->has_length &&
+    if (!request->impl->has_length && !request->impl->has_coding &&
         (request->impl->method == KNURL_HTTP_POST ||
          request->impl->method == KNURL_HTTP_PUT ||
          request->impl->method == KNURL_HTTP_PATCH)) {
         request->impl->rejection_status = 411;
         return knurl_fail(error, KNURL_INVALID, "request_plan",
-                          "managed POST, PUT and PATCH require Content-Length");
+                          "managed POST, PUT and PATCH require Content-Length "
+                          "or chunked framing");
     }
     if (request->impl->plan.on_body_end == NULL &&
         !request->impl->response->impl->producer &&
@@ -209,6 +207,16 @@ static knurl_status admit(knurl_request *request, knurl_error *error)
                 error, KNURL_INVALID, "request_plan",
                 "plan body limit exceeds the configured hard ceiling");
     }
+    if (request->impl->has_coding && policy->mode == KNURL_BODY_NONE) {
+        request->impl->rejection_status = 413;
+        return knurl_fail(error, KNURL_LIMIT, "request_plan",
+                          "request body is not allowed for this route");
+    }
+    if (request->impl->has_coding &&
+        !(KNURL_KORE_BODY_METHODS &
+          KNURL_HTTP_METHOD_MASK(request->impl->method)))
+        return knurl_fail(error, KNURL_NOT_SUPPORTED, "request_plan",
+                          "this managed method does not accept chunked input");
     if (request->impl->has_length) {
         (void)knurl_u64_compare(request->impl->content_length,
                                 policy->max_bytes, &order, NULL);
@@ -280,6 +288,8 @@ int knurl_kore_prebody(struct http_request *native, const void *data,
     if (hosts != 1 || lengths > 1 || coding > 1 || (coding && lengths))
         return reject(native, 400);
     if (coding) {
+        if (memcmp(request->impl->version.data, "HTTP/1.1", 8) != 0)
+            return reject(native, 400);
         (void)knurl_request_header_first(request, "transfer-encoding", &value,
                                          NULL);
         if (!knurl_text_equal_case(value.data, "chunked"))
@@ -350,9 +360,9 @@ int knurl_kore_prebody(struct http_request *native, const void *data,
         return KORE_RESULT_RETRY;
     }
     if (expect && plan.disposition == KNURL_REQUEST_MANAGED &&
-        request->impl->has_length &&
-        (request->impl->content_length.high ||
-         request->impl->content_length.low) &&
+        (request->impl->has_coding ||
+         (request->impl->has_length && (request->impl->content_length.high ||
+                                        request->impl->content_length.low))) &&
         request->impl->response->impl->phase == KNURL_RESPONSE_BUILDING) {
         status = knurl_response_interim(request->impl->response, 100, NULL, 0,
                                         &error);

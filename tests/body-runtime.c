@@ -117,6 +117,9 @@ static knurl_status consume(knurl_request *request, const void *data,
             length <= 32);
     OBSERVE(request->body(request) == NULL &&
             request->body_bytes(request, &view, NULL) == KNURL_STATE);
+    OBSERVE(request->trailer_count(request) == 0 &&
+            request->trailer_first(request, "X-Trace", &view, NULL) ==
+                KNURL_STATE);
     if (is(c, "/invalid")) {
         *consumed = 1;
         return KNURL_AGAIN;
@@ -166,7 +169,8 @@ static void closed(knurl_request *request, const knurl_request_outcome *out,
                 !c->ended && !c->calls);
     } else if (is(c, "/invalid") || is(c, "/bad-plan") || is(c, "/no-end") ||
                is(c, "/dispatch-error") || is(c, "/reply-invalid") ||
-               is(c, "/oversize")) {
+               is(c, "/oversize") || is(c, "/chunk-invalid") ||
+               is(c, "/chunk-limit")) {
         OBSERVE(!out->body_complete && out->body_cause != KNURL_OK &&
                 !c->ended);
     } else if (is(c, "/body-error") || is(c, "/truncated")) {
@@ -218,10 +222,34 @@ static knurl_status complete(knurl_request *request, void *userdata,
     unsigned char buffer[128];
     size_t count;
     size_t i;
-    int fd;
+    int fd, present;
     c = userdata;
     ++c->ended;
     OBSERVE(c->ended == 1 && pthread_equal(c->owner, pthread_self()));
+    if (is(c, "/chunk-stream") || is(c, "/chunk-buffer") ||
+        is(c, "/chunk-spill")) {
+        OBSERVE(request->content_length(request, &present, &result.length,
+                                        NULL) == KNURL_OK &&
+                !present);
+        OBSERVE(request->trailer_count(request) == 2);
+        OBSERVE(request->trailer_first(request, "x-trace", &bytes, NULL) ==
+                    KNURL_OK &&
+                bytes.length == 4 && memcmp(bytes.data, "done", 4) == 0);
+        OBSERVE(request->header_first(request, "x-trace", &bytes, NULL) ==
+                KNURL_EOF);
+        if (is(c, "/chunk-stream"))
+            OBSERVE(c->delivered == 5);
+        else {
+            body = request->body(request);
+            OBSERVE(body != NULL &&
+                    body->read(body, buffer, sizeof(buffer), &count, error) ==
+                        KNURL_OK &&
+                    count == 5 && memcmp(buffer, "abcde", 5) == 0);
+            OBSERVE(
+                body->kind(body) ==
+                (is(c, "/chunk-spill") ? KNURL_BODY_FILE : KNURL_BODY_MEMORY));
+        }
+    }
     if (is(c, "/deadline"))
         return KNURL_OK;
     if (is(c, "/deferred"))
@@ -366,23 +394,25 @@ static knurl_status configure_plan(knurl_request *request,
         methods |= KNURL_HTTP_METHOD_MASK(request->method(request));
         return KNURL_OK;
     }
-    if (is(c, "/buffer") || is(c, "/spill") || is(c, "/spill-failure") ||
-        is(c, "/bad-plan")) {
-        if (is(c, "/spill"))
+    if (is(c, "/chunk-buffer") || is(c, "/chunk-spill") || is(c, "/buffer") ||
+        is(c, "/spill") || is(c, "/spill-failure") || is(c, "/bad-plan")) {
+        if (is(c, "/spill") || is(c, "/chunk-spill"))
             knurl_body_policy_init_materialized(&plan->body);
         else
             knurl_body_policy_init_buffered(&plan->body);
         plan->body.max_bytes.low = 4096;
-        plan->body.memory_buffer_limit_bytes = is(c, "/bad-plan") ? 8192
-                                               : is(c, "/spill")  ? 4
-                                                                  : 4096;
+        plan->body.memory_buffer_limit_bytes =
+            is(c, "/bad-plan")                           ? 8192
+            : (is(c, "/spill") || is(c, "/chunk-spill")) ? 4
+                                                         : 4096;
         return KNURL_OK;
     }
     if (is(c, "/ping") || is(c, "/survives") || is(c, "/deferred") ||
         is(c, "/deadline"))
         return KNURL_OK;
     knurl_body_policy_init_stream(&plan->body);
-    plan->body.max_bytes.low = is(c, "/oversize") ? 4 : 4096;
+    plan->body.max_bytes.low =
+        is(c, "/oversize") || is(c, "/chunk-limit") ? 4 : 4096;
     plan->on_body = consume;
     if (is(c, "/stream") || is(c, "/truncated")) {
         length.high = 0;
@@ -553,37 +583,57 @@ static int pipeline(unsigned short port)
     const char *request =
         "GET /immediate HTTP/1.1\r\nHost: localhost\r\n\r\n"
         "GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    const char *chunked =
+        "POST /chunk-buffer HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: "
+        "chunked\r\n\r\n"
+        "3;foo=\"a b\"\r\nabc\r\n2\r\nde\r\n0\r\nX-Trace: done\r\nX-Trace: "
+        "second\r\n\r\n"
+        "GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     char response[512];
     char *second;
     size_t used;
     ssize_t count;
     int fd;
-    fd = connect_to(port);
-    CHECK(fd >= 0);
-    CHECK(write(fd, request, strlen(request)) == (ssize_t)strlen(request));
-    used = 0;
-    while (used < sizeof(response) - 1) {
-        count = read(fd, response + used, sizeof(response) - used - 1);
-        if (count == -1 && errno == EINTR)
-            continue;
-        CHECK(count >= 0);
-        if (count == 0)
-            break;
-        used += (size_t)count;
+    int turn;
+    for (turn = 0; turn < 2; ++turn) {
+        if (turn)
+            request = chunked;
+        fd = connect_to(port);
+        CHECK(fd >= 0);
+        CHECK(write(fd, request, strlen(request)) == (ssize_t)strlen(request));
+        used = 0;
+        while (used < sizeof(response) - 1) {
+            count = read(fd, response + used, sizeof(response) - used - 1);
+            if (count == -1 && errno == EINTR)
+                continue;
+            CHECK(count >= 0);
+            if (count == 0)
+                break;
+            used += (size_t)count;
+        }
+        response[used] = '\0';
+        CHECK(strncmp(response, "HTTP/1.1 200 ", 13) == 0);
+        second = strstr(response, "\r\n\r\nokHTTP/1.1 200 ");
+        CHECK(second != NULL);
+        second = strstr(second + 6, "\r\n\r\n");
+        CHECK(second != NULL && strcmp(second + 4, "ok") == 0);
+        CHECK(close(fd) == 0);
     }
-    response[used] = '\0';
-    CHECK(strncmp(response, "HTTP/1.1 200 ", 13) == 0);
-    second = strstr(response, "\r\n\r\nokHTTP/1.1 200 ");
-    CHECK(second != NULL);
-    second = strstr(second + 6, "\r\n\r\n");
-    CHECK(second != NULL && strcmp(second + 4, "ok") == 0);
-    CHECK(close(fd) == 0);
     return 0;
 }
 
 static int client(unsigned short port)
 {
-    char pattern[65];
+    char pattern[65], chunked[96];
+    static const char *const invalid_chunks[] = {
+        "z\r\n",
+        "10000000000000000\r\n",
+        "1;=bad\r\na\r\n0\r\n\r\n",
+        "1\r\naX\n",
+        "1\na\r\n0\r\n\r\n",
+        "0\r\nContent-Length: 1\r\n\r\n",
+        "0\r\nHost: changed\r\n\r\n",
+        "0\r\nBad Trailer: x\r\n\r\n"};
     const char *method[] = {"GET",    "POST", "PUT",     "PATCH",
                             "DELETE", "HEAD", "OPTIONS", "PROPFIND",
                             "MKCOL",  "COPY", "MOVE"};
@@ -597,6 +647,9 @@ static int client(unsigned short port)
                            408, "") == 0);
             CHECK(exchange(port, "POST", "/idle", "Content-Length: 3\r\n", "a",
                            408, "") == 0);
+            CHECK(exchange(port, "POST", "/idle",
+                           "Transfer-Encoding: chunked\r\n",
+                           "1;metadata=only\r\n", 408, "") == 0);
             /* Application backpressure must not spend the rate budget. */
             CHECK(exchange(port, "POST", "/again", "Content-Length: 64\r\n",
                            pattern, 200, "ok") == 0);
@@ -609,6 +662,26 @@ static int client(unsigned short port)
         return 0;
     }
     CHECK(pipeline(port) == 0);
+    for (i = 0; i < sizeof(invalid_chunks) / sizeof(invalid_chunks[0]); ++i)
+        CHECK(exchange(port, "POST", "/chunk-invalid",
+                       "Transfer-Encoding: chunked\r\n", invalid_chunks[i], 400,
+                       "malformed request body framing") == 0);
+    CHECK(exchange(port, "POST", "/chunk-limit",
+                   "Transfer-Encoding: chunked\r\n", "5\r\nabcde\r\n0\r\n\r\n",
+                   413, "failed to stream request body") == 0);
+    snprintf(chunked, sizeof(chunked), "40\r\n%s\r\n0\r\n\r\n", pattern);
+    CHECK(exchange(port, "POST", "/again", "Transfer-Encoding: chunked\r\n",
+                   chunked, 200, "ok") == 0);
+    CHECK(exchange(port, "POST", "/chunk-stream",
+                   "Transfer-Encoding: chunked\r\n",
+                   "3;foo=\"a b\"\r\nabc\r\n2\r\nde\r\n0\r\nX-Trace: "
+                   "done\r\nX-Trace: second\r\n\r\n",
+                   200, "ok") == 0);
+    CHECK(exchange(port, "POST", "/chunk-spill",
+                   "Transfer-Encoding: chunked\r\n",
+                   "3\r\nabc\r\n2\r\nde\r\n0\r\nX-Trace: done\r\nX-Trace: "
+                   "second\r\n\r\n",
+                   200, "ok") == 0);
     CHECK(progressive(port, pattern) == 0);
     CHECK(exchange(port, "POST", "/again", "Content-Length: 64\r\n", pattern,
                    200, "ok") == 0);

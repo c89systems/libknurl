@@ -74,6 +74,18 @@ int main(void)
     char buffer[128];
     size_t length;
 
+    knurl_bytes input;
+    long integer;
+    input.data = "42";
+    input.length = 2;
+    if (knurl_input_long(input, 0, 100, &integer, &error) != KNURL_OK ||
+        integer != 42)
+        return 6;
+    input.data = "https://example.org";
+    input.length = strlen(input.data);
+    if (knurl_input_http_url(input, &error) != KNURL_OK)
+        return 7;
+
     if (knurl_u64_from_decimal("18446744073709551615", 20, &maximum, &error) !=
             KNURL_OK ||
         knurl_u64_format_decimal(maximum, buffer, sizeof(buffer), &length,

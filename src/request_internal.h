@@ -22,6 +22,8 @@ struct knurl_request_impl {
     knurl_bytes path;
     knurl_header *headers;
     size_t header_count;
+    knurl_header *trailers;
+    size_t trailer_count;
     knurl_header *queries;
     size_t query_count;
     knurl_header *params;

@@ -260,6 +260,7 @@ static void retired(const knurl_storage_outcome *outcome, void *data)
     } else if (s->action == KNURL_STORAGE_OPEN_READ) {
         knurl_static_config config;
         knurl_static_config_init(&config);
+        config.compression_disabled = 1;
         config.content_type = s->route->config.content_type != NULL
                                   ? s->route->config.content_type
                                   : "application/octet-stream";
@@ -267,8 +268,8 @@ static void retired(const knurl_storage_outcome *outcome, void *data)
                                    ? s->route->config.cache_control
                                    : "no-cache";
         if (knurl_static_reply_asset(&config, 1, s->request,
-                                     s->request->impl->reply, s->asset, s->path,
-                                     &error) == KNURL_OK) {
+                                     s->request->impl->reply, NULL, s->asset,
+                                     s->path, &error) == KNURL_OK) {
             s->asset = NULL;
             (void)knurl_dav_finish(s, NULL);
         } else {

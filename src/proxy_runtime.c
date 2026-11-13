@@ -484,7 +484,7 @@ static knurl_status local_step(struct proxy_exchange *x)
 
 static knurl_status upload_step(struct proxy_exchange *x)
 {
-    knurl_proxy_frame_result frame;
+    knurl_http_frame_result frame;
     knurl_status status;
     size_t consumed;
     size_t count;
@@ -510,14 +510,14 @@ static knurl_status upload_step(struct proxy_exchange *x)
                                         x->input_length - x->input_offset,
                                         &consumed);
         x->input_offset += consumed;
-        if (frame == KNURL_PROXY_FRAME_INVALID)
+        if (frame == KNURL_HTTP_FRAME_INVALID)
             return x->upload.failure != KNURL_OK ? x->upload.failure
                                                  : KNURL_INVALID;
-        if (frame == KNURL_PROXY_FRAME_COMPLETE)
+        if (frame == KNURL_HTTP_FRAME_COMPLETE)
             return knurl_channel_body_complete(
                 x->channel, x->input + x->input_offset,
                 x->input_length - x->input_offset, NULL);
-        if (frame == KNURL_PROXY_FRAME_PAUSED)
+        if (frame == KNURL_HTTP_FRAME_PAUSED)
             return KNURL_OK;
     }
     if (budget == (unsigned int)-1)

@@ -1,4 +1,4 @@
-#include "proxy_framing.h"
+#include "http_framing.h"
 #include "proxy_headers.h"
 
 #include "proxy-check.h"
@@ -124,7 +124,7 @@ static void test_trailer_handoff(void)
     static const unsigned char allowed[] = "0\r\nX-Trace: done\r\n\r\nNEXT";
     static const unsigned char undeclared[] = "0\r\nX-Other: bad\r\n\r\n";
     knurl_proxy_headers inbound;
-    knurl_proxy_body_framer framer;
+    knurl_http_body_framer framer;
     knurl_proxy_request_head head;
     size_t consumed;
 
@@ -134,18 +134,18 @@ static void test_trailer_handoff(void)
     add(&inbound, "Trailer", "X-Trace");
     PROXY_CHECK(knurl_proxy_request_head_parse(&inbound, &head, NULL) ==
                 KNURL_PROXY_HEADER_OK);
-    knurl_proxy_body_framer_chunked(&framer);
+    knurl_http_body_framer_chunked(&framer);
     PROXY_CHECK(
-        knurl_proxy_body_framer_feed(&framer, allowed, sizeof(allowed) - 1u,
-                                     &consumed, consume_body, declared_trailer,
-                                     &inbound) == KNURL_PROXY_FRAME_COMPLETE);
+        knurl_http_body_framer_feed(&framer, allowed, sizeof(allowed) - 1u,
+                                    &consumed, consume_body, declared_trailer,
+                                    &inbound) == KNURL_HTTP_FRAME_COMPLETE);
     PROXY_CHECK(consumed == sizeof(allowed) - sizeof("NEXT"));
 
-    knurl_proxy_body_framer_chunked(&framer);
-    PROXY_CHECK(knurl_proxy_body_framer_feed(
+    knurl_http_body_framer_chunked(&framer);
+    PROXY_CHECK(knurl_http_body_framer_feed(
                     &framer, undeclared, sizeof(undeclared) - 1u, &consumed,
                     consume_body, declared_trailer,
-                    &inbound) == KNURL_PROXY_FRAME_INVALID);
+                    &inbound) == KNURL_HTTP_FRAME_INVALID);
     knurl_proxy_headers_cleanup(&inbound);
 }
 

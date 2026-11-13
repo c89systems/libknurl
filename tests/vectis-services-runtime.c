@@ -473,21 +473,19 @@ static void ws_open(struct reference_app *app, reference_websocket *ws,
                     void *data)
 {
     struct fixture *f = data;
-    unsigned char *large = malloc(20000);
+    unsigned char *large = malloc(12000);
     reference_error error;
     (void)app;
     if (!large) {
         f->failed = 1;
         return;
     }
-    memset(large, 'w', 20000);
-    if (reference_websocket_send(ws, 0, NULL, 0, &error) != REFERENCE_OK ||
+    memset(large, 'w', 12000);
+    if (reference_websocket_send(ws, 0, NULL, 0, &error) != REFERENCE_INVALID ||
         reference_websocket_send(ws, 1, "\xc0\xaf", 2, &error) !=
-            REFERENCE_OK ||
-        reference_websocket_send(ws, 2, large, 20000, &error) != REFERENCE_OK ||
-        reference_websocket_close(ws, &error) != REFERENCE_OK ||
-        reference_websocket_send(ws, 1, "after-close", 11, &error) !=
-            REFERENCE_OK)
+            REFERENCE_INVALID ||
+        reference_websocket_send(ws, 2, large, 12000, &error) != REFERENCE_OK ||
+        reference_websocket_send(ws, 1, "ready", 5, &error) != REFERENCE_OK)
         f->failed = 1;
     free(large);
     ++f->ws_opened;
@@ -610,13 +608,10 @@ static int websocket(unsigned short port)
         CHECK(used < sizeof(head) - 1 && read(fd, head + used, 1) == 1);
         head[++used] = 0;
     } while (!strstr(head, "\r\n\r\n"));
-    CHECK(atoi(head + 9) == 101 && !read_all(fd, frame, 2) && frame[0] == 128 &&
-          frame[1] == 0);
-    CHECK(!read_all(fd, frame, 4) && frame[0] == 129 && frame[1] == 2 &&
-          frame[2] == 0xc0 && frame[3] == 0xaf);
+    CHECK(atoi(head + 9) == 101);
     CHECK(!read_all(fd, frame, 4) && frame[0] == 130 && frame[1] == 126 &&
-          frame[2] * 256 + frame[3] == 20000);
-    left = 20000;
+          frame[2] * 256 + frame[3] == 12000);
+    left = 12000;
     while (left) {
         used = left < sizeof(chunk) ? left : sizeof(chunk);
         CHECK(!read_all(fd, chunk, used));
@@ -624,17 +619,16 @@ static int websocket(unsigned short port)
             CHECK(chunk[i] == 'w');
         left -= used;
     }
-    CHECK(!read_all(fd, frame, 2) && frame[0] == 136 && frame[1] == 0);
-    CHECK(!read_all(fd, frame, 2) && frame[0] == 129 && frame[1] == 11 &&
-          !read_all(fd, chunk, 11) && !memcmp(chunk, "after-close", 11));
-    frame[0] = 1;
+    CHECK(!read_all(fd, frame, 2) && frame[0] == 129 && frame[1] == 5 &&
+          !read_all(fd, chunk, 5) && !memcmp(chunk, "ready", 5));
+    frame[0] = 129;
     frame[1] = 130;
     memset(frame + 2, 0, 4);
-    frame[6] = 0xc0;
-    frame[7] = 0xaf;
+    frame[6] = 'o';
+    frame[7] = 'k';
     CHECK(!write_all(fd, frame, 8) && !read_all(fd, frame, 4) &&
-          frame[0] == 129 && frame[1] == 2 && frame[2] == 0xc0 &&
-          frame[3] == 0xaf);
+          frame[0] == 129 && frame[1] == 2 && frame[2] == 'o' &&
+          frame[3] == 'k');
     frame[0] = 136;
     frame[1] = 128;
     memset(frame + 2, 0, 4);

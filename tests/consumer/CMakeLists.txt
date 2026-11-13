@@ -50,6 +50,9 @@ foreach(surface vectis-filesystem vectis-host-runtime vectis-xml-runtime materia
   target_compile_definitions(${surface}_consumer PRIVATE
     $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   target_link_libraries(${surface}_consumer PRIVATE knurl::${KNURL_VARIANT})
+  if(surface STREQUAL "static-runtime")
+    target_link_libraries(${surface}_consumer PRIVATE ZLIB::ZLIB)
+  endif()
   if(surface STREQUAL "policy-runtime" OR surface STREQUAL "policy-logs-runtime" OR surface STREQUAL "vectis-config" OR surface STREQUAL "vectis-response-head")
     target_link_libraries(${surface}_consumer PRIVATE pslog::pslog_${KNURL_VARIANT})
   endif()

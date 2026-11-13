@@ -1,7 +1,9 @@
 # HTTP and application-input completeness specification
 
-Status: approved work scope from the 2026-11-13 implementation request. This
-document defines the behavior to implement and verify in the current repository.
+Status: implemented and verified on 2026-11-13. The
+[verification record](verification.md#http-completeness-2026-11-13) identifies the
+completed gates and their limits. This document defines the delivered behavior
+from the 2026-11-13 implementation request.
 It extends the [product contract](server-api-spec.md) for the operation families
 below. Existing [SOAP work](soap12-spec.md) remains deferred.
 
@@ -185,6 +187,7 @@ frames may interleave. Reject a continuation without an active message or a new
 data opcode before a fragmented message ends. Add max_message_bytes, with zero
 inheriting max_frame_bytes; count all fragments with checked arithmetic and
 close with 1009 on excess. No message-assembly buffer is introduced.
+Both directions enforce the configured data-frame and message ceilings.
 
 Validate text UTF-8 across fragment boundaries, rejecting overlong sequences,
 surrogates, invalid scalar values and incomplete final sequences with close

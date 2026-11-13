@@ -30,6 +30,24 @@ static void clear_payload(knurl_reply *reply)
     char *type;
     int file;
     knurl_source *source;
+    size_t i, count;
+    if (reply->impl->automatic_asset) {
+        count = 0;
+        for (i = 0; i < reply->impl->header_count; ++i) {
+            const char *name = reply->impl->headers[i].name.data;
+            if (knurl_text_equal_case(name, "content-encoding") ||
+                knurl_text_equal_case(name, "etag") ||
+                knurl_text_equal_case(name, "last-modified") ||
+                knurl_text_equal_case(name, "accept-ranges") ||
+                knurl_text_equal_case(name, "content-range")) {
+                free((void *)reply->impl->headers[i].name.data);
+                free((void *)reply->impl->headers[i].value.data);
+            } else
+                reply->impl->headers[count++] = reply->impl->headers[i];
+        }
+        reply->impl->header_count = count;
+        reply->impl->automatic_asset = 0;
+    }
     body = reply->impl->body;
     type = reply->impl->content_type;
     file = reply->impl->file;
@@ -124,6 +142,7 @@ knurl_status knurl_reply_new(knurl_reply **out, knurl_error *error)
                           "cannot allocate reply");
     knurl_reply_receiver_init(reply);
     reply->impl->selected = reply->impl->status = reply->impl->busy = 0;
+    reply->impl->automatic_asset = 0;
     reply->impl->owner = NULL;
     reply->impl->kind = KNURL_REPLY_EMPTY;
     reply->impl->content_type = NULL;

@@ -54,7 +54,8 @@ typedef struct knurl_websocket_outcome {
     int clean;
     /** Locally sent WebSocket close status; zero means no status code. */
     unsigned short local_code;
-    /** Peer WebSocket close status; zero means absent. */
+    /** Peer close status; 1005 represents an empty close, 1006 a missing close.
+     * Neither reserved value is transmitted on the wire. */
     unsigned short peer_code;
     /** Borrowed peer close reason, valid during terminal callback. */
     knurl_bytes peer_reason;
@@ -70,7 +71,7 @@ typedef knurl_status (*knurl_websocket_open_fn)(knurl_websocket *, void *,
  */
 typedef knurl_status (*knurl_websocket_frame_fn)(knurl_websocket *,
                                                  knurl_websocket_opcode,
-                                                 knurl_bytes, void *,
+                                                 int final, knurl_bytes, void *,
                                                  knurl_error *);
 /** Owner-loop notification to retry an atomic frame after output capacity
  * returns.
@@ -89,7 +90,9 @@ typedef void (*knurl_websocket_close_fn)(knurl_websocket *,
 typedef struct knurl_websocket_config {
     /** Maximum accepted WebSocket frame payload size. */
     size_t max_frame_bytes;
-    /** Zero retains Kore's send behavior (SIZE_MAX); positive sets a budget. */
+    /** Maximum message size across all fragments; zero inherits frame limit. */
+    size_t max_message_bytes;
+    /** Zero selects max_frame_bytes + 14, with a 127-byte control minimum. */
     size_t output_queue_bytes;
     /** WebSocket close-handshake deadline in milliseconds. */
     long close_timeout_ms;
@@ -168,14 +171,18 @@ KNURL_API knurl_status knurl_websocket_accept(knurl_request *,
 KNURL_API knurl_status
 knurl_router_websocket(knurl_router *, const knurl_websocket_route_config *,
                        knurl_route **, knurl_error *);
-/** Copies one raw frame, retaining Kore's opcode/text-byte behavior. The frame
- * uses FIN; continuation is accepted for sending. The receive payload limit is
- * independent of output capacity. AGAIN queues nothing and arms notification.
- * No extensions are negotiated. */
+/** Copy one complete frame. Sequencing, UTF-8 and controls are validated.
+ * AGAIN queues nothing, changes no message state and arms notification. */
 KNURL_API knurl_status knurl_websocket_send(knurl_websocket *,
                                             knurl_websocket_opcode,
                                             const void *, size_t,
                                             knurl_error *);
+/** Copy one bounded frame, with explicit FIN. Continuations require an active
+ * fragmented message. Message state changes only on queue acceptance. */
+KNURL_API knurl_status knurl_websocket_send_frame(knurl_websocket *,
+                                                  knurl_websocket_opcode,
+                                                  int final, const void *,
+                                                  size_t, knurl_error *);
 /** Copy one text frame; AGAIN queues nothing. See knurl_websocket_send for
  * byte/opcode behavior.
  */
@@ -222,10 +229,10 @@ struct knurl_server;
  * borrowed accessor. Do not copy, initialize or modify the shell or impl.
  */
 struct knurl_websocket {
-    /** Copies one raw frame, retaining Kore's opcode/text-byte behavior. The
-     * frame uses FIN; continuation is accepted for sending. The receive payload
-     * limit is independent of output capacity. AGAIN queues nothing and arms
-     * notification. No extensions are negotiated. */
+    /** Copy one frame with explicit FIN and validated message state. */
+    knurl_status (*send_frame)(struct knurl_websocket *, knurl_websocket_opcode,
+                               int, const void *, size_t, struct knurl_error *);
+    /** Copy one complete frame; equivalent to send_frame with FIN true. */
     knurl_status (*send)(struct knurl_websocket *, knurl_websocket_opcode,
                          const void *, size_t, struct knurl_error *);
     /** Copy one text frame; AGAIN queues nothing. See knurl_websocket_send for

@@ -148,6 +148,8 @@ void rl_logging_open(lua_State *);
 int rl_logging_config(lua_State *, int, struct rl_server *, knurl_error *);
 int rl_set_pslog(lua_State *);
 void rl_requests_open(lua_State *);
+void rl_input_open(lua_State *);
+void rl_input_requests_open(lua_State *);
 void rl_sources_open(lua_State *);
 void rl_codecs_open(lua_State *);
 void rl_xml_objects_open(lua_State *);

@@ -11,7 +11,9 @@ userdata remains caller-owned. It opens no resource and invokes no callback.
 The default body policy retains Vectis's upload bound; set `body.max_bytes` for
 the route and respect the server's hard ceiling. STREAMING_UPLOAD and STREAM
 both select the same live STREAM delivery here. They never materialize or spool
-the body. Managed POST/PUT/PATCH still require Content-Length.
+the body. Managed POST/PUT/PATCH accept Content-Length or HTTP/1.1 chunked
+framing. Callbacks receive decoded payload bytes; byte limits apply to those
+bytes. A chunked body completes only after its zero chunk and trailer block.
 
 Auth and before hooks run before body admission. An early staged reply bypasses
 the upload callbacks. Open runs on the first admitted body callback, or at body

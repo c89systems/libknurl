@@ -13,6 +13,7 @@ struct knurl_reply_impl {
     int selected;
     int status;
     int busy;
+    int automatic_asset;
     void *owner;
     knurl_reply_kind kind;
     char *content_type;

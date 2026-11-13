@@ -91,15 +91,24 @@ ok(server:sse{path='/sse-denied',auth={kind='callback',callback=function() retur
 local spec={path='/ws',protocol='test',headers={['X-Handshake']='copied'},max_frame_bytes=256,
   connect=function(ws)
     opens=opens+1;assert(ws:state()=='open');per_ws[ws]={};retained=ws
-    ok(ws:send_text('ready'));ok(ws:send(0));ok(ws:send_text('\xc0\xaf'));ok(ws:send_binary(string.rep('w',512)))
-    ok(ws:close());assert(ws:state()=='open');ok(ws:send_text('after-close'))
+    ok(ws:send_text('ready'))
+    local value,why=ws:send(0);assert(value==nil and why.status==knurl.status.INVALID)
+    value,why=ws:send_text('\xc0\xaf');assert(value==nil and why.status==knurl.status.INVALID)
+    value,why=ws:send_binary(string.rep('w',512));assert(value==nil and why.status==knurl.status.LIMIT)
+    ok(ws:send_binary(string.rep('w',256)))
   end,
-  handler=function(ws,opcode,payload)
+  handler=function(ws,opcode,payload,final)
     local s=per_ws[ws];assert(s and ws==retained)
+    assert(type(final)=='boolean')
+    if payload=='close' then
+      ok(ws:send(knurl.websocket.CLOSE));assert(ws:state()=='closing')
+      local value,why=ws:send_text('after-close');assert(value==nil and why.status==knurl.status.STATE)
+      return
+    end
     if payload=='pause' and not s.paused then
       s.paused=true;pauses=pauses+1;ok(server:defer(function() ok(ws:resume()) end));return nil,knurl.AGAIN
     end
-    ok(ws:send(opcode,payload))
+    ok(ws:send_frame(opcode,final,payload))
   end,
   disconnect=function(ws,out) assert(out.opened and out.clean and out.peer_code==1000);closes=closes+1;per_ws[ws]=nil end,
 }

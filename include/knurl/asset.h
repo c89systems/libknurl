@@ -44,6 +44,17 @@ typedef struct knurl_asset_info {
     const char *content_type;
     /** HTTP Last-Modified timestamp text, when available. */
     const char *last_modified;
+    /** Nonzero asserts Last-Modified identifies this representation strongly
+     * enough for date If-Range. Zero never promotes timestamp resolution alone.
+     */
+    int last_modified_strong;
+    /** Optional precise Unix modification timestamp for sidecar freshness.
+     * has_modification_time=0 leaves both values unspecified. */
+    knurl_u64 modification_seconds;
+    /** Subsecond modification component, 0..999999999 when present. */
+    unsigned long modification_nanoseconds;
+    /** Nonzero makes the precise timestamp available for freshness checks. */
+    int has_modification_time;
 } knurl_asset_info;
 /** One immediate child name/metadata view; listing storage expires at the next
  * list call or asset close.

@@ -48,6 +48,16 @@ KNURL_API knurl_bytes knurl_request_authority(const knurl_request *request);
 KNURL_API size_t knurl_request_listener_index(const knurl_request *request);
 /** Count ordered request headers, including repeated fields. */
 KNURL_API size_t knurl_request_header_count(const knurl_request *request);
+/** Count separate body trailers; zero before body completion. */
+KNURL_API size_t knurl_request_trailer_count(const knurl_request *);
+/** Trailer access requires completed input, otherwise STATE. Views expire
+ * with the request; legal repeated fields retain order. */
+KNURL_API knurl_status knurl_request_trailer_at(const knurl_request *, size_t,
+                                                knurl_header *, knurl_error *);
+/** First case-insensitive trailer, EOF if absent, STATE before completion. */
+KNURL_API knurl_status knurl_request_trailer_first(const knurl_request *,
+                                                   const char *, knurl_bytes *,
+                                                   knurl_error *);
 /** Borrow one ordered request header by zero-based index until request close.
  */
 KNURL_API knurl_status knurl_request_header_at(const knurl_request *request,
@@ -76,6 +86,40 @@ KNURL_API knurl_status knurl_request_path_param(const knurl_request *request,
                                                 const char *name,
                                                 knurl_bytes *out,
                                                 knurl_error *error);
+/** Exact typed query/path lookups. EOF means absent; duplicate query names
+ * are INVALID. Bounds are inclusive and failure preserves numeric output. */
+KNURL_API knurl_status knurl_request_query_long(const knurl_request *,
+                                                const char *, long minimum,
+                                                long maximum, long *out,
+                                                knurl_error *);
+/** Exact signed-decimal path capture within inclusive native-long bounds;
+ * EOF absent, INVALID syntax/bounds, OVERFLOW unrepresentable. */
+KNURL_API knurl_status knurl_request_param_long(const knurl_request *,
+                                                const char *, long minimum,
+                                                long maximum, long *out,
+                                                knurl_error *);
+/** Exact unsigned-decimal query with inclusive portable bounds. Duplicate
+ * names are INVALID, absence EOF; failure preserves output. */
+KNURL_API knurl_status knurl_request_query_u64(const knurl_request *,
+                                               const char *, knurl_u64 minimum,
+                                               knurl_u64 maximum,
+                                               knurl_u64 *out, knurl_error *);
+/** Exact unsigned-decimal path capture with inclusive portable bounds;
+ * EOF absent, INVALID syntax/bounds, OVERFLOW unrepresentable. */
+KNURL_API knurl_status knurl_request_param_u64(const knurl_request *,
+                                               const char *, knurl_u64 minimum,
+                                               knurl_u64 maximum,
+                                               knurl_u64 *out, knurl_error *);
+/** Query accepts exactly true/false/1/0; duplicates INVALID, absence EOF.
+ * Successful false writes zero; failure preserves output. */
+KNURL_API knurl_status knurl_request_query_boolean(const knurl_request *,
+                                                   const char *, int *out,
+                                                   knurl_error *);
+/** Path capture accepts exactly true/false/1/0; absence EOF, syntax INVALID.
+ * Successful false writes zero; failure preserves output. */
+KNURL_API knurl_status knurl_request_param_boolean(const knurl_request *,
+                                                   const char *, int *out,
+                                                   knurl_error *);
 /** Borrow the real TCP peer endpoint, unaffected by forwarded-address policy,
  * until request close.
  */
@@ -139,6 +183,30 @@ struct lonejson_schema_view;
  * borrowed accessor. Do not copy, initialize or modify the shell or impl.
  */
 struct knurl_request {
+    /** Typed lookups: exact lexical conversion; EOF absent, INVALID duplicate
+     * queries or out-of-bounds values, OVERFLOW unrepresentable numbers. */
+    knurl_status (*query_long)(const struct knurl_request *, const char *, long,
+                               long, long *, struct knurl_error *);
+    /** Exact signed-decimal path capture within inclusive bounds; EOF absent,
+     * INVALID syntax/bounds, OVERFLOW unrepresentable. */
+    knurl_status (*param_long)(const struct knurl_request *, const char *, long,
+                               long, long *, struct knurl_error *);
+    /** Exact unsigned query within inclusive bounds; duplicate names INVALID,
+     * absence EOF, overflow OVERFLOW. Failure preserves output. */
+    knurl_status (*query_u64)(const struct knurl_request *, const char *,
+                              struct knurl_u64, struct knurl_u64,
+                              struct knurl_u64 *, struct knurl_error *);
+    /** Exact unsigned path capture within inclusive bounds; EOF absent,
+     * INVALID syntax/bounds, OVERFLOW unrepresentable. */
+    knurl_status (*param_u64)(const struct knurl_request *, const char *,
+                              struct knurl_u64, struct knurl_u64,
+                              struct knurl_u64 *, struct knurl_error *);
+    /** Exactly true/false/1/0 query; duplicates INVALID, absence EOF. */
+    knurl_status (*query_boolean)(const struct knurl_request *, const char *,
+                                  int *, struct knurl_error *);
+    /** Exactly true/false/1/0 capture; syntax INVALID, absence EOF. */
+    knurl_status (*param_boolean)(const struct knurl_request *, const char *,
+                                  int *, struct knurl_error *);
     /** Borrowed native view, tied to this packaged backend revision. No native
      * transport intervention is permitted while managed I/O owns the
      * connection. */
@@ -213,6 +281,14 @@ struct knurl_request {
     size_t (*listener_index)(const struct knurl_request *request);
     /** Count ordered request headers, including repeated fields. */
     size_t (*header_count)(const struct knurl_request *request);
+    /** Separate trailers become visible after body completion. */
+    size_t (*trailer_count)(const struct knurl_request *);
+    /** Borrow ordered trailer by zero-based index; STATE before completion. */
+    knurl_status (*trailer_at)(const struct knurl_request *, size_t,
+                               struct knurl_header *, struct knurl_error *);
+    /** First case-insensitive trailer; STATE before completion, EOF absent. */
+    knurl_status (*trailer_first)(const struct knurl_request *, const char *,
+                                  struct knurl_bytes *, struct knurl_error *);
     /** Borrow one ordered request header by zero-based index until request
      * close.
      */

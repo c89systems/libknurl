@@ -79,10 +79,10 @@ knurl_status knurl_proxy_upload_init(knurl_proxy_upload_buffer *upload,
     }
     upload->capacity = capacity;
     if (chunked)
-        knurl_proxy_body_framer_chunked(&upload->framer);
+        knurl_http_body_framer_chunked(&upload->framer);
     else
-        knurl_proxy_body_framer_fixed(&upload->framer, content_length);
-    upload->complete = upload->framer.phase == KNURL_PROXY_PHASE_COMPLETE;
+        knurl_http_body_framer_fixed(&upload->framer, content_length);
+    upload->complete = upload->framer.phase == KNURL_HTTP_PHASE_COMPLETE;
     for (i = 0u; i < request_headers->count; ++i) {
         if (strcasecmp(request_headers->fields[i].name, "trailer") != 0)
             continue;
@@ -109,27 +109,27 @@ void knurl_proxy_upload_cleanup(knurl_proxy_upload_buffer *upload)
     memset(upload, 0, sizeof(*upload));
 }
 
-knurl_proxy_frame_result
+knurl_http_frame_result
 knurl_proxy_upload_feed(knurl_proxy_upload_buffer *upload,
                         const unsigned char *data, size_t length,
                         size_t *consumed)
 {
-    knurl_proxy_frame_result result;
+    knurl_http_frame_result result;
 
     if (upload == NULL || upload->bytes == NULL || consumed == NULL ||
         upload->fixed_reservation != 0u || (data == NULL && length != 0u)) {
         if (consumed != NULL)
             *consumed = 0u;
-        return KNURL_PROXY_FRAME_INVALID;
+        return KNURL_HTTP_FRAME_INVALID;
     }
-    result = knurl_proxy_body_framer_feed(&upload->framer, data, length,
-                                          consumed, knurl_proxy_upload_accept,
-                                          knurl_proxy_upload_trailer, upload);
+    result = knurl_http_body_framer_feed(&upload->framer, data, length,
+                                         consumed, knurl_proxy_upload_accept,
+                                         knurl_proxy_upload_trailer, upload);
     if (upload->failure != KNURL_OK) {
-        upload->framer.phase = KNURL_PROXY_PHASE_INVALID;
-        return KNURL_PROXY_FRAME_INVALID;
+        upload->framer.phase = KNURL_HTTP_PHASE_INVALID;
+        return KNURL_HTTP_FRAME_INVALID;
     }
-    if (result == KNURL_PROXY_FRAME_COMPLETE)
+    if (result == KNURL_HTTP_FRAME_COMPLETE)
         upload->complete = 1;
     return result;
 }
@@ -143,7 +143,7 @@ knurl_proxy_upload_reserve_fixed(knurl_proxy_upload_buffer *upload,
     if (capacity != NULL)
         *capacity = 0u;
     if (upload == NULL || capacity == NULL || upload->bytes == NULL ||
-        upload->framer.phase != KNURL_PROXY_PHASE_FIXED)
+        upload->framer.phase != KNURL_HTTP_PHASE_FIXED)
         return NULL;
     if (upload->fixed_reservation != 0u) {
         *capacity = upload->fixed_reservation;
@@ -168,32 +168,32 @@ knurl_proxy_upload_reserve_fixed(knurl_proxy_upload_buffer *upload,
     return upload->bytes + upload->end;
 }
 
-knurl_proxy_frame_result
+knurl_http_frame_result
 knurl_proxy_upload_commit_fixed(knurl_proxy_upload_buffer *upload,
                                 size_t length)
 {
     if (upload == NULL || upload->bytes == NULL ||
-        upload->framer.phase != KNURL_PROXY_PHASE_FIXED || length == 0u ||
+        upload->framer.phase != KNURL_HTTP_PHASE_FIXED || length == 0u ||
         length > upload->fixed_reservation ||
         (uint64_t)length > upload->framer.remaining)
-        return KNURL_PROXY_FRAME_INVALID;
+        return KNURL_HTTP_FRAME_INVALID;
     upload->fixed_reservation = 0u;
     if ((uint64_t)length > ((uint64_t)-1) - upload->body_accepted ||
         (upload->body_limit != 0u &&
          (uint64_t)length > upload->body_limit - upload->body_accepted)) {
         upload->failure = KNURL_LIMIT;
-        upload->framer.phase = KNURL_PROXY_PHASE_INVALID;
-        return KNURL_PROXY_FRAME_INVALID;
+        upload->framer.phase = KNURL_HTTP_PHASE_INVALID;
+        return KNURL_HTTP_FRAME_INVALID;
     }
     upload->end += length;
     upload->body_accepted += (uint64_t)length;
     upload->framer.remaining -= (uint64_t)length;
     if (upload->framer.remaining == 0u) {
-        upload->framer.phase = KNURL_PROXY_PHASE_COMPLETE;
+        upload->framer.phase = KNURL_HTTP_PHASE_COMPLETE;
         upload->complete = 1;
-        return KNURL_PROXY_FRAME_COMPLETE;
+        return KNURL_HTTP_FRAME_COMPLETE;
     }
-    return KNURL_PROXY_FRAME_MORE;
+    return KNURL_HTTP_FRAME_MORE;
 }
 
 size_t knurl_proxy_upload_read(char *buffer, size_t size, size_t count,
