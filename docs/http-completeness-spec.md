@@ -124,6 +124,9 @@ equal-quality preference is Brotli sidecar, gzip sidecar, dynamic gzip, identity
 Return 406 when no available representation is acceptable. Merge Vary: Accept-Encoding
 without losing existing Vary fields. HEAD selects the same representation as GET
 without reading file data or running a compressor to determine its length.
+Preserve repeated Vary fields through response submission. Include negotiated
+Content-Encoding on successful asset replies and 304, and omit it from plain
+error responses, including pretty error pages.
 
 For filesystem and asset-provider mounts, look for `original.br` / `original.gz`
 only through the same confined provider/path policy as the original resource.

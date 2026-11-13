@@ -25,7 +25,7 @@ struct fixture {
     char directory[64];
     int opened, closed;
 };
-static int stopped;
+static int stopped, pretty_errors;
 /* Generated with the Brotli public encoder and independently decoded to
  * "abcdef" with the Brotli public decoder. No Brotli runtime dependency. */
 static const char brotli_fixture[] = "\213\002\200abcdef\003";
@@ -49,10 +49,17 @@ static knurl_status ordinary(knurl_request *request, knurl_reply *reply,
 static knurl_status before(knurl_request *request, knurl_reply *reply,
                            int *finish, void *data, knurl_error *error)
 {
+    knurl_status status;
     (void)request;
     (void)finish;
     (void)data;
-    return knurl_reply_header_set(reply, "X-Group", "yes", error);
+    status = knurl_reply_header_add(reply, "vary", "Origin", error);
+    if (status == KNURL_OK)
+        status = knurl_reply_header_add(reply, "vary",
+                                        "Access-Control-Request-Method", error);
+    if (status == KNURL_OK)
+        status = knurl_reply_header_set(reply, "X-Group", "yes", error);
+    return status;
 }
 static knurl_status replace(knurl_request *request, knurl_reply *reply,
                             int *finish, void *data, knurl_error *error)
@@ -207,6 +214,13 @@ static int exchange(unsigned short port, const char *method, const char *path,
     if (strstr(metadata, request) == NULL)
         fprintf(stderr, "%s: %s\n", path, metadata);
     CHECK(strstr(metadata, request) != NULL);
+    if (strcmp(path, "/g/assets/data") == 0)
+        CHECK(strstr(metadata, "vary: Origin\r\n") != NULL &&
+              strstr(metadata, "vary: Access-Control-Request-Method\r\n") !=
+                  NULL &&
+              strstr(metadata, "vary: Accept-Encoding\r\n") != NULL);
+    if (code >= 400)
+        CHECK(strstr(metadata, "content-encoding:") == NULL);
     if (expected_header != NULL) {
         if (strstr(metadata, expected_header) == NULL)
             fprintf(stderr, "%s headers: %s\n", path, metadata);
@@ -285,9 +299,16 @@ static int exchange(unsigned short port, const char *method, const char *path,
             boundary, boundary, boundary);
         expected = request;
     }
-    if (strcmp(result, expected) != 0)
-        fprintf(stderr, "%s body: %s\n", path, result);
-    CHECK(strcmp(result, expected) == 0);
+    if (pretty_errors && code >= 400 && expected[0] == 0 &&
+        strcmp(method, "HEAD") != 0) {
+        snprintf(request, sizeof(request), "<title>%d ", code);
+        CHECK(strstr(result, "<html>") != NULL &&
+              strstr(result, request) != NULL);
+    } else {
+        if (strcmp(result, expected) != 0)
+            fprintf(stderr, "%s body: %s\n", path, result);
+        CHECK(strcmp(result, expected) == 0);
+    }
     n = read(fd, ending, 1);
     CHECK(n == 0);
     close(fd);
@@ -295,13 +316,45 @@ static int exchange(unsigned short port, const char *method, const char *path,
 }
 static int client(unsigned short port)
 {
+    static const char *const paths[] = {"/files/data.txt", "/files/song.MP3",
+                                        "/files/movie.mp4"};
+    static const char *const codings[] = {"gzip", "gzip", "br"};
     char etag[256], headers[1024];
+    size_t i;
+    for (i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+        snprintf(headers, sizeof(headers),
+                 "Accept-Encoding: %s\r\nIf-Match: \"different\"\r\n",
+                 codings[i]);
+        CHECK(exchange(port, "GET", paths[i], headers, "", 412, "", NULL,
+                       NULL) == 0);
+        CHECK(exchange(port, "HEAD", paths[i], headers, "", 412, "", NULL,
+                       NULL) == 0);
+        snprintf(headers, sizeof(headers),
+                 "Accept-Encoding: %s\r\nIf-None-Match: bad\r\n", codings[i]);
+        CHECK(exchange(port, "GET", paths[i], headers, "", 400, "", NULL,
+                       NULL) == 0);
+        CHECK(exchange(port, "HEAD", paths[i], headers, "", 400, "", NULL,
+                       NULL) == 0);
+    }
+    if (pretty_errors) {
+        CHECK(exchange(port, "GET", "/stop", NULL, "", 200, "stopped", NULL,
+                       NULL) == 0);
+        return 0;
+    }
     CHECK(exchange(port, "GET", "/files/song.MP3", "Accept-Encoding: gzip\r\n",
-                   "", 200, "abcdef", "content-encoding: gzip\r\n", NULL) == 0);
+                   "", 200, "abcdef", "content-encoding: gzip\r\n", etag) == 0);
+    snprintf(headers, sizeof(headers),
+             "Accept-Encoding: gzip\r\nIf-None-Match: %s\r\n", etag);
+    CHECK(exchange(port, "GET", "/files/song.MP3", headers, "", 304, "",
+                   "content-encoding: gzip\r\n", NULL) == 0);
     CHECK(exchange(port, "GET", "/files/movie.mp4",
                    "Accept-Encoding: br,gzip\r\n", "", 200, brotli_fixture,
                    "content-encoding: br\r\n", etag) == 0);
     CHECK(strstr(etag, "br:") != NULL);
+    snprintf(headers, sizeof(headers),
+             "Accept-Encoding: br\r\nIf-None-Match: %s\r\n", etag);
+    CHECK(exchange(port, "GET", "/files/movie.mp4", headers, "", 304, "",
+                   "content-encoding: br\r\n", NULL) == 0);
     CHECK(exchange(port, "GET", "/files/data.txt", "Accept-Encoding: gzip\r\n",
                    "", 200, "abcdef", "content-encoding: gzip\r\n", etag) == 0);
     CHECK(exchange(port, "GET", "/files/data.txt",
@@ -535,6 +588,14 @@ static int client(unsigned short port)
                    "cache-control: no-store", NULL) == 0);
     CHECK(exchange(port, "GET", "/g/assets/data", NULL, "", 200, "abcdef",
                    "X-Group: yes", NULL) == 0);
+    CHECK(exchange(port, "GET", "/g/assets/data", "Accept-Encoding: gzip\r\n",
+                   "", 200, "abcdef", "content-encoding: gzip\r\n", etag) == 0);
+    snprintf(headers, sizeof(headers),
+             "Accept-Encoding: gzip\r\nIf-None-Match: %s\r\n", etag);
+    CHECK(exchange(port, "GET", "/g/assets/data", headers, "", 304, "",
+                   "content-encoding: gzip\r\n", NULL) == 0);
+    CHECK(exchange(port, "HEAD", "/g/assets/data", "Accept-Encoding: gzip\r\n",
+                   "", 200, "", "content-encoding: gzip\r\n", NULL) == 0);
     CHECK(exchange(port, "GET", "/g", NULL, "", 308, "", "location: /g/",
                    NULL) == 0);
     CHECK(exchange(port, "GET", "/g/", NULL, "", 200, "index", NULL, NULL) ==
@@ -587,7 +648,7 @@ static int put(const char *path, const char *text)
     }
     return close(fd) == 0;
 }
-int main(void)
+int main(int argc, char **argv)
 {
     static const knurl_mime_type instance_types[] = {
         {".GLOBAL", "application/x-instance"}, {"png", "image/x-instance"}};
@@ -610,6 +671,7 @@ int main(void)
     char root[256], file[512], path[512], sub[512], space[512], secret[256];
     char markdown[512];
     gzFile gzip;
+    pretty_errors = argc == 2 && strcmp(argv[1], "pretty") == 0;
     memset(&fixture, 0, sizeof(fixture));
     fixture.child = -1;
     strcpy(fixture.directory, "static-fixture-XXXXXX");
@@ -656,6 +718,7 @@ int main(void)
     listener.bind = "127.0.0.1";
     config.listeners = &listener;
     config.listener_count = config.workers.count = 1;
+    config.http.pretty_error_pages = pretty_errors;
     config.workers.affinity_disabled = config.http.backend_quiet = 1;
     config.signals.mode = KNURL_SIGNALS_LIBRARY;
     config.io.output_queue_bytes = 4096;

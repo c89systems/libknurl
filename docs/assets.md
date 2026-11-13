@@ -207,9 +207,11 @@ and Lua. Missing Accept-Encoding selects identity. Up to 32 empty list members
 are ignored across all Accept-Encoding fields; a larger count is rejected.
 Explicit weights, wildcard and identity exclusions determine selection; equal
 quality prefers Brotli sidecar, gzip sidecar, dynamic gzip, then identity.
-Malformed qvalues fail; no acceptable
-available representation returns 406. Vary includes Accept-Encoding without
-discarding other Vary fields. Range selects identity, returning 406 if identity
+Malformed qvalues fail; no acceptable available representation returns 406.
+Vary includes Accept-Encoding without discarding other Vary fields during
+submission, including on HEAD and 304. Negotiated Content-Encoding describes
+successful asset replies and 304 metadata; plain error replies and pretty HTML
+errors do not inherit it. Range selects identity, returning 406 if identity
 is excluded; Cache-Control no-transform suppresses transformations.
 
 Sidecars `original.br` and `original.gz` are opened through the same confined

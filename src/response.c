@@ -1084,7 +1084,9 @@ knurl_status knurl_response_submit(knurl_response *r, knurl_reply *reply,
                 header(r, reply->impl->headers[i].name.data,
                        reply->impl->headers[i].value.data,
                        !knurl_text_equal_case(reply->impl->headers[i].name.data,
-                                              "set-cookie"),
+                                              "set-cookie") &&
+                           !knurl_text_equal_case(
+                               reply->impl->headers[i].name.data, "vary"),
                        1, error);
         }
     }

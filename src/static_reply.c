@@ -63,9 +63,6 @@ knurl_status knurl_static_reply_asset(const knurl_static_config *config,
     if (status != KNURL_OK)
         goto done;
     info = &encoding.info;
-    if (encoding.coding != NULL)
-        status = knurl_reply_header_set(reply, "content-encoding",
-                                        encoding.coding, error);
     if (status == KNURL_OK && (config->cache_control != NULL || custom))
         status = knurl_reply_header_set(
             reply, "cache-control",
@@ -199,11 +196,18 @@ knurl_status knurl_static_reply_asset(const knurl_static_config *config,
         }
         source = compressed;
     }
-    status = knurl_reply_source_take(reply, code, type, source, error);
+    if (encoding.coding != NULL)
+        status = knurl_reply_header_set(reply, "content-encoding",
+                                        encoding.coding, error);
+    if (status == KNURL_OK)
+        status = knurl_reply_source_take(reply, code, type, source, error);
     if (status != KNURL_OK)
         knurl_source_destroy(source, NULL);
     goto done;
 empty:
+    if (status == KNURL_OK && code == 304 && encoding.coding != NULL)
+        status = knurl_reply_header_set(reply, "content-encoding",
+                                        encoding.coding, error);
     if (status == KNURL_OK)
         status = knurl_reply_status(reply, code, error);
 done:

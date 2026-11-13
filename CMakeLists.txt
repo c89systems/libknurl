@@ -308,6 +308,8 @@ if(BUILD_TESTING)
     endif()
     if(codec STREQUAL "static-runtime")
       target_link_libraries(knurl_${codec} PRIVATE ZLIB::ZLIB)
+      add_test(NAME knurl.static-runtime-pretty COMMAND knurl_static-runtime pretty)
+      set_tests_properties(knurl.static-runtime-pretty PROPERTIES TIMEOUT 8)
     endif()
     target_compile_definitions(knurl_${codec} PRIVATE
       $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
