@@ -95,7 +95,7 @@ knurl_kore_object_dependencies("${kore_source_dir}/.patched"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_acme.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_tls_state.c")
 knurl_c89(knurl_objects)
-set(KNURL_ABI_VERSION 1)
+set(KNURL_ABI_VERSION 0)
 foreach(variant static shared)
   string(TOUPPER "${variant}" kind)
   add_library(knurl_${variant} ${kind} $<TARGET_OBJECTS:knurl_objects> $<TARGET_OBJECTS:knurl_kore>)

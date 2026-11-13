@@ -18,11 +18,11 @@ normalized. Static archives and Linux shared libraries omit debug sections;
 Darwin debug-map object names are relative at link time; the packager does not
 post-mutate installed dylibs.
 
-The HTTP completeness work uses shared-library ABI 1, advanced once from the
-released ABI 0. Linux uses SONAME `libknurl.so.1`; Darwin uses install name
-`@rpath/libknurl.1.dylib` and compatibility/current versions `1.0.0`. Those Mach-O
-versions track ABI independently of the repository's release or development
-version. Package verification checks the installed library metadata.
+Knurl has not been released, so shared-library ABI remains 0. Linux uses SONAME
+`libknurl.so.0`; Darwin uses install name `@rpath/libknurl.0.dylib` and
+compatibility/current versions `0.0.0`. Those Mach-O versions track ABI
+independently of the repository's release or development version. Package
+verification checks the installed library metadata.
 
 Dependency SDKs are external: cpkt 0.7.0, LoneJSON 0.50.0 and pslog 0.13.0. The
 selected SDK hashes and linked cpkt component versions appear in `DEPENDENCIES`.

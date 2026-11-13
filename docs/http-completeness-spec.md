@@ -217,11 +217,11 @@ legacy frame engine or alternate callback shape.
 
 ## ABI, implementation sequence and acceptance
 
-New receiver fields and changed callback/config layouts break the public ABI.
-The latest release v0.1.0 uses ABI 0. Advance exactly once to ABI 1 for this
-coherent change, verify installed Linux/Darwin metadata, and do not increment
-again between implementation steps. Keep repository release/version markers
-independent; do not create a release tag for this work.
+Receiver fields and callback/config layouts change during unreleased development.
+Knurl has not been released, so keep shared-library ABI 0 and verify installed
+Linux/Darwin metadata against it. Local tags do not establish a published ABI
+commitment. Keep repository release/version markers independent; do not create
+a release tag for this work.
 
 Implement and verify in this order: input helpers/ABI boundary, static ranges and
 dates, negotiated static compression, shared framing/managed chunked bodies,

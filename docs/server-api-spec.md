@@ -25,8 +25,8 @@ WebSocket fragmentation/UTF-8/close validation. This includes the explicit final
 callback argument, bounded default output and transactional fragment sending.
 The corresponding public guides define these delivered interfaces:
 [input](input.md), [requests](requests.md), [assets](assets.md) and
-[WebSockets](websockets.md). These changes use shared-library ABI 1, advanced once
-from released ABI 0. HTTP/2/3 listeners and SOAP remain excluded; proxy upstream
+[WebSockets](websockets.md). Knurl has not been released, so these changes retain
+shared-library ABI 0. HTTP/2/3 listeners and SOAP remain excluded; proxy upstream
 HTTP/2 remains supported. Other extraction behavior retains its baseline.
 
 Vectis retains its app/service graph, outer supervision, business handlers,

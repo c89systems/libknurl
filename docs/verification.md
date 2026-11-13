@@ -8,9 +8,13 @@ multipart ranges and date conditions; negotiated gzip/Brotli sidecars and true
 incremental gzip; shared proxy/managed chunk framing with separate trailers;
 application WebSocket fragmentation, incremental UTF-8, validated close handling
 and transactional fragment sends. The public guides and LuaLS declarations match
-the new interfaces. ABI 1 advances once from released v0.1.0's ABI 0. Darwin's
+the new interfaces. Knurl has not been released, so ABI remains 0. Darwin's
 install name and compatibility/current versions track ABI independently of the
 development release identity.
+
+The ABI 0 correction repeats the seven-target build/SDK gates and focused native
+C/Lua loading checks. The functional suites below remain applicable because this
+correction changes library identity and documentation only.
 
 The focused cases prove malformed/duplicate/NUL/overflow input, allocation
 failures without ownership loss, multipart offsets and complete lengths above
