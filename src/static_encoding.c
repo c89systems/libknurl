@@ -55,16 +55,22 @@ static int contains(const char *p, const char *name)
     }
     return 0;
 }
-static int weights(const char *p, int quality[4])
+static int weights(const char *p, int quality[4], size_t *empty)
 {
     const char *begin;
     size_t length;
     int q, whole, digits, scale, index;
-    while (*p != 0) {
+    for (;;) {
         while (*p == ' ' || *p == '\t')
             ++p;
-        if (*p == 0)
-            return 1;
+        if (*p == 0 || *p == ',') {
+            if (++*empty > 32)
+                return 0;
+            if (*p == 0)
+                return 1;
+            ++p;
+            continue;
+        }
         begin = p;
         while (token((unsigned char)*p))
             ++p;
@@ -113,10 +119,9 @@ static int weights(const char *p, int quality[4])
         }
         if (*p == 0)
             return 1;
-        if (*p++ != ',' || *p == 0)
+        if (*p++ != ',')
             return 0;
     }
-    return 1;
 }
 static int eligible(const char *type)
 {
@@ -204,7 +209,7 @@ knurl_status knurl_static_encoding_select(
 {
     int quality[4] = {-1, -1, -1, -1};
     int q_identity, q_gzip, q_br, best, allowed = !config->compression_disabled;
-    size_t i;
+    size_t i, empty = 0;
     knurl_header h;
     knurl_asset *candidate = NULL;
     const knurl_asset_info *original = knurl_asset_stat(identity);
@@ -215,7 +220,7 @@ knurl_status knurl_static_encoding_select(
     for (i = 0; i < knurl_request_header_count(request); ++i) {
         (void)knurl_request_header_at(request, i, &h, NULL);
         if (equal(h.name.data, h.name.length, "accept-encoding") &&
-            !weights(h.value.data, quality))
+            !weights(h.value.data, quality, &empty))
             return knurl_fail(error, KNURL_INVALID, "static_encoding",
                               "invalid or ambiguous Accept-Encoding weights");
         if ((equal(h.name.data, h.name.length, "range") &&

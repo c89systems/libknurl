@@ -1,7 +1,6 @@
 #include "static_internal.h"
 #include "reply_internal.h"
 #include <knurl/request.h>
-#include <curl/curl.h>
 #include <openssl/rand.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +12,21 @@ static const char *header(knurl_request *request, const char *name)
     return knurl_request_header_first(request, name, &bytes, NULL) == KNURL_OK
                ? bytes.data
                : NULL;
+}
+static const char *single_header(knurl_request *request, const char *name)
+{
+    const char *value = NULL;
+    knurl_header h;
+    size_t i;
+    for (i = 0; i < knurl_request_header_count(request); ++i) {
+        (void)knurl_request_header_at(request, i, &h, NULL);
+        if (knurl_text_equal_case(h.name.data, name)) {
+            if (value != NULL)
+                return NULL;
+            value = h.value.data;
+        }
+    }
+    return value;
 }
 knurl_status knurl_static_reply_asset(const knurl_static_config *config,
                                       int custom, knurl_request *request,
@@ -73,6 +87,17 @@ knurl_status knurl_static_reply_asset(const knurl_static_config *config,
             code = match < 0 ? 400 : 412;
             goto empty;
         }
+    } else if (status == KNURL_OK && info->last_modified != NULL) {
+        value = single_header(request, "if-unmodified-since");
+        since_time = knurl_static_date(value);
+        modified = since_time != (time_t)-1
+                       ? knurl_static_date(info->last_modified)
+                       : (time_t)-1;
+        if (since_time != (time_t)-1 && modified != (time_t)-1 &&
+            modified > since_time) {
+            code = 412;
+            goto empty;
+        }
     }
     value = header(request, "if-none-match");
     if (status == KNURL_OK && value != NULL) {
@@ -83,9 +108,11 @@ knurl_status knurl_static_reply_asset(const knurl_static_config *config,
         }
     }
     if (status == KNURL_OK && value == NULL && info->last_modified != NULL) {
-        const char *since = header(request, "if-modified-since");
-        modified = curl_getdate(info->last_modified, NULL);
-        since_time = since != NULL ? curl_getdate(since, NULL) : (time_t)-1;
+        const char *since = single_header(request, "if-modified-since");
+        since_time = knurl_static_date(since);
+        modified = since_time != (time_t)-1
+                       ? knurl_static_date(info->last_modified)
+                       : (time_t)-1;
         if (since_time != (time_t)-1 && modified != (time_t)-1 &&
             since_time >= modified) {
             code = 304;
@@ -99,7 +126,8 @@ knurl_status knurl_static_reply_asset(const knurl_static_config *config,
                       : NULL;
     value = header(request, "if-range");
     if (range_input != NULL && value != NULL &&
-        !knurl_static_if_range(value, info))
+        (single_header(request, "if-range") == NULL ||
+         !knurl_static_if_range(value, info)))
         range_input = NULL;
     knurl_static_range_parse(range_input, info->size, &range);
     knurl_u64_format_decimal(info->size, total, sizeof(total), &written, NULL);

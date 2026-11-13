@@ -3,6 +3,7 @@
 #include "asset_internal.h"
 #include <knurl/static.h>
 #include "mime_internal.h"
+#include <time.h>
 knurl_status knurl_static_reply_asset(const knurl_static_config *, int,
                                       knurl_request *, knurl_reply *,
                                       knurl_asset_provider *, knurl_asset *,
@@ -30,6 +31,7 @@ struct knurl_static_ranges {
     int requested, satisfiable;
 };
 int knurl_http_tag_matches(const char *, const char *, int, int);
+time_t knurl_static_date(const char *);
 int knurl_static_if_range(const char *, const knurl_asset_info *);
 void knurl_static_range_parse(const char *, knurl_u64,
                               struct knurl_static_ranges *);

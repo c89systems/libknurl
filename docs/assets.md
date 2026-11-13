@@ -183,8 +183,13 @@ Last-Modified uses the same opened metadata, formats English HTTP dates
 independently of locale, and returns 304 for If-Modified-Since dates at or after
 Last-Modified when If-None-Match is absent. Live HTTP handling uses
 libcurl's public [date parser](https://curl.se/libcurl/c/curl_getdate.html); asset
-construction does not initialize curl or perform network work. Only GET applies
-Range. Up to 16 `bytes` ranges support suffix/open-ended forms. Unsatisfiable
+construction does not initialize curl or perform network work. If-Unmodified-Since
+returns 412 when the opened representation is newer, unless If-Match is present.
+It runs before If-None-Match, If-Modified-Since and ranges; invalid dates,
+repeated date fields and unavailable modification metadata are ignored.
+All three HTTP-date forms are accepted. Invalid or repeated If-Range falls back
+to the complete response. Only GET applies Range. Up to 16 `bytes` ranges support
+suffix/open-ended forms. Unsatisfiable
 members are dropped when another member is satisfiable. One selected member
 uses 206 Content-Range; several use streamed multipart/byteranges with per-part
 types/ranges and a checked complete length. Request order and overlaps are
@@ -198,9 +203,11 @@ on armhf, including ranges beyond 4 GiB.
 Static configuration enables negotiated compression by default. Set
 `compression_disabled=true` to disable it, or `precompressed_disabled=true` to
 disable sidecar lookup while retaining dynamic gzip. The same fields exist in C
-and Lua. Missing Accept-Encoding selects identity. Explicit weights, wildcard and
-identity exclusions determine selection; equal quality prefers Brotli sidecar,
-gzip sidecar, dynamic gzip, then identity. Malformed qvalues fail; no acceptable
+and Lua. Missing Accept-Encoding selects identity. Up to 32 empty list members
+are ignored across all Accept-Encoding fields; a larger count is rejected.
+Explicit weights, wildcard and identity exclusions determine selection; equal
+quality prefers Brotli sidecar, gzip sidecar, dynamic gzip, then identity.
+Malformed qvalues fail; no acceptable
 available representation returns 406. Vary includes Accept-Encoding without
 discarding other Vary fields. Range selects identity, returning 406 if identity
 is excluded; Cache-Control no-transform suppresses transformations.

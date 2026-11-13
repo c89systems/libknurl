@@ -216,11 +216,30 @@ static int negotiation(const char *accept, const char *extra_name,
 }
 int main(void)
 {
+    char empty[34];
     CHECK(gzip_stream() == 0);
 #define CASE(a, n, v, g, b, s, d, p, t, e, c, z)                               \
     CHECK(negotiation(a, n, v, g, b, s, d, p, t, e, c, z) == 0)
     CASE(NULL, NULL, NULL, 1, 1, 0, 0, 0, "text/plain", KNURL_OK, NULL, 0);
     CASE("gzip,br", NULL, NULL, 1, 1, 0, 0, 0, "text/plain", KNURL_OK, "br", 0);
+    CASE("gzip,, br", NULL, NULL, 1, 1, 0, 0, 0, "text/plain", KNURL_OK, "br",
+         0);
+    CASE("gzip,", NULL, NULL, 0, 0, 0, 0, 0, "text/plain", KNURL_OK, "gzip", 1);
+    CASE(", \t,gzip, \t", NULL, NULL, 0, 0, 0, 0, 0, "text/plain", KNURL_OK,
+         "gzip", 1);
+    CASE("", NULL, NULL, 1, 1, 0, 0, 0, "text/plain", KNURL_OK, NULL, 0);
+    CASE(", ,\t", NULL, NULL, 1, 1, 0, 0, 0, "text/plain", KNURL_OK, NULL, 0);
+    CASE("gzip,", "Accept-Encoding", ",br,", 1, 1, 0, 0, 0, "text/plain",
+         KNURL_OK, "br", 0);
+    memset(empty, ',', sizeof(empty));
+    empty[31] = 0;
+    CASE(empty, NULL, NULL, 1, 1, 0, 0, 0, "text/plain", KNURL_OK, NULL, 0);
+    CASE(empty, "Accept-Encoding", "", 1, 1, 0, 0, 0, "text/plain",
+         KNURL_INVALID, NULL, 0);
+    empty[31] = ',';
+    empty[32] = 0;
+    CASE(empty, NULL, NULL, 1, 1, 0, 0, 0, "text/plain", KNURL_INVALID, NULL,
+         0);
     CASE("gzip,br;q=0.5", NULL, NULL, 1, 1, 0, 0, 0, "text/plain", KNURL_OK,
          "gzip", 0);
     CASE("gzip", NULL, NULL, 0, 0, 0, 0, 0, "text/plain", KNURL_OK, "gzip", 1);

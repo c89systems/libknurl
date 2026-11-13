@@ -111,7 +111,8 @@ static knurl_status packed_open(const char *path, knurl_asset **out, void *data,
         status = knurl_asset_new(&c, out, error);
     } else if (strcmp(path, "/picture.png") == 0 ||
                strcmp(path, "/data") == 0 || strcmp(path, "/index.html") == 0 ||
-               strcmp(path, "/untyped.html") == 0) {
+               strcmp(path, "/untyped.html") == 0 ||
+               strcmp(path, "/undated") == 0) {
         bytes.data = strcmp(path, "/data") == 0 ? "abcdef" : "packed-index";
         bytes.length = strlen(bytes.data);
         knurl_u64_from_size(bytes.length, &c.info.size, NULL);
@@ -119,6 +120,8 @@ static knurl_status packed_open(const char *path, knurl_asset **out, void *data,
             c.info.content_type = "text/html";
         if (strcmp(path, "/picture.png") == 0)
             c.info.content_type = "image/png";
+        if (strcmp(path, "/undated") == 0)
+            c.info.last_modified = NULL;
         status = knurl_asset_memory(&c.info, bytes, closed, f, out, error);
     } else
         return KNURL_EOF;
@@ -301,6 +304,9 @@ static int client(unsigned short port)
     CHECK(strstr(etag, "br:") != NULL);
     CHECK(exchange(port, "GET", "/files/data.txt", "Accept-Encoding: gzip\r\n",
                    "", 200, "abcdef", "content-encoding: gzip\r\n", etag) == 0);
+    CHECK(exchange(port, "GET", "/files/data.txt",
+                   "Accept-Encoding: gzip,,\r\n", "", 200, "abcdef",
+                   "content-encoding: gzip\r\n", NULL) == 0);
     CHECK(strncmp(etag, "W/\"gzip:", 8) == 0);
     snprintf(headers, sizeof(headers),
              "Accept-Encoding: gzip\r\nIf-None-Match: %s\r\n", etag);
@@ -422,8 +428,71 @@ static int client(unsigned short port)
                    "If-Modified-Since: invalid\r\n", "", 200, "abcdef", NULL,
                    NULL) == 0);
     CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT\r\n", "",
+                   412, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "HEAD", "/packed/data",
+                   "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT\r\n", "",
+                   412, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n", "",
+                   200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Unmodified-Since: Mon, 07 Nov 1994 08:49:37 GMT\r\n", "",
+                   200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Unmodified-Since: invalid\r\n", "", 200, "abcdef", NULL,
+                   NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/undated",
+                   "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT\r\n", "",
+                   200, "packed-index", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Unmodified-Since: Sunday, 06-Nov-94 08:49:36 GMT\r\n",
+                   "", 412, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Unmodified-Since: Sun Nov  6 08:49:36 1994\r\n", "", 412,
+                   "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Unmodified-Since: 06 Nov 1994 08:49:36 GMT\r\n", "", 200,
+                   "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT\r\n"
+                   "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT\r\n",
+                   "", 200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT, "
+                   "Sun, 06 Nov 1994 08:49:36 GMT\r\n",
+                   "", 200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Match: \"packed\"\r\n"
+                   "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT\r\n",
+                   "", 200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Match: \"different\"\r\n"
+                   "If-Unmodified-Since: Mon, 07 Nov 1994 08:49:37 GMT\r\n",
+                   "", 412, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-None-Match: \"packed\"\r\n"
+                   "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT\r\n",
+                   "", 412, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "Range: bytes=1-3\r\n"
+                   "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT\r\n",
+                   "", 412, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
                    "If-Modified-Since: Mon, 07 Nov 1994 08:49:37 GMT\r\n", "",
                    304, "", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT, "
+                   "Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+                   "", 200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n"
+                   "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+                   "", 200, "abcdef", NULL, NULL) == 0);
+    CHECK(exchange(port, "GET", "/packed/data",
+                   "Range: bytes=1-3\r\nIf-Range: \"packed\"\r\n"
+                   "If-Range: \"different\"\r\n",
+                   "", 200, "abcdef", NULL, NULL) == 0);
     CHECK(exchange(
               port, "GET", "/packed/data",
               "Range: bytes=1-3\r\nIf-Range: Sun, 06 Nov 1994 08:49:37 GMT\r\n",

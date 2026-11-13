@@ -100,6 +100,13 @@ ETags never qualify. Apply If-Modified-Since's not-modified comparison to dates
 at or after Last-Modified, preserving If-None-Match precedence. Use metadata from
 the same opened asset used for delivery.
 
+Evaluate If-Unmodified-Since when If-Match is absent, before If-None-Match,
+If-Modified-Since and ranges. A known modification later than the supplied date
+returns 412 for GET and HEAD. Ignore invalid dates or unavailable modification
+metadata; If-Match takes precedence even when its condition succeeds.
+Accept the three HTTP-date forms and ignore repeated modification-date fields
+or date lists. Repeated or invalid If-Range selects the complete response.
+
 ### Negotiated compression
 
 Static configuration gains `compression_disabled`, default false, and
@@ -111,9 +118,10 @@ If identity is explicitly unacceptable for that request, return 406.
 
 Parse Accept-Encoding token/qvalue lists, wildcard and identity exclusions.
 Reject malformed qvalues rather than guessing. Missing Accept-Encoding selects
-identity. Select the best acceptable available representation; equal-quality
-preference is Brotli sidecar, gzip sidecar, dynamic gzip, identity. Return 406
-when no available representation is acceptable. Merge Vary: Accept-Encoding
+identity. Ignore up to 32 empty list members across all Accept-Encoding fields;
+reject a larger count. Select the best acceptable available representation;
+equal-quality preference is Brotli sidecar, gzip sidecar, dynamic gzip, identity.
+Return 406 when no available representation is acceptable. Merge Vary: Accept-Encoding
 without losing existing Vary fields. HEAD selects the same representation as GET
 without reading file data or running a compressor to determine its length.
 

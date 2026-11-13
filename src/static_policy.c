@@ -4,6 +4,49 @@
 #include <curl/curl.h>
 #include <string.h>
 #include <time.h>
+static int date_shape(const char *text, size_t length, const char *shape)
+{
+    size_t i;
+    unsigned char c;
+    if (length != strlen(shape))
+        return 0;
+    for (i = 0; i < length; ++i) {
+        c = (unsigned char)text[i];
+        if (shape[i] == '#') {
+            if (c < '0' || c > '9')
+                return 0;
+        } else if (shape[i] == '@') {
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')))
+                return 0;
+        } else if (c != (unsigned char)shape[i])
+            return 0;
+    }
+    return 1;
+}
+/* curl_getdate accepts more than HTTP-date, including some date lists. Check
+ * the three HTTP wire forms before using its calendar/time conversion. */
+time_t knurl_static_date(const char *text)
+{
+    const char *comma;
+    size_t n;
+    if (text == NULL)
+        return (time_t)-1;
+    while (*text == ' ' || *text == '\t')
+        ++text;
+    n = strlen(text);
+    while (n != 0 && (text[n - 1] == ' ' || text[n - 1] == '\t'))
+        --n;
+    if (date_shape(text, n, "@@@, ## @@@ #### ##:##:## GMT") ||
+        date_shape(text, n, "@@@ @@@ ## ##:##:## ####") ||
+        date_shape(text, n, "@@@ @@@  # ##:##:## ####"))
+        return curl_getdate(text, NULL);
+    comma = memchr(text, ',', n);
+    if (comma != NULL && comma - text >= 6 && comma - text <= 9 &&
+        date_shape(comma, n - (size_t)(comma - text),
+                   ", ##-@@@-## ##:##:## GMT"))
+        return curl_getdate(text, NULL);
+    return (time_t)-1;
+}
 /* Preserve Vectis's complete-list validation, including malformed tails, with
  * weak comparison on both sides for If-None-Match. */
 int knurl_http_tag_matches(const char *p, const char *etag, int exists,
@@ -66,8 +109,8 @@ int knurl_static_if_range(const char *input, const knurl_asset_info *info)
     if (input[0] != '"' && !(input[0] == 'W' && input[1] == '/')) {
         if (!info->last_modified_strong || info->last_modified == NULL)
             return 0;
-        date = curl_getdate(input, NULL);
-        modified = curl_getdate(info->last_modified, NULL);
+        date = knurl_static_date(input);
+        modified = knurl_static_date(info->last_modified);
         return date != (time_t)-1 && modified != (time_t)-1 && date == modified;
     }
     if (input == NULL || etag == NULL || etag[0] == 0 ||

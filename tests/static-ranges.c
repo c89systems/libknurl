@@ -180,6 +180,12 @@ static int dates(void)
     info.last_modified_strong = 1;
     CHECK(knurl_static_if_range(info.last_modified, &info));
     CHECK(knurl_static_if_range("Sunday, 06-Nov-94 08:49:37 GMT", &info));
+    CHECK(knurl_static_if_range("Sun Nov  6 08:49:37 1994", &info));
+    CHECK(knurl_static_if_range(" \tSun, 06 Nov 1994 08:49:37 GMT \t", &info));
+    CHECK(!knurl_static_if_range("06 Nov 1994 08:49:37 GMT", &info));
+    CHECK(!knurl_static_if_range("Sun, 06 Nov 1994 08:49:37 GMT, "
+                                 "Sun, 06 Nov 1994 08:49:37 GMT",
+                                 &info));
     CHECK(!knurl_static_if_range("Sun, 06 Nov 1994 08:49:36 GMT", &info));
     CHECK(!knurl_static_if_range("bad", &info));
     info.etag = "W/\"tag\"";
