@@ -48,9 +48,9 @@ while IFS=$'\t' read -r kind name version pin_target digest url; do
       case "$entry" in /*|../*|*/../*|*/..) printf 'Unsafe SDK archive path: %s\n' "$entry" >&2; exit 1;; esac
     done <"$staging/.entries"
     rm -f -- "$staging/.entries"
-    # Reproducible archives carry old mtimes. New SDK bytes must invalidate
-    # existing CMake/Ninja header and linker dependencies after an upgrade.
-    tar -xmzf "$archive" -C "$staging" --strip-components=1
+    # Preserve manifest-declared permissions independently of the caller's umask.
+    # Ignore old archive mtimes so new SDK bytes invalidate build dependencies.
+    tar -xmpzf "$archive" -C "$staging" --strip-components=1
     rm -rf -- "$prefix"
     mv -- "$staging" "$prefix"
     staging=
