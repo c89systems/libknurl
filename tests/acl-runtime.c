@@ -255,6 +255,7 @@ static int client(struct fixture *f, unsigned short port)
             "X-Forwarded-For: 1.2.3.4,,10.0.0.2\r\n",
             "X-Forwarded-For: bad,10.0.0.2\r\n",
             "X-Forwarded-For: 1.2.3.4:80\r\n",
+            "X-Forwarded-For: fe80::1%lo0\r\n",
             "X-Real-IP: 1.2.3.4\r\nX-Real-IP: 2.3.4.5\r\n"};
         size_t i;
         IP("X-Forwarded-For: 1.2.3.4, 2001:db8::2\r\n", "1.2.3.4");
@@ -335,6 +336,7 @@ static int client(struct fixture *f, unsigned short port)
             "Forwarded: for=\"1.2.3.4:\"\r\n",
             "Forwarded: for=\"1.2.3.4:-1\"\r\n",
             "Forwarded: for=_hidden\r\n",
+            "Forwarded: for=\"[fe80::1%lo0]\"\r\n",
             "Forwarded: for=1.2.3.4,\r\n"};
         size_t i;
         IP("Forwarded: for=\"[::ffff:192.0.2.1]\"\r\n", "192.0.2.1");

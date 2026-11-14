@@ -34,7 +34,8 @@ have finished. Keep the opened file immutable: replace database paths by atomic
 rename and open a new handle, rather than modifying an opened inode in place.
 
 Lookup accepts binary IPv4/IPv6 and normalizes IPv4-mapped IPv6 to IPv4. Numeric
-text parsing never resolves DNS. OK returns a copied two-letter uppercase
+text parsing never resolves DNS and rejects interface scope suffixes such as
+`%lo0` on every platform. OK returns a copied two-letter uppercase
 `country.iso_code`; EOF means no record or missing country code. Malformed
 records return BACKEND, file read failures return IO, and allocation failures
 return NOMEM. Errors never become unknown-country results. Country codes such

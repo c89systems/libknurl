@@ -60,8 +60,9 @@ static void provider_test(void)
     knurl_mmdb *db = NULL;
     knurl_error error;
     int count = 0;
-    const char *bad[] = {"localhost",  "1.2.3.4:80", "fe80::1%lo", "[::1]",
-                         "1.2.3.4/32", "",           NULL};
+    const char *bad[] = {
+        "localhost", "1.2.3.4:80", "fe80::1%lo",          "[::1]", "1.2.3.4/32",
+        "fe80::1%1", "::1%lo0",    "2001:db8::1%missing", "",      NULL};
     size_t i;
     knurl_mmdb_config_init(&config);
     assert(config.lookup == NULL && config.close == NULL &&

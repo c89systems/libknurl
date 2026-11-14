@@ -36,7 +36,9 @@ knurl_status knurl_mmdb_address_parse(const char *text, knurl_mmdb_address *out,
 {
     if (out != NULL)
         memset(out, 0, sizeof(*out));
-    if (text != NULL && out != NULL) {
+    /* Darwin's inet_pton accepts %zone suffixes and embeds interface scope.
+     * This API accepts unscoped numeric addresses on every platform. */
+    if (text != NULL && out != NULL && strchr(text, '%') == NULL) {
         if (inet_pton(AF_INET, text, out->bytes) == 1)
             out->size = 4;
         else if (inet_pton(AF_INET6, text, out->bytes) == 1)
