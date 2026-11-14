@@ -165,6 +165,7 @@ static void notes(knurl_watch *watch, unsigned int events, void *userdata)
     ssize_t count;
     size_t i;
     int status;
+    pid_t waited;
     (void)watch;
     (void)events;
     fixture = userdata;
@@ -176,9 +177,19 @@ static void notes(knurl_watch *watch, unsigned int events, void *userdata)
             ++fixture->persisted;
             continue;
         }
-        if (waitpid(fixture->client, &status, 0) != fixture->client ||
-            !WIFEXITED(status) || WEXITSTATUS(status))
+        status = 0;
+        do {
+            waited = waitpid(fixture->client, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+        if (waited != fixture->client || !WIFEXITED(status) ||
+            WEXITSTATUS(status)) {
+            (void)fprintf(stderr,
+                          "ACME protocol client wait: expected %ld, got %ld, "
+                          "status %d, errno %d\n",
+                          (long)fixture->client, (long)waited, status,
+                          waited < 0 ? errno : 0);
             fixture->failure = 1;
+        }
         fixture->client = 0;
         if (buffer[i] == '1') {
             fixture->phase = 2;

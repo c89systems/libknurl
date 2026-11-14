@@ -428,6 +428,7 @@ static void completed(knurl_watch *watch, unsigned int events, void *userdata)
     size_t i;
     char command_byte;
     int status;
+    pid_t waited;
     (void)watch;
     (void)events;
     fixture = userdata;
@@ -450,9 +451,19 @@ static void completed(knurl_watch *watch, unsigned int events, void *userdata)
         case 'B':
         case 'C':
         case 'D':
-            if (waitpid(fixture->client, &status, 0) != fixture->client ||
-                !WIFEXITED(status) || WEXITSTATUS(status))
+            status = 0;
+            do {
+                waited = waitpid(fixture->client, &status, 0);
+            } while (waited < 0 && errno == EINTR);
+            if (waited != fixture->client || !WIFEXITED(status) ||
+                WEXITSTATUS(status)) {
+                (void)fprintf(stderr,
+                              "ACME runtime client wait: expected %ld, got "
+                              "%ld, status %d, errno %d\n",
+                              (long)fixture->client, (long)waited, status,
+                              waited < 0 ? errno : 0);
                 fixture->failure = 1;
+            }
             fixture->client = 0;
             if (bytes[i] == 'A') {
                 (void)knurl_server_set_serving(fixture->server, 1, NULL);
