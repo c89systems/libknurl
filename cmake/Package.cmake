@@ -33,7 +33,8 @@ run("${CMAKE_COMMAND}" --install "${BUILD_DIR}" --prefix "${work}/${package}")
 # handles shared libraries. Keep all link symbols. Darwin shared images are not
 # post-mutated (install_name/strip can invalidate their signatures).
 if(SDK_PLATFORM STREQUAL "Darwin")
-  run("${SDK_STRIP}" -S "${work}/${package}/lib/libknurl.a")
+  run("${CMAKE_COMMAND}" -E env ZERO_AR_DATE=1
+    "${SDK_STRIP}" -S "${work}/${package}/lib/libknurl.a")
 else()
   run("${SDK_STRIP}" --enable-deterministic-archives --strip-debug "${work}/${package}/lib/libknurl.a")
   run("${SDK_STRIP}" --strip-debug "${work}/${package}/lib/libknurl.so.${SDK_VERSION}")
