@@ -1075,7 +1075,8 @@ static int origin_publish(lua_State *L)
 static int proxy_setup(lua_State *L)
 {
     struct origin_ports ports;
-    struct pollfd ready[3];
+    struct pollfd ready[4];
+    struct linger reset;
     SSL_CTX *context = NULL;
     X509_STORE *store;
     int sockets[3] = {-1, -1, -1}, quit[2] = {-1, -1}, i, fd, failed = 0,
@@ -1084,7 +1085,7 @@ static int proxy_setup(lua_State *L)
         goto failed;
     sockets[0] = proxy_socket(1, &ports.http);
     sockets[1] = proxy_socket(1, &ports.tls);
-    sockets[2] = proxy_socket(0, &ports.unavailable);
+    sockets[2] = proxy_socket(1, &ports.unavailable);
     if (sockets[0] < 0 || sockets[1] < 0 || sockets[2] < 0 || pipe(quit))
         goto failed;
     context = SSL_CTX_new(TLS_server_method());
@@ -1113,16 +1114,26 @@ static int proxy_setup(lua_State *L)
         signal(SIGPIPE, SIG_IGN);
         ready[0].fd = sockets[0];
         ready[1].fd = sockets[1];
-        ready[2].fd = quit[0];
-        for (i = 0; i < 3; ++i)
+        ready[2].fd = sockets[2];
+        ready[3].fd = quit[0];
+        memset(&reset, 0, sizeof(reset));
+        reset.l_onoff = 1;
+        for (i = 0; i < 4; ++i)
             ready[i].events = POLLIN;
-        while (!failed && poll(ready, 3, -1) > 0) {
-            if (ready[2].revents)
+        while (!failed && poll(ready, 4, -1) > 0) {
+            if (ready[3].revents)
                 break;
-            for (i = 0; i < 2; ++i)
+            for (i = 0; i < 3; ++i)
                 if (ready[i].revents & POLLIN) {
                     fd = accept(sockets[i], NULL, NULL);
-                    if (fd < 0 || origin_request(fd, i ? context : NULL))
+                    if (fd < 0)
+                        failed = 1;
+                    else if (i == 2) {
+                        if (setsockopt(fd, SOL_SOCKET, SO_LINGER, &reset,
+                                       sizeof(reset)) != 0)
+                            failed = 1;
+                        close(fd);
+                    } else if (origin_request(fd, i ? context : NULL))
                         failed = 1;
                 }
         }

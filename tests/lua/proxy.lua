@@ -125,7 +125,7 @@ declare('/bad-client',{target=origin.tls,tls_ca_pem=material.ca,tls_client_cert_
     assert(err.message~='Problem with the local SSL certificate' and err.message:lower():find('certificate',1,true))
     return gateway(err)
   end})
--- A bound, non-listening port may drop SYNs; bound the connect deadline.
+-- The failure origin resets connections; keep its connect deadline bounded.
 declare('/gateway',{target=origin.unavailable,connect_timeout_ms=250})
 declare('/gateway-error',{target=origin.unavailable,connect_timeout_ms=250,on_error=function() error('expected gateway failure') end})
 declare('/gateway-getter',{target=origin.unavailable,connect_timeout_ms=250,on_error=function() return setmetatable({status=503,body='copied'}, {__index=function() error('expected gateway getter failure') end}) end})
