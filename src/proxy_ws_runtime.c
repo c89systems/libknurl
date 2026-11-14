@@ -90,7 +90,8 @@ static void connected(CURL *easy, CURLcode result, void *data)
         knurl_proxy_record_failure(
             x, result == CURLE_OPERATION_TIMEDOUT ? KNURL_TIMEOUT : KNURL_IO,
             result == CURLE_OPERATION_TIMEDOUT ? 504 : 502,
-            curl_easy_strerror(result));
+            x->upstream_error[0] ? x->upstream_error
+                                 : curl_easy_strerror(result));
         x->failure.source = KNURL_ERROR_BACKEND;
         x->failure.native_code = (long)result;
     } else
@@ -187,8 +188,13 @@ knurl_status knurl_proxy_ws_start(struct proxy_exchange *x, const char *url,
     if (easy == NULL)
         return KNURL_NOMEM;
     x->upstream.easy = easy;
-    status = knurl_proxy_curl_set_ca(easy, r->tls_ca_pem, r->tls_ca_pem_length,
-                                     error);
+    status = curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, x->upstream_error) ==
+                     CURLE_OK
+                 ? KNURL_OK
+                 : KNURL_BACKEND;
+    if (status == KNURL_OK)
+        status = knurl_proxy_curl_set_ca(easy, r->tls_ca_pem,
+                                         r->tls_ca_pem_length, error);
     if (status == KNURL_OK)
         status = knurl_proxy_curl_set_client_identity(
             easy, r->tls_client_cert_pem, r->tls_client_cert_pem_length,

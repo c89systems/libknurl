@@ -120,6 +120,11 @@ for _,phase in ipairs{'error','oom','invalid','nul','type'} do
   end})
 end
 declare('/secure',{target=origin.tls,tls_ca_pem=material.ca,tls_client_cert_pem=material.certificate,tls_client_key_pem=material.private_key})
+declare('/bad-client',{target=origin.tls,tls_ca_pem=material.ca,tls_client_cert_pem='invalid certificate',tls_client_key_pem=material.private_key,
+  on_error=function(err)
+    assert(err.message~='Problem with the local SSL certificate' and err.message:lower():find('certificate',1,true))
+    return gateway(err)
+  end})
 declare('/gateway',{target=origin.unavailable})
 declare('/gateway-error',{target=origin.unavailable,on_error=function() error('expected gateway failure') end})
 declare('/gateway-getter',{target=origin.unavailable,on_error=function() return setmetatable({status=503,body='copied'}, {__index=function() error('expected gateway getter failure') end}) end})

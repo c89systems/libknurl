@@ -1192,6 +1192,7 @@ static int drive_proxy(unsigned short port)
     P("GET", "/proxy/sse", "", 0, 200, "data: first\n\ndata: second\n\n", 27);
     required_header = NULL;
     P("GET", "/secure", "", 0, 201, "tls", 3);
+    P("GET", "/bad-client", "", 0, 503, "gateway", 7);
     P("GET", "/local", "", 0, 403, "A\0B", 3);
     omit_length = 1;
     connection_value = "Upgrade";

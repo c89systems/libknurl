@@ -378,7 +378,10 @@ static void upstream_done(CURL *easy, CURLcode result, void *data)
         knurl_proxy_record_failure(
             x, result == CURLE_OPERATION_TIMEDOUT ? KNURL_TIMEOUT : KNURL_IO,
             result == CURLE_OPERATION_TIMEDOUT ? 504 : 502,
-            result != CURLE_OK ? curl_easy_strerror(result) : reason);
+            result != CURLE_OK
+                ? (x->upstream_error[0] ? x->upstream_error
+                                        : curl_easy_strerror(result))
+                : reason);
         if (first && result != CURLE_OK) {
             x->failure.source = KNURL_ERROR_BACKEND;
             x->failure.native_code = (long)result;
@@ -1020,8 +1023,13 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
         status = KNURL_NOMEM;
         goto exchange_failed;
     }
-    status = knurl_proxy_curl_set_ca(easy, route->tls_ca_pem,
-                                     route->tls_ca_pem_length, error);
+    status = curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, x->upstream_error) ==
+                     CURLE_OK
+                 ? KNURL_OK
+                 : KNURL_BACKEND;
+    if (status == KNURL_OK)
+        status = knurl_proxy_curl_set_ca(easy, route->tls_ca_pem,
+                                         route->tls_ca_pem_length, error);
     if (status == KNURL_OK)
         status = knurl_proxy_curl_set_client_identity(
             easy, route->tls_client_cert_pem, route->tls_client_cert_pem_length,
