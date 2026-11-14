@@ -25,6 +25,18 @@ invalid(knurl.acl{allow={countries={'US'}}})
 invalid(knurl.acl{allow={addresses={'10.0.0.0/33'}}})
 invalid(knurl.acl{dns_refresh_ms=-1})
 invalid(knurl.acl{dns_max_addresses=1025})
+for _,bad in ipairs{
+  {unexpected=true}, {allow={unexpected=true}}, {use_peer='yes'},
+  {dns_timeout_ms=-1}, {dns_refresh_ms=1.5}, {country_database='a\0b'},
+  {allow={addresses={'a\0b'}}}, {allow={addresses={[2]='10.0.0.1'}}},
+  {allow={countries={'USA'}}}, {allow={addresses={'a-.example'}}},
+} do invalid(knurl.acl(bad)) end
+local defaults=ok(knurl.acl{})
+assert(defaults:refresh() and defaults:check('::1'))
+ok(defaults:close())
+local empty=ok(knurl.acl{policy='deny'})
+assert(empty:refresh() and empty:check('1.2.3.4')==false)
+ok(empty:close())
 local s=ok(knurl.server{port=0,client_ip={trusted_proxies={'*','10.0.0.0/8'},
   forwarded_header='x-client-chain',real_ip_header='',max_hops=5,forwarded_format='comma'}})
 local config=ok(s:effective_config())
@@ -39,9 +51,12 @@ ok(group:get('/blocked',denied,{acl={policy='allow'}}))
 invalid(s:get('/invalid',denied,{acl=false}))
 ok(s:validate())
 ok(acl:close())
+invalid(s:get('/closed-acl',denied,{acl=acl}))
 ok(s:close())
 ok(acl:close())
 value,err=acl:check('1.1.1.1')
+assert(value==nil and err.status==knurl.status.STATE)
+value,err=acl:refresh()
 assert(value==nil and err.status==knurl.status.STATE)
 print('Lua ACL declarations, standalone checks and ownership passed')
 local providers=require('knurl_provider_fixture')
@@ -52,10 +67,17 @@ local schema=json.schema('item',{json.field('value',json.string())})
 local deny=ok(knurl.acl{policy='deny'})
 local called=0
 local server=ok(knurl.server{port=0,workers={count=1,affinity_disabled=true},http={backend_quiet=true},
-  client_ip={trusted_proxies={'127.0.0.1'},resolve=function(req) if req.path=='/bad-override' then return '' end end},
-  on_parent_ready=function(s) ok(fixture.spawn_acl(ok(s:listener()).port)) end,
-  on_worker_exit=function() assert(called==2 and providers.stats().assets_opened==opened) end})
-ok(server:route{path='/blocked',methods={'GET','POST'},acl=deny,handler=denied})
+  client_ip={trusted_proxies={'127.0.0.1'},resolve=function(req)
+    if req.path=='/bad-override' then return '' end
+    if req.path=='/override' then return '127.0.0.1' end
+  end},
+  on_parent_ready=function(s)
+    ok(s:set_serving(true))
+    ok(fixture.spawn_acl(ok(s:listener()).port))
+  end,
+  on_worker_exit=function() assert(called==3 and providers.stats().assets_opened==opened) end})
+ok(server:route{path='/blocked',methods={'GET','POST'},acl=deny,
+  auth={kind='callback',callback=denied},before=denied,after=denied,handler=denied})
 ok(server:json_route{path='/json',method='POST',acl=deny,handler=denied})
 ok(server:json_typed_route{path='/typed',method='POST',acl=deny,handler=denied})
 ok(server:xml_route{path='/xml',method='POST',input_schema=schema,acl=deny,handler=denied})
@@ -76,6 +98,8 @@ ok(server:text{path='/fixed-text',body='denied',acl=deny})
 ok(server:sse{path='/sse',acl=deny,open=denied,read=denied,close=denied})
 ok(server:get('/allowed',function() called=called+1;return 'allowed' end,{acl={policy='deny',allow={addresses={'localhost'}}}}))
 ok(server:get('/bad-override',denied))
+ok(server:get('/override',function() called=called+1;return 'overridden' end,
+  {acl={policy='deny',allow={addresses={'127.0.0.1'}}}}))
 ok(server:get('/stop',function() called=called+1;ok(server:stop());return 'stopped' end))
 ok(deny:close())
 ok(server:run());ok(fixture.join());ok(server:close())

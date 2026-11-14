@@ -1,7 +1,9 @@
+#define _POSIX_C_SOURCE 200809L
 #include <knurl/knurl.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 void *__real_malloc(size_t);
 void *__real_calloc(size_t, size_t);
 void *__real_realloc(void *, size_t);
@@ -127,6 +129,54 @@ static void exercise(const char *path)
     assert(acl->close(acl, &error) == KNURL_OK);
     assert(knurl_router_destroy(router, &error) == KNURL_OK);
 }
+static void wait_due(void)
+{
+    struct timespec delay;
+    delay.tv_sec = 0;
+    delay.tv_nsec = 4000000;
+    assert(nanosleep(&delay, NULL) == 0);
+}
+static size_t refresh_failure(size_t allocation)
+{
+    knurl_acl_config config;
+    knurl_acl *acl;
+    knurl_mmdb_address address;
+    knurl_error error;
+    const char *names[] = {"one.test", "two.test"};
+    size_t before, calls, snapshot_live;
+    int allowed = 1;
+    fail_at = 0;
+    knurl_acl_config_init(&config);
+    config.policy = KNURL_ACL_DENY;
+    config.allow.addresses = names;
+    config.allow.address_count = 2;
+    config.resolve = resolve;
+    config.dns_refresh_ms = 1;
+    assert(knurl_acl_new(&config, &acl, &error) == KNURL_OK);
+    assert(acl->refresh(acl, &error) == KNURL_OK);
+    assert(knurl_mmdb_address_parse("1.2.3.4", &address, &error) == KNURL_OK);
+    snapshot_live = live;
+    wait_due();
+    before = attempts;
+    if (allocation)
+        fail_at = before + allocation;
+    assert(acl->refresh(acl, &error) == (allocation ? KNURL_NOMEM : KNURL_OK));
+    calls = attempts - before;
+    assert(live ==
+           snapshot_live); /* Partial snapshots and scratch are freed. */
+    if (allocation) {
+        assert(acl->check(acl, &address, NULL, &allowed, &error) ==
+                   KNURL_NOMEM &&
+               !allowed);
+        fail_at = 0;
+        wait_due();
+        assert(acl->refresh(acl, &error) == KNURL_OK);
+    }
+    assert(acl->check(acl, &address, NULL, &allowed, &error) == KNURL_OK &&
+           allowed);
+    assert(acl->close(acl, &error) == KNURL_OK && live == 0);
+    return calls;
+}
 int main(int argc, char **argv)
 {
     size_t calls, i;
@@ -140,5 +190,8 @@ int main(int argc, char **argv)
         exercise(argv[1]);
         assert(live == 0);
     }
+    calls = refresh_failure(0);
+    for (i = 1; i <= calls; ++i)
+        (void)refresh_failure(i);
     return 0;
 }

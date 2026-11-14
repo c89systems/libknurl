@@ -264,6 +264,196 @@ static void indexed(void)
     check(acl, "100.0.62.1", NULL, 1);
     acl->close(acl, NULL);
 }
+/* Flip every bit independently, including host bits in noncanonical networks.
+ * The expected membership follows the bit position, independently of Core's
+ * byte/mask implementation. Exercise every IPv4/IPv6 prefix in both policies.
+ */
+static void prefix_boundaries(void)
+{
+    static const char *const bases[] = {
+        "165.90.195.60", "2001:db8:a55a:3cc3:9696:5aa5:c33c:6996"};
+    knurl_acl_config config;
+    knurl_acl *acl;
+    knurl_mmdb_address base, changed, other;
+    knurl_error error;
+    char rule[96];
+    const char *rules[1];
+    size_t family, policy;
+    unsigned int prefix, bit, width;
+    int accepted;
+    rules[0] = rule;
+    for (family = 0; family < 2; ++family) {
+        assert(knurl_mmdb_address_parse(bases[family], &base, &error) ==
+               KNURL_OK);
+        assert(knurl_mmdb_address_parse(bases[1 - family], &other, &error) ==
+               KNURL_OK);
+        width = base.size * 8;
+        for (prefix = 0; prefix <= width + 1; ++prefix) {
+            if (prefix > width)
+                assert(snprintf(rule, sizeof(rule), "%s", bases[family]) <
+                       (int)sizeof(rule));
+            else
+                assert(snprintf(rule, sizeof(rule), "%s/%u", bases[family],
+                                prefix) < (int)sizeof(rule));
+            for (policy = 0; policy < 2; ++policy) {
+                knurl_acl_config_init(&config);
+                config.policy = policy ? KNURL_ACL_ALLOW : KNURL_ACL_DENY;
+                if (policy) {
+                    config.deny.addresses = rules;
+                    config.deny.address_count = 1;
+                } else {
+                    config.allow.addresses = rules;
+                    config.allow.address_count = 1;
+                }
+                acl = create(&config);
+                assert(acl->check(acl, &base, NULL, &accepted, &error) ==
+                       KNURL_OK);
+                assert(accepted == !(int)policy);
+                for (bit = 0; bit < width; ++bit) {
+                    changed = base;
+                    changed.bytes[bit / 8] ^=
+                        (unsigned char)(128u >> (bit % 8));
+                    accepted = -1;
+                    assert(acl->check(acl, &changed, NULL, &accepted, &error) ==
+                           KNURL_OK);
+                    assert(accepted == (policy ? bit < prefix : bit >= prefix));
+                }
+                assert(acl->check(acl, &other, NULL, &accepted, &error) ==
+                       KNURL_OK);
+                assert(accepted == (int)policy);
+                acl->close(acl, NULL);
+            }
+        }
+    }
+}
+struct resolver_fault {
+    knurl_status status;
+    size_t count;
+    int invalid, calls;
+};
+static knurl_status faulty_resolve(const char *name, knurl_mmdb_address *out,
+                                   size_t capacity, size_t *count, void *data,
+                                   knurl_error *error)
+{
+    struct resolver_fault *fault = data;
+    assert(!strcmp(name, "fault.test") && capacity == 2);
+    ++fault->calls;
+    *count = fault->count;
+    assert(knurl_mmdb_address_parse("192.0.2.1", &out[0], error) == KNURL_OK);
+    assert(knurl_mmdb_address_parse("::ffff:192.0.2.1", &out[1], error) ==
+           KNURL_OK);
+    if (fault->invalid)
+        out[0].size = 5;
+    return fault->status;
+}
+static void resolver_failures(void)
+{
+    static const struct {
+        knurl_status returned, expected;
+        size_t count;
+        int invalid;
+    } cases[] = {{KNURL_EOF, KNURL_BACKEND, 1, 0},
+                 {KNURL_AGAIN, KNURL_BACKEND, 1, 0},
+                 {KNURL_IO, KNURL_IO, 1, 0},
+                 {KNURL_TIMEOUT, KNURL_TIMEOUT, 1, 0},
+                 {KNURL_CANCELLED, KNURL_CANCELLED, 1, 0},
+                 {KNURL_OK, KNURL_BACKEND, 0, 0},
+                 {KNURL_OK, KNURL_LIMIT, 3, 0},
+                 {KNURL_OK, KNURL_BACKEND, 1, 1}};
+    struct resolver_fault fault;
+    knurl_acl_config config;
+    knurl_acl *acl;
+    knurl_mmdb_address address;
+    knurl_error error;
+    const char *names[] = {"fault.test"};
+    size_t i;
+    int accepted;
+    assert(knurl_mmdb_address_parse("192.0.2.1", &address, &error) == KNURL_OK);
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        memset(&fault, 0, sizeof(fault));
+        fault.status = cases[i].returned;
+        fault.count = cases[i].count;
+        fault.invalid = cases[i].invalid;
+        knurl_acl_config_init(&config);
+        config.policy = KNURL_ACL_DENY;
+        config.allow.addresses = names;
+        config.allow.address_count = 1;
+        config.resolve = faulty_resolve;
+        config.resolve_userdata = &fault;
+        config.dns_max_addresses = 2;
+        assert(knurl_acl_new(&config, &acl, &error) == KNURL_OK &&
+               !fault.calls);
+        assert(acl->refresh(acl, &error) == cases[i].expected);
+        assert(error.status == cases[i].expected &&
+               strstr(error.detail, "fault.test"));
+        accepted = 1;
+        assert(acl->check(acl, &address, NULL, &accepted, &error) ==
+                   cases[i].expected &&
+               !accepted);
+        fault.status = KNURL_OK;
+        fault.count = 2;
+        fault.invalid = 0;
+        assert(acl->refresh(acl, &error) == KNURL_OK && fault.calls == 2);
+        check(acl, "192.0.2.1", NULL, 1);
+        check(acl, "::ffff:192.0.2.1", NULL, 1);
+        check(acl, "192.0.2.2", NULL, 0);
+        acl->close(acl, NULL);
+    }
+}
+static void country_combinations(void)
+{
+    knurl_mmdb_config provider;
+    knurl_mmdb *db;
+    knurl_acl_config config;
+    knurl_acl *acl;
+    knurl_mmdb_address address;
+    knurl_error error;
+    const char *addresses[] = {"1.0.0.0/8"};
+    const char *countries[] = {"US"};
+    unsigned int mask, policy, client;
+    int allowed, expected, allow_match, deny_match, needs_lookup;
+    knurl_status status;
+    knurl_mmdb_config_init(&provider);
+    provider.lookup = country;
+    assert(knurl_mmdb_new(&provider, &db, &error) == KNURL_OK);
+    /* Independently combine address, country and unknown alternatives on both
+     * sides, under both fallback policies. Client 4 has a database I/O error.
+     */
+    for (mask = 0; mask < 64; ++mask)
+        for (policy = 0; policy < 2; ++policy) {
+            knurl_acl_config_init(&config);
+            config.country_provider = db;
+            config.policy = policy ? KNURL_ACL_DENY : KNURL_ACL_ALLOW;
+            config.allow.addresses = config.deny.addresses = addresses;
+            config.allow.countries = config.deny.countries = countries;
+            config.allow.address_count = (mask & 1) != 0;
+            config.allow.country_count = (mask & 2) != 0;
+            config.deny.address_count = (mask & 4) != 0;
+            config.deny.country_count = (mask & 8) != 0;
+            config.allow.unknown = (mask & 16) != 0;
+            config.deny.unknown = (mask & 32) != 0;
+            acl = create(&config);
+            needs_lookup = (mask & (2 | 8 | 16 | 32)) != 0;
+            for (client = 1; client <= 4; ++client) {
+                memset(&address, 0, sizeof(address));
+                address.size = 4;
+                address.bytes[0] = (unsigned char)client;
+                allow_match = (client == 1 && (mask & (1 | 2))) ||
+                              (client == 3 && (mask & 16));
+                deny_match = (client == 1 && (mask & (4 | 8))) ||
+                             (client == 3 && (mask & 32));
+                expected = !deny_match && (allow_match || !policy);
+                allowed = 1;
+                status = acl->check(acl, &address, NULL, &allowed, &error);
+                if (client == 4 && needs_lookup)
+                    assert(status == KNURL_IO && !allowed);
+                else
+                    assert(status == KNURL_OK && allowed == expected);
+            }
+            acl->close(acl, NULL);
+        }
+    db->close(db, NULL);
+}
 int main(int argc, char **argv)
 {
     knurl_acl_config config;
@@ -287,6 +477,9 @@ int main(int argc, char **argv)
     assert(argc == 2);
     lifecycle(argv[1]);
     indexed();
+    prefix_boundaries();
+    resolver_failures();
+    country_combinations();
     knurl_acl_config_init(&config);
     assert(config.policy == KNURL_ACL_ALLOW && !config.dns_refresh_ms &&
            !config.use_peer);

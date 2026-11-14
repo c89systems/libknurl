@@ -27,8 +27,10 @@ static knurl_status resolve(const char *name, knurl_mmdb_address *addresses,
     }
     assert(pthread_mutex_unlock(&state->mutex) == 0);
     *count = 1;
-    return knurl_mmdb_address_parse(version ? "2.2.2.2" : "1.1.1.1", addresses,
-                                    error);
+    return knurl_mmdb_address_parse(!strcmp(name, "two.test")
+                                        ? (version ? "1.1.1.1" : "3.3.3.3")
+                                        : (version ? "2.2.2.2" : "1.1.1.1"),
+                                    addresses, error);
 }
 static void *refresh(void *userdata)
 {
@@ -61,7 +63,9 @@ int main(void)
     knurl_acl_config_init(&config);
     config.policy = KNURL_ACL_DENY;
     config.allow.addresses = names;
-    config.allow.address_count = 2;
+    config.allow.address_count = 1;
+    config.deny.addresses = names + 1;
+    config.deny.address_count = 1;
     config.dns_refresh_ms = 1;
     config.resolve = resolve;
     config.resolve_userdata = &state;
@@ -83,6 +87,7 @@ int main(void)
     for (i = 0; i < 1000; ++i) {
         check(state.acl, "1.1.1.1", 1);
         check(state.acl, "2.2.2.2", 0);
+        check(state.acl, "3.3.3.3", 0);
     }
     assert(pthread_mutex_lock(&state.mutex) == 0);
     state.released = 1;

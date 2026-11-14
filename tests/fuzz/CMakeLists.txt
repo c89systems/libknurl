@@ -22,6 +22,8 @@ add_executable(knurl_fuzz parsers.c
   "${root}/src/http_framing.c" "${root}/src/proxy_headers.c"
   "${root}/src/proxy_http.c" "${root}/src/proxy_ws_wire.c"
   "${root}/src/static_policy.c" "${root}/src/route_path.c"
+  "${root}/src/acl.c" "${root}/src/acl_dns.c"
+  "${root}/src/ip.c" "${root}/src/forwarded.c"
   "${root}/src/websocket_frame.c" "${root}/src/websocket_protocol.c" "${root}/src/websocket.c")
 target_include_directories(knurl_fuzz PRIVATE "${root}/src")
 target_link_libraries(knurl_fuzz PRIVATE knurl::static CURL::libcurl)

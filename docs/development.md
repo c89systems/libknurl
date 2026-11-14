@@ -62,6 +62,15 @@ checkout is rejected during preparation and Core configuration.
 Toolchain discovery is read-only; only explicit provisioning prepares compilers.
 One operation owns the checkout; run operations serially.
 
+The native AFL++ harness instruments owned HTTP/WebSocket parsers and ACL/IP/
+forwarding parsers. Inputs are bounded to 16 KiB; the ACL resolver is deterministic
+and never performs network DNS. Forwarding assertions check hop limits,
+normalization and rejection of appended unusable identities. ACL assertions
+check invalid-address failures and deny precedence. The corpus includes IPv4,
+mapped IPv6, hostname and RFC 7239 inputs; a syntax dictionary guides mutations.
+Seed replay runs in CTest. Bounded campaigns complement the unit and wire tests;
+they do not establish exhaustive security or source coverage.
+
 Normal Make configuration enables the required Core tests, including when reusing
 a directory previously configured with `BUILD_TESTING=OFF`. Direct CMake builds
 may still select a library-only configuration. The `lifecycle.*` checks cover

@@ -60,6 +60,29 @@ static knurl_status forbidden(knurl_request *r, knurl_reply *reply, void *data,
     ++unexpected;
     return KNURL_STATE;
 }
+static knurl_status forbidden_hook(knurl_request *r, knurl_reply *reply,
+                                   int *finish, void *data, knurl_error *error)
+{
+    (void)finish;
+    return forbidden(r, reply, data, error);
+}
+static knurl_status country_lookup(const knurl_mmdb_address *address,
+                                   knurl_mmdb_country *country, void *data,
+                                   knurl_error *error)
+{
+    (void)data;
+    knurl_error_clear(error);
+    if (address->bytes[0] == 3)
+        return KNURL_EOF;
+    if (address->bytes[0] == 4)
+        return KNURL_IO;
+    if (address->bytes[0] == 5) {
+        memcpy(country->code, "us", 3);
+        return KNURL_OK;
+    }
+    memcpy(country->code, address->bytes[0] == 1 ? "US" : "SE", 3);
+    return KNURL_OK;
+}
 static knurl_status raw(knurl_request *r, knurl_request_plan *plan, void *data,
                         knurl_error *error)
 {
@@ -196,7 +219,7 @@ static int client(struct fixture *f, unsigned short port)
     CHECK(knurl_test_acl_exchange(port, "GET", "/identity", headers,           \
                                   expected) == 200)
     IP("", peer);
-    if (mode < 3 || mode == 6) {
+    if (mode < 3 || mode >= 6) {
         IP("X-Forwarded-For: 1.2.3.4, 10.0.0.2\r\n", mode == 0   ? peer
                                                      : mode == 2 ? "10.0.0.2"
                                                                  : "1.2.3.4");
@@ -226,6 +249,20 @@ static int client(struct fixture *f, unsigned short port)
         IP("X-Forwarded-For: 1.2.3.4\r\nX-Real-IP: 9.9.9.9\r\n", peer);
     }
     if (mode == 1) {
+        static const char *const malformed[] = {
+            "X-Forwarded-For: ,1.2.3.4\r\n",
+            "X-Forwarded-For: 1.2.3.4,\r\n",
+            "X-Forwarded-For: 1.2.3.4,,10.0.0.2\r\n",
+            "X-Forwarded-For: bad,10.0.0.2\r\n",
+            "X-Forwarded-For: 1.2.3.4:80\r\n",
+            "X-Real-IP: 1.2.3.4\r\nX-Real-IP: 2.3.4.5\r\n"};
+        size_t i;
+        IP("X-Forwarded-For: 1.2.3.4, 2001:db8::2\r\n", "1.2.3.4");
+        for (i = 0; i < sizeof(malformed) / sizeof(malformed[0]); ++i) {
+            IP(malformed[i], peer);
+            CHECK(knurl_test_acl_exchange(port, "GET", "/effective",
+                                          malformed[i], NULL) == 403);
+        }
         CHECK(knurl_test_acl_exchange(
                   port, "GET", "/effective",
                   "X-Forwarded-For: malformed\r\nX-Real-IP: 1.2.3.4\r\n",
@@ -257,8 +294,57 @@ static int client(struct fixture *f, unsigned short port)
         CHECK(knurl_test_acl_exchange(port, "GET", "/peer",
                                       "X-Forwarded-For: 1.2.3.4\r\n",
                                       "allowed") == 200);
+        CHECK(knurl_test_acl_exchange(port, "GET", "/country",
+                                      "X-Forwarded-For: 1.1.1.1\r\n",
+                                      "allowed") == 200);
+        CHECK(knurl_test_acl_exchange(port, "GET", "/country",
+                                      "X-Forwarded-For: 2.2.2.2\r\n",
+                                      NULL) == 403);
+        CHECK(knurl_test_acl_exchange(port, "GET", "/country",
+                                      "X-Forwarded-For: 3.3.3.3\r\n",
+                                      NULL) == 403);
+        CHECK(knurl_test_acl_exchange(port, "GET", "/unknown",
+                                      "X-Forwarded-For: 3.3.3.3\r\n",
+                                      "allowed") == 200);
+        CHECK(knurl_test_acl_exchange(port, "GET", "/known",
+                                      "X-Forwarded-For: 3.3.3.3\r\n",
+                                      NULL) == 403);
+        CHECK(knurl_test_acl_exchange(port, "GET", "/known",
+                                      "X-Forwarded-For: 2.2.2.2\r\n",
+                                      "allowed") == 200);
+        CHECK(knurl_test_acl_exchange(
+                  port, "POST", "/unknown",
+                  "X-Forwarded-For: 4.4.4.4\r\nContent-Length: "
+                  "999999999\r\nExpect: 100-continue\r\n",
+                  NULL) == 503);
+        CHECK(knurl_test_acl_exchange(port, "GET", "/unknown",
+                                      "X-Forwarded-For: 5.5.5.5\r\n",
+                                      NULL) == 503);
+        /* A per-request lookup error cannot poison later valid lookups. */
+        CHECK(knurl_test_acl_exchange(port, "GET", "/unknown",
+                                      "X-Forwarded-For: 3.3.3.3\r\n",
+                                      "allowed") == 200);
     }
-    if (mode == 6) {
+    if (mode == 4) {
+        static const char *const malformed[] = {
+            "Forwarded: proto=https\r\n",
+            "Forwarded: for=1.2.3.4;proto=http;PROTO=https\r\n",
+            "Forwarded: for=1.2.3.4;\r\n",
+            "Forwarded: for=\"[2001:db8::1]\r\n",
+            "Forwarded: for=\"[1.2.3.4]\"\r\n",
+            "Forwarded: for=\"1.2.3.4:\"\r\n",
+            "Forwarded: for=\"1.2.3.4:-1\"\r\n",
+            "Forwarded: for=_hidden\r\n",
+            "Forwarded: for=1.2.3.4,\r\n"};
+        size_t i;
+        IP("Forwarded: for=\"[::ffff:192.0.2.1]\"\r\n", "192.0.2.1");
+        for (i = 0; i < sizeof(malformed) / sizeof(malformed[0]); ++i) {
+            IP(malformed[i], peer);
+            CHECK(knurl_test_acl_exchange(port, "GET", "/effective",
+                                          malformed[i], NULL) == 403);
+        }
+    }
+    if (mode >= 6) {
         CHECK(wait_status(port, "1.1.1.1", 200) == 0);
         CHECK(version_set(f, '1') == 0 &&
               wait_status(port, "2.2.2.2", 200) == 0);
@@ -271,6 +357,17 @@ static int client(struct fixture *f, unsigned short port)
               wait_status(port, "2.2.2.2", 200) == 0);
         CHECK(version_set(f, '3') == 0 &&
               wait_status(port, "2.2.2.2", 503) == 0);
+        CHECK(knurl_test_acl_exchange(
+                  port, "POST", "/dynamic",
+                  "X-Forwarded-For: 2.2.2.2\r\nContent-Length: "
+                  "999999999\r\nExpect: 100-continue\r\n",
+                  NULL) == 503);
+        if (mode == 7) {
+            /* Stop while native DNS work still owns the ACL. */
+            CHECK(knurl_test_acl_exchange(port, "GET", "/stop", NULL,
+                                          "stopped") == 200);
+            return 0;
+        }
         /* The late result for 1.1.1.1 must never publish after its deadline. */
         pause_ms(160);
         CHECK(knurl_test_acl_exchange(port, "GET", "/dynamic",
@@ -301,6 +398,8 @@ static knurl_status ready(knurl_server *server,
             return KNURL_STATE;
     }
     knurl_error_clear(error);
+    if (knurl_server_set_serving(server, 1, error) != KNURL_OK)
+        return error->status;
     f->child = fork();
     if (f->child < 0)
         return KNURL_IO;
@@ -337,7 +436,10 @@ static int run(int mode)
     knurl_route_group_config group_config;
     knurl_route_group *group;
     knurl_acl_config acl_config;
-    knurl_acl *deny, *permit, *peer, *dynamic_acl;
+    knurl_acl *deny, *permit, *peer, *dynamic_acl, *country_acl, *unknown_acl,
+        *known_acl;
+    knurl_mmdb_config country_config;
+    knurl_mmdb *country_provider;
     knurl_proxy_config proxy;
     knurl_static_config file;
     knurl_upload_stream_config upload;
@@ -356,10 +458,11 @@ static int run(int mode)
     lonejson *runtime;
     knurl_error error;
     knurl_run_result result;
-    const char *trusted[] = {"127.0.0.0/8", "10.0.0.0/8"};
+    const char *trusted[] = {"127.0.0.0/8", "10.0.0.0/8", "2001:db8::/32"};
     const char *star[] = {"*"};
     const char *local[] = {"127.0.0.0/8"};
     const char *names[] = {"dynamic.test"};
+    const char *countries[] = {"US"};
     int status;
     size_t i;
     const char *group_paths[] = {"/group", "/list", "/rest-list"};
@@ -381,7 +484,7 @@ static int run(int mode)
     config.callbacks.userdata = &f;
     if (mode) {
         config.client_ip.trusted_proxies = mode == 2 ? star : trusted;
-        config.client_ip.trusted_proxy_count = mode == 2 ? 1 : 2;
+        config.client_ip.trusted_proxy_count = mode == 2 ? 1 : 3;
     }
     if (mode == 3) {
         config.client_ip.forwarded_header = "x-chain";
@@ -414,17 +517,44 @@ static int run(int mode)
     acl_config.resolve = resolve;
     acl_config.resolve_userdata = &f;
     dynamic_acl = acl_new(&acl_config);
+    knurl_mmdb_config_init(&country_config);
+    country_config.lookup = country_lookup;
+    CHECK(knurl_mmdb_new(&country_config, &country_provider, &error) ==
+          KNURL_OK);
+    knurl_acl_config_init(&acl_config);
+    acl_config.country_provider = country_provider;
+    acl_config.policy = KNURL_ACL_DENY;
+    acl_config.allow.countries = countries;
+    acl_config.allow.country_count = 1;
+    country_acl = acl_new(&acl_config);
+    acl_config.allow.country_count = 0;
+    acl_config.allow.unknown = 1;
+    unknown_acl = acl_new(&acl_config);
+    acl_config.allow.unknown = 0;
+    acl_config.deny.unknown = 1;
+    acl_config.policy = KNURL_ACL_ALLOW;
+    known_acl = acl_new(&acl_config);
     knurl_route_config_init(&route);
     route.method = KNURL_HTTP_ANY;
     route.handler = forbidden;
     route.acl = deny;
     route.path = "/blocked";
+    route.hooks.auth = route.hooks.before = route.hooks.after = forbidden_hook;
     CHECK(router->route(router, &route, NULL, &error) == KNURL_OK);
+    /* A second match must never be tried after the selected route denies. */
+    route.acl = NULL;
+    route.path = "^/blocked$";
+    route.path_kind = KNURL_PATH_REGEX;
+    CHECK(router->route(router, &route, NULL, &error) == KNURL_OK);
+    route.path_kind = KNURL_PATH_LITERAL;
+    route.acl = deny;
+    route.hooks.auth = route.hooks.before = route.hooks.after = NULL;
     route.handler = NULL;
     route.on_headers = raw;
     route.path = "/raw";
     CHECK(router->route(router, &route, NULL, &error) == KNURL_OK);
     route.on_headers = NULL;
+    route.hooks.auth = route.hooks.before = route.hooks.after = NULL;
     route.handler = allowed;
     route.path = "/effective";
     route.acl = permit;
@@ -436,6 +566,8 @@ static int run(int mode)
         knurl_route_group_config_init(&group_config);
         group_config.prefix = group_paths[i];
         group_config.acl = deny;
+        group_config.hooks.auth = group_config.hooks.before =
+            group_config.hooks.after = forbidden_hook;
         CHECK(router->group(router, &group_config, &group, &error) == KNURL_OK);
         route.path = "/open";
         route.acl = peer;
@@ -532,7 +664,16 @@ static int run(int mode)
     route.acl = peer;
     CHECK(router->route(router, &route, NULL, &error) == KNURL_OK);
     route.path = "/dynamic";
-    route.acl = mode == 6 ? dynamic_acl : NULL;
+    route.acl = mode >= 6 ? dynamic_acl : NULL;
+    CHECK(router->route(router, &route, NULL, &error) == KNURL_OK);
+    route.path = "/country";
+    route.acl = country_acl;
+    CHECK(router->route(router, &route, NULL, &error) == KNURL_OK);
+    route.path = "/unknown";
+    route.acl = unknown_acl;
+    CHECK(router->route(router, &route, NULL, &error) == KNURL_OK);
+    route.path = "/known";
+    route.acl = known_acl;
     CHECK(router->route(router, &route, NULL, &error) == KNURL_OK);
     route.path = "/stop";
     route.handler = stop;
@@ -543,10 +684,14 @@ static int run(int mode)
     permit->close(permit, NULL);
     peer->close(peer, NULL);
     dynamic_acl->close(dynamic_acl, NULL);
+    country_acl->close(country_acl, NULL);
+    unknown_acl->close(unknown_acl, NULL);
+    known_acl->close(known_acl, NULL);
     CHECK(knurl_server_run(server, &result, &error) == KNURL_OK);
     CHECK(waitpid(f.child, &status, 0) == f.child && WIFEXITED(status) &&
           WEXITSTATUS(status) == 0);
     CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(country_provider->close(country_provider, &error) == KNURL_OK);
     CHECK(knurl_asset_provider_close(provider, &error) == KNURL_OK);
     lonejson_free(runtime);
     CHECK(access("absent-acl-output", F_OK) != 0);
@@ -556,7 +701,7 @@ static int run(int mode)
 int main(void)
 {
     int mode;
-    for (mode = 0; mode < 7; ++mode)
+    for (mode = 0; mode < 8; ++mode)
         CHECK(run(mode) == 0);
     return 0;
 }

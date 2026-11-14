@@ -7,6 +7,7 @@
 #include "server_internal.h" /* IWYU pragma: keep (fixture's server layout) */
 #include "loop_internal.h"
 #include "receivers_internal.h"
+#include "forwarded.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -98,6 +99,115 @@ static void paths(char *text)
     }
 }
 
+static void forwarded(const unsigned char *data, size_t length)
+{
+    static const size_t limits[] = {1, 0, 64};
+    struct knurl_forward_chain *chain = malloc(sizeof(*chain));
+    knurl_client_ip_config config;
+    knurl_mmdb_address normalized;
+    knurl_bytes input;
+    char *extended = malloc(length + 32);
+    size_t format, bound, i, count;
+    if (chain == NULL || extended == NULL)
+        abort();
+    memset(&config, 0, sizeof(config));
+    input.data = (const char *)data;
+    input.length = length;
+    for (format = 0; format < 2; ++format)
+        for (bound = 0; bound < sizeof(limits) / sizeof(limits[0]); ++bound) {
+            config.forwarded_format =
+                format ? KNURL_FORWARDED_RFC7239 : KNURL_FORWARDED_COMMA;
+            config.max_hops = limits[bound];
+            if (!knurl_forwarded_parse(&config, input, chain))
+                continue;
+            count = chain->count;
+            assert(count && count <= (limits[bound] ? limits[bound] : 16));
+            for (i = 0; i < count; ++i) {
+                assert(knurl_ip_normalize(&chain->hops[i], &normalized));
+                assert(normalized.size == chain->hops[i].size);
+                assert(!memcmp(normalized.bytes, chain->hops[i].bytes,
+                               normalized.size));
+            }
+            if (count > 1) {
+                config.max_hops = count - 1;
+                assert(!knurl_forwarded_parse(&config, input, chain));
+            }
+            config.max_hops = 64;
+            memcpy(extended, data, length);
+            strcpy(extended + length, format ? ",for=unknown" : ",invalid");
+            input.data = extended;
+            input.length = strlen(extended);
+            assert(!knurl_forwarded_parse(&config, input, chain));
+            input.data = (const char *)data;
+            input.length = length;
+        }
+    free(extended);
+    free(chain);
+}
+/* Never allow mutated hostnames to initiate system DNS or file I/O. */
+static knurl_status resolve(const char *name, knurl_mmdb_address *out,
+                            size_t capacity, size_t *count, void *data,
+                            knurl_error *error)
+{
+    (void)name;
+    (void)data;
+    assert(capacity == 2);
+    assert(knurl_mmdb_address_parse("192.0.2.1", &out[0], error) == KNURL_OK);
+    assert(knurl_mmdb_address_parse("::ffff:192.0.2.1", &out[1], error) ==
+           KNURL_OK);
+    *count = 2;
+    return KNURL_OK;
+}
+static void acl_input(const unsigned char *data, size_t length)
+{
+    knurl_acl_config config;
+    knurl_acl *acl;
+    knurl_mmdb_address peer;
+    struct knurl_ip_network network;
+    knurl_status status;
+    knurl_error error;
+    char *text = malloc(length + 1), *line;
+    const char *rules[1];
+    int allowed = 1;
+    if (text == NULL)
+        abort();
+    memcpy(text, data, length);
+    text[length] = 0;
+    line = strchr(text, '\n');
+    if (line != NULL)
+        *line = 0;
+    rules[0] = text;
+    knurl_acl_config_init(&config);
+    config.policy = KNURL_ACL_DENY;
+    config.allow.addresses = config.deny.addresses = rules;
+    config.allow.address_count = config.deny.address_count = 1;
+    config.resolve = resolve;
+    config.dns_max_addresses = 2;
+    status = knurl_acl_new(&config, &acl, &error);
+    if (status == KNURL_OK) {
+        assert(acl->refresh(acl, &error) == KNURL_OK);
+        if (knurl_ip_network_parse(text, &network))
+            peer = network.address;
+        else
+            assert(knurl_mmdb_address_parse("192.0.2.1", &peer, &error) ==
+                   KNURL_OK);
+        assert(acl->check(acl, &peer, NULL, &allowed, &error) == KNURL_OK &&
+               !allowed);
+        memset(&peer, 0, sizeof(peer));
+        memcpy(peer.bytes, data, length < 16 ? length : 16);
+        peer.size = length ? data[0] % 20 : 0;
+        allowed = 1;
+        status = acl->check(acl, &peer, NULL, &allowed, &error);
+        assert(status ==
+               (peer.size == 4 || peer.size == 16 ? KNURL_OK : KNURL_INVALID));
+        assert(
+            !allowed); /* Identical allow/deny sets can never grant access. */
+        assert(acl->close(acl, &error) == KNURL_OK);
+    } else
+        assert(status == KNURL_INVALID && acl == NULL);
+    free(text);
+}
+
 /* Only the transport is a fixture. Parsing/validation/control-frame processing
  * uses the real owned websocket_frame.c against a bounded Core channel. */
 static knurl_status empty_read(knurl_channel *channel, void *data, size_t size,
@@ -182,6 +292,8 @@ int main(int argc, char **argv)
     framing(data, length);
     heads(data, length);
     paths((char *)data);
+    forwarded(data, length);
+    acl_input(data, length);
     websocket(data, length);
     free(data);
     return 0;

@@ -46,6 +46,7 @@ for mode=0,5 do
       access_log_file_count=3,access_log_rotation_disabled=mode==5},logger=root,access_log=policy,
     on_parent_ready=function(s)
       local value,err=s:set_pslog(nil);assert(value==nil and err.status==knurl.status.STATE)
+      ok(s:set_serving(true))
       ok(fixture.spawn_logging(ok(s:listener()).port))
     end})
   if mode==0 then

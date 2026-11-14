@@ -1396,6 +1396,10 @@ static int spawn_acl(lua_State *L)
             failed = knurl_test_acl_exchange(port, "GET", "/bad-override", NULL,
                                              NULL) != 500;
         if (!failed)
+            failed = knurl_test_acl_exchange(port, "GET", "/override",
+                                             "X-Forwarded-For: malformed\r\n",
+                                             "overridden") != 200;
+        if (!failed)
             failed =
                 knurl_test_acl_exchange(port, "GET", "/sse", NULL, NULL) != 403;
         if (!failed)
