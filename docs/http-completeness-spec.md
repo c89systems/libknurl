@@ -1,5 +1,8 @@
 # HTTP and application-input completeness specification
 
+Historical scope: Lua clauses below refer to the archived pre-Luthrum product.
+Only the C library/SDK is active; see [runtime direction](runtime-direction.md).
+
 Status: implemented and verified on 2026-11-13. The
 [verification record](verification.md#http-completeness-2026-11-13) identifies the
 completed gates and their limits. This document defines the delivered behavior

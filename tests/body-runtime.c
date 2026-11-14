@@ -821,7 +821,8 @@ int main(int argc, char **argv)
     config.listeners = &listener;
     config.listener_count = config.workers.count = 1;
     config.workers.affinity_disabled = config.http.backend_quiet = 1;
-    config.workers.shutdown_timeout_ms = 100;
+    /* Cleanup under memory instrumentation must fit the shutdown budget. */
+    config.workers.shutdown_timeout_ms = 5000;
     config.dispatch.mode = KNURL_DISPATCH_CALLBACK;
     config.dispatch.on_headers = headers;
     config.limits.body_spool_directory = ".";

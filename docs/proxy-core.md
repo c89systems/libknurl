@@ -69,8 +69,5 @@ HEAD output contributes zero. WebSocket counts are accepted opaque relay bytes,
 excluding the opening handshake. These are accepted-byte counters, not bytes
 proven delivered to a peer. Hosts do not need to recreate transport logic.
 
-Lua's `proxy{on_exchange=function(snapshot) ... end}` copies those fields into a
-table through the same public C callback. Callback exceptions and allocation
-failure are protected and reported at server completion, after transport cleanup.
-The callback cannot replace an already completed response. Upstream failures
-also set the public request observation's upstream disconnect classification.
+The exchange callback cannot replace an already completed response. Upstream
+failures also set the public request observation's upstream disconnect classification.

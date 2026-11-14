@@ -1,5 +1,9 @@
 # Extraction verification
 
+Product scope update (2026-11-15): executable and Lua results below are historical.
+Only the C library/SDK ships; the other sources are archived pending Luthrum.
+See [runtime direction](runtime-direction.md).
+
 ## HTTP completeness (2026-11-13)
 
 The [implementation specification](http-completeness-spec.md) is delivered:

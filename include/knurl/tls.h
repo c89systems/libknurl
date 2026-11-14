@@ -161,6 +161,14 @@ typedef knurl_status (*knurl_acme_state_fn)(
     knurl_acme_event event, knurl_bytes domain, knurl_bytes runtime_directory,
     void *userdata, knurl_error *error);
 
+/** File-backed ACME durability policy for an explicitly configured private
+ * runtime_directory on durable storage. RESTORE uses files in place; PERSIST
+ * fsyncs account/domain keys, certificate and containing directories before
+ * publication. Rejects symlinks, foreign owners and nonprivate
+ * files/directories. userdata is unused. This synchronous key-manager callback
+ * can report I/O failure; the configured persistence budget applies. */
+KNURL_API knurl_acme_state_fn knurl_acme_file_state(void);
+
 /** Configuration for acme. Use the owning operation's initializer before
  * applying overrides.
  */

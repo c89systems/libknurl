@@ -12,8 +12,13 @@ Initialize `knurl_access_log_config` and call
 Registration copies the access rules and borrows both logger pointers. It
 creates no logger, opens no file and invokes no sink. Invalid registration
 preserves the previous configuration. Logger instances must remain alive
-through every run and use sinks capable of native process callbacks. Lua
-interop must enforce that capability through its public pslog descriptor.
+through every run and use sinks capable of native process callbacks.
+
+A host can create one root pslog instance and pass it to this registration and
+its other native components. Derived context loggers share its sink. Retain the
+host-owned root until the server and all borrowing native work have retired;
+component shutdown does not destroy it. Runtime bindings and their script-level
+logger construction are deferred until Luthrum.
 
 The root receives backend runtime logs. A NULL root selects a library-owned JSON
 logger during the run, preserving the ordinary INFO filter. Structured access
@@ -47,8 +52,7 @@ individual structured status is disabled. The parent skips contended worker
 buffers instead of waiting on an unfinished record; a worker killed while holding
 that buffer can lose its unfinished records.
 
-File rotation is enabled by default, with these `config.http` settings (also
-available under Lua's `http` table):
+File rotation is enabled by default, with these `config.http` settings:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |

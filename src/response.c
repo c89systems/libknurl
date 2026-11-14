@@ -1216,6 +1216,9 @@ void knurl_response_error_message(knurl_response *r, knurl_status cause,
 {
     knurl_reply *failure;
     knurl_status status;
+    if (code >= 500 &&
+        r->impl->request->impl->server->impl->config.http.hide_server_errors)
+        message = NULL;
     if (!r->impl->outcome.committed && !r->impl->inflight) {
         retire_source(r, cause);
         if (knurl_response_replace_uncommitted(r, NULL) == KNURL_OK) {

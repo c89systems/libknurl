@@ -120,11 +120,8 @@ app/request/raw-record/reply/userdata shape through public registrations. Its
 LoneJSON allocator observes native field parsing. It also checks no transport
 body store, owner-loop callbacks, early malformed input, disconnect while
 parsing, a tiny queue, source replacement, auth/limits, empty 204 and handler 501.
-The Lua typed-route binding uses this same C registration, supplying a pinned
-Lua-owned record through the optional public record provider. Its native parser
-receives only public record/schema pointers; the Lua handler runs on the owner
-loop and retained Lua records survive completion. Providers receive a release
-for each acquire attempt, including partial failure and disconnect during parsing.
+Record providers receive a release for each acquire attempt, including partial
+failure and disconnect during parsing.
 
 `knurl_xml_generator_new/read/destroy` provide resumable output. Each read
 advances an iterative traversal using public libxml2 writer calls, then flushes
@@ -165,14 +162,3 @@ It runs on a default-stack pthread. The [wire fixture](https://github.com/c89sys
 covers grouped registration, copied options, memory/file bodies, rewind, output,
 malformed input, auth short circuit, body limits and staged replacement. Both
 fixtures run against relocated static/shared installed SDKs.
-
-The [Lua facade](lua.md) binds mapped `parse`/`parse_record`, materialized/live
-output, request-owned parsing and `server/group:xml_route` through the public C
-codecs and LoneJSON interop. Data/path inputs, root/text/attribute options,
-trimming, unknown-field precedence and separate mapped limits follow Vectis.
-The [installed typed fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/typed.lua) covers these paths and copied
-route options. Owned Lua document/XPath/element and incremental SAX bindings lift
-Vectis's object facade through these public operations. Their
-[ported fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/xml.lua) covers mutation, retained owners, result
-cleanup, callback identity/reentry and Lua allocation failure. Node finalizers
-retire independent views during other queries without closing the active DOM.

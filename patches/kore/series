@@ -66,3 +66,5 @@
 0066-iterative-json-traversal.patch
 0067-lonejson-lifecycle-status.patch
 0068-allow-empty-request-field-values.patch
+0069-absolute-tls-handshake-deadline.patch
+0070-atomic-acme-certificate-install.patch

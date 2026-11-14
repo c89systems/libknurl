@@ -277,6 +277,7 @@ knurl_status knurl_config_normalize(knurl_server_config *config,
         if (status != KNURL_OK)                                                \
             return status;                                                     \
     } while (0)
+    DEADLINE(tls_handshake, 10000, 0);
     DEADLINE(startup, 30000, 0);
     DEADLINE(request_header, 5000, 1);
     DEADLINE(request_body_idle, 15000, 1);

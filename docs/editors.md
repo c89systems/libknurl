@@ -2,9 +2,7 @@
 
 ## Ordinary build inputs
 
-Run `make build` for Core C/C++ work, or `make lua` for the Lua binding and its
-embedding header. The latter builds Core, installs its public SDK under the
-selected build tree and prepares the released Lua providers. An initial build
+Run `make build` for Core C/C++ work. An initial build
 is required before the editor can resolve generated and dependency headers.
 There is no separate editor SDK or compilation-database bootstrap.
 
@@ -13,7 +11,6 @@ The checked-in `.clangd` uses these ordinary databases:
 | Files | Compilation database |
 | --- | --- |
 | Core implementation, public C headers, examples and C/C++ consumers | `build/debug/compile_commands.json` |
-| `src/lua/`, `lua/include/`, `tests/lua/` | `build/debug/lua/compile_commands.json` |
 | Optional parser harnesses under `tests/fuzz/` | `build/release/fuzz/compile_commands.json` |
 
 New implementation/consumer files need to belong to a CMake target; refresh the
@@ -45,10 +42,9 @@ returns lazy completion items.
 Parser/configuration checks can be reproduced from the checkout root:
 
 ```sh
-make lua
+make build
 clangd --check=src/xml_mapping.c --tweaks=none
 clangd --check=include/knurl/knurl.h --tweaks=none
-clangd --check=lua/include/knurl/lua.h --tweaks=none
 ```
 
 These commands use ordinary `.clangd` discovery. The `--check` exit status alone
@@ -58,14 +54,5 @@ an editor. The [verification record](https://github.com/c89systems/libknurl/blob
 `--tweaks=none` avoids the previously recorded clangd code-action self-test
 limitations; it does not disable parser diagnostics or the live LSP checks.
 
-## Lua annotations
-
-The Lua facade's annotations reference the shipped `knurl.meta.lua` definitions,
-including methods implemented dynamically in C. LuaLS discovers both files in the
-source tree; installed consumers add their `share/lua/5.5` prefix to the language
-server's workspace library. Metadata contains no runtime implementation and
-requires no extra module at runtime. CMake and LuaRocks both install it.
-
-C/C++ binding comments are checked with clangd; Lua annotations are interpreted
-by LuaLS/EmmyLua. Test ordinary `require("knurl")` inference when changing the
-facade or metadata, including dynamic userdata methods implemented in C.
+Archived Lua annotations are reference material for future Luthrum integration;
+they have no active editor build or installation contract.

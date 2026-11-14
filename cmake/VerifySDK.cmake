@@ -53,6 +53,9 @@ foreach(record IN LISTS records)
   endif()
   set(digest "${CMAKE_MATCH_1}")
   set(path "${CMAKE_MATCH_2}")
+  if(path MATCHES "(^|/)(archive|lua|binary)(/|$)|[.]lua$|[.]rock(spec)?$|(^|/)bin/knurl$|^include/knurl/lua[.]h$")
+    message(FATAL_ERROR "Deferred product in C SDK: ${path}")
+  endif()
   string(LENGTH "${digest}" length)
   if(NOT length EQUAL 64 OR IS_ABSOLUTE "${path}" OR path MATCHES "(^|/)[.][.](/|$)" OR
       (NOT path IN_LIST sdk_docs AND

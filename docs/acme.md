@@ -1,5 +1,14 @@
 # ACME host state
 
+For a server using durable local storage, set C `acme.state = knurl_acme_file_state()`
+and configure an explicit `runtime_directory`.
+Create that directory with mode 0700, owned by the server user, and mount it on
+durable writable storage. Account and domain keys stay private in that directory.
+Certificate replacement is atomic; the policy fsyncs the files and containing
+directories before acknowledging publication. It reports persistence failures
+instead of distributing an unacknowledged certificate. Custom callbacks remain
+available for external durable stores.
+
 libknurl uses Kore's runtime layout directly: `account-key.pem` and each
 domain's `certificates/<domain>/key.pem` and `fullchain.pem`. The host prepares
 the private runtime directory and owns durable storage, hydration and cleanup.

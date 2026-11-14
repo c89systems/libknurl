@@ -3,11 +3,16 @@
 This is the complete product contract. Feature guides describe the implementation;
 they cannot enlarge this contract or establish compatibility.
 
+Product decision, 2026-11-15: only the C library and C SDK ship. The standalone
+executable and Lua binding are archived until Luthrum is ready. C requirements
+below remain active; historical Lua clauses describe deferred work, not a current
+product. See [runtime direction](runtime-direction.md).
+
 ## Purpose and boundary
 
 Extract Vectis's working enhanced Kore HTTP server, reverse proxy, WebDAV and
 server helpers into libknurl. libknurl owns their implementation, its public
-`knurl_` C API and its `knurl` Lua module. Kore is the private backend.
+`knurl_` C API. Kore is the private backend.
 Vectis consumes the library and removes the extracted implementations.
 The cutover preserves existing application C/Lua calls, handlers, declarations,
 configuration, output, streaming and lifecycle behavior through forwarding.

@@ -1,5 +1,8 @@
 # Musl worker-stack assessment (2026-11-08)
 
+The Lua binding discussed below is now archived pending Luthrum. Its measurements
+remain historical evidence; see [runtime direction](runtime-direction.md).
+
 This document records the historical diagnosis before the iterative mapper and
 Kore patch 0066. Both local corrections are now implemented; see
 [verification](verification.md) and the [XML manual](xml.md). The adopted

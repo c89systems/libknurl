@@ -121,6 +121,8 @@ int main(void)
     REQUIRE(effective.config.limits.max_connections == 1024);
     REQUIRE(effective.config.limits.request_limit == 1024);
     REQUIRE(effective.config.timeouts.request_header.milliseconds == 2000);
+    REQUIRE(effective.config.timeouts.tls_handshake.milliseconds == 10000);
+    REQUIRE(effective.config.http.hide_server_errors);
     REQUIRE(effective.requested_timeouts.request_header.milliseconds == 1001);
     REQUIRE(effective.config.timeouts.request_body_idle.disabled);
     REQUIRE(effective.config.timeouts.request_body_idle.milliseconds == 0);

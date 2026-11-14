@@ -53,6 +53,9 @@ static knurl_status facade_finish(knurl_request *request, knurl_status status,
     code = status == KNURL_INVALID
                ? 400
                : (status == KNURL_NOT_SUPPORTED ? 501 : 500);
+    if (code >= 500 &&
+        request->impl->server->impl->config.http.hide_server_errors)
+        handler_failed = 0;
     if (knurl_reply_new(&failure, NULL) == KNURL_OK) {
         if (knurl_response_replace_uncommitted(response, NULL) == KNURL_OK &&
             knurl_reply_failure(failure, code,

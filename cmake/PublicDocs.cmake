@@ -12,8 +12,8 @@ set(knurl_public_docs
   docs/input.md
   docs/mmdb.md
   docs/logging.md
-  docs/lua.md
-  docs/async-bindings.md
+  docs/tasks.md
+  docs/runtime-direction.md
   docs/openapi.md
   docs/overview.md
   docs/policy.md
@@ -32,7 +32,6 @@ set(knurl_public_docs
   docs/webdav.md
   docs/websockets.md
   docs/xml.md
-  lua/README.md
 )
 
 function(knurl_verify_public_docs source_root packaged_root)

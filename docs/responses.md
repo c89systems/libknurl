@@ -79,8 +79,7 @@ reads it. Reset failure produces an uncommitted 500 (with Kore's error page when
 configured); failed/unselected sources close before request-close callbacks.
 Reset callbacks cannot mutate the
 busy reply. The default remains false; manual, parsing and spooled consumers retain
-their explicit reset policy. Lua legacy stream declarations use this same C
-option.
+their explicit reset policy.
 
 `knurl_response_file_take` takes an open regular-file descriptor on success and
 checks its offset and length against the target's actual seek representation.
@@ -105,7 +104,7 @@ independent descriptor/cursor, supports reset, excludes later growth, and fails
 if the file is truncated before its declared end. Renaming/unlinking the path
 does not change the pinned file; close releases the descriptor without unlinking.
 Opening a FIFO or directory fails. Filesystem reads run synchronously on the
-owner loop. Mapped Lua file parsing uses this public reader. The short
+owner loop. The short
 [file-source fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/source-file.c) covers these ownership/failure cases.
 
 `knurl_reply_source_spooled` lifts Vectis's synchronous `response_source`:
@@ -124,9 +123,7 @@ claim. [Spooled JSON](json.md) shares that private file lifecycle.
 The [public materialization fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/reply-spooled.c) proves output
 larger than the buffered default, descriptor privacy/lifetime, source reentry,
 buffered replacement ownership, input/reset/AGAIN and actual file-size failures,
-plus synchronous stack-record JSON serialization. The installed
-[Lua fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/foundation.lua) covers the matching `spooled_source`
-declaration, HEAD, chunk remainders and allocation/close failures.
+plus synchronous stack-record JSON serialization.
 
 `knurl_response_bytes` copies a complete body under the output bound and
 automatically begins/ends delivery. Failure leaves no partial reply. HEAD and

@@ -6,11 +6,10 @@ Start with the [quick starts](../README.md) or find a guide below. The
 | Use | Reference |
 | --- | --- |
 | Features, supported platforms and application boundary | [Overview](overview.md) |
-| clangd comments, completion and LuaLS annotations | [Editor setup](editors.md) |
+| clangd comments and completion | [Editor setup](editors.md) |
 | Public C API and ownership/units/error hovers | [Installed headers](https://github.com/c89systems/libknurl/tree/trunk/include/knurl/) |
-| Lua facade, callbacks, shapes and lifetimes | [Lua guide](lua.md), [annotated facade](https://github.com/c89systems/libknurl/blob/trunk/lua/knurl.lua), [editor types](https://github.com/c89systems/libknurl/blob/trunk/lua/knurl.meta.lua) |
-| Host-owned Lua VM and provider interop | [Embedding header](https://github.com/c89systems/libknurl/blob/trunk/lua/include/knurl/lua.h), [Lua source packages](../lua/README.md) |
-| Native tasks and handwritten async modules | [Async adapter contract](async-bindings.md) |
+| Native tasks and request continuation | [Tasks](tasks.md) |
+| C product boundary and deferred Luthrum integration | [Runtime direction](runtime-direction.md) |
 | Core SDK archives and relocated consumers | [SDK delivery](sdk.md) |
 | Lifecycle, signals, control and fork ownership | [Processes](processes.md) |
 | Routing, request metadata and body policies | [Requests](requests.md) |
@@ -33,11 +32,9 @@ Start with the [quick starts](../README.md) or find a guide below. The
 | Trusted proxies, admission, autoblock and observations | [Policy](policy.md) |
 | Borrowed pslog loggers and independent access files | [Logging](logging.md) |
 
-C declarations use Doxygen comments recognized by clangd. Lua uses LuaLS/EmmyLua
-annotations, including dynamic methods implemented in C. Neither editor metadata
-nor these guides expose private Kore or dependency layouts. Public indexes are
-zero-based in C and one-based in Lua unless an operation explicitly documents an
-exception, such as selected-array callback indexes.
+C declarations use Doxygen comments recognized by clangd. These guides and the
+public headers avoid private Kore or dependency layouts. Public C indexes are
+zero-based unless an operation documents an exception.
 
 Contributor instructions and verification history are in the source repository.
 [Development](https://github.com/c89systems/libknurl/blob/trunk/docs/development.md)

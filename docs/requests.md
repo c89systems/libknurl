@@ -83,10 +83,9 @@ and close the connection. Unsupported transfer coding returns 501.
 
 Trailers remain separate from initial headers. `request->trailer_count`,
 `trailer_at` and `trailer_first` expose ordered fields after body completion.
-Before completion, count is zero and lookups return STATE. Lua exposes
-`req.trailer(name)` and the completed ordered `req.trailers` table; native request
-userdata also has `:trailers()`. Trailer names are case-insensitive, repeated
-fields retain order, and views expire with the request. Limits are 100 fields,
+Before completion, count is zero and lookups return STATE. Trailer names are
+case-insensitive, repeated fields retain order, and views expire with the request.
+Limits are 100 fields,
 8192 bytes per line and 16384 bytes for the complete block. Trailer values never
 change routing, authentication or initial headers. A pipelined suffix is retained
 for the next request. See [input helpers](input.md) for exact typed query/capture

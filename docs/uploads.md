@@ -85,7 +85,7 @@ remains valid through request cleanup and native acknowledgement (and the
 optional host release). Caller userdata stays retained by the caller until server run returns.
 Cancellation revokes HTTP delivery immediately and retains native work until its
 acknowledgement; an uncooperative callback remains subject to the existing worker
-shutdown deadline. Lua uses the owner-loop stream callbacks above.
+shutdown deadline.
 
 `knurl_router_upload_file` and `knurl_route_group_upload_file` reuse that reader
 path. Initialize `knurl_upload_file_config`, set the route and explicit

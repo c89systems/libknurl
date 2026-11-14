@@ -191,6 +191,8 @@ typedef struct knurl_limit_config {
  * applying overrides.
  */
 typedef struct knurl_timeout_config {
+    /** Absolute accept-to-TLS-handshake deadline; default 10000 ms. */
+    knurl_deadline tls_handshake;
     /** Server startup/readiness deadline. */
     knurl_deadline startup;
     /** Downstream request-head receive deadline. */
@@ -259,6 +261,10 @@ typedef struct knurl_http_config {
     int backend_quiet;
     /** Nonzero selects formatted backend error pages. */
     int pretty_error_pages;
+    /** Nonzero hides diagnostic messages in automatic 5xx responses.
+     * Enabled by the production profile; explicit application bodies remain
+     * under application control. */
+    int hide_server_errors;
 } knurl_http_config;
 
 /** Infer a filename's Content-Type using this instance's overrides, then

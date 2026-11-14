@@ -1,5 +1,9 @@
 # Vectis integration boundary
 
+Product scope update (2026-11-15): executable and Lua results below are historical.
+Only the C library/SDK ships; the other sources are archived pending Luthrum.
+See [runtime direction](runtime-direction.md).
+
 The [extraction contract](server-api-spec.md) is the sole normative product spec.
 Baseline: Vectis `6b1e263e0436687f68a7768ca55f4361a6e59e19`.
 Source links target that exact public revision, so reading this contract does

@@ -1,13 +1,10 @@
 # Testing
 
 Run build and test operations serially in one checkout. `make test` builds and
-runs Core checks for the selected `TARGET` and `CONFIG`; Lua is a separate product.
+runs C library checks for the selected `TARGET` and `CONFIG`.
 
 ```sh
 make test
-make lua
-ctest --test-dir build/debug/lua --parallel 1 \
-  --stop-on-failure --output-on-failure --no-tests=error
 make memcheck
 make qemu-smoke TARGET=armhf-linux-musl
 make prerelease
@@ -28,16 +25,16 @@ also require `ssh-keygen`; their temporary keys and refs stay under `build/`.
 
 | Profile | Scope |
 | --- | --- |
-| Native plain | Full GNU/musl Core and Lua suites, installed consumers and source reconstruction. Release test assertions remain enabled. |
-| Native memory | Selected Core codec, source, storage, WebDAV, proxy and traversal cases, plus installed Lua foundation/REST/typed/XML cases in both loading modes, through Valgrind. Invalid memory/uninitialized uses and definite/indirect leaks fail. Logs are per process; no blanket suppressions. |
-| ARM QEMU | Core HTTP/count/MIME smoke, XML and Kore JSON worker-stack regressions, and Lua preload/dynamic loading with basic JSON and inert routes. No full runtime suite, Valgrind or fuzzing. |
+| Native plain | Full GNU/musl C suites and relocated installed consumers. Release test assertions remain enabled. |
+| Native memory | Selected Core codec, source, storage, WebDAV, proxy and traversal cases, through Valgrind. Invalid memory/uninitialized uses and definite/indirect leaks fail. Logs are per process; no blanket suppressions. |
+| ARM QEMU | Core HTTP/count/MIME smoke, XML and Kore JSON worker-stack regressions. No full runtime suite, Valgrind or fuzzing. |
 | Native fuzz | Owned proxy HTTP/chunk framing, WebSocket handshake/frame, route/range/ETag parsers. Instrumented C89 sources reuse the installed GNU Release SDK for support code. Seed replay, coverage-map presence, nonzero executions and zero saved crashes/hangs are required. |
 
-`make verify-all` builds each selected configuration once through `lua-all`,
+`make verify-all` builds each selected configuration once through `build-all`,
 then checks its existing binaries. Host-tool checks run once. Native SDK tests
 preserve and verify the final archive separately from their corruption fixtures;
 cross SDKs get their own final-byte and relocated-consumer checks. No check invokes
-another full matrix or cleans matching Core/Lua products. The default Debug/editor build
+another full matrix or cleans matching C products. The default Debug/editor build
 and the optimized Release build are distinct inputs, not interchangeable proof.
 
 Installed reference consumers use a CTest SDK preparation fixture and separate
@@ -75,8 +72,8 @@ library retains its worker-death recovery requirement.
 
 [The macOS workflow](../.github/workflows/macos.yml) runs on branch pushes and
 manual dispatch. It uses the standard ARM64 `macos-15` runner and serial Debug
-and Release jobs. Each job builds Core and Lua with the selected Apple toolchain
-and runs their complete native CTest suites, including SDK privacy/relocation
+and Release jobs. Each job builds the C library with the selected Apple toolchain
+and runs the complete native CTest suite, including SDK privacy/relocation
 and installed-consumer checks. Homebrew supplies host tools, including Bash 4.4+
 and GNU archive utilities; target dependencies use the ordinary checksum-pinned
 SDK acquisition. The workflow records the tested commit in its toolchain step.
@@ -87,9 +84,9 @@ the Darwin release-artifact gate; hosted runs do not publish release products.
 ## Debug test thread stacks
 
 GNU Linux Debug test executables set the process's default pthread stack size to
-128 KiB before `main`. This includes the Lua test hosts, installed-consumer
+128 KiB before `main`. This includes installed-consumer
 fixtures and SDK example applications launched by the tests. The setting belongs
-to these test applications; Core/Lua libraries and exported SDK targets do not
+to these test applications; Core libraries and exported SDK targets do not
 install it. Main-thread stack limits and build-tool worker defaults are unchanged.
 Explicitly requested pthread stack sizes remain effective, and pthread-owned
 stacks retain nonzero guard regions.

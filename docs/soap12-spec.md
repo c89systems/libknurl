@@ -1,5 +1,8 @@
 # SOAP 1.2 server implementation specification
 
+The future Lua surface is deferred until Luthrum. This specification does not
+ship an executable or binding; see [runtime direction](runtime-direction.md).
+
 Status: planned extension, 2026-11-13. This document specifies future work;
 the SOAP APIs described below do not exist yet. It does not change the current
 [extraction contract](server-api-spec.md) or authorize implementation or release.
@@ -39,7 +42,7 @@ Use the current W3C Recommendations and their published errata:
 - [RFC 3902](https://www.rfc-editor.org/rfc/rfc3902.html)
   for `application/soap+xml` and its action parameter.
 - [Existing XML behavior](xml.md), [request/body lifecycle](requests.md),
-  [reply/source ownership](responses.md) and [Lua binding](lua.md).
+  [reply/source ownership](responses.md) and [deferred runtime integration](runtime-direction.md).
 
 SOAP 1.2's published envelope namespace is
 `http://www.w3.org/2003/05/soap-envelope`. This identifier is independent of

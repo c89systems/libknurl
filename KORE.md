@@ -1,5 +1,9 @@
 # Kore defect record
 
+Current product scope: the C library and SDK ship. Lua and executable references
+below record historical integration work archived pending Luthrum; see
+[product direction](docs/runtime-direction.md).
+
 Record every defect found in upstream Kore, the imported Vectis patch stack,
 and libknurl's Kore patches/adapter here, including defects fixed before a
 commit. Add the reproducer, cause, fix and evidence when finding a new bug;
@@ -98,7 +102,7 @@ findings rather than attributing every subcase to untouched upstream code.
 | A03 | Transient directory/account/nonce/signing failures left no scheduled retry, or repeated requests raced an unfinished account setup. | [0055](patches/kore/0055-acme-protocol-recovery.patch) retains pending account intent and reschedules work after transient failures. | Directory/transport/account-error scenarios in the protocol fixture. |
 | A04 | Overlapping order timers and signing operations could outlive their order, reschedule stale work or lose key ownership before installation/failure. | [0055](patches/kore/0055-acme-protocol-recovery.patch) associates work with its order, cancels it on cleanup and retains keys through terminal handling. | Issuance/recovery/renewal cases; no claim that all possible allocation failures are covered. |
 | A05 | CA challenge notification could precede HTTP workers installing the challenge certificate. | [0055](patches/kore/0055-acme-protocol-recovery.patch) waits for worker installation acknowledgement. | Local-CA challenge/issuance checks. |
-| A06 | The original library ACME patch added startup-key persistence and a separate candidate-install path, changing Vectis's runtime-file and durable-store ordering. | [0061](patches/kore/0061-direct-acme-host-persistence.patch) removes the extra startup PERSIST/candidate-install hook and retains Kore's working files plus host persistence callback. | [acme-runtime.c](tests/acme-runtime.c), [tests/lua/acme.lua](tests/lua/acme.lua), and the TLS/provider forwarding fixtures. This was our integration error, not an upstream requirement. |
+| A06 | The original library ACME patch added startup-key persistence and a separate candidate-install path, changing Vectis's runtime-file and durable-store ordering. | [0061](patches/kore/0061-direct-acme-host-persistence.patch) removes the extra startup PERSIST/candidate-install hook and retains Kore's working files plus host persistence callback. | [acme-runtime.c](tests/acme-runtime.c), [tests/lua/acme.lua](archive/pre-luthrum/tests/lua/acme.lua), and the TLS/provider forwarding fixtures. This was our integration error, not an upstream requirement. |
 
 ## Patch and adapter defects
 

@@ -1,5 +1,8 @@
 # Route ACL implementation contract
 
+Historical scope: Lua clauses below refer to the archived pre-Luthrum product.
+Only the C library/SDK is active; see [runtime direction](runtime-direction.md).
+
 ACLs are reusable, reference-counted declarations with public C free functions
 and receiver methods, plus a Lua facade. Construction copies and validates
 configuration without DNS, files, threads or server initialization. Explicit

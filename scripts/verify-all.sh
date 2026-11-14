@@ -13,7 +13,7 @@ for tool in valgrind qemu-aarch64 qemu-arm ssh-keygen python3; do
   command -v "$tool" >/dev/null || { printf 'Required check tool missing: %s\n' "$tool" >&2; exit 1; }
 done
 "$root/scripts/lifecycle/cpkt-aflpp.sh" discover >/dev/null
-make --no-print-directory lua-all CONFIG="$config" JOBS="$jobs" CANDIDATE_VERSION="$candidate"
+make --no-print-directory build-all CONFIG="$config" JOBS="$jobs" CANDIDATE_VERSION="$candidate"
 targets=$(scripts/lifecycle/cpkt-toolchains.sh targets)
 for target in $targets; do
   binary="$root/build/$target/$config"
@@ -21,10 +21,10 @@ for target in $targets; do
   case "$target" in
     x86_64-linux-gnu)
       ctest --test-dir "$binary" --parallel 1 --stop-on-failure --output-on-failure --no-tests=error
-      ctest --test-dir "$binary/lua" --parallel 1 --stop-on-failure --output-on-failure --no-tests=error ;;
+      ;;
     x86_64-linux-musl)
       ctest --test-dir "$binary" -E '^(kore[.]|lifecycle[.])' --parallel 1 --stop-on-failure --output-on-failure --no-tests=error
-      ctest --test-dir "$binary/lua" --parallel 1 --stop-on-failure --output-on-failure --no-tests=error ;;
+      ;;
     *-linux-*)
       cmake -S cmake/checks -B "$binary/checks/qemu" "-DKNURL_BUILD=$binary" -DCHECK_KIND=qemu
       ctest --test-dir "$binary/checks/qemu" --parallel 1 --stop-on-failure --output-on-failure --no-tests=error ;;
@@ -40,12 +40,13 @@ binary="$root/build/$config"
 cmake -S cmake/checks -B "$binary/checks/memory" "-DKNURL_BUILD=$binary" -DCHECK_KIND=memory
 ctest --test-dir "$binary/checks/memory" --parallel 1 --stop-on-failure --output-on-failure --no-tests=error
 if [[ $config != release ]]; then
-  make --no-print-directory lua TARGET=x86_64-linux-gnu CONFIG=release JOBS="$jobs" CANDIDATE_VERSION="$candidate"
+  make --no-print-directory build TARGET=x86_64-linux-gnu CONFIG=release JOBS="$jobs" CANDIDATE_VERSION="$candidate"
 fi
 binary="$root/build/release"
+cmake --install "$binary" --prefix "$binary/core-sdk"
 cmake -S tests/fuzz -B "$binary/fuzz" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   "-DCMAKE_TOOLCHAIN_FILE=$root/cmake/toolchains/selected.cmake" -DKNURL_TARGET=x86_64-linux-gnu -DKNURL_AFL=ON \
-  "-DKNURL_CORE_PREFIX=$binary/lua-core-sdk" "-DKNURL_SDK_ROOT=$root/.cache/sdk/x86_64-linux-gnu" "-DKNURL_CANDIDATE_VERSION=$candidate"
+  "-DKNURL_CORE_PREFIX=$binary/core-sdk" "-DKNURL_SDK_ROOT=$root/.cache/sdk/x86_64-linux-gnu" "-DKNURL_CANDIDATE_VERSION=$candidate"
 cmake --build "$binary/fuzz" --parallel "$jobs"
 ctest --test-dir "$binary/fuzz" --parallel 1 --stop-on-failure --output-on-failure --no-tests=error
 bash scripts/fuzz.sh "$binary/fuzz" smoke 10

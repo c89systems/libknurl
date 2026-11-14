@@ -641,6 +641,8 @@ static void configure(struct knurl_runtime *runtime)
     worker_policy = config->workers.death_policy == KNURL_WORKER_RESTART
                         ? KORE_WORKER_POLICY_RESTART
                         : KORE_WORKER_POLICY_TERMINATE;
+    kore_tls_handshake_timeout_ms =
+        (u_int64_t)config->timeouts.tls_handshake.milliseconds;
     worker_idle_timeout =
         (u_int64_t)config->timeouts.connection_idle.milliseconds;
     http_header_max = config->limits.max_request_header_bytes;

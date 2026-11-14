@@ -1,6 +1,7 @@
 #include "proxy_transport.h"
 #include "proxy_common.h"
 #include "loop_internal.h"
+#include <knurl/tls.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -428,6 +429,16 @@ knurl_status knurl_proxy_curl_set_ca(CURL *easy, char *pem, size_t pem_length,
         return KNURL_INVALID;
     }
     if (pem == NULL) {
+        const char *file = knurl_tls_system_ca_file();
+        const char *directory = getenv("SSL_CERT_DIR");
+        if ((file != NULL &&
+             curl_easy_setopt(easy, CURLOPT_CAINFO, file) != CURLE_OK) ||
+            (directory != NULL && *directory != '\0' &&
+             curl_easy_setopt(easy, CURLOPT_CAPATH, directory) != CURLE_OK)) {
+            knurl_proxy_error(error, KNURL_BACKEND,
+                              "failed to configure system TLS trust");
+            return KNURL_BACKEND;
+        }
         knurl_error_clear(error);
         return KNURL_OK;
     }

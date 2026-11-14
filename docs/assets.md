@@ -60,12 +60,6 @@ and `root_dir` for `knurl_router_static_directory`, or `path` and a borrowed
 `provider` for `knurl_router_static_assets`. Enabling indexes selects `index.html`
 unless `index_file` is supplied. Strings/options are copied during registration.
 Custom providers and hook userdata remain borrowed through router destruction.
-The Lua facade accepts host providers through public Lua interop values for
-`static_assets` and `webdav` declarations. Each value pins its optional Lua owner,
-and copied route declarations retain it through server close. The binding does
-not close borrowed providers. Packed lookup stays with the host, while these
-mounts use the same C static/storage/WebDAV implementation. See the
-[host-provider workflow](lua.md#host-providers).
 Literal route groups provide the corresponding convenience registrations.
 Filesystem single-file registration preserves Vectis's configured GET/HEAD masks,
 so a separate POST route can use the same literal path. Directory/asset mounts
@@ -135,20 +129,6 @@ built-ins without filesystem access; its result is borrowed until destruction.
 `knurl_static_content_type(filename)` remains the built-in-only helper.
 The latter, and a NULL-server lookup, return strings with static lifetime.
 
-Lua uses dictionaries, forwarded to those same public C declarations:
-
-```lua
-local server = assert(knurl.server{
-  port = 8080,
-  http = {mime_types = {custom = 'application/vnd.example.resource'}},
-})
-assert(server:static_directory{
-  path = '/files', root_dir = './public',
-  mime_types = {ts = 'text/plain; charset=utf-8'},
-})
-assert(server:content_type('item.custom') == 'application/vnd.example.resource')
-```
-
 Strings and mapping arrays are copied at server creation or route registration;
 there is no process-global registry or live mutation. Zero entries inherit the
 next layer. Extensions are ASCII letters/digits or `+`, `-`, `_`, optionally
@@ -171,8 +151,8 @@ must contain both a token name and a token or quoted value with no whitespace
 around `=`. Validation checks syntax, not whether a vendor type is registered.
 Quoted parameter values allow escaped quotes/backslashes, delimiters and the
 legacy opaque bytes permitted by HTTP; HTAB is accepted only in allowed whitespace
-or quoted positions. C strings are NUL-terminated; Lua also rejects embedded NUL
-using the string's explicit length. The same Core validator protects mappings,
+or quoted positions. C strings are NUL-terminated. The same Core validator
+protects mappings,
 explicit static/404 types, asset metadata, DAV types and staged reply/header types.
 
 Assets default to no-cache and a `not found\n` 404 with
@@ -206,8 +186,8 @@ on armhf, including ranges beyond 4 GiB.
 
 Static configuration enables negotiated compression by default. Set
 `compression_disabled=true` to disable it, or `precompressed_disabled=true` to
-disable sidecar lookup while retaining dynamic gzip. The same fields exist in C
-and Lua. Missing Accept-Encoding selects identity. Up to 32 empty list members
+disable sidecar lookup while retaining dynamic gzip. Missing Accept-Encoding
+selects identity. Up to 32 empty list members
 are ignored across all Accept-Encoding fields; a larger count is rejected.
 Explicit weights, wildcard and identity exclusions determine selection; equal
 quality prefers Brotli sidecar, gzip sidecar, dynamic gzip, then identity.

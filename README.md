@@ -1,9 +1,13 @@
 # libknurl
 
-libknurl is an embeddable HTTP server for C89 and Lua 5.5.1, built on Kore.
+libknurl is an embeddable C89 HTTP server library built on Kore.
 Use it to serve a site, expose a typed API or embed a reverse proxy in your own
 application. Your application supplies the handlers, schemas, storage and
-authentication policy, and owns the Lua VM when using the Lua facade.
+authentication policy.
+
+The standalone `knurl` executable and Lua binding are deferred until C89 Systems'
+Luthrum runtime is ready. They are archived in the repository and are excluded
+from current builds and releases. [Product direction](docs/runtime-direction.md)
 
 - **Compose routes.** Use literal, parameter and regex routes with groups and
   middleware, and let handlers revise a staged reply before it goes out.
@@ -88,31 +92,12 @@ cmake --build build
 ./build/server
 ```
 
-## Hello in Lua
-
-With the `knurl` module installed for your Lua 5.5.1 runtime, save this as
-`hello.lua` and run `lua hello.lua`. [Lua installation](lua/README.md)
-
-```lua
-local knurl = require("knurl")
-local server = assert(knurl.server {bind = "127.0.0.1", port = 8080, workers = 1})
-assert(server:route {
-  path = "/",
-  methods = {"GET"},
-  handler = function()
-    return "Hello from libknurl!\n"
-  end,
-})
-assert(server:run())
-assert(server:close())
-```
-
-With either server running, `curl -fsS http://127.0.0.1:8080/` prints
+With the server running, `curl -fsS http://127.0.0.1:8080/` prints
 `Hello from libknurl!`. Stop the server with Ctrl-C.
 
 ## Guides
 
-The SDK and Lua source packages include the public guides for offline reading.
+The C SDK includes the public guides for offline reading.
 [Documentation index](docs/README.md) · [Build from source](https://github.com/c89systems/libknurl/blob/trunk/docs/development.md)
 
 libknurl is MIT licensed. Kore retains its upstream notices.

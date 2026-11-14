@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-# Both products declare the repository root; never adopt an enclosing checkout.
+# Builds declare the repository root; never adopt an enclosing checkout.
 function(knurl_version root output)
   file(REAL_PATH "${root}" root)
   find_program(knurl_git git)

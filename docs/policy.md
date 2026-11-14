@@ -22,7 +22,7 @@ changing `knurl_request_peer`. An optional `client_ip.resolve` callback sees
 that default and writes a replacement numeric IPv4/IPv6 address into a supplied
 46-byte buffer. An optional `correlation_id.resolve` writes at most 128 bytes.
 An address resolver returning zero bytes preserves the default identity and its
-forwarding validity; Lua nil uses this path. A nonempty valid host replacement
+forwarding validity; a zero-length result uses this path. A nonempty valid host replacement
 explicitly overrides that decision.
 It may return an empty identifier; NUL, control bytes and DEL are rejected.
 Neither callback must append a terminator. The server validates and retains
@@ -97,78 +97,6 @@ accounting. The public policy fixture also runs against relocated static/shared
 SDKs. [Structured and file access logging](logging.md) use the same resolved
 identity without retaining application-owned request state.
 
-## Lua callbacks
-
-The Lua binding adapts these public C callbacks without a second policy engine.
-`client_ip.resolve(request)` and `correlation_id.resolve(request)` return a string
-or nil/error. Nil without error preserves the default address or empty correlation
-identifier. The C core enforces numeric address syntax, the 128-byte identifier
-bound and control-byte rejection. Configured callbacks are copied at declaration;
-construction and validation do not invoke them.
-
-`callbacks.on_request_start(server, request)` runs after resolution and before
-admission. It returns nil/true or nil/error; false rejects with STATE.
-`callbacks.on_request_close(server, request, outcome)` runs once after final
-observation and before request handles expire, including resolution/start/admission
-failure. Both callbacks and route hooks share the same Lua request table, so host
-state stored there survives into routing and cleanup. The facade refreshes resolved
-identity during the early phases and fills completed body metadata once when the
-route chain begins. Later hooks retain ordinary Lua body edits.
-
-`admission.on_connection(info)` sees copied peer/local endpoints, one-based
-listener index, TLS flag and process identity. `admission.on_request(request)`
-runs before body storage or proxy/upload allocation. Both return nil/true/allow,
-false/reject, close, or a table containing that action; nil/error propagates a
-failure. A request reject table may additionally contain status/status_code,
-headers, content_type and body. An action alone retains the native default 403;
-the native output queue bounds copied rejection bytes. File/source/codec payloads
-are rejected before acquiring them. CLOSE sends no HTTP response. Allow ignores
-unselected payload fields.
-
-`callbacks.on_observe(server, event)` receives copied fields named after the C
-snapshot. Kind is connection_accepted, tcp_stall, tls_failure, http_status,
-request_started, request_rejected, response_committed, request_complete or
-application. Disconnect side is unknown/downstream/upstream/host. Connection
-metadata is copied separately from request identity. A managed event's request
-uses the same scoped Lua table; transport events omit it. Only has_outcome events
-include final outcome/counts. Recursive events and response I/O remain forbidden.
-Saving copied event/count metadata does not retain native request lifetime.
-
-Outcome tables copy cause, body_cause, body_complete, upgraded, received_body_bytes
-and delivered_body_bytes, plus response cause/status/committed and wire, interim,
-body and monotonic duration counts. Wide quantities use the ordinary exact Lua
-integer/count representation. No borrowed native snapshot pointer reaches Lua.
-
-`callbacks.on_worker_event(server, event)` copies kind (started/exited/restarted/
-escalated), process, exit_status, signal_number, abandoned, expected and error.
-`callbacks.on_tls_identity(server, event)` copies one-based identity_index,
-pending/usable state, domain and error. `server:tls_identity_state(index)` queries
-the public active-run view. Run results also expose has_failure, last_failure and
-recovered_failures. These additions preserve native process roles and worker
-indices; they do not infer application service ownership.
-
-The whole Lua callback boundary, including metadata/result conversion, is
-protected. Status-bearing callbacks propagate errors into their native operation.
-Void callback exceptions retain the first local failure and request orderly server
-stop; request scope retirement still runs. Parent failures reach run directly;
-worker failures follow the native worker-exit/failure event path. Return values of
-void notifications are discarded. Worker signal traps also wake the existing
-runtime event loop, retaining Kore's signal priority and meaning even when a
-signal arrives just before its blocking wait. This adds no polling or host stop
-request for an ordinary worker signal. The [installed Lua fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/policy.lua)
-checks wire failures, shared request state/body timing, copied snapshots, exact
-close notification, event reentry, allocation failure and callback-error cleanup.
-
-Lua supervision uses `supervision={enabled, control_fd, interest, on_event}` and
-`server:supervision_take(options)`. The descriptor transfers only on success.
-`on_event(server, flags)` uses `knurl.control.READ/WRITE/EOF/ERROR`; host code
-owns reading/writing its protocol. `server:control_interest(mask)` updates the
-native parent watch. Child processes close the inherited server endpoint; the
-host closes its other inherited pipe/socket endpoints in its process hook.
-The core closes its endpoint at stop, and a new run requires a fresh transfer.
-The same fixture proves normal/EOF/error paths, failed replacement preserving
-the previous callback, and constructor/allocation failures retaining caller FD
-ownership. No framing, polling loop or application control protocol is added.
 
 ## Process-shared autoblock
 
@@ -262,7 +190,7 @@ names retain at most 256 bytes with `name_truncated`. Addresses are numeric IPv4
 or IPv6 strings. Unknown listener indices are `(size_t)-1` in C.
 
 The optional queue is a bounded process-shared FIFO collecting all workers.
-Coordinate one logical consumer across C and Lua, since each poll consumes an
+Coordinate one logical consumer across the application, since each poll consumes an
 event. Overflow overwrites the oldest event. `autoblock_next` reports accumulated
 overwrite/recovery losses, including when returning EOF. The loss count resets
 only when the caller requests it. Linux owner-death recovery discards pending
@@ -272,33 +200,4 @@ Polling is allowed on the current process's owner loop, in serialized lifecycle
 callbacks, or after `run` returns. Retained events clear on the next run,
 notification registration or destruction.
 
-Lua polls copied event userdata through the same public C surface. No Lua
-callback runs in the producer. For example, a parent-loop timer can drain:
-
-```lua
-assert(server:set_autoblock_notifications { queue_capacity = 256 })
-
-local function drain()
-    while true do
-        local event, err, dropped = server:autoblock_next()
-        if dropped and dropped ~= 0 then
-            print("autoblock notifications lost", tostring(dropped))
-        end
-        if not event then
-            assert(err == knurl.EOF, tostring(err))
-            break
-        end
-        local info = event:snapshot()
-        print(info.address, table.concat(info.via, " -> "), info.reason,
-              tostring(info.duration_ms))
-    end
-end
-```
-
-Call `drain` from the parent owner loop or after `server:run()` returns.
-`autoblock_next` returns `event, nil, dropped` or `nil, knurl.EOF, dropped`.
-The copied userdata remains valid after server closure. Its `snapshot()` builds
-a Lua table and can be retried if allocation fails. Polling allocates the copied
-owner before consuming the queue. Snapshot indices are one-based; an unknown
-listener is zero and a transport event has no `rule_index`. Set
-`queue_capacity=0` to disable polling on an inactive server.
+Set `queue_capacity=0` to disable polling on an inactive server.

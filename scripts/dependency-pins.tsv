@@ -13,7 +13,6 @@ sdk	lonejson	0.50.0	aarch64-linux-musl	d18d291a2c6a731aa54205673633221e388e4fbea
 sdk	lonejson	0.50.0	armhf-linux-gnu	5ea12a2dc327811101bad13dff23182c54a2bfa7133e87352442147706e6b094	https://github.com/c89systems/lonejson/releases/download/v0.50.0/liblonejson-0.50.0-armhf-linux-gnu.tar.gz
 sdk	lonejson	0.50.0	armhf-linux-musl	d11abea1a1e0e387426b230fb19c7ef35086b351b40245a10efb12784ee64797	https://github.com/c89systems/lonejson/releases/download/v0.50.0/liblonejson-0.50.0-armhf-linux-musl.tar.gz
 sdk	lonejson	0.50.0	arm64-apple-darwin	efc25f93d2768fb57f89d54025711ae3f82f7feeba1c776b25108b43356d8031	https://github.com/c89systems/lonejson/releases/download/v0.50.0/liblonejson-0.50.0-arm64-apple-darwin.tar.gz
-lua	lonejson	0.50.0	all	d4e634aca2d9e7f859a98ff66b6afffae8422e9642f2d60c1e303f09bdf5da99	https://github.com/c89systems/lonejson/releases/download/v0.50.0/lonejson-lua-0.50.0.tar.gz
 sdk	pslog	0.13.0	x86_64-linux-gnu	3fa68da666c70470f0f09041b05561f807cd241fae30421410033932d2b8c1c4	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-x86_64-linux-gnu.tar.gz
 sdk	pslog	0.13.0	x86_64-linux-musl	c195881181b1cbe08acb705ab91a8cd0e8cabe470c9fdb391b40820529836f80	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-x86_64-linux-musl.tar.gz
 sdk	pslog	0.13.0	aarch64-linux-gnu	d15b172c076324c05d7596cb7b01ba036c2d1aeb0eb7264bd4e77cc6c103c71f	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-aarch64-linux-gnu.tar.gz
@@ -21,4 +20,3 @@ sdk	pslog	0.13.0	aarch64-linux-musl	44c295a5ade15ce30dcbca6ba7775b6ea52156094130
 sdk	pslog	0.13.0	armhf-linux-gnu	55bfb03089697d01abfad14bb631c6cc69bfc361f09e8e0064bba1f48c086290	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-armhf-linux-gnu.tar.gz
 sdk	pslog	0.13.0	armhf-linux-musl	5ba1d3c16f864a3c6010ece642b6ecaa85273c2ba282d72856c9e7af6ac6320e	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-armhf-linux-musl.tar.gz
 sdk	pslog	0.13.0	arm64-apple-darwin	7f3b8e89f7f1a3ac27d47cb92aa68c4989ed4c8cdb51c80c81692412ba75cacb	https://github.com/c89systems/libpslog/releases/download/v0.13.0/libpslog-0.13.0-arm64-apple-darwin.tar.gz
-lua	pslog	0.13.0	all	d492e71ccb5b9f979e4cfbfd73c0ba87fc143698825167a5473edddc74e7248f	https://github.com/c89systems/libpslog/releases/download/v0.13.0/lua-pslog-0.13.0.tar.gz

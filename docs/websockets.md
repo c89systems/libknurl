@@ -105,18 +105,12 @@ WebSocket idle uses `timeouts.websocket_idle`; managed HTTP request and native
 keepalive timers expire with the handshake request. Output write-idle bounds
 continue to apply.
 
-Lua `message(ws, opcode, payload, final)` receives the equivalent frame and final
-flag. Use `ws:send_frame(opcode, final, payload)` to echo fragments, preserving
-their boundaries. `ws:close()` starts an empty closing handshake. Configuration
-fields and their defaults match C; the binding adds no message assembly.
-
 The [runtime fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/websocket-runtime.c) exercises the public API over
 HTTP and HTTPS: route configuration copies, failed transactional acceptance,
 request/open/close ordering, atomic queue pressure, capacity notifications,
 early frames, held frame redelivery, extended lengths, control frames, malformed protocol,
 close timeout and worker drain. The private channel fixture also checks that
 reused Kore connection objects start with cleared event flags and retained frame
-allocations continue to consume queue capacity. The [installed Lua cases](https://github.com/c89systems/libknurl/blob/trunk/tests/lua/events.lua)
-cover callback failures, replay and backpressure through the host VM. Exhaustive
+allocations continue to consume queue capacity. Exhaustive
 TLS retry/fault combinations are not established by these fixtures; see
 [verification](https://github.com/c89systems/libknurl/blob/trunk/docs/verification.md).

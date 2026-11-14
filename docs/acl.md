@@ -1,14 +1,14 @@
 # Route ACLs
 
 Include `<knurl/acl.h>` or `<knurl/knurl.h>`. The standalone C functions and
-receiver shell work without a server. Lua uses the same Core policy engine.
+receiver shell work without a server.
 
 Each ACL has `allow` and `deny` rule sets and one fallback `policy`. Deny matches
 win, then allow matches, then the policy applies. Zero/default policy is allow;
 `deny` with an empty allow set blocks everyone. Entries within a set are
 alternatives. To require both a permitted network and country, use separate
 group and route ACLs: every attached ACL must allow the client. A route cannot
-weaken its group's restriction, including Lua route-list convenience groups.
+weaken its group's restriction.
 
 Addresses accept numeric IPv4/IPv6, CIDRs including /0, and configured forward-DNS
 hostnames. IPv4-mapped IPv6 normalizes to IPv4. Countries are exactly two uppercase
@@ -16,20 +16,6 @@ ASCII letters, including XK. `unknown` matches a valid missing country/record;
 database and DNS errors never become unknown. The subject is the effective
 client unless `use_peer` selects the actual TCP peer.
 
-```lua
-local knurl = require('knurl')
-local server = assert(knurl.server{port=8080,
-  client_ip={trusted_proxies={'10.0.0.0/8'}, max_hops=16}})
-local country = assert(knurl.acl{
-  policy='deny', country_database='/srv/geo/country.mmdb',
-  allow={countries={'SE','NO'}}, deny={unknown=true}})
-local group = assert(server:group('/internal', {acl=country}))
-assert(group:get('/status', function() return 'ok' end, {
-  acl={policy='deny', allow={addresses={'192.0.2.0/24','office.example'}}}}))
-assert(country:close()) -- Core retains the group's reference.
-assert(server:run())
-assert(server:close())
-```
 
 Construction and server validation copy/validate declarations without DNS, files
 or threads. Startup prepares attached ACLs before serving. Country paths open
@@ -104,10 +90,9 @@ retain its userdata. Background callbacks must not use Lua or live HTTP handles.
 Standalone C hosts call `knurl_acl_refresh` before `knurl_acl_check` and schedule
 later refreshes themselves. AGAIN means not due or already refreshing. Check
 accepts binary peer/effective addresses, returns an explicit status and clears
-the admission output on failure. Lua exposes `acl:refresh()` (true when refreshed,
-false when not due), `acl:check(peer[, effective])` (boolean or nil/error), and
-`acl:close()`. Checks and refresh may run concurrently. Fork and final close
-require quiescent users. Startup-only and DNS-free ACLs create no background work.
+the admission output on failure. Checks and refresh may run concurrently. Fork
+and final close require quiescent users. Startup-only and DNS-free ACLs create
+no background work.
 
 ## Forwarding trust
 
@@ -120,7 +105,7 @@ the single-hop identity.
 
 Defaults read X-Forwarded-For, using X-Real-IP only when the chain is absent.
 `forwarded_header` / `real_ip_header` customize names; empty disables them.
-`forwarded_format='comma'` is the default. `'rfc7239'` parses
+`forwarded_format=KNURL_FORWARDED_COMMA` is the default. `KNURL_FORWARDED_RFC7239` parses
 [Forwarded `for` parameters](https://www.rfc-editor.org/rfc/rfc7239.html), including
 quoted IPv6 and numeric ports; explicitly select `forwarded_header='forwarded'`.
 Unusable/obfuscated, malformed, duplicate or oversized chains use the peer
@@ -132,7 +117,7 @@ ACLs using effective identity reject unusable forwarding data from trusted peers
 with 403; fallback to the proxy's peer address cannot grant client access.
 `use_peer` explicitly evaluates that peer, and a successful host `client_ip.resolve`
 callback explicitly replaces the normal identity decision.
-Zero-length C results and Lua nil preserve the default and its trust validity;
+Zero-length C results preserve the default and its trust validity;
 they cannot turn an invalid forwarding chain into an allowed proxy identity.
 
 The [implementation contract](acl-spec.md) defines the verification envelope.

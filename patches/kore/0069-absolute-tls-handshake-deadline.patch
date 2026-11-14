@@ -1,0 +1,36 @@
+diff --git a/include/kore/kore.h b/include/kore/kore.h
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -222,6 +222,7 @@
+ #define KORE_IDLE_TIMER_MAX	5000
+ 
+ extern u_int64_t	worker_idle_timeout;
++extern u_int64_t kore_tls_handshake_timeout_ms;
+ 
+ #define WEBSOCKET_OP_CONT	0x00
+ #define WEBSOCKET_OP_TEXT	0x01
+diff --git a/src/connection.c b/src/connection.c
+--- a/src/connection.c
++++ b/src/connection.c
+@@ -30,6 +30,7 @@
+ struct kore_pool		connection_pool;
+ struct connection_list		connections;
+ struct connection_list		disconnected;
++u_int64_t kore_tls_handshake_timeout_ms = 10000;
+ 
+ void
+ kore_connection_init(void)
+@@ -202,6 +203,13 @@
+ 		next = TAILQ_NEXT(c, list);
+ 		if (c->proto == CONN_PROTO_MSG)
+ 			continue;
++		/* Absolute since accept: progress cannot renew this deadline. */
++		if (c->state == CONN_STATE_TLS_SHAKE &&
++		    kore_tls_handshake_timeout_ms > 0 && now >= c->http_start &&
++		    now - c->http_start >= kore_tls_handshake_timeout_ms) {
++			kore_connection_disconnect(c);
++			continue;
++		}
+ #if !defined(KORE_NO_HTTP)
+ 		if (c->state == CONN_STATE_ESTABLISHED &&
+ 		    c->proto == CONN_PROTO_HTTP) {

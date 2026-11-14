@@ -33,15 +33,12 @@ make help
 make toolchain             # Explicit provisioning; unnecessary when already prepared.
 make build                 # Compile the selected x86_64-linux-gnu target in build/debug.
 make build-all             # Compile the full seven-target matrix, serially.
-make lua                   # Build the separate Lua facade/binding against the installed shared core.
-make lua-all               # Compile both products for all seven targets, serially.
-make lua-package           # Stage Lua sources, rockspec, source rock and their checksums.
 make sdk-package           # Stage the selected Core SDK binary rehearsal under build/.
 make sdk-verify            # Inspect that archive and build its relocated consumers.
 make build-all CONFIG=release
 make test                  # Run checks for the selected toolchain target.
-make memcheck              # Native GNU Core/Lua Valgrind gate, reusing ordinary binaries.
-make qemu-smoke TARGET=armhf-linux-musl  # Core/Lua and stack checks; no fuzzing.
+make memcheck              # Native GNU C Valgrind gate, reusing ordinary binaries.
+make qemu-smoke TARGET=armhf-linux-musl  # C/HTTP and stack checks; no fuzzing.
 make fuzz-smoke            # Seed replay and a 10-second native AFL++ campaign.
 make fuzz FUZZ_SECONDS=300 # Longer native campaign; same instrumented producer.
 make verify-all CONFIG=release # One matrix build followed by all declared gates.
@@ -74,7 +71,7 @@ they do not establish exhaustive security or source coverage.
 Normal Make configuration enables the required Core tests, including when reusing
 a directory previously configured with `BUILD_TESTING=OFF`. Direct CMake builds
 may still select a library-only configuration. The `lifecycle.*` checks cover
-owned paths, tracked source inputs, version/release identity and archive-cache
+owned paths, the C product/archive boundary, version/release identity and archive-cache
 misses, zero-request hits, corruption and failure cleanup. Acquisition fixtures
 use a loopback origin and isolated caches under `build/`.
 
@@ -82,16 +79,10 @@ Every build selects a concrete architecture/OS and the lifecycle toolchain for
 that target. The default is `x86_64-linux-gnu`, using `build/debug` and
 `build/release`; other targets use `build/<target>/debug` or `release`.
 There is no host-based product selection. [Editor setup](editors.md) describes
-how these ordinary builds supply clangd's Core and Lua compilation databases.
+how ordinary builds supply clangd's C compilation database.
 
-Lua provider SDKs have one Release producer per target under
-`build/<target>/release/lua-deps/` (default GNU: `build/release/lua-deps/`). Both
-Core configurations reuse those dependency bytes. Switching Core configuration
-does not replace shared SDKs with differently configured Lua providers.
-
-Lua source-package commands and the complete artifact inventory are described in
-[Release preparation](releasing.md). The [Lua package README](../lua/README.md)
-contains the build prerequisites shipped with that product.
+The active product is the C library and SDK. Executable/Lua sources and their old
+build integration are archived pending Luthrum; see [runtime direction](runtime-direction.md).
 
 The [Core SDK archive](sdk.md) has its own selected-target binary rehearsal and
 final-byte/consumer verification. It ships public library payload and metadata;

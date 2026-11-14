@@ -12,7 +12,6 @@ include("${knurl_root}/cmake/DebugTestStacks.cmake")
 if(NOT checked_CMAKE_HOME_DIRECTORY STREQUAL knurl_root)
   message(FATAL_ERROR "Checks require this checkout's configured Core build")
 endif()
-set(lua_build "${KNURL_BUILD}/lua")
 if(CHECK_KIND STREQUAL "memory")
   if(NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" OR
       NOT CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR
@@ -25,7 +24,7 @@ if(CHECK_KIND STREQUAL "memory")
     --track-origins=yes --trace-children=yes "--log-file=${CMAKE_BINARY_DIR}/valgrind-%p.log")
   foreach(name declarations input static_ranges static_encoding websocket_protocol asset mime json json_runtime access_log_file source_file_test rest-runtime openapi xml-mapped xml-runtime xml_stack kore_json_stack autoblock policy-logs-runtime
       storage-filesystem webdav-runtime static-runtime body_runtime websocket_runtime upload-runtime
-      proxy_framing http_completeness_failure proxy_http proxy_ws_wire route_resume task ca)
+      proxy_framing http_completeness_failure proxy_http proxy_ws_wire route_resume task acme-file ca)
     set(program "${KNURL_BUILD}/knurl_${name}")
     if(NOT EXISTS "${program}")
       message(FATAL_ERROR "Build required memory-check executable: ${program}")
@@ -35,7 +34,6 @@ if(CHECK_KIND STREQUAL "memory")
   endforeach()
   add_test(NAME memory.rest-spill COMMAND ${runner} "${KNURL_BUILD}/knurl_rest-runtime" spill)
   set_tests_properties(memory.rest-spill PROPERTIES TIMEOUT 120 LABELS memory)
-  set(lua_cases foundation input rest typed xml config events acl curl)
   add_test(NAME memory.acl COMMAND ${runner}
     "${KNURL_BUILD}/knurl_acl_test" "${KNURL_BUILD}/tests/mmdb-fixtures")
   add_test(NAME memory.acl-concurrent COMMAND ${runner} "${KNURL_BUILD}/knurl_acl_concurrent")
@@ -51,7 +49,6 @@ if(CHECK_KIND STREQUAL "memory")
   add_test(NAME memory.mmdb-heap COMMAND ${runner}
     "${KNURL_BUILD}/knurl_mmdb_memory" "${KNURL_BUILD}/tests/mmdb-fixtures/cache.mmdb" 65536)
   set_tests_properties(memory.mmdb-heap PROPERTIES TIMEOUT 120 LABELS memory)
-  set(lua_timeout 120)
 elseif(CHECK_KIND STREQUAL "qemu")
   if(checked_KNURL_TARGET MATCHES "^aarch64-linux-(gnu|musl)$")
     find_program(QEMU qemu-aarch64 REQUIRED)
@@ -77,7 +74,6 @@ elseif(CHECK_KIND STREQUAL "qemu")
     add_test(NAME qemu.${name} COMMAND ${runner} "${KNURL_BUILD}/knurl_${case}")
     set_tests_properties(qemu.${name} PROPERTIES TIMEOUT 20 LABELS qemu)
   endforeach()
-  set(lua_cases target-smoke acl)
   add_test(NAME qemu.acl COMMAND ${runner}
     "${KNURL_BUILD}/knurl_acl_test" "${KNURL_BUILD}/tests/mmdb-fixtures")
   add_test(NAME qemu.acl-concurrent COMMAND ${runner} "${KNURL_BUILD}/knurl_acl_concurrent")
@@ -94,23 +90,6 @@ elseif(CHECK_KIND STREQUAL "qemu")
   add_test(NAME qemu.mmdb-corpus COMMAND ${runner}
     "${KNURL_BUILD}/knurl_mmdb_corpus" "${KNURL_BUILD}/tests/mmdb-fixtures/valid-28-6.mmdb" 65536)
   set_tests_properties(qemu.mmdb qemu.mmdb-memory qemu.mmdb-corpus PROPERTIES TIMEOUT 30 LABELS qemu)
-  set(lua_timeout 20)
 else()
   message(FATAL_ERROR "CHECK_KIND must be memory or qemu")
 endif()
-foreach(name IN LISTS lua_cases)
-  foreach(mode preload dynamic)
-    set(host "${lua_build}/knurl_lua_${mode}_host")
-    if(NOT EXISTS "${host}")
-      message(FATAL_ERROR "Build the installed-Core Lua hosts before checking: ${host}")
-    endif()
-    add_test(NAME "${CHECK_KIND}.lua-${name}-${mode}" COMMAND "${CMAKE_COMMAND}"
-      "-DBINARY=${lua_build}" "-DPREFIX=${CMAKE_BINARY_DIR}/installed"
-      "-DHOST=${host}" "-DRUNNER=${runner}"
-      "-DSCRIPT=${knurl_root}/tests/lua/${name}.lua"
-      "-DWORKSPACE=${lua_build}/tests/${CHECK_KIND}-${name}-${mode}"
-      -P "${knurl_root}/lua/cmake/RunFixture.cmake")
-    set_tests_properties("${CHECK_KIND}.lua-${name}-${mode}" PROPERTIES
-      TIMEOUT "${lua_timeout}" LABELS "${CHECK_KIND}")
-  endforeach()
-endforeach()

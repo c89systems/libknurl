@@ -89,8 +89,7 @@ budgets during startup, serving and shutdown, and verifies budget cancellation.
 The [auxiliary fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/auxiliary-runtime.c) proves loop/teardown hooks
 for HTTP, key-manager and ACME roles, key-manager restart/terminate policy, and
 existing account-key loading against a local unavailable directory endpoint.
-Local-CA issuance/persistence is exercised separately by the ACME runtime and Lua
-fixtures; those are not claims about a remote CA.
+Local-CA issuance/persistence is exercised separately by the ACME runtime fixtures; those are not claims about a remote CA.
 
 The [host adapter](https://github.com/c89systems/libknurl/blob/trunk/tests/vectis-host.c) maps shared readiness and existing
 READY/control providers, the baseline 100 ms readiness/60 s auth-maintenance

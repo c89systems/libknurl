@@ -1,7 +1,7 @@
 # Features and integration
 
 libknurl is a C89 HTTP server library for websites, REST services and APIs.
-It combines a public C API and Lua facade with a [Kore](https://kore.io/) backend,
+It combines a public C API with a [Kore](https://kore.io/) backend,
 covering server configuration, routing, request bodies, replies, TLS and worker
 lifecycle.
 
@@ -30,7 +30,7 @@ providers. libknurl owns HTTP transport and the reusable server mechanisms.
 - Per-route and group [IP/DNS/country ACLs](acl.md), including proxy handlers,
   startup-only or background DNS refresh and configurable forwarding trust.
 
-## C and Lua interfaces
+## C interfaces
 
 The C API uses opaque handles, configuration values, explicit ownership and
 returned errors. Route handlers construct staged replies; the server handles
@@ -43,18 +43,15 @@ The standalone [MMDB country reader](mmdb.md) provides free functions and receiv
 methods without starting a server. Its C89 implementation reads bounded file
 blocks through a lazy cache with a configurable total reader heap limit.
 
-The `knurl` Lua module provides an ergonomic facade over a C binding of the
-public shared library. It runs in the host's Lua 5.5.1 state, including embedded
-Lua, and shares the same routing, codecs, proxy, WebDAV and lifecycle APIs.
-The host owns the Lua runtime. Lua packaging comprises facade/binding sources,
-a LuaRocks rockspec and a source rock.
+The executable and Lua binding are archived pending Luthrum. They are not current
+products or dependencies; see [runtime direction](runtime-direction.md).
 
 ## Application integration
 
 libknurl exposes a complete server facade for Vectis's HTTP/web/REST/API
 workflows.
 The integration preserves Vectis's handlers, route declarations, response/source
-contracts and application C/Lua interfaces through forwarding wrappers and
+contracts and application C interfaces through forwarding wrappers and
 generic callbacks. Application services, authentication providers, metrics
 aggregation, packed assets, durable storage and outer supervision stay with
 the application.
@@ -71,10 +68,8 @@ ownership, streaming and lifecycle behavior.
 | cpkt | OpenSSL, curl, nghttp2 and libxml2 packages and their native link dependencies |
 | LoneJSON | Typed JSON records, parsing, serialization and generators |
 | libpslog | Structured runtime and access logging |
-| Lua 5.5.1 | Host runtime for the Lua module |
 
-Dependency SDKs and Lua providers come from `github.com/c89systems/`.
-C-only applications use the native library independently of the Lua module.
+Dependency SDKs come from `github.com/c89systems/`.
 Platforms comprise GNU and musl Linux on x86_64, aarch64 and armhf, and
 Darwin on arm64.
 

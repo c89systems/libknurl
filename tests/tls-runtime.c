@@ -12,6 +12,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <signal.h>
+#include <poll.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -632,6 +634,37 @@ static int tunnel_client(struct fixture *fixture)
     return 0;
 }
 
+static int handshake_deadline(struct fixture *fixture)
+{
+    static const unsigned char prefix[] = {22, 3, 1, 1, 0};
+    struct pollfd p;
+    struct timespec start, end;
+    unsigned char byte = 0;
+    long elapsed;
+    int fd = connect_to(fixture->ports[1]), i, result;
+    CHECK(fd >= 0 && clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    CHECK(write(fd, prefix, sizeof(prefix)) == (ssize_t)sizeof(prefix));
+    p.fd = fd;
+    p.events = POLLIN;
+    p.revents = 0;
+    for (i = 0; i < 16; ++i) {
+        result = poll(&p, 1, 100);
+        CHECK(result >= 0);
+        if (result > 0)
+            break;
+        /* An incomplete, valid TLS record keeps asking OpenSSL for more.
+         * Progress must not renew the absolute accept deadline. */
+        if (write(fd, &byte, 1) != 1)
+            break;
+    }
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &end) == 0);
+    elapsed = (long)(end.tv_sec - start.tv_sec) * 1000 +
+              (end.tv_nsec - start.tv_nsec) / 1000000;
+    CHECK(i < 16 && elapsed >= 450 && elapsed < 1600);
+    CHECK(read(fd, &byte, 1) <= 0);
+    close(fd);
+    return 0;
+}
 static int client(struct fixture *fixture)
 {
     CHECK(header_guardrails(fixture, 0) == 0);
@@ -670,6 +703,7 @@ static int client(struct fixture *fixture)
                    "location: https://[::1]:8443/a?x=1\r\n") == 0);
     CHECK(exchange(fixture, 6, NULL, 0, 0, "evil.local@localhost", "/",
                    "400 ") == 0);
+    CHECK(handshake_deadline(fixture) == 0);
     CHECK(tunnel_client(fixture) == 0);
     CHECK(exchange(fixture, 0, NULL, 0, 0, "localhost", "/stop",
                    "\r\n\r\nclear") == 0);
@@ -911,6 +945,7 @@ static int run(struct fixture *fixture)
     config.http.server_header = "vectis-header-fixture";
     config.http.hsts_max_age_seconds = 997;
     config.workers.shutdown_timeout_ms = 1000;
+    config.timeouts.tls_handshake.milliseconds = 500;
     config.tls.identities = identities;
     config.tls.identity_count = 4;
     memset(&baseline, 0, sizeof(baseline));

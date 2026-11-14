@@ -93,6 +93,7 @@ void knurl_server_config_init(knurl_server_config *config)
     config->limits.body_min_rate_bytes_per_second.low = 1024;
     config->limits.body_min_rate_disabled = 0;
     config->limits.websocket_max_frame_bytes = 16384;
+    knurl_deadline_init(&config->timeouts.tls_handshake);
     knurl_deadline_init(&config->timeouts.startup);
     knurl_deadline_init(&config->timeouts.request_header);
     knurl_deadline_init(&config->timeouts.request_body_idle);
@@ -119,6 +120,7 @@ void knurl_server_config_init(knurl_server_config *config)
     config->http.backend_curl_recv_max_bytes.high = 0;
     config->http.backend_curl_recv_max_bytes.low = 0;
     config->http.backend_quiet = config->http.pretty_error_pages = 0;
+    config->http.hide_server_errors = 0;
     config->io.chunk_bytes = 8192;
     config->proxy.active_exchanges = 0;
     config->proxy.idle_connections = 0;
@@ -180,6 +182,7 @@ void knurl_server_config_init_production_webserver(knurl_server_config *config)
     knurl_server_config_init(config);
     config->limits.hard_body_bytes = config->limits.default_body_bytes;
     config->autoblock.enabled = 1;
+    config->http.hide_server_errors = 1;
     config->autoblock.tcp_stall_threshold = 20;
     config->autoblock.tls_failure_threshold = 10;
     config->autoblock.status_rules = rules;

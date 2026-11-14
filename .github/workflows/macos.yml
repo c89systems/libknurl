@@ -39,7 +39,7 @@ jobs:
 
       - name: Install host prerequisites
         run: |
-          brew install bash cmake ninja make gnu-tar flock pkgconf python luarocks
+          brew install bash cmake ninja make gnu-tar flock pkgconf python
           {
             echo "$(brew --prefix bash)/bin"
             echo "$(brew --prefix make)/libexec/gnubin"
@@ -56,21 +56,14 @@ jobs:
           xcode-select --print-path
           xcrun --sdk macosx --show-sdk-path
 
-      - name: Build Core and Lua
+      - name: Build C library
         env:
           CONFIG: ${{ matrix.config }}
-        run: make lua TARGET=arm64-apple-darwin CONFIG="$CONFIG" JOBS=1
+        run: make build TARGET=arm64-apple-darwin CONFIG="$CONFIG" JOBS=1
 
       - name: Test Core and packaged SDK
         env:
           CONFIG: ${{ matrix.config }}
         run: >-
           ctest --test-dir "build/arm64-apple-darwin/$CONFIG"
-          --parallel 1 --stop-on-failure --output-on-failure --no-tests=error
-
-      - name: Test Lua and installed source consumer
-        env:
-          CONFIG: ${{ matrix.config }}
-        run: >-
-          ctest --test-dir "build/arm64-apple-darwin/$CONFIG/lua"
           --parallel 1 --stop-on-failure --output-on-failure --no-tests=error

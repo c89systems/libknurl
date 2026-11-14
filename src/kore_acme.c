@@ -91,8 +91,9 @@ knurl_status knurl_kore_acme_prepare(struct knurl_runtime *runtime,
     if (status != KNURL_OK)
         return knurl_fail(error, status, "acme_prepare",
                           "ACME directory URL requires HTTP or HTTPS");
-    file = config->acme.ca_file != NULL ? config->acme.ca_file
-                                        : getenv("SSL_CERT_FILE");
+    file = config->acme.ca_file != NULL        ? config->acme.ca_file
+           : config->acme.ca_directory != NULL ? NULL
+                                               : knurl_tls_system_ca_file();
     directory = config->acme.ca_directory != NULL ? config->acme.ca_directory
                                                   : getenv("SSL_CERT_DIR");
     if (file != NULL && *file == '\0')
