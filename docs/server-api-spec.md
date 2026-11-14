@@ -150,7 +150,7 @@ replacing the pristine revision and replaying/fixing the external patches.
 Compile owned C, binding and selected Kore backend with strict -std=c89. Public
 headers support C89/C++; dependency/private layouts stay private. Consume pinned
 released c89systems cpkt, LoneJSON and libpslog packages, preferring the newest
-compatible closure. Current pins are cpkt 0.7.0, LoneJSON 0.50.0 and pslog 0.13.0;
+compatible closure. Current pins are cpkt 0.8.0, LoneJSON 0.50.0 and pslog 0.13.0;
 cpkt provides OpenSSL/curl/nghttp2/libxml2 and the Lua runtime/link closure.
 No sibling checkout is a build input or writable under this task.
 The [route ACL contract](acl-spec.md) adds reusable IP/CIDR, forward-DNS and

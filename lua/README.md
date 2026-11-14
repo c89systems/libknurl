@@ -11,7 +11,7 @@ The source archive includes the [quick starts](../README.md) and
 Required installed SDKs, for one concrete target:
 
 - libknurl, matching this package's `VERSION`, shared component;
-- cpkt 0.7.0, including Lua 5.5.1 and its shared link closure;
+- cpkt 0.8.0, including Lua 5.5.1 and its shared link closure;
 - LoneJSON 0.50.0 C SDK and its public shared Lua provider;
 - pslog 0.13.0 C SDK and its public shared Lua provider.
 

@@ -24,7 +24,7 @@ compatibility/current versions `0.0.0`. Those Mach-O versions track ABI
 independently of the repository's release or development version. Package
 verification checks the installed library metadata.
 
-Dependency SDKs are external: cpkt 0.7.0, LoneJSON 0.50.0 and pslog 0.13.0. The
+Dependency SDKs are external: cpkt 0.8.0, LoneJSON 0.50.0 and pslog 0.13.0. The
 selected SDK hashes and linked cpkt component versions appear in `DEPENDENCIES`.
 LoneJSON 0.50.0 retains 0.49.0's shared-library ABI 29. Rebuild Core, its Lua
 provider and downstream consumers together against these headers;
