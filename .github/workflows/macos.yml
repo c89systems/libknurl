@@ -39,12 +39,11 @@ jobs:
 
       - name: Install host prerequisites
         run: |
-          brew install bash cmake ninja make gnu-tar coreutils flock pkgconf python luarocks
+          brew install bash cmake ninja make gnu-tar flock pkgconf python luarocks
           {
             echo "$(brew --prefix bash)/bin"
             echo "$(brew --prefix make)/libexec/gnubin"
             echo "$(brew --prefix gnu-tar)/libexec/gnubin"
-            echo "$(brew --prefix coreutils)/libexec/gnubin"
           } >> "$GITHUB_PATH"
 
       - name: Check native toolchain
@@ -52,6 +51,8 @@ jobs:
           test "$(uname -m)" = arm64
           git rev-parse HEAD
           bash scripts/lifecycle/require-host-bash.sh
+          # SDK validation uses the macOS stat argument format.
+          stat -f %Lp CMakeLists.txt
           xcode-select --print-path
           xcrun --sdk macosx --show-sdk-path
 
