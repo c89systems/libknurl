@@ -128,9 +128,10 @@ state(server:tls_identity_state());ok(server:close())
 -- The descriptor belongs to the server only after a successful operation.
 for _,mode in ipairs{'declaration','take','eof','returned-error','throw'} do
   local reader,writer=fixture.fd_pair()
-  local called=0
+  local called,eof_events=0,0
   local config={enabled=true,control_fd=reader,on_event=function(s,flags)
     called=called+1;assert(flags & knurl.control.READ~=0 or flags & knurl.control.EOF~=0)
+    if flags & knurl.control.EOF~=0 then eof_events=eof_events+1 end
     local bytes=fixture.fd_read(reader)
     if mode=='returned-error' then return nil,{status=knurl.status.INVALID,message='control returned error'} end
     if mode=='throw' then error('control callback failed') end
@@ -150,7 +151,12 @@ for _,mode in ipairs{'declaration','take','eof','returned-error','throw'} do
   local snapshot=ok(s:effective_config());assert(snapshot.supervision.enabled and snapshot.supervision.control_fd==reader)
   local value,err=s:run()
   if mode=='returned-error' or mode=='throw' then assert(value==nil and err.status and called==1)
-  else ok(value,err);assert(called==1) end
+  else
+    ok(value,err)
+    -- kqueue may report READ before EOF even when the pipe is empty.
+    if mode=='eof' then assert(eof_events==1 and called>=1 and called<=2)
+    else assert(called==1 and eof_events==0) end
+  end
   assert(fixture.fd_closed(reader));ok(s:close())
   if writer then fixture.fd_close(writer) end
 end
