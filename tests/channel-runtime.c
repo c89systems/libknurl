@@ -551,10 +551,21 @@ static int connect_to(unsigned short port, int small)
         return -1;
     if (small) {
         int receive_size;
+#ifdef KNURL_CHANNEL_BACKEND_TEST
+        socklen_t size_length;
+#endif
         receive_size = 4096;
         if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive_size,
                        sizeof(receive_size)) != 0)
             return -1;
+#ifdef KNURL_CHANNEL_BACKEND_TEST
+        size_length = sizeof(receive_size);
+        if (getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive_size,
+                       &size_length) != 0 ||
+            receive_size <= 0 ||
+            (unsigned long)receive_size > KNURL_TEST_PREFIX_BYTES / 4)
+            return -1;
+#endif
     }
     timeout.tv_sec = 3;
     timeout.tv_usec = 0;
@@ -603,10 +614,10 @@ static int exchange(unsigned short port, const char *request,
     if (strstr(request, "GET /bad-upgrade ") != NULL) {
         CHECK(knurl_test_prefix_wait());
         used = 0;
-        while (used < 65536) {
+        while (used < KNURL_TEST_PREFIX_BYTES) {
             size_t wanted;
             size_t i;
-            wanted = 65536 - used;
+            wanted = KNURL_TEST_PREFIX_BYTES - used;
             if (wanted > sizeof(response))
                 wanted = sizeof(response);
             count = read(fd, response, wanted);
@@ -653,6 +664,7 @@ static int echo_tunnel(unsigned short port, const char *path, int prefix)
     size_t used;
     size_t sent;
     size_t received;
+    size_t prefix_length;
     size_t i;
     ssize_t count;
     int fd;
@@ -677,14 +689,19 @@ static int echo_tunnel(unsigned short port, const char *path, int prefix)
         || prefix == 1
 #endif
     ) {
+        prefix_length = 65536;
+#ifdef KNURL_CHANNEL_BACKEND_TEST
+        if (prefix == 1)
+            prefix_length = KNURL_TEST_PREFIX_BYTES;
+#endif
         received = 0;
-        while (received < 65536) {
+        while (received < prefix_length) {
             size_t wanted;
-            wanted = 65536 - received;
+            wanted = prefix_length - received;
             if (wanted > sizeof(data))
                 wanted = sizeof(data);
             count = read(fd, data, wanted);
-            CHECK(count > 0 && (size_t)count <= 65536 - received);
+            CHECK(count > 0 && (size_t)count <= prefix_length - received);
             for (i = 0; i < (size_t)count; ++i)
                 CHECK(data[i] == 'p');
             received += (size_t)count;
