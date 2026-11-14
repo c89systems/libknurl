@@ -35,7 +35,16 @@ if(CHECK_KIND STREQUAL "memory")
   endforeach()
   add_test(NAME memory.rest-spill COMMAND ${runner} "${KNURL_BUILD}/knurl_rest-runtime" spill)
   set_tests_properties(memory.rest-spill PROPERTIES TIMEOUT 120 LABELS memory)
-  set(lua_cases foundation input rest typed xml config events)
+  set(lua_cases foundation input rest typed xml config events acl)
+  add_test(NAME memory.acl COMMAND ${runner}
+    "${KNURL_BUILD}/knurl_acl_test" "${KNURL_BUILD}/tests/mmdb-fixtures")
+  add_test(NAME memory.acl-concurrent COMMAND ${runner} "${KNURL_BUILD}/knurl_acl_concurrent")
+  add_test(NAME memory.acl-cancel COMMAND ${runner} "${KNURL_BUILD}/knurl_acl_cancel")
+  add_test(NAME memory.acl-runtime COMMAND ${runner} "${KNURL_BUILD}/knurl_acl_runtime")
+  add_test(NAME memory.acl-heap COMMAND ${runner}
+    "${KNURL_BUILD}/knurl_acl_memory" "${KNURL_BUILD}/tests/mmdb-fixtures/valid-28-6.mmdb")
+  set_tests_properties(memory.acl memory.acl-concurrent memory.acl-cancel memory.acl-runtime memory.acl-heap
+    PROPERTIES TIMEOUT 120 LABELS memory)
   add_test(NAME memory.mmdb COMMAND ${runner}
     "${KNURL_BUILD}/knurl_mmdb_test" "${KNURL_BUILD}/tests/mmdb-fixtures")
   set_tests_properties(memory.mmdb PROPERTIES TIMEOUT 120 LABELS memory)
@@ -68,7 +77,16 @@ elseif(CHECK_KIND STREQUAL "qemu")
     add_test(NAME qemu.${name} COMMAND ${runner} "${KNURL_BUILD}/knurl_${case}")
     set_tests_properties(qemu.${name} PROPERTIES TIMEOUT 20 LABELS qemu)
   endforeach()
-  set(lua_cases target-smoke)
+  set(lua_cases target-smoke acl)
+  add_test(NAME qemu.acl COMMAND ${runner}
+    "${KNURL_BUILD}/knurl_acl_test" "${KNURL_BUILD}/tests/mmdb-fixtures")
+  add_test(NAME qemu.acl-concurrent COMMAND ${runner} "${KNURL_BUILD}/knurl_acl_concurrent")
+  add_test(NAME qemu.acl-cancel COMMAND ${runner} "${KNURL_BUILD}/knurl_acl_cancel")
+  add_test(NAME qemu.acl-runtime COMMAND ${runner} "${KNURL_BUILD}/knurl_acl_runtime")
+  add_test(NAME qemu.acl-heap COMMAND ${runner}
+    "${KNURL_BUILD}/knurl_acl_memory" "${KNURL_BUILD}/tests/mmdb-fixtures/valid-28-6.mmdb")
+  set_tests_properties(qemu.acl qemu.acl-concurrent qemu.acl-cancel qemu.acl-runtime qemu.acl-heap
+    PROPERTIES TIMEOUT 60 LABELS qemu)
   add_test(NAME qemu.mmdb COMMAND ${runner}
     "${KNURL_BUILD}/knurl_mmdb_test" "${KNURL_BUILD}/tests/mmdb-fixtures")
   add_test(NAME qemu.mmdb-memory COMMAND ${runner}

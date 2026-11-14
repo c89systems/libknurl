@@ -120,6 +120,7 @@ knurl_status knurl_router_websocket(knurl_router *router,
         config.path = input->path;
         config.path_kind = input->path_kind;
         config.on_headers = dispatch;
+        config.acl = input->acl;
         config.userdata = state;
         status = knurl_router_route(router, &config, &route, error);
         if (status == KNURL_OK) {

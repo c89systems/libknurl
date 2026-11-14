@@ -61,6 +61,8 @@ typedef struct knurl_static_config {
      * submission.
      */
     knurl_route_hooks hooks;
+    /** Optional retained route ACL. */
+    knurl_acl *acl;
 } knurl_static_config;
 /** GET/HEAD; directory indexes default disabled. Assets with a different
  * default index policy enable it explicitly. Strings/declarations are copied;

@@ -7,6 +7,7 @@
  */
 
 #include <knurl/http.h>
+#include <knurl/acl.h>
 #include <knurl/reply.h>
 #include <knurl/dispatch.h>
 
@@ -70,6 +71,8 @@ typedef struct knurl_route_hooks {
  * applying overrides.
  */
 typedef struct knurl_route_config {
+    /** Optional retained ACL, enforced before route resource allocation. */
+    knurl_acl *acl;
     /** Single HTTP method; methods supplies the explicit multi-method mask when
      * nonzero.
      */
@@ -102,10 +105,19 @@ typedef struct knurl_route_config {
     knurl_route_hooks hooks;
 } knurl_route_config;
 
+/** Replace a retained route/group ACL while its router is inactive. NULL clears
+ * that level; group and route restrictions apply independently. */
+KNURL_API knurl_status knurl_route_set_acl(knurl_route *, knurl_acl *,
+                                           knurl_error *);
+KNURL_API knurl_status knurl_route_group_set_acl(knurl_route_group *,
+                                                 knurl_acl *, knurl_error *);
+
 /** Configuration for route group. Use the owning operation's initializer before
  * applying overrides.
  */
 typedef struct knurl_route_group_config {
+    /** Optional retained ACL; intersects with every route's own ACL. */
+    knurl_acl *acl;
     /** Copied route path prefix; empty adds no prefix to the group's routes. */
     const char *prefix;
     /** Staged auth/before/after callbacks; all finish before transport
@@ -364,6 +376,9 @@ struct knurl_xml_route_config;
  * borrowed accessor. Do not copy, initialize or modify the shell or impl.
  */
 struct knurl_route_group {
+    /** Replace the retained group ACL while the router is inactive. */
+    knurl_status (*set_acl)(struct knurl_route_group *, knurl_acl *,
+                            knurl_error *);
     /** Register a mapped XML live-input route under the group prefix. The
      * bounded native parser returns the mapped record to owner-loop handlers;
      * retain schemas/userdata through router destruction.
@@ -458,6 +473,8 @@ struct knurl_route_config;
  * borrowed accessor. Do not copy, initialize or modify the shell or impl.
  */
 struct knurl_route {
+    /** Replace the retained route ACL while the router is inactive. */
+    knurl_status (*set_acl)(struct knurl_route *, knurl_acl *, knurl_error *);
     /** Borrow immutable route configuration until router destruction; no
      * callback is invoked.
      */

@@ -2,8 +2,10 @@
 #define _POSIX_C_SOURCE 200809L
 #include "policy_internal.h"
 #include "server_internal.h"
+#include "forwarded.h"
 #include <arpa/inet.h>
 #include <string.h>
+#include <strings.h>
 static int address(const char *value, unsigned char bytes[16])
 {
     if (inet_pton(AF_INET, value, bytes) == 1)
@@ -12,18 +14,50 @@ static int address(const char *value, unsigned char bytes[16])
         return 16;
     return 0;
 }
-static int trusted(const knurl_client_ip_config *config, const char *value)
+static int trusted(const knurl_client_ip_config *config,
+                   const knurl_mmdb_address *value, int immediate)
 {
-    unsigned char left[16], right[16];
+    struct knurl_ip_network network;
     size_t i;
-    int n = address(value, left);
-    if (n == 0)
-        return 0;
-    for (i = 0; i < config->trusted_proxy_count; ++i)
-        if (address(config->trusted_proxies[i], right) == n &&
-            !memcmp(left, right, (size_t)n))
+    for (i = 0; i < config->trusted_proxy_count; ++i) {
+        if (strcmp(config->trusted_proxies[i], "*") == 0) {
+            if (immediate)
+                return 1;
+        } else if (knurl_ip_network_parse(config->trusted_proxies[i],
+                                          &network) &&
+                   knurl_ip_contains(&network, value))
             return 1;
+    }
     return 0;
+}
+static int trusted_peer(const knurl_client_ip_config *config, const char *value)
+{
+    knurl_mmdb_address raw, normalized;
+    return value != NULL &&
+           knurl_mmdb_address_parse(value, &raw, NULL) == KNURL_OK &&
+           knurl_ip_normalize(&raw, &normalized) &&
+           trusted(config, &normalized, 1);
+}
+/* 0 absent, 1 unique, -1 duplicate. Never combine untrusted identity fields. */
+static int unique_header(knurl_request *r, const char *name, knurl_bytes *out)
+{
+    knurl_header field;
+    size_t i, length;
+    int found = 0;
+    if (name == NULL || name[0] == 0)
+        return 0;
+    length = strlen(name);
+    for (i = 0; i < knurl_request_header_count(r); ++i) {
+        (void)knurl_request_header_at(r, i, &field, NULL);
+        if (field.name.length == length &&
+            strncasecmp(field.name.data, name, length) == 0) {
+            if (found)
+                return -1;
+            *out = field.value;
+            found = 1;
+        }
+    }
+    return found;
 }
 static int token(const char *start, const char *end, char out[46])
 {
@@ -50,21 +84,18 @@ static void via_add(knurl_autoblock_event *event, const char *ip)
 static int forwarded(const knurl_client_ip_config *config, knurl_bytes header,
                      char out[46], knurl_autoblock_event *event)
 {
-    const char *start, *end, *value = header.data;
-    if (value == NULL || header.length == 0)
+    struct knurl_forward_chain chain;
+    size_t i;
+    if (!knurl_forwarded_parse(config, header, &chain))
         return 0;
-    end = value + header.length;
-    while (end > value) {
-        start = end;
-        while (start > value && start[-1] != ',')
-            --start;
-        if (!token(start, end, out))
+    for (i = chain.count; i != 0; --i) {
+        if (inet_ntop(chain.hops[i - 1].size == 4 ? AF_INET : AF_INET6,
+                      chain.hops[i - 1].bytes, out, 46) == NULL)
             return 0;
-        if (!trusted(config, out) || start == value)
+        if (!trusted(config, &chain.hops[i - 1], 0) || i == 1)
             return 1;
         if (event != NULL)
             via_add(event, out);
-        end = start - 1;
     }
     return 0;
 }
@@ -76,25 +107,29 @@ knurl_status knurl_request_identity(knurl_request *r, knurl_error *error)
     size_t n = 0, i;
     unsigned char bytes[16];
     char resolved[46];
-    int found = 0;
+    int found = 0, field;
     r->impl->effective_address = r->impl->peer.address;
     r->impl->address_source = KNURL_CLIENT_ADDRESS_PEER;
+    r->impl->forwarding_invalid = 0;
     if (r->impl->peer.address.data != NULL &&
-        trusted(&config->client_ip, r->impl->peer.address.data)) {
-        if (knurl_request_header_first(r, "x-forwarded-for", &header, NULL) ==
-            KNURL_OK)
+        trusted_peer(&config->client_ip, r->impl->peer.address.data)) {
+        field = unique_header(r, config->client_ip.forwarded_header, &header);
+        if (field == 1)
             found = forwarded(&config->client_ip, header,
                               r->impl->effective_storage, NULL);
         if (found)
             r->impl->address_source = KNURL_CLIENT_ADDRESS_FORWARDED_FOR;
-        if (!found && knurl_request_header_first(r, "x-real-ip", &header,
-                                                 NULL) == KNURL_OK) {
-            found =
-                token(header.data, (const char *)header.data + header.length,
-                      r->impl->effective_storage);
-            if (found)
-                r->impl->address_source = KNURL_CLIENT_ADDRESS_REAL_IP;
+        if (field == 0) {
+            field = unique_header(r, config->client_ip.real_ip_header, &header);
+            if (field == 1) {
+                found = token(header.data,
+                              (const char *)header.data + header.length,
+                              r->impl->effective_storage);
+                if (found)
+                    r->impl->address_source = KNURL_CLIENT_ADDRESS_REAL_IP;
+            }
         }
+        r->impl->forwarding_invalid = field != 0 && !found;
         if (found)
             r->impl->effective_address = knurl_view(r->impl->effective_storage);
     }
@@ -103,18 +138,22 @@ knurl_status knurl_request_identity(knurl_request *r, knurl_error *error)
                                            config->client_ip.userdata, error);
         if (status != KNURL_OK)
             return status;
-        if (n == 0 || n >= sizeof(r->impl->effective_storage) ||
-            memchr(resolved, 0, n) != NULL)
-            return knurl_fail(error, KNURL_INVALID, "client_address",
-                              "resolver returned an invalid address length");
-        resolved[n] = 0;
-        if (address(resolved, bytes) == 0)
-            return knurl_fail(
-                error, KNURL_INVALID, "client_address",
-                "resolver must return a numeric IPv4 or IPv6 address");
-        r->impl->address_source = KNURL_CLIENT_ADDRESS_RESOLVER;
-        memcpy(r->impl->effective_storage, resolved, n + 1);
-        r->impl->effective_address = knurl_view(r->impl->effective_storage);
+        if (n != 0) {
+            if (n >= sizeof(r->impl->effective_storage) ||
+                memchr(resolved, 0, n) != NULL)
+                return knurl_fail(
+                    error, KNURL_INVALID, "client_address",
+                    "resolver returned an invalid address length");
+            resolved[n] = 0;
+            if (address(resolved, bytes) == 0)
+                return knurl_fail(
+                    error, KNURL_INVALID, "client_address",
+                    "resolver must return a numeric IPv4 or IPv6 address");
+            r->impl->address_source = KNURL_CLIENT_ADDRESS_RESOLVER;
+            r->impl->forwarding_invalid = 0;
+            memcpy(r->impl->effective_storage, resolved, n + 1);
+            r->impl->effective_address = knurl_view(r->impl->effective_storage);
+        }
     }
     if (config->correlation_id.resolve != NULL) {
         n = 0;
@@ -162,8 +201,10 @@ void knurl_request_autoblock_context(knurl_request *request,
          strcmp(event->peer_address, event->address) != 0))
         via_add(event, event->peer_address);
     if (event->address_source == KNURL_CLIENT_ADDRESS_FORWARDED_FOR &&
-        knurl_request_header_first(request, "x-forwarded-for", &header, NULL) ==
-            KNURL_OK)
+        unique_header(
+            request,
+            request->impl->server->impl->config.client_ip.forwarded_header,
+            &header) == 1)
         (void)forwarded(&request->impl->server->impl->config.client_ip, header,
                         selected, event);
     for (i = 0; i < event->via_count / 2; ++i) {

@@ -200,6 +200,8 @@ typedef struct knurl_xml_route_config {
      * submission.
      */
     knurl_route_hooks hooks;
+    /** Optional retained route ACL. */
+    knurl_acl *acl;
     /** Optional copied record-owner adapter; its callbacks/storage obey
      * knurl_record_provider.
      */

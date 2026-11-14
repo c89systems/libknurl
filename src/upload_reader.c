@@ -499,6 +499,7 @@ knurl_upload_reader_add(knurl_router *router, knurl_route_group *group,
     route.path_kind = config->path_kind;
     route.body = config->body;
     route.hooks = config->hooks;
+    route.acl = config->acl;
     route.on_headers = headers;
     route.userdata = copy;
     status =

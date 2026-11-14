@@ -59,6 +59,7 @@ void knurl_route_config_init(knurl_route_config *config)
     if (config == NULL)
         return;
     config->method = KNURL_HTTP_ANY;
+    config->acl = NULL;
     config->methods = 0;
     config->path = NULL;
     config->path_kind = KNURL_PATH_LITERAL;
@@ -73,6 +74,7 @@ void knurl_route_group_config_init(knurl_route_group_config *config)
 {
     if (config != NULL) {
         config->prefix = "";
+        config->acl = NULL;
         hooks_init(&config->hooks);
     }
 }
@@ -110,6 +112,7 @@ void knurl_router_release(knurl_router *router)
         if (router->impl->routes[i]->impl->has_pattern)
             regfree(&router->impl->routes[i]->impl->pattern);
         free((void *)router->impl->routes[i]->impl->config.path);
+        (void)knurl_acl_close(router->impl->routes[i]->impl->config.acl, NULL);
         if (router->impl->routes[i]->impl->release_userdata != NULL)
             router->impl->routes[i]->impl->release_userdata(
                 router->impl->routes[i]->impl->config.userdata);
@@ -120,6 +123,7 @@ void knurl_router_release(knurl_router *router)
     for (group = router->impl->groups; group != NULL; group = next) {
         next = group->impl->next;
         free((void *)group->impl->config.prefix);
+        (void)knurl_acl_close(group->impl->config.acl, NULL);
         free(group);
     }
     free(router);
@@ -245,6 +249,7 @@ static knurl_status route_add(knurl_router *router,
     route->impl->directory_mount = 0;
     route->impl->preflight = NULL;
     route->impl->group = group;
+    route->impl->router = router;
     route->impl->release_userdata = NULL;
     if (route->impl->config.path == NULL) {
         free(route);
@@ -279,6 +284,11 @@ static knurl_status route_add(knurl_router *router,
         goto failed;
     }
     router->impl->routes = grown;
+    if (input->acl != NULL) {
+        status = knurl_acl_retain(input->acl, error);
+        if (status != KNURL_OK)
+            goto failed;
+    }
     router->impl->routes[router->impl->count++] = route;
     if (out != NULL)
         *out = route;
@@ -342,6 +352,14 @@ knurl_status knurl_router_group(knurl_router *router,
                           "cannot allocate group");
     }
     knurl_route_group_receiver_init(group);
+    if (config->acl != NULL) {
+        status = knurl_acl_retain(config->acl, error);
+        if (status != KNURL_OK) {
+            free(copy);
+            free(group);
+            return status;
+        }
+    }
     group->impl->config = *config;
     group->impl->config.prefix = copy;
     group->impl->router = router;
@@ -491,6 +509,7 @@ void knurl_router_receiver_init(knurl_router *receiver)
 void knurl_route_group_receiver_init(knurl_route_group *receiver)
 {
     static const knurl_route_group methods = {
+        knurl_route_group_set_acl,
         knurl_route_group_xml_route,
         knurl_route_group_upload_stream,
         knurl_route_group_upload_reader,
@@ -510,7 +529,8 @@ void knurl_route_group_receiver_init(knurl_route_group *receiver)
 
 void knurl_route_receiver_init(knurl_route *receiver)
 {
-    static const knurl_route methods = {knurl_route_declaration, NULL};
+    static const knurl_route methods = {knurl_route_set_acl,
+                                        knurl_route_declaration, NULL};
     *receiver = methods;
     receiver->impl = (struct knurl_route_impl *)receiver;
 }

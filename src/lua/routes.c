@@ -14,6 +14,7 @@ static int static_route(lua_State *L, int kind)
                                          "method",
                                          "methods",
                                          "auth",
+                                         "acl",
                                          "before",
                                          "after",
                                          "provider",
@@ -68,6 +69,7 @@ static int static_route(lua_State *L, int kind)
     rule->native_reply = 1;
     index = lua_absindex(L, -1);
     rl_rule_hooks(&config.hooks, rule);
+    config.acl = rule->acl;
     root = rl_rule_root(L, index, rule);
     if (rule->group != NULL)
         status = kind == 2 ? knurl_route_group_static_assets(
@@ -95,8 +97,8 @@ int rl_static_assets(lua_State *L) { return static_route(L, 2); }
 int rl_upload_file(lua_State *L)
 {
     static const char *const fields[] = {
-        "path",           "path_kind", "file_path", "method", "methods",
-        "max_body_bytes", "body",      "auth",      "before", "after"};
+        "path", "path_kind", "file_path", "method", "methods", "max_body_bytes",
+        "body", "auth",      "acl",       "before", "after"};
     struct rl_rule *rule;
     knurl_route_config route;
     knurl_upload_file_config config;
@@ -130,6 +132,7 @@ int rl_upload_file(lua_State *L)
     rule->is_upload = rule->native_reply = 1;
     index = lua_absindex(L, -1);
     rl_rule_hooks(&config.hooks, rule);
+    config.acl = rule->acl;
     root = rl_rule_root(L, index, rule);
     status =
         rule->group != NULL
@@ -217,6 +220,7 @@ int rl_webdav(lua_State *L)
                                          "auth_required",
                                          "conceal_unauthorized",
                                          "auth",
+                                         "acl",
                                          "before",
                                          "after"};
     struct rl_rule *rule;
@@ -277,6 +281,7 @@ int rl_webdav(lua_State *L)
     rule->native_reply = 1;
     index = lua_absindex(L, -1);
     rl_rule_hooks(&config.hooks, rule);
+    config.acl = rule->acl;
     /* Root/child auth belongs to WebDAV, not a second generic route gate. */
     config.hooks.auth = NULL;
     if (required) {

@@ -130,6 +130,8 @@ typedef knurl_status (*knurl_websocket_headers_fn)(knurl_request *,
  * before applying overrides.
  */
 typedef struct knurl_websocket_route_config {
+    /** Optional retained route ACL, checked before handshake callbacks. */
+    knurl_acl *acl;
     /** Resource or route path, interpreted according to the enclosing
      * operation.
      */

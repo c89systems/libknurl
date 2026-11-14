@@ -297,13 +297,17 @@ static int invoke(lua_State *L)
     }
     if (call->operation == ADDRESS || call->operation == CORRELATION) {
         if (lua_isnil(L, -2)) {
-            knurl_bytes current =
-                knurl_request_effective_address(call->request);
-            text = call->operation == ADDRESS ? current.data : "";
-            length = call->operation == ADDRESS ? current.length : 0;
-        } else if (lua_type(L, -2) == LUA_TSTRING)
+            text = "";
+            length = 0;
+        } else if (lua_type(L, -2) == LUA_TSTRING) {
             text = lua_tolstring(L, -2, &length);
-        else {
+            if (call->operation == ADDRESS && length == 0) {
+                call->status = rl_fail(
+                    call->error, KNURL_INVALID,
+                    "address resolver requires a numeric address or nil");
+                return 0;
+            }
+        } else {
             call->status =
                 rl_fail(call->error, KNURL_INVALID,
                         "resolver must return a string or nil/error");

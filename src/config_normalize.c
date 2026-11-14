@@ -3,6 +3,7 @@
 #include "server_internal.h"
 #include "file_internal.h"
 #include "acme_internal.h"
+#include "ip.h"
 
 #include <arpa/inet.h>
 #include <limits.h>
@@ -165,7 +166,7 @@ knurl_status knurl_config_normalize(knurl_server_config *config,
     knurl_status status;
     long cpus;
     size_t i;
-    unsigned char address[16];
+    struct knurl_ip_network network;
     off_t log_limit;
     const char *proxy;
     if (config->name == NULL)
@@ -323,18 +324,33 @@ knurl_status knurl_config_normalize(knurl_server_config *config,
             return invalid(error,
                            "redirect listener requires a presented HTTPS port");
     }
+    if (config->client_ip.forwarded_header == NULL)
+        config->client_ip.forwarded_header = "x-forwarded-for";
+    if (config->client_ip.real_ip_header == NULL)
+        config->client_ip.real_ip_header = "x-real-ip";
+    if (config->client_ip.max_hops == 0)
+        config->client_ip.max_hops = 16;
+    if (config->client_ip.max_hops > 64 ||
+        config->client_ip.forwarded_format < KNURL_FORWARDED_COMMA ||
+        config->client_ip.forwarded_format > KNURL_FORWARDED_RFC7239 ||
+        (config->client_ip.forwarded_header[0] &&
+         !knurl_header_name_valid(config->client_ip.forwarded_header)) ||
+        (config->client_ip.real_ip_header[0] &&
+         !knurl_header_name_valid(config->client_ip.real_ip_header)))
+        return invalid(error, "valid forwarding header names, format and at "
+                              "most 64 hops required");
     if (config->client_ip.trusted_proxy_count > 16 ||
         (config->client_ip.trusted_proxy_count != 0 &&
          config->client_ip.trusted_proxies == NULL))
-        return invalid(
-            error,
-            "trusted proxy array must contain at most 16 numeric addresses");
+        return invalid(error, "trusted proxy array must contain at most 16 "
+                              "addresses/CIDRs or * entries");
     for (i = 0; i < config->client_ip.trusted_proxy_count; ++i) {
         proxy = config->client_ip.trusted_proxies[i];
-        if (proxy == NULL || (inet_pton(AF_INET, proxy, address) != 1 &&
-                              inet_pton(AF_INET6, proxy, address) != 1))
+        if (proxy == NULL || (strcmp(proxy, "*") != 0 &&
+                              !knurl_ip_network_parse(proxy, &network)))
             return invalid(
-                error, "trusted proxy must be a numeric IPv4 or IPv6 address");
+                error,
+                "trusted proxy must be a numeric IPv4/IPv6 address, CIDR or *");
     }
     if (config->autoblock.status_rule_count > 16 ||
         config->autoblock.event_rule_count > 16 ||

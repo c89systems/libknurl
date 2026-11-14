@@ -319,6 +319,7 @@ knurl_status knurl_router_proxy(knurl_router *router,
     route.methods = config->methods;
     route.path_kind = config->path_kind;
     route.on_headers = knurl_proxy_dispatch;
+    route.acl = config->acl;
     route.userdata = data;
     status = knurl_router_route(router, &route, &registered, error);
     if (status != KNURL_OK)

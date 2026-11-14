@@ -91,6 +91,7 @@ static knurl_status add(knurl_router *router, knurl_route_group *group,
     reader.path_kind = config->path_kind;
     reader.body = config->body;
     reader.hooks = config->hooks;
+    reader.acl = config->acl;
     reader.buffer_bytes = config->body.memory_buffer_limit_bytes;
     reader.handler = write_file;
     reader.userdata = path;

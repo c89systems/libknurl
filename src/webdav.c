@@ -153,6 +153,7 @@ static knurl_status add(knurl_router *router, knurl_route_group *group,
     route.path_kind = KNURL_PATH_REGEX;
     route.methods = KNURL_HTTP_METHODS_ALL;
     route.on_headers = knurl_dav_headers;
+    route.acl = config->acl;
     route.userdata = r;
     status = knurl_router_route(router, &route, &registered, error);
     free(regex);

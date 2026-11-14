@@ -36,6 +36,7 @@ target_sources(knurl_lua PRIVATE ../src/lua/tls.c)
 target_sources(knurl_lua PRIVATE ../src/lua/logging.c)
 target_sources(knurl_lua PRIVATE ../src/lua/providers.c)
 target_sources(knurl_lua PRIVATE ../src/lua/input.c)
+target_sources(knurl_lua PRIVATE ../src/lua/acl.c)
 # Link the shipped search paths directly, including with osxcross where an
 # install_name_tool may be unavailable. Embedding/test hosts resolve the shared
 # SDK closure; the module does not retain workstation paths.
@@ -78,7 +79,7 @@ if(BUILD_TESTING)
   target_compile_definitions(knurl_acme_fixture PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   target_link_libraries(knurl_acme_fixture PRIVATE knurl::lua cpkt::openssl_ssl_shared lonejson::lonejson)
   foreach(mode preload dynamic)
-    add_executable(knurl_lua_${mode}_host ../tests/lua/host.c ../tests/lua/events.c)
+    add_executable(knurl_lua_${mode}_host ../tests/lua/host.c ../tests/lua/events.c ../tests/acl-wire.c)
     set_target_properties(knurl_lua_${mode}_host PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
     target_compile_options(knurl_lua_${mode}_host PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -Wvla -Walloca -UNDEBUG)
     target_compile_definitions(knurl_lua_${mode}_host PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
@@ -108,6 +109,11 @@ if(BUILD_TESTING)
       "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:knurl_lua_${mode}_host>"
       "-DSCRIPT=${knurl_root}/tests/lua/input.lua" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
     set_tests_properties(knurl.lua-input-${mode} PROPERTIES TIMEOUT 10)
+    add_test(NAME knurl.lua-acl-${mode} COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
+      "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:knurl_lua_${mode}_host>"
+      "-DSCRIPT=${knurl_root}/tests/lua/acl.lua" "-DWORKSPACE=${CMAKE_CURRENT_BINARY_DIR}/tests/acl-${mode}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
+    set_tests_properties(knurl.lua-acl-${mode} PROPERTIES TIMEOUT 20)
     add_test(NAME knurl.lua-config-${mode} COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
       "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:knurl_lua_${mode}_host>"
       "-DSCRIPT=${knurl_root}/tests/lua/config.lua" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")

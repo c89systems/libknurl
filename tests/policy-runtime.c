@@ -493,7 +493,7 @@ static int client(unsigned short port, int mode)
         exchange(port,
                  GET("/identity",
                      "X-Forwarded-For: invalid\r\nX-Real-IP: 2001:db8::9\r\n"),
-                 200, mode ? "2001:db8::9|" : "127.0.0.1|") == 0);
+                 200, "127.0.0.1|") == 0);
     CHECK(exchange(
               port,
               GET("/identity", "X-Forwarded-For: ,\r\nX-Real-IP: garbage\r\n"),

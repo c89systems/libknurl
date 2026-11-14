@@ -6,12 +6,14 @@ execute on the HTTP worker's owning loop. Configuration is inert: construction
 and validation do not invoke them. Function and userdata pointers are borrowed
 for the server lifetime.
 
-`config.client_ip.trusted_proxies` retains Vectis's numeric-address trust list.
+`config.client_ip.trusted_proxies` accepts numeric addresses, CIDRs and immediate
+peer wildcard trust; see [ACLs and forwarding trust](acl.md).
 The server copies the list and its strings. Untrusted TCP peers cannot select
 their effective address through forwarding headers. For trusted peers, the first
 X-Forwarded-For field is walked from right to left, returning the nearest
 untrusted address or the leftmost address when the entire chain is trusted.
-Malformed chains fall back to a valid trimmed X-Real-IP, then to the TCP peer.
+Absent chains may use a valid trimmed X-Real-IP. Malformed, duplicate or overlong
+chain headers use the TCP peer without trying a second identity header.
 IPv6 trust comparisons use address bytes, so equivalent textual forms match.
 Transport admission and observations always retain the actual TCP peer.
 
@@ -19,6 +21,9 @@ Transport admission and observations always retain the actual TCP peer.
 changing `knurl_request_peer`. An optional `client_ip.resolve` callback sees
 that default and writes a replacement numeric IPv4/IPv6 address into a supplied
 46-byte buffer. An optional `correlation_id.resolve` writes at most 128 bytes.
+An address resolver returning zero bytes preserves the default identity and its
+forwarding validity; Lua nil uses this path. A nonempty valid host replacement
+explicitly overrides that decision.
 It may return an empty identifier; NUL, control bytes and DEL are rejected.
 Neither callback must append a terminator. The server validates and retains
 successful results through request close. Correlation is empty by default:

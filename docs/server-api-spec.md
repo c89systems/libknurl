@@ -153,7 +153,9 @@ released c89systems cpkt, LoneJSON and libpslog packages, preferring the newest
 compatible closure. Current pins are cpkt 0.7.0, LoneJSON 0.50.0 and pslog 0.13.0;
 cpkt provides OpenSSL/curl/nghttp2/libxml2 and the Lua runtime/link closure.
 No sibling checkout is a build input or writable under this task.
-The standalone [MMDB country reader contract](mmdb.md) adds a public provider,
+The [route ACL contract](acl-spec.md) adds reusable IP/CIDR, forward-DNS and
+country policies, group intersection, C/Lua declarations and enforcement before
+route resources, including proxies. The standalone [MMDB country reader contract](mmdb.md) adds a public provider,
 free functions and receiver shell independent of server initialization. Use only
 Knurl's C89 implementation, with bounded pread and lazy cache allocation under a
 configurable total requested heap limit. Never mmap the database. Include cache

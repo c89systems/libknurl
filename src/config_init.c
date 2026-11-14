@@ -147,6 +147,10 @@ void knurl_server_config_init(knurl_server_config *config)
     config->supervision.userdata = NULL;
     config->client_ip.trusted_proxies = NULL;
     config->client_ip.trusted_proxy_count = 0;
+    config->client_ip.forwarded_header = NULL;
+    config->client_ip.real_ip_header = NULL;
+    config->client_ip.forwarded_format = KNURL_FORWARDED_COMMA;
+    config->client_ip.max_hops = 0;
     config->client_ip.resolve = NULL;
     config->client_ip.userdata = NULL;
     config->correlation_id.resolve = NULL;

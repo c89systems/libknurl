@@ -185,6 +185,7 @@ static knurl_status add_route(knurl_router *router, knurl_route_group *group,
     reader.handler = parse;
     reader.userdata = data;
     reader.hooks = config->hooks;
+    reader.acl = config->acl;
     codec.open = open_records;
     codec.finish = complete;
     codec.release = release_records;

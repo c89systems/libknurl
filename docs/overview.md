@@ -27,6 +27,8 @@ providers. libknurl owns HTTP transport and the reusable server mechanisms.
 - TLS termination, mutual TLS, ACME certificate management and HTTPS redirects.
 - Trusted-proxy address resolution, admission and autoblock rules, structured
   access logging, and transport/lifecycle observations.
+- Per-route and group [IP/DNS/country ACLs](acl.md), including proxy handlers,
+  startup-only or background DNS refresh and configurable forwarding trust.
 
 ## C and Lua interfaces
 

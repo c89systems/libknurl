@@ -724,6 +724,8 @@ struct rl_rule *rl_rule_new(lua_State *L, knurl_error *error)
     index = lua_absindex(L, -1);
     luaL_setmetatable(L, RL_RULE);
     rl_table_copy(L, 2);
+    if (!rl_acl_option(L, -1, &rule->acl, error))
+        return NULL;
     if (!rl_auth_prepare(L, -1, error))
         return NULL;
     lua_setiuservalue(L, index, 1);
@@ -784,18 +786,18 @@ static int rule(lua_State *L, int kind_id)
     int root, index;
     static const char *const route_fields[] = {
         "path",    "path_kind", "method", "methods", "body",
-        "handler", "before",    "after",  "auth"};
+        "handler", "before",    "after",  "auth",    "acl"};
     static const char *const group_fields[] = {"prefix", "before", "after",
-                                               "auth"};
+                                               "auth", "acl"};
     static const char *const codec_fields[] = {
-        "path",         "path_kind",       "method",        "methods",
-        "body",         "handler",         "before",        "after",
-        "auth",         "input_schema",    "output_schema", "xml",
-        "buffer_bytes", "max_output_bytes"};
+        "path", "path_kind",    "method",          "methods",
+        "body", "handler",      "before",          "after",
+        "auth", "acl",          "input_schema",    "output_schema",
+        "xml",  "buffer_bytes", "max_output_bytes"};
     static const char *const upload_fields[] = {
-        "path",        "path_kind", "method",       "methods",       "body",
-        "before",      "after",     "auth",         "open",          "on_chunk",
-        "on_complete", "close",     "buffer_bytes", "max_body_bytes"};
+        "path",     "path_kind",   "method", "methods",      "body",
+        "before",   "after",       "auth",   "acl",          "open",
+        "on_chunk", "on_complete", "close",  "buffer_bytes", "max_body_bytes"};
     if (s == NULL) {
         parent = luaL_testudata(L, 1, RL_GROUP);
         if (parent != NULL)
@@ -835,6 +837,7 @@ static int rule(lua_State *L, int kind_id)
     root = lua_absindex(L, -1);
     if (group) {
         knurl_route_group_config_init(&gc);
+        gc.acl = r->acl;
         if (!rl_field_string(L, 2, "prefix", &gc.prefix))
             goto invalid;
         gc.hooks.auth = rl_auth;
@@ -847,6 +850,7 @@ static int rule(lua_State *L, int kind_id)
                                     &r->group, &e);
     } else {
         knurl_route_config_init(&config);
+        config.acl = r->acl;
         if (kind_id == 5)
             knurl_body_policy_init_upload(&config.body);
         else if (codec)

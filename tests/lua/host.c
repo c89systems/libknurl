@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <lua.h>
 #include "events.h"
+#include "../acl-wire.h"
 #include <lauxlib.h>
 #include <lualib.h>
 #if defined(KNURL_PRELOAD_TEST)
@@ -1376,6 +1377,46 @@ static int spawn_policy(lua_State *L)
     lua_pushboolean(L, 1);
     return 1;
 }
+static int spawn_acl(lua_State *L)
+{
+    unsigned short port = (unsigned short)luaL_checkinteger(L, 1);
+    child = fork();
+    if (child < 0)
+        return luaL_error(L, "fork failed");
+    if (child == 0) {
+        int failed;
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGPIPE, SIG_IGN);
+        failed = knurl_test_acl_blocked(port);
+        if (!failed)
+            failed = knurl_test_acl_exchange(port, "GET", "/allowed",
+                                             "X-Forwarded-For: malformed\r\n",
+                                             NULL) != 403;
+        if (!failed)
+            failed = knurl_test_acl_exchange(port, "GET", "/bad-override", NULL,
+                                             NULL) != 500;
+        if (!failed)
+            failed =
+                knurl_test_acl_exchange(port, "GET", "/sse", NULL, NULL) != 403;
+        if (!failed)
+            failed = knurl_test_acl_exchange(port, "GET", "/fixed-json", NULL,
+                                             NULL) != 403;
+        if (!failed)
+            failed = knurl_test_acl_exchange(port, "GET", "/fixed-text", NULL,
+                                             NULL) != 403;
+        if (!failed)
+            failed = knurl_test_acl_exchange(port, "GET", "/allowed", NULL,
+                                             "allowed") != 200;
+        if (!failed)
+            failed = knurl_test_acl_exchange(port, "GET", "/stop", NULL,
+                                             "stopped") != 200;
+        if (failed)
+            (void)knurl_test_acl_exchange(port, "GET", "/stop", NULL, NULL);
+        _exit(failed);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
 static int extension(X509 *certificate, X509 *issuer, int nid, const char *text)
 {
     X509V3_CTX context;
@@ -1591,6 +1632,8 @@ int main(int argc, char **argv)
     lua_setfield(L, -2, "tls_setup");
     lua_pushcfunction(L, spawn_policy);
     lua_setfield(L, -2, "spawn_policy");
+    lua_pushcfunction(L, spawn_acl);
+    lua_setfield(L, -2, "spawn_acl");
     lua_pushcfunction(L, spawn_body);
     lua_setfield(L, -2, "spawn_body");
     lua_pushcfunction(L, upload_progress);

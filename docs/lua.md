@@ -1,5 +1,10 @@
 # Lua server facade
 
+`knurl.acl` constructs reusable [route ACLs](acl.md). Route, group and convenience
+declarations accept `acl` objects or inline options; all enforcement, DNS lifecycle
+and country lookup live in Core. ACLs compose with the existing authentication
+hooks and admission callbacks.
+
 `knurl.input` provides [exact validation and HTML escaping](input.md), including
 typed request query/path lookups. Managed routes accept HTTP/1.1 chunked input
 through their existing body policy, with separate completed trailers; see

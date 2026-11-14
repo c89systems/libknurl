@@ -446,6 +446,7 @@ static knurl_status add_route(knurl_router *router, knurl_route_group *group,
     route.handler = serve;
     route.userdata = r;
     route.hooks = config->hooks;
+    route.acl = config->acl;
     status = knurl_router_route(group != NULL ? group->impl->router : router,
                                 &route, &registered, error);
     free(pattern);

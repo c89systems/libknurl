@@ -522,7 +522,9 @@ int rl_config_parse(lua_State *L, int options, int owner,
                                                   "identity_index",
                                                   "presented_port",
                                                   "redirect_https_port"};
-    static const char *const client_fields[] = {"trusted_proxies", "resolve"};
+    static const char *const client_fields[] = {
+        "trusted_proxies", "resolve",          "forwarded_header",
+        "real_ip_header",  "forwarded_format", "max_hops"};
     static const char *const signal_fields[] = {"mode"};
     struct scratch a;
     knurl_listener_config *listeners;
@@ -609,6 +611,23 @@ int rl_config_parse(lua_State *L, int options, int owner,
                      &c->client_ip.trusted_proxy_count, error))
             goto invalid;
         lua_pop(L, 1);
+        if (!rl_field_string(L, -1, "forwarded_header",
+                             &c->client_ip.forwarded_header) ||
+            !rl_field_string(L, -1, "real_ip_header",
+                             &c->client_ip.real_ip_header) ||
+            !rl_field_size(L, -1, "max_hops", &c->client_ip.max_hops))
+            goto invalid;
+        {
+            const char *format = NULL;
+            if (!rl_field_string(L, -1, "forwarded_format", &format))
+                goto invalid;
+            if (format != NULL) {
+                if (!strcmp(format, "rfc7239"))
+                    c->client_ip.forwarded_format = KNURL_FORWARDED_RFC7239;
+                else if (strcmp(format, "comma"))
+                    goto invalid;
+            }
+        }
     }
     lua_pop(L, 1);
     rl_field(L, options, "autoblock");
@@ -796,6 +815,16 @@ void rl_config_push(lua_State *L, const knurl_server_effective *e)
         lua_rawseti(L, -2, (lua_Integer)i + 1);
     }
     lua_setfield(L, -2, "trusted_proxies");
+    lua_pushstring(L, c->client_ip.forwarded_header);
+    lua_setfield(L, -2, "forwarded_header");
+    lua_pushstring(L, c->client_ip.real_ip_header);
+    lua_setfield(L, -2, "real_ip_header");
+    lua_pushstring(L, c->client_ip.forwarded_format == KNURL_FORWARDED_RFC7239
+                          ? "rfc7239"
+                          : "comma");
+    lua_setfield(L, -2, "forwarded_format");
+    rl_push_size(L, c->client_ip.max_hops);
+    lua_setfield(L, -2, "max_hops");
     lua_setfield(L, -2, "client_ip");
     lua_getfield(L, -1, "autoblock");
     lua_newtable(L);

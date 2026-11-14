@@ -127,6 +127,8 @@ void knurl_config_cleanup(knurl_server_config *config)
     free((void *)config->tls.acme.ca_directory);
     free_list(config->client_ip.trusted_proxies,
               config->client_ip.trusted_proxy_count);
+    free((void *)config->client_ip.forwarded_header);
+    free((void *)config->client_ip.real_ip_header);
     free((void *)config->autoblock.status_rules);
     if (config->autoblock.event_rules != NULL) {
         for (i = 0; i < config->autoblock.event_rule_count; ++i)
@@ -156,6 +158,8 @@ knurl_status knurl_config_copy(const knurl_server_config *input,
     out->tls.acme.runtime_directory = NULL;
     out->tls.acme.ca_file = out->tls.acme.ca_directory = NULL;
     out->client_ip.trusted_proxies = NULL;
+    out->client_ip.forwarded_header = NULL;
+    out->client_ip.real_ip_header = NULL;
     out->autoblock.status_rules = NULL;
     out->autoblock.event_rules = NULL;
     status = KNURL_OK;
@@ -166,6 +170,8 @@ knurl_status knurl_config_copy(const knurl_server_config *input,
             goto failed;                                                       \
     } while (0)
     COPY_TEXT(name);
+    COPY_TEXT(client_ip.forwarded_header);
+    COPY_TEXT(client_ip.real_ip_header);
     COPY_TEXT(limits.body_spool_directory);
     COPY_TEXT(http.server_header);
     COPY_TEXT(http.access_log_path);

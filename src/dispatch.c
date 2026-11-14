@@ -1,6 +1,7 @@
 #include "request_internal.h"
 #include "response_internal.h"
 #include "server_internal.h"
+#include "acl_internal.h"
 
 void knurl_request_plan_init(knurl_request_plan *plan)
 {
@@ -91,6 +92,9 @@ knurl_status knurl_router_dispatch_headers(knurl_router *router,
             request->impl->rejection_status = 404;
         return status;
     }
+    status = knurl_acl_route_check(request, error);
+    if (status != KNURL_OK)
+        return status;
     plan->body = request->impl->route->impl->config.body;
     if (request->impl->route->impl->preflight != NULL) {
         status = request->impl->route->impl->preflight(

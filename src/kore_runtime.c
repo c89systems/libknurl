@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "kore_internal.h"
 #include "executor_internal.h"
+#include "acl_internal.h"
 #include "storage_internal.h"
 #include "body_internal.h"
 #include "autoblock_internal.h"
@@ -270,6 +271,11 @@ static int worker_start(void *userdata)
     if (runtime->server->impl->process.role != KNURL_PROCESS_HTTP)
         return 1;
     runtime->server->impl->loop->impl->http_worker = 1;
+    runtime->status = knurl_acl_worker_start(runtime->server, &runtime->error);
+    if (runtime->status != KNURL_OK) {
+        knurl_kore_child_failure(runtime, &runtime->error);
+        return 0;
+    }
     knurl_kore_tls_worker(runtime, runtime->server->impl->process.worker_index,
                           1);
     return knurl_runtime_hook(
@@ -866,6 +872,8 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
                 runtime, server->impl->config.callbacks.on_parent_prepare);
         if (runtime->status == KNURL_OK)
             runtime->status = knurl_autoblock_open(server, &runtime->error);
+        if (runtime->status == KNURL_OK)
+            runtime->status = knurl_acl_router_prepare(server, &runtime->error);
         if (runtime->status == KNURL_OK)
             runtime->status =
                 knurl_kore_logging_start(runtime, &runtime->error);

@@ -38,6 +38,15 @@ static knurl_status resolve(knurl_request *request, char *out, size_t capacity,
 static int paths(void)
 {
     const char *proxies[] = {"127.0.0.1", "10.0.0.1"};
+    const char *expected[] = {"198.51.100.1", "192.0.2.254",  "127.0.0.1",
+                              "203.0.113.42", "198.51.100.1", "2001:db8::1",
+                              "127.0.0.1"};
+    const knurl_client_address_source sources[] = {
+        KNURL_CLIENT_ADDRESS_FORWARDED_FOR, KNURL_CLIENT_ADDRESS_PEER,
+        KNURL_CLIENT_ADDRESS_PEER,          KNURL_CLIENT_ADDRESS_RESOLVER,
+        KNURL_CLIENT_ADDRESS_FORWARDED_FOR, KNURL_CLIENT_ADDRESS_REAL_IP,
+        KNURL_CLIENT_ADDRESS_PEER};
+    const size_t via_counts[] = {2, 0, 0, 1, 16, 1, 0};
     knurl_server_config config;
     knurl_autoblock_notifications_config notifications;
     knurl_autoblock_event_rule rule = {"path", 1};
@@ -48,10 +57,12 @@ static int paths(void)
     knurl_autoblock_event event;
     knurl_error error;
     int mode, calls = 0;
-    for (mode = 0; mode < 5; ++mode) {
+    for (mode = 0; mode < 7; ++mode) {
         knurl_server_config_init(&config);
         config.client_ip.trusted_proxies = proxies;
         config.client_ip.trusted_proxy_count = 2;
+        if (mode == 4)
+            config.client_ip.max_hops = 64;
         if (mode == 3) {
             config.client_ip.resolve = resolve;
             config.client_ip.userdata = &calls;
@@ -80,7 +91,9 @@ static int paths(void)
         headers[1].value = ip("2001:db8::1");
         if (mode == 2)
             headers[0].value = ip("invalid");
-        if (mode == 4)
+        if (mode == 5)
+            headers[0].name = ip("x-ignored");
+        if (mode == 4 || mode == 6)
             headers[0].value = ip("198.51.100.1, 10.0.0.1, 10.0.0.1, 10.0.0.1,"
                                   "10.0.0.1, 10.0.0.1, 10.0.0.1, 10.0.0.1,"
                                   "10.0.0.1, 10.0.0.1, 10.0.0.1, 10.0.0.1,"
@@ -93,19 +106,9 @@ static int paths(void)
                              KNURL_OBSERVE_APPLICATION, 0, "path", request,
                              NULL);
         CHECK(server->autoblock_next(server, &event, NULL, &error) == KNURL_OK);
-        CHECK(!strcmp(event.address, mode == 1   ? "192.0.2.254"
-                                     : mode == 2 ? "2001:db8::1"
-                                     : mode == 3 ? "203.0.113.42"
-                                                 : "198.51.100.1"));
-        CHECK(event.address_source ==
-              (mode == 1   ? KNURL_CLIENT_ADDRESS_PEER
-               : mode == 2 ? KNURL_CLIENT_ADDRESS_REAL_IP
-               : mode == 3 ? KNURL_CLIENT_ADDRESS_RESOLVER
-                           : KNURL_CLIENT_ADDRESS_FORWARDED_FOR));
-        CHECK(event.via_count == (mode == 1   ? 0U
-                                  : mode == 4 ? 16U
-                                  : mode == 0 ? 2U
-                                              : 1U));
+        CHECK(!strcmp(event.address, expected[mode]));
+        CHECK(event.address_source == sources[mode]);
+        CHECK(event.via_count == via_counts[mode]);
         CHECK(event.via_truncated == (mode == 4));
         if (event.via_count != 0)
             CHECK(!strcmp(event.via[event.via_count - 1], "127.0.0.1"));

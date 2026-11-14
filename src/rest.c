@@ -190,6 +190,7 @@ static knurl_status add(knurl_router *router, knurl_route_group *group,
     route.path_kind = config->path_kind;
     route.body = config->body;
     route.hooks = config->hooks;
+    route.acl = config->acl;
     route.handler = dispatch;
     route.userdata = copy;
     status = group != NULL

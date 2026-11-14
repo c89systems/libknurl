@@ -14,6 +14,7 @@ struct knurl_route_impl {
     int directory_mount;
     knurl_headers_fn preflight;
     knurl_route_group *group;
+    knurl_router *router;
     void (*release_userdata)(void *);
 };
 

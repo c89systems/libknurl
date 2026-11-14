@@ -768,6 +768,7 @@ knurl_status rl_codec_route_register(lua_State *L, struct rl_rule *rule,
         xml.path_kind = config->path_kind;
         xml.body = config->body;
         xml.hooks = config->hooks;
+        xml.acl = config->acl;
         xml.userdata = rule;
         xml.records = &provider;
         xml.input = &input;
@@ -796,6 +797,7 @@ knurl_status rl_codec_route_register(lua_State *L, struct rl_rule *rule,
         typed.path_kind = config->path_kind;
         typed.body = config->body;
         typed.hooks = config->hooks;
+        typed.acl = config->acl;
         typed.userdata = rule;
         typed.records = &provider;
         typed.input = input;
@@ -813,6 +815,7 @@ knurl_status rl_codec_route_register(lua_State *L, struct rl_rule *rule,
     json.path_kind = config->path_kind;
     json.body = config->body;
     json.hooks = config->hooks;
+    json.acl = config->acl;
     json.userdata = rule;
     json.records = &provider;
     json.input = input;

@@ -228,19 +228,11 @@ static knurl_status rest_handler(knurl_request *request, const void *decoded,
 }
 int rl_rest_route(lua_State *L)
 {
-    static const char *const fields[] = {"path",
-                                         "path_kind",
-                                         "method",
-                                         "methods",
-                                         "body",
-                                         "handler",
-                                         "auth",
-                                         "before",
-                                         "after",
-                                         "decode",
-                                         "decode_disabled",
-                                         "validate",
-                                         "on_error"};
+    static const char *const fields[] = {
+        "path",     "path_kind", "method", "methods",
+        "body",     "handler",   "auth",   "acl",
+        "before",   "after",     "decode", "decode_disabled",
+        "validate", "on_error"};
     static const char *const callbacks[] = {"handler", "decode", "validate",
                                             "on_error"};
     struct rl_rule *rule;
@@ -288,6 +280,7 @@ int rl_rest_route(lua_State *L)
     config.on_error = rest_error;
     config.userdata = rule;
     rl_rule_hooks(&config.hooks, rule);
+    config.acl = rule->acl;
     root = rl_rule_root(L, index, rule);
     status =
         rule->group != NULL

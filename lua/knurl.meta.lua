@@ -39,6 +39,7 @@
 ---Route declarations are copied at registration; callback/schema/provider owners
 ---are retained through server close. See the feature guides for helper fields.
 ---@class knurl.RouteOptions
+---@field acl? knurl.ACL|knurl.ACLOptions # Core gate before body/handler/provider/proxy work; intersects with group ACL.
 ---@field path? string # Literal/parameter path, or regex inferred from leading ^.
 ---@field path_kind? 'literal'|'params'|'regex'
 ---@field method? string|integer # Ordinary routes default GET; typed/upload routes POST.
@@ -173,7 +174,7 @@
 ---@field tls? table # Identity/material/ACME declarations; see docs/tls.md.
 ---@field callbacks? knurl.ServerCallbacks # Lifecycle/request/observation callbacks; owner VM only.
 ---@field start_paused? boolean # Hold the serving gate until set_serving(true).
----@field client_ip? table # Trusted proxy CIDRs and optional bounded address resolver.
+---@field client_ip? knurl.ClientIPOptions # Trusted proxy addresses/CIDRs, immediate-peer wildcard and forwarding policy.
 ---@field correlation_id? table # Optional bounded identifier resolver.
 ---@field admission? table # Pre-TLS connection and pre-body request admission callbacks.
 ---@field autoblock? knurl.Autoblock # Shared status/event counting policy.
@@ -456,7 +457,37 @@
 ---@field html_escape fun(value:string, max_bytes?:integer): string?, knurl.Error? # HTML text/quoted attribute escaping; zero selects 1 MiB.
 
 ---Public module loaded into an existing Lua 5.5 VM; owns neither VM nor interpreter.
+---@class knurl.ClientIPOptions
+---@field trusted_proxies? string[] # Numeric addresses/CIDRs; * trusts only the immediate TCP peer.
+---@field forwarded_header? string # Default x-forwarded-for; empty disables.
+---@field real_ip_header? string # Default x-real-ip; used only when chain is absent; empty disables.
+---@field forwarded_format? 'comma'|'rfc7239'
+---@field max_hops? integer # Zero selects 16; maximum 64.
+---@field resolve? fun(request:knurl.Request): string?, knurl.Error?
+
+---@class knurl.ACLRules
+---@field addresses? string[] # Numeric IPs/CIDRs or configured forward-DNS hostnames.
+---@field countries? string[] # Exactly two uppercase ASCII letters; requires country_database.
+---@field unknown? boolean # Valid missing country/record; never lookup errors.
+
+---@class knurl.ACLOptions
+---@field policy? 'allow'|'deny' # Fallback after deny matches then allow matches; default allow.
+---@field allow? knurl.ACLRules
+---@field deny? knurl.ACLRules
+---@field use_peer? boolean # Default false selects effective identity.
+---@field dns_refresh_ms? integer # Zero resolves once at preparation; positive opts into background refresh.
+---@field dns_timeout_ms? integer # Zero selects 10000 ms background deadline.
+---@field dns_max_addresses? integer # Zero selects 64 per hostname; maximum 1024.
+---@field country_database? string # Copied immutable MMDB path, opened during preparation.
+---@field max_heap_bytes? integer # MMDB reader requested-heap cap; zero selects 512 KiB.
+
+---@class knurl.ACL
+---@field check fun(self:knurl.ACL, peer:string, effective?:string): boolean?, knurl.Error? # Never resolves DNS; false is denial.
+---@field refresh fun(self:knurl.ACL): boolean?, knurl.Error? # Standalone preparation/refresh; false means not due. Do not call from request handlers.
+---@field close fun(self:knurl.ACL): boolean?, knurl.Error? # Release caller reference; routes retain their own references.
+
 ---@class knurl.Module
+---@field acl fun(options:knurl.ACLOptions): knurl.ACL?, knurl.Error? # Inert reusable Core ACL; server startup prepares attached ACLs.
 ---@field input knurl.Input # Exact span validators and context-specific HTML escaping.
 ---@field version string # Version of the public C library loaded by the binding.
 ---@field AGAIN knurl.Sentinel # Producer/consumer would block; explicit resume/readiness required.

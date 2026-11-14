@@ -3,6 +3,8 @@ set(knurl_public_docs
   README.md
   docs/README.md
   docs/acme.md
+  docs/acl.md
+  docs/acl-spec.md
   docs/assets.md
   docs/channels.md
   docs/editors.md

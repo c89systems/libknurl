@@ -45,6 +45,7 @@ struct rl_server {
     pslog_lua_logger_ref logger, access_logger;
 };
 struct rl_rule {
+    knurl_acl *acl;
     struct rl_server *server;
     knurl_route_group *group;
     int root;
@@ -149,6 +150,8 @@ int rl_logging_config(lua_State *, int, struct rl_server *, knurl_error *);
 int rl_set_pslog(lua_State *);
 void rl_requests_open(lua_State *);
 void rl_input_open(lua_State *);
+void rl_acl_open(lua_State *);
+int rl_acl_option(lua_State *, int, knurl_acl **, knurl_error *);
 void rl_input_requests_open(lua_State *);
 void rl_sources_open(lua_State *);
 void rl_codecs_open(lua_State *);

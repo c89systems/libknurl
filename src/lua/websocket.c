@@ -354,7 +354,8 @@ int rl_websocket(lua_State *L)
                                          "output_queue_bytes",
                                          "close_timeout_ms",
                                          "protocol",
-                                         "headers"};
+                                         "headers",
+                                         "acl"};
     struct rl_rule *rule;
     struct ws_declaration *declaration;
     knurl_route_config route;
@@ -429,6 +430,7 @@ int rl_websocket(lua_State *L)
     lua_setiuservalue(L, index, 3);
     route.method = KNURL_HTTP_GET;
     route.on_headers = headers;
+    route.acl = rule->acl;
     route.userdata = rule;
     root = rl_rule_root(L, index, rule);
     status = knurl_router_route(knurl_server_router(rule->server->native),

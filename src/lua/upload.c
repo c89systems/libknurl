@@ -167,6 +167,7 @@ void rl_upload_config(knurl_upload_stream_config *out,
     out->path_kind = route->path_kind;
     out->body = route->body;
     out->hooks = route->hooks;
+    out->acl = route->acl;
     out->open = upload_open;
     out->write = upload_write;
     out->finish = upload_finish;

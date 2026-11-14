@@ -1,6 +1,6 @@
 # MMDB country reader
 
-Knurl's standalone C89 MMDB reader supplies country lookup for future route ACLs.
+Knurl's standalone C89 MMDB reader supplies country lookup for [route ACLs](acl.md).
 The public provider, free functions and receiver shell in `knurl/mmdb.h` work
 without initializing a server, router or loop. Knurl is the sole implementation;
 there is no embedded or external libmaxminddb dependency.

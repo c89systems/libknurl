@@ -481,7 +481,8 @@ int rl_proxy(lua_State *L)
                                          "rewrite",
                                          "modify_response",
                                          "on_error",
-                                         "on_exchange"};
+                                         "on_exchange",
+                                         "acl"};
     static const char *const callbacks[] = {
         "preflight", "rewrite", "modify_response", "on_error", "on_exchange"};
     knurl_proxy_config config;
@@ -559,6 +560,7 @@ int rl_proxy(lua_State *L)
     rule = rl_rule_new(L, &error);
     if (rule == NULL)
         return rl_error(L, &error);
+    config.acl = rule->acl;
     if (rule->group != NULL)
         return rl_error(L, (rl_fail(&error, KNURL_NOT_SUPPORTED,
                                     "proxy registers on a server router"),

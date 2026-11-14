@@ -15,6 +15,7 @@ Start with the [quick starts](../README.md) or find a guide below. The
 | Routing, request metadata and body policies | [Requests](requests.md) |
 | Exact input validation and HTML escaping | [Input helpers](input.md) |
 | File-backed MMDB country readers and comparison | [MMDB](mmdb.md) |
+| Route IP/DNS/country ACLs and proxy trust | [ACLs](acl.md) |
 | Staged replies, live output and source ownership | [Responses](responses.md) |
 | Live chunk/native-reader/file uploads | [Uploads](uploads.md) |
 | Takeover input and opaque tunnel output | [Channels](channels.md) |

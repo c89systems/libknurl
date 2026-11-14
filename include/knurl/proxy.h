@@ -239,6 +239,9 @@ KNURL_API knurl_status knurl_proxy_response_remove_header(
  * bodies flow through bounded chunk buffers; they are never materialized.
  */
 typedef struct knurl_proxy_config {
+    /** Optional retained route ACL, checked before proxy callbacks/allocation.
+     */
+    knurl_acl *acl;
     /** Required libknurl route pattern; copied before registration returns. */
     const char *path;
     /** Zero selects all supported libknurl HTTP methods. WebSocket requires

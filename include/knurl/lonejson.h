@@ -218,6 +218,8 @@ typedef struct knurl_json_route_config {
      * submission.
      */
     knurl_route_hooks hooks;
+    /** Optional retained route ACL. */
+    knurl_acl *acl;
     /** Optional copied record-owner adapter; its callbacks/storage obey
      * knurl_record_provider.
      */
@@ -261,6 +263,8 @@ typedef struct knurl_json_typed_route_config {
      * submission.
      */
     knurl_route_hooks hooks;
+    /** Optional retained route ACL. */
+    knurl_acl *acl;
     /** Optional copied record-owner adapter; its callbacks/storage obey
      * knurl_record_provider.
      */
@@ -378,6 +382,8 @@ typedef struct knurl_rest_route_config {
      * submission.
      */
     knurl_route_hooks hooks;
+    /** Optional retained route ACL. */
+    knurl_acl *acl;
     /** Optional REST decoder; successful output remains alive until release. */
     knurl_rest_decode_fn decode;
     /** Owner-release callback; called under the enclosing acquire/release

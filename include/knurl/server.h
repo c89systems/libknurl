@@ -617,7 +617,8 @@ typedef struct knurl_supervision_config {
  */
 #define KNURL_CORRELATION_ID_MAX 128U
 /** Write into the supplied bounded buffer and return its length (no trailing
- * NUL required). Address resolvers return a numeric IPv4/IPv6 address;
+ * NUL required). Address resolvers return a numeric IPv4/IPv6 address, or zero
+ * length to preserve the default identity and its trust validity;
  * correlation IDs may be empty but cannot contain NUL/control bytes. */
 typedef knurl_status (*knurl_request_resolve_fn)(knurl_request *, char *,
                                                  size_t capacity,
@@ -637,6 +638,10 @@ typedef struct knurl_identifier_config {
 /** Configuration for client ip. Use the owning operation's initializer before
  * applying overrides.
  */
+typedef enum knurl_forwarded_format {
+    KNURL_FORWARDED_COMMA = 0,
+    KNURL_FORWARDED_RFC7239 = 1
+} knurl_forwarded_format;
 typedef struct knurl_client_ip_config {
     /** Trusted numeric proxy addresses/CIDRs; arbitrary forwarded addresses
      * remain untrusted.
@@ -644,6 +649,14 @@ typedef struct knurl_client_ip_config {
     const char *const *trusted_proxies;
     /** Number of entries in trusted_proxies. */
     size_t trusted_proxy_count;
+    /** NULL selects X-Forwarded-For; empty disables this header. */
+    const char *forwarded_header;
+    /** NULL selects X-Real-IP; empty disables this fallback header. */
+    const char *real_ip_header;
+    /** Comma-separated numeric addresses or RFC 7239 for parameters. */
+    knurl_forwarded_format forwarded_format;
+    /** Zero selects 16 hops; maximum 64. Oversized chains use the peer. */
+    size_t max_hops;
     /** Host resolver callback; its bounded output is copied before return. */
     knurl_request_resolve_fn resolve;
     /** Caller-owned callback context; retain it for the enclosing

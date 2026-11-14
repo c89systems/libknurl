@@ -219,6 +219,7 @@ static knurl_status add_route(knurl_router *router, knurl_route_group *group,
     route.handler = dispatch;
     route.userdata = data;
     route.hooks = config->hooks;
+    route.acl = config->acl;
     status = group != NULL
                  ? knurl_route_group_route(group, &route, &registered, error)
                  : knurl_router_route(router, &route, &registered, error);
@@ -262,6 +263,7 @@ static knurl_status typed_route(knurl_router *router, knurl_route_group *group,
     declaration.input = config->input;
     declaration.userdata = config->userdata;
     declaration.hooks = config->hooks;
+    declaration.acl = config->acl;
     declaration.records = config->records;
     return add_route(router, group, &declaration, config->handler, out, error);
 }

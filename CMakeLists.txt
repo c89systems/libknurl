@@ -76,6 +76,7 @@ add_library(knurl_objects OBJECT src/common.c src/u64.c src/input.c src/input_re
 target_sources(knurl_objects PRIVATE src/static_gzip.c src/static_encoding.c)
 target_sources(knurl_objects PRIVATE src/mmdb.c src/mmdb_decode.c src/mmdb_file.c src/mmdb_cache.c)
 target_sources(knurl_objects PRIVATE src/mmdb_prefix.c)
+target_sources(knurl_objects PRIVATE src/ip.c src/forwarded.c src/acl.c src/acl_dns.c src/acl_runtime.c)
 target_include_directories(knurl_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(knurl_objects PRIVATE "${kore_source_dir}/include/kore")
 target_link_libraries(knurl_objects PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::LibXml2 lonejson::lonejson pslog::pslog_shared)

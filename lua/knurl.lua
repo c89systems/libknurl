@@ -7,6 +7,7 @@ M.websocket,M.loop,M.sse_encode=native.websocket,native.loop,native.sse_encode
 ---Host-control FD readiness constants; see Server:control_interest.
 M.control=native.control
 M.input=native.input
+M.acl=native.acl
 local Server, Group = {}, {}
 Server.__index, Group.__index = Server, Group
 local requests = setmetatable({}, {__mode='k'})
@@ -169,7 +170,7 @@ local function fixed_route(self,kind,opts)
   if location then headers.location=location end
   return route(self,path,function()
     return {status=code,body=body,content_type=content_type,headers=copy(headers)}
-  end,{method=opts.method,methods=opts.methods,auth=kind=='auth_json' and opts.auth or nil,openapi=opts.openapi})
+  end,{method=opts.method,methods=opts.methods,acl=opts.acl,auth=kind=='auth_json' and opts.auth or nil,openapi=opts.openapi})
 end
 ---Copied fixed reply registrations; JSON is already encoded and forwarded unchanged.
 for _,name in ipairs{'text','json','redirect','auth_json'} do
@@ -242,14 +243,15 @@ function Server:group(prefix,opts)
       if type(prefix)~='string' or type(opts.routes)~='table' or #opts.routes==0 then return invalid('group requires a prefix and non-empty routes array') end
       local defaults=copy(opts)
       defaults.prefix,defaults.path_prefix,defaults.routes=nil,nil,nil
+      local target,err=self:group(prefix,{acl=defaults.acl})
+      if not target then return nil,err end
+      defaults.acl=nil
       for _,item in ipairs(opts.routes) do
         if type(item)~='table' or type(item.path)~='string' then return invalid('group route path required') end
         local merged=copy(defaults)
         for k,v in pairs(item) do merged[k]=v end
-        local left=prefix:sub(-1)=='/' and prefix:sub(1,-2) or prefix
-        local right=item.path:sub(1,1)=='/' and item.path or '/'..item.path
-        merged.path=left..right
-        local value,err=self:route(merged)
+        if item.path:sub(1,1)~='/' and item.path:sub(1,1)~='^' then merged.path='/'..item.path end
+        local value,err=target:route(merged)
         if not value then return nil,err end
       end
       return true
@@ -298,7 +300,7 @@ local function sse(self,opts)
   if type(opts)~='table' or type(opts.read)~='function' then return invalid('SSE declaration and read callback required') end
   opts=copy(opts)
   local allowed={path=true,path_kind=true,method=true,methods=true,body=true,auth=true,before=true,after=true,
-    open=true,read=true,close=true,headers=true,status=true,status_code=true,content_type=true,openapi=true}
+    open=true,read=true,close=true,headers=true,status=true,status_code=true,content_type=true,openapi=true,acl=true}
   for key in pairs(opts) do if not allowed[key] then return invalid('unknown SSE field: '..tostring(key)) end end
   for _,name in ipairs{'open','close'} do
     if opts[name]~=nil and type(opts[name])~='function' then return invalid('SSE '..name..' must be a function') end
@@ -316,7 +318,7 @@ local function sse(self,opts)
     end
   end
   local route_opts={}
-  for _,name in ipairs{'path','path_kind','method','methods','auth','before','after','openapi'} do route_opts[name]=opts[name] end
+  for _,name in ipairs{'path','path_kind','method','methods','auth','before','after','openapi','acl'} do route_opts[name]=opts[name] end
   route_opts.body='none'
   route_opts.handler=function(req)
     local state
@@ -496,10 +498,18 @@ function rest.group(server,opts)
     return invalid('REST server, group options and routes required')
   end
   local group={prefix=opts.prefix or opts.path_prefix,routes={}}
+  local target=server
+  if opts.acl~=nil then
+    local err
+    target,err=server:group(group.prefix or '',{acl=opts.acl})
+    if not target then return nil,err end
+    group.prefix=''
+  end
   for index,item in ipairs(opts.routes) do
     if type(item)~='table' then return invalid('REST group route must be a table') end
     local merged=copy(opts)
     for key,value in pairs(item) do merged[key]=value end
+    if opts.acl~=nil then merged.acl=item.acl end
     local route,err=rest_route_options(merged)
     if not route then return nil,err end
     group.routes[index]=route
@@ -511,7 +521,7 @@ function rest.group(server,opts)
     local left=prefix:sub(-1)=='/' and prefix:sub(1,-2) or prefix
     local right=route.path:sub(1,1)=='/' and route.path or '/'..route.path
     route.path=left..right
-    local value,err=register_rest(server,route)
+    local value,err=register_rest(target,route)
     if not value then return nil,err end
   end
   return true
