@@ -72,10 +72,16 @@ foreach(surface vectis-filesystem vectis-host-runtime vectis-xml-runtime materia
     target_link_options(${surface}_consumer PRIVATE "-Wl,--dynamic-linker,${loader}" -Wl,--disable-new-dtags)
     set_target_properties(${surface}_consumer PROPERTIES BUILD_RPATH
       "${KNURL_PREFIX}/lib;${KNURL_SDK_ROOT}/cpkt/lib;${KNURL_SDK_ROOT}/lonejson/lib;${KNURL_SDK_ROOT}/pslog/lib;${CMAKE_SYSROOT}/lib;${CMAKE_SYSROOT}/usr/lib")
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set_target_properties(${surface}_consumer PROPERTIES BUILD_RPATH
+      "${KNURL_PREFIX}/lib;${KNURL_SDK_ROOT}/cpkt/lib;${KNURL_SDK_ROOT}/lonejson/lib;${KNURL_SDK_ROOT}/pslog/lib")
   endif()
 endforeach()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(vectis-typed_consumer PRIVATE "-Wl,--dynamic-linker,${loader}" -Wl,--disable-new-dtags)
   set_target_properties(vectis-typed_consumer PROPERTIES BUILD_RPATH
     "${KNURL_PREFIX}/lib;${KNURL_SDK_ROOT}/cpkt/lib;${KNURL_SDK_ROOT}/lonejson/lib;${KNURL_SDK_ROOT}/pslog/lib;${CMAKE_SYSROOT}/lib;${CMAKE_SYSROOT}/usr/lib")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  set_target_properties(vectis-typed_consumer PROPERTIES BUILD_RPATH
+    "${KNURL_PREFIX}/lib;${KNURL_SDK_ROOT}/cpkt/lib;${KNURL_SDK_ROOT}/lonejson/lib;${KNURL_SDK_ROOT}/pslog/lib")
 endif()

@@ -50,12 +50,15 @@ else()
   endif()
   target_link_libraries(server PRIVATE ${libraries})
 endif()
-# Rehearsal runners use the selected toolchain loader and external provider
-# SDKs. This is build-tree execution metadata, never installed in libknurl.
+# Build-tree applications use external provider SDKs. Linux rehearsals also
+# select their toolchain loader. These paths are never installed in libknurl.
 if(KNURL_VERIFY_RUN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   file(GLOB loaders "${CMAKE_SYSROOT}/lib/ld-linux*.so*" "${CMAKE_SYSROOT}/lib/ld-musl*.so*")
   list(GET loaders 0 loader)
   target_link_options(server PRIVATE "-Wl,--dynamic-linker,${loader}" -Wl,--disable-new-dtags)
   set_target_properties(server PROPERTIES BUILD_RPATH
     "${KNURL_PREFIX}/lib;${KNURL_SDK_ROOT}/cpkt/lib;${KNURL_SDK_ROOT}/lonejson/lib;${KNURL_SDK_ROOT}/pslog/lib;${CMAKE_SYSROOT}/lib;${CMAKE_SYSROOT}/usr/lib")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  set_target_properties(server PROPERTIES BUILD_RPATH
+    "${KNURL_PREFIX}/lib;${KNURL_SDK_ROOT}/cpkt/lib;${KNURL_SDK_ROOT}/lonejson/lib;${KNURL_SDK_ROOT}/pslog/lib")
 endif()
