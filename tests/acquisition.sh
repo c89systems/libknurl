@@ -23,7 +23,7 @@ destination="$cache/archives/sha256/$digest/archive.tar.gz"
 requests() {
   local count
   count=$(wc -l <"$work/requests")
-  [[ $count == "$1" ]] || { printf 'Expected %s requests, got %s\n' "$1" "$count" >&2; exit 1; }
+  [[ $count -eq $1 ]] || { printf 'Expected %s requests, got %s\n' "$1" "$count" >&2; exit 1; }
 }
 # Expected failures run in a separate Bash so the surrounding `if` does not
 # disable errexit inside the acquisition helper.
