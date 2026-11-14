@@ -71,6 +71,19 @@ can prove log transport but cannot supply autoblock runtime evidence. Use a
 Linux execution environment with robust-list support for that check; the
 library retains its worker-death recovery requirement.
 
+## Hosted macOS diagnostics
+
+[The macOS workflow](../.github/workflows/macos.yml) runs on branch pushes and
+manual dispatch. It uses the standard ARM64 `macos-15` runner and serial Debug
+and Release jobs. Each job builds Core and Lua with the selected Apple toolchain
+and runs their complete native CTest suites, including SDK privacy/relocation
+and installed-consumer checks. Homebrew supplies host tools, including Bash 4.4+
+and GNU archive utilities; target dependencies use the ordinary checksum-pinned
+SDK acquisition. The workflow records the tested commit in its toolchain step.
+
+These runs provide native macOS diagnostics. Local osxcross verification remains
+the Darwin release-artifact gate; hosted runs do not publish release products.
+
 ## Debug test thread stacks
 
 GNU Linux Debug test executables set the process's default pthread stack size to

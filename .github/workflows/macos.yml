@@ -1,0 +1,75 @@
+name: macOS native checks
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: ARM64 ${{ matrix.config }}
+    runs-on: macos-15
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        config: [debug, release]
+    defaults:
+      run:
+        shell: bash
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      CMAKE_BUILD_PARALLEL_LEVEL: '1'
+      CTEST_PARALLEL_LEVEL: '1'
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install host prerequisites
+        run: |
+          brew install bash cmake ninja make gnu-tar coreutils flock pkgconf python luarocks
+          {
+            echo "$(brew --prefix bash)/bin"
+            echo "$(brew --prefix make)/libexec/gnubin"
+            echo "$(brew --prefix gnu-tar)/libexec/gnubin"
+            echo "$(brew --prefix coreutils)/libexec/gnubin"
+          } >> "$GITHUB_PATH"
+
+      - name: Check native toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          git rev-parse HEAD
+          bash scripts/lifecycle/require-host-bash.sh
+          xcode-select --print-path
+          xcrun --sdk macosx --show-sdk-path
+
+      - name: Build Core and Lua
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: make lua TARGET=arm64-apple-darwin CONFIG="$CONFIG" JOBS=1
+
+      - name: Test Core and packaged SDK
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: >-
+          ctest --test-dir "build/arm64-apple-darwin/$CONFIG"
+          --parallel 1 --stop-on-failure --output-on-failure --no-tests=error
+
+      - name: Test Lua and installed source consumer
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: >-
+          ctest --test-dir "build/arm64-apple-darwin/$CONFIG/lua"
+          --parallel 1 --stop-on-failure --output-on-failure --no-tests=error
