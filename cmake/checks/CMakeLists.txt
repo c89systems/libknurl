@@ -25,7 +25,7 @@ if(CHECK_KIND STREQUAL "memory")
     --track-origins=yes --trace-children=yes "--log-file=${CMAKE_BINARY_DIR}/valgrind-%p.log")
   foreach(name declarations input static_ranges static_encoding websocket_protocol asset mime json json_runtime access_log_file source_file_test rest-runtime openapi xml-mapped xml-runtime xml_stack kore_json_stack autoblock policy-logs-runtime
       storage-filesystem webdav-runtime static-runtime body_runtime websocket_runtime upload-runtime
-      proxy_framing http_completeness_failure proxy_http proxy_ws_wire)
+      proxy_framing http_completeness_failure proxy_http proxy_ws_wire route_resume task ca)
     set(program "${KNURL_BUILD}/knurl_${name}")
     if(NOT EXISTS "${program}")
       message(FATAL_ERROR "Build required memory-check executable: ${program}")
@@ -35,7 +35,7 @@ if(CHECK_KIND STREQUAL "memory")
   endforeach()
   add_test(NAME memory.rest-spill COMMAND ${runner} "${KNURL_BUILD}/knurl_rest-runtime" spill)
   set_tests_properties(memory.rest-spill PROPERTIES TIMEOUT 120 LABELS memory)
-  set(lua_cases foundation input rest typed xml config events acl)
+  set(lua_cases foundation input rest typed xml config events acl curl)
   add_test(NAME memory.acl COMMAND ${runner}
     "${KNURL_BUILD}/knurl_acl_test" "${KNURL_BUILD}/tests/mmdb-fixtures")
   add_test(NAME memory.acl-concurrent COMMAND ${runner} "${KNURL_BUILD}/knurl_acl_concurrent")

@@ -349,6 +349,7 @@ void knurl_request_receiver_init(knurl_request *receiver)
                                           knurl_request_body_spill,
                                           knurl_request_body_resume,
                                           knurl_request_takeover,
+                                          knurl_request_resume,
                                           NULL};
     *receiver = methods;
     receiver->impl = (struct knurl_request_impl *)receiver;

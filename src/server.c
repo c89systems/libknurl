@@ -5,6 +5,7 @@
 #include <knurl/tls.h>
 #include <knurl/pslog.h>
 #include <knurl/loop.h>
+#include <knurl/task.h>
 #include <knurl/server.h>
 #include <knurl/storage.h>
 #include "router_internal.h"
@@ -220,6 +221,7 @@ void knurl_server_receiver_init(knurl_server *receiver)
         knurl_storage_filesystem_new,
         knurl_server_set_autoblock_notifications,
         knurl_server_autoblock_next,
+        knurl_task_pool_new,
         NULL};
     *receiver = methods;
     receiver->impl = (struct knurl_server_impl *)receiver;

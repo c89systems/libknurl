@@ -498,6 +498,8 @@
 ---@field websocket knurl.WebSocketOpcodes # CONTINUATION/TEXT/BINARY/CLOSE/PING/PONG opcodes.
 ---@field count fun(high_or_decimal:knurl.IntegerInput, low?:knurl.IntegerInput): knurl.Unsigned?, knurl.Error? # Exact checked unsigned 64-bit construction, never rounded.
 ---@field server fun(options?:knurl.ServerOptions): knurl.Server?, knurl.Error? # Inert copied declaration; no listeners/forks/callbacks on construction.
+---@field sleep fun(milliseconds:integer): boolean # Suspend an ordinary route/hook; zero defers one loop turn.
+---@field async_configure fun(options:{threads?:integer,max_tasks?:integer}):boolean # Before first async use; zero selects 2 threads and 16 admitted tasks per worker (maximum 8/256).
 ---@field source fun(options:table): knurl.Source?, knurl.Error? # Explicit read(capacity), optional reset, close(cause); nil, EOF/AGAIN convention.
 ---@field sse_encode fun(event:string|number|table, capacity:integer): string?, knurl.Error? # One bounded event; CR/LF/CRLF split field lines. Preformatted frame wins, oversize fails without splitting.
 ---@field json knurl.JSON # Public LoneJSON-backed mapped operations.

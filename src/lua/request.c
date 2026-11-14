@@ -11,11 +11,13 @@ static int start_trampoline(lua_State *L)
 {
     struct rl_call *c = lua_touserdata(L, 1);
     struct rl_request *r;
-    r = lua_newuserdatauv(L, sizeof(*r), 7);
+    r = lua_newuserdatauv(L, sizeof(*r), 8);
     memset(r, 0, sizeof(*r));
     r->native = c->native;
     r->root = LUA_NOREF;
     luaL_setmetatable(L, RL_REQUEST);
+    lua_newtable(L);
+    lua_setiuservalue(L, -2, 8);
     lua_rawgeti(L, LUA_REGISTRYINDEX, c->server->root);
     lua_setiuservalue(L, -2, 1);
     lua_pushvalue(L, -1);
@@ -54,6 +56,7 @@ void rl_request_close(knurl_server *server, knurl_request *request,
     r = knurl_request_userdata(request);
     if (r == NULL)
         return;
+    rl_async_cancel(r);
     r->native = NULL;
     rl_request_push(s->L, r);
     lua_getiuservalue(s->L, -1, 5);
@@ -482,37 +485,12 @@ knurl_status rl_reply(lua_State *L, int index, knurl_reply *reply,
     body.data = lua_tolstring(L, -1, &body.length);
     return knurl_reply_bytes(reply, (int)code, type, body, error);
 }
-static int route_trampoline(lua_State *L)
+static int route_continue(lua_State *L, int status, lua_KContext context)
 {
-    struct rl_call *c = lua_touserdata(L, 1);
-    int view, options, value, invoke = 1;
-    rl_request_push(L, c->request);
-    view = lua_absindex(L, -1);
-    rl_rule_options(L, c->rule);
-    options = lua_absindex(L, -1);
-    if (c->hook == 3) {
-        c->status = rl_auth_apply(L, options, view, c->native, c->reply,
-                                  &c->finish, c->error);
-        return 0;
-    }
-    rl_field(L, options, c->name);
-    if (lua_isnil(L, -1))
-        invoke = 0;
+    struct rl_call *c = (struct rl_call *)context;
+    int view = c->view, value, invoke = c->invoke;
+    (void)status;
     if (invoke) {
-        if (!lua_isfunction(L, -1)) {
-            c->status = rl_fail(c->error, KNURL_INVALID,
-                                "route hook must be a function");
-            return 0;
-        }
-        lua_pushvalue(L, view);
-        if (c->hook == 2) {
-            if (c->request->native_reply)
-                rl_reply_view_push(L, c);
-            else
-                lua_getiuservalue(L, view, 2);
-            lua_call(L, 2, 2);
-        } else
-            lua_call(L, 1, 2);
         if (!lua_isnil(L, -1)) {
             c->status = rl_callback_error(L, -1, c->error,
                                           "route callback returned an error");
@@ -561,6 +539,40 @@ static int route_trampoline(lua_State *L)
     }
     return 0;
 }
+static int route_trampoline(lua_State *L)
+{
+    struct rl_call *c = lua_touserdata(L, 1);
+    int options;
+    rl_request_push(L, c->request);
+    c->view = lua_absindex(L, -1);
+    rl_rule_options(L, c->rule);
+    options = lua_absindex(L, -1);
+    if (c->hook == 3) {
+        c->status = rl_auth_apply(L, options, c->view, c->native, c->reply,
+                                  &c->finish, c->error);
+        return 0;
+    }
+    rl_field(L, options, c->name);
+    c->invoke = !lua_isnil(L, -1);
+    if (c->invoke) {
+        if (!lua_isfunction(L, -1)) {
+            c->status = rl_fail(c->error, KNURL_INVALID,
+                                "route hook must be a function");
+            return 0;
+        }
+        lua_pushvalue(L, c->view);
+        if (c->hook == 2) {
+            if (c->request->native_reply)
+                rl_reply_view_push(L, c);
+            else
+                lua_getiuservalue(L, c->view, 2);
+            lua_callk(L, 2, 2, (lua_KContext)c, route_continue);
+        } else {
+            lua_callk(L, 1, 2, (lua_KContext)c, route_continue);
+        }
+    }
+    return route_continue(L, LUA_OK, (lua_KContext)c);
+}
 static knurl_status route_call(knurl_request *n, knurl_reply *reply,
                                int *finish, void *data, knurl_error *error,
                                int hook, const char *name)
@@ -585,7 +597,7 @@ static knurl_status route_call(knurl_request *n, knurl_reply *reply,
         c.request->native_reply = r->native_reply;
     if (!r->is_group && r->native_reply && hook == 1)
         c.request->native_reply = 1;
-    status = rl_protect(c.server->L, route_trampoline, &c, error);
+    status = rl_async_call(&c, route_trampoline, error);
     if (c.reply_view != NULL)
         c.reply_view->native = NULL;
     if (finish != NULL)

@@ -12,6 +12,14 @@
 extern "C" {
 #endif
 
+/** Borrow the selected system CA bundle path. CURL_CA_BUNDLE then SSL_CERT_FILE
+ * override conventional system locations, including when the override is
+ * invalid (TLS must fail rather than silently broaden trust). A nonempty
+ * SSL_CERT_DIR selects directory trust instead of the fallback bundle. NULL
+ * means no file was discovered. Environment must remain stable during use.
+ */
+KNURL_API const char *knurl_tls_system_ca_file(void);
+
 /** Values for tls mode. */
 typedef enum knurl_tls_mode {
     /** TLS mode/availability: disabled. */

@@ -25,6 +25,16 @@ typedef struct knurl_endpoint {
 KNURL_API knurl_server *knurl_request_server(const knurl_request *request);
 /** Borrow the request's owner loop; never retain across fork/run boundaries. */
 KNURL_API knurl_loop *knurl_request_loop(const knurl_request *request);
+/** Resume a router callback that returned KNURL_AGAIN. Owner-loop only, after
+ * the callback has returned. The request/reply remain borrowed until request
+ * close. status is the callback's terminal result; finish short-circuits a
+ * pending auth/before hook. Further callbacks may suspend again. Cancel owned
+ * asynchronous work from the request-close notification; never resume
+ * afterward.
+ */
+KNURL_API knurl_status knurl_request_resume(knurl_request *request,
+                                            knurl_status status, int finish,
+                                            knurl_error *error);
 /** Read the parsed HTTP method enum; use method_token for the original bytes.
  */
 KNURL_API knurl_http_method knurl_request_method(const knurl_request *request);
@@ -391,6 +401,9 @@ struct knurl_request {
                              const struct knurl_channel_config *config,
                              struct knurl_channel **out,
                              struct knurl_error *error);
+    /** Complete a suspended router callback; see knurl_request_resume. */
+    knurl_status (*resume)(struct knurl_request *, knurl_status, int,
+                           struct knurl_error *);
     /** Private library state; applications must not access it. */
     struct knurl_request_impl *impl;
 };

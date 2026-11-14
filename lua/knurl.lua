@@ -8,6 +8,8 @@ M.websocket,M.loop,M.sse_encode=native.websocket,native.loop,native.sse_encode
 M.control=native.control
 M.input=native.input
 M.acl=native.acl
+M.sleep=native.sleep
+M.async_configure=native.async_configure
 local Server, Group = {}, {}
 Server.__index, Group.__index = Server, Group
 local requests = setmetatable({}, {__mode='k'})

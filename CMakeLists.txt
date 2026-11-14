@@ -74,6 +74,8 @@ add_library(knurl_objects OBJECT src/common.c src/u64.c src/input.c src/input_re
   src/tls.c src/tls_material.c src/kore_tls.c src/kore_process.c
   src/acme_state.c src/kore_acme.c src/kore_tls_state.c)
 target_sources(knurl_objects PRIVATE src/static_gzip.c src/static_encoding.c)
+target_sources(knurl_objects PRIVATE src/ca.c)
+target_sources(knurl_objects PRIVATE src/task.c)
 target_sources(knurl_objects PRIVATE src/mmdb.c src/mmdb_decode.c src/mmdb_file.c src/mmdb_cache.c)
 target_sources(knurl_objects PRIVATE src/mmdb_prefix.c)
 target_sources(knurl_objects PRIVATE src/ip.c src/forwarded.c src/acl.c src/acl_dns.c src/acl_runtime.c)
@@ -129,7 +131,7 @@ target_link_libraries(knurl_static PRIVATE ZLIB::ZLIB)
 set(knurl_core_headers include/knurl/mmdb.h include/knurl/common.h include/knurl/input.h include/knurl/http.h include/knurl/knurl.h
   include/knurl/io.h include/knurl/reply.h include/knurl/tls.h
   include/knurl/server.h include/knurl/pslog.h include/knurl/openapi.h include/knurl/router.h include/knurl/request.h include/knurl/kore.h
-  include/knurl/loop.h include/knurl/response.h include/knurl/dispatch.h
+  include/knurl/loop.h include/knurl/task.h include/knurl/response.h include/knurl/dispatch.h
   include/knurl/body.h include/knurl/upload.h include/knurl/channel.h include/knurl/websocket.h
   include/knurl/proxy.h include/knurl/xml.h include/knurl/lonejson.h
   include/knurl/asset.h include/knurl/static.h include/knurl/storage.h include/knurl/webdav.h)
@@ -160,6 +162,13 @@ endif()
 include(cmake/SDK.cmake)
 
 if(BUILD_TESTING)
+  foreach(name ca)
+    add_executable(knurl_${name} tests/${name}.c)
+    target_link_libraries(knurl_${name} PRIVATE knurl::shared)
+    knurl_c89(knurl_${name})
+    knurl_local_runtime(knurl_${name})
+    add_test(NAME knurl.${name} COMMAND knurl_${name})
+  endforeach()
   include(cmake/MMDBTests.cmake)
   add_test(NAME knurl.receiver-surface COMMAND "${CMAKE_COMMAND}"
     "-DKNURL_ROOT=${CMAKE_CURRENT_SOURCE_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ReceiverSurface.cmake")
@@ -519,6 +528,18 @@ if(BUILD_TESTING)
   add_test(NAME knurl.loop-smoke COMMAND knurl_loop_smoke)
   set_tests_properties(knurl.loop-smoke PROPERTIES TIMEOUT 10)
   add_executable(knurl_server_runtime tests/server-runtime.c)
+  add_executable(knurl_route_resume tests/route-resume.c tests/acl-wire.c)
+  target_link_libraries(knurl_route_resume PRIVATE knurl::shared)
+  knurl_c89(knurl_route_resume)
+  knurl_local_runtime(knurl_route_resume)
+  add_test(NAME knurl.route-resume COMMAND knurl_route_resume)
+  set_tests_properties(knurl.route-resume PROPERTIES TIMEOUT 12)
+  add_executable(knurl_task tests/task.c tests/acl-wire.c)
+  target_link_libraries(knurl_task PRIVATE knurl::static Threads::Threads)
+  knurl_c89(knurl_task)
+  knurl_local_runtime(knurl_task)
+  add_test(NAME knurl.task COMMAND knurl_task)
+  set_tests_properties(knurl.task PROPERTIES TIMEOUT 12)
   target_link_libraries(knurl_server_runtime PRIVATE knurl::shared Threads::Threads)
   knurl_c89(knurl_server_runtime)
   knurl_local_runtime(knurl_server_runtime)

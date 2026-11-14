@@ -27,7 +27,15 @@ int luaopen_knurl_native(lua_State *L)
         return 1;
     lua_pop(L, 1);
     lua_newtable(L);
+    lua_pushcfunction(L, rl_sleep);
+    lua_setfield(L, -2, "sleep");
+    lua_pushcfunction(L, rl_async_configure);
+    lua_setfield(L, -2, "async_configure");
     rl_values_open(L);
+    rl_curl_core(L);
+    lua_setfield(L, -2, "curl");
+    rl_async_curl_loader(L);
+    lua_setfield(L, -2, "async_curl");
     rl_logging_open(L);
     rl_servers_open(L);
     rl_requests_open(L);
@@ -78,9 +86,17 @@ static int preload_call(lua_State *L)
 {
     struct preload *p = lua_touserdata(L, 1);
     int package, preload, loaded, i;
-    const char *names[] = {"knurl.native", "knurl"};
-    lua_CFunction loaders[] = {luaopen_knurl_native, facade_loader};
-    void *keys[] = {&module_key, &facade_key};
+    const char *names[] = {"knurl.native", "knurl",           "curl.core",
+                           "curl",         "async.curl.core", "async.curl"};
+    lua_CFunction loaders[] = {luaopen_knurl_native, facade_loader,
+                               rl_curl_core,         rl_curl_loader,
+                               rl_async_curl_core,   rl_async_curl_loader};
+    void *keys[] = {&module_key,
+                    &facade_key,
+                    &rl_curl_core_key,
+                    &rl_curl_facade_key,
+                    &rl_async_curl_core_key,
+                    &rl_async_curl_facade_key};
     lua_getglobal(L, "package");
     if (!lua_istable(L, -1)) {
         p->status = rl_fail(p->error, KNURL_STATE,
@@ -102,7 +118,7 @@ static int preload_call(lua_State *L)
         return 0;
     }
     loaded = lua_absindex(L, -1);
-    for (i = 0; i < 2; ++i) {
+    for (i = 0; i < 6; ++i) {
         lua_getfield(L, preload, names[i]);
         if (!lua_isnil(L, -1) && lua_tocfunction(L, -1) != loaders[i]) {
             p->status =
@@ -158,7 +174,7 @@ static int preload_call(lua_State *L)
             lua_pop(L, 1);
         }
     }
-    for (i = 0; i < 2; ++i) {
+    for (i = 0; i < 6; ++i) {
         lua_pushcfunction(L, loaders[i]);
         lua_setfield(L, preload, names[i]);
     }

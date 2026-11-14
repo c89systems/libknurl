@@ -10,6 +10,7 @@ Start with the [quick starts](../README.md) or find a guide below. The
 | Public C API and ownership/units/error hovers | [Installed headers](https://github.com/c89systems/libknurl/tree/trunk/include/knurl/) |
 | Lua facade, callbacks, shapes and lifetimes | [Lua guide](lua.md), [annotated facade](https://github.com/c89systems/libknurl/blob/trunk/lua/knurl.lua), [editor types](https://github.com/c89systems/libknurl/blob/trunk/lua/knurl.meta.lua) |
 | Host-owned Lua VM and provider interop | [Embedding header](https://github.com/c89systems/libknurl/blob/trunk/lua/include/knurl/lua.h), [Lua source packages](../lua/README.md) |
+| Native tasks and handwritten async modules | [Async adapter contract](async-bindings.md) |
 | Core SDK archives and relocated consumers | [SDK delivery](sdk.md) |
 | Lifecycle, signals, control and fork ownership | [Processes](processes.md) |
 | Routing, request metadata and body policies | [Requests](requests.md) |

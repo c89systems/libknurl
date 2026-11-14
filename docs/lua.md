@@ -1,5 +1,24 @@
 # Lua server facade
 
+Ordinary route handlers and their before/after hooks can use
+`local curl = require('async.curl')` and `knurl.sleep(milliseconds)`. They suspend
+while waiting and resume on their worker loop. `require('curl')` is synchronous
+in every context. Native authentication, proxy rewrite, mapped codec handlers,
+producers, curl callbacks and lifecycle callbacks cannot suspend; using
+`async.curl` there raises an explicit error. Route coroutines and pending native
+transfers are cancelled on request close. Buffered responses are capped at 8 MiB;
+headers at 64 KiB. Read/write and LoneJSON adapters transfer incremental chunks
+directly. Both modules expose `perform`, `json`, `stream_json`, `version`, and
+`core`. `json` buffers; `stream_json` uses incremental schema mapping.
+
+The [native async adapter](async-bindings.md) runs libcurl on task threads without
+accessing Lua there. Call `knurl.async_configure{threads=2,max_tasks=16}` before
+first use to configure the shared Lua task pool; zero selects these defaults.
+Limits are 8 threads and 256 admitted tasks per worker. Queued and cancelling
+tasks retain admission until native acknowledgment. Streaming callbacks execute
+on the Lua owner thread, must return promptly and cannot yield. Downstream
+modules can implement their own adapters with the public C/Lua task APIs.
+
 `knurl.acl` constructs reusable [route ACLs](acl.md). Route, group and convenience
 declarations accept `acl` objects or inline options; all enforcement, DNS lifecycle
 and country lookup live in Core. ACLs compose with the existing authentication

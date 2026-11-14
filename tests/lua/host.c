@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <lua.h>
 #include "events.h"
+#include "curl-fixture.h"
 #include "../acl-wire.h"
 #include <lauxlib.h>
 #include <lualib.h>
@@ -1702,6 +1703,7 @@ int main(int argc, char **argv)
         lua_pushstring(L, argv[3]);
         lua_setfield(L, -2, "workspace");
     }
+    knurl_test_curl_register(L);
     lua_setglobal(L, "fixture");
     lua_pushstring(L, "preserved");
     lua_setglobal(L, "host_marker");
@@ -1710,6 +1712,7 @@ int main(int argc, char **argv)
         status = lua_pcall(L, 0, 0, 0);
     if (status != LUA_OK)
         fprintf(stderr, "Lua fixture: %s\n", lua_tostring(L, -1));
+    knurl_test_curl_cleanup();
     lua_close(L);
     SSL_CTX_free(client_context);
     return status != LUA_OK;

@@ -29,14 +29,15 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/facade.inc"
   COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/knurl.lua"
     "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/facade.inc" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Embed.cmake"
   DEPENDS knurl.lua cmake/Embed.cmake VERBATIM)
-add_library(knurl_lua SHARED ../src/lua/knurl_native.c ../src/lua/value.c ../src/lua/server.c ../src/lua/config.c ../src/lua/auth.c ../src/lua/request.c ../src/lua/source.c ../src/lua/codec.c ../src/lua/xml.c ../src/lua/body.c ../src/lua/upload.c ../src/lua/reply.c ../src/lua/routes.c ../src/lua/proxy.c ../src/lua/loop.c ../src/lua/sse.c ../src/lua/websocket.c "${CMAKE_CURRENT_BINARY_DIR}/facade.inc")
+include(cmake/Sources.cmake)
+add_library(knurl_lua SHARED ${knurl_lua_sources} "${CMAKE_CURRENT_BINARY_DIR}/facade.inc")
 add_library(knurl::lua ALIAS knurl_lua)
-target_sources(knurl_lua PRIVATE ../src/lua/rest.c ../src/lua/openapi.c ../src/lua/policy.c)
-target_sources(knurl_lua PRIVATE ../src/lua/tls.c)
-target_sources(knurl_lua PRIVATE ../src/lua/logging.c)
-target_sources(knurl_lua PRIVATE ../src/lua/providers.c)
-target_sources(knurl_lua PRIVATE ../src/lua/input.c)
-target_sources(knurl_lua PRIVATE ../src/lua/acl.c)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/curl_facade.inc"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/curl.lua"
+    "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/curl_facade.inc" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Embed.cmake"
+  DEPENDS curl.lua cmake/Embed.cmake VERBATIM)
+target_sources(knurl_lua PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/curl_facade.inc")
+target_link_libraries(knurl_lua PRIVATE cpkt::curl_shared)
 # Link the shipped search paths directly, including with osxcross where an
 # install_name_tool may be unavailable. Embedding/test hosts resolve the shared
 # SDK closure; the module does not retain workstation paths.
@@ -50,6 +51,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 install(TARGETS knurl_lua EXPORT knurlLuaTargets LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/lua/5.5/knurl")
 install(FILES knurl.lua knurl.meta.lua DESTINATION "${CMAKE_INSTALL_DATADIR}/lua/5.5")
+install(FILES curl.lua DESTINATION "${CMAKE_INSTALL_DATADIR}/lua/5.5")
+install(FILES curl/core.lua DESTINATION "${CMAKE_INSTALL_DATADIR}/lua/5.5/curl")
+install(FILES async/curl.lua DESTINATION "${CMAKE_INSTALL_DATADIR}/lua/5.5/async")
+install(FILES async/curl/core.lua DESTINATION "${CMAKE_INSTALL_DATADIR}/lua/5.5/async/curl")
 install(FILES include/knurl/lua.h DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/knurl")
 install(FILES ../LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/knurl-lua")
 install(EXPORT knurlLuaTargets NAMESPACE knurl:: DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/knurl_lua")
@@ -72,6 +77,16 @@ if(BUILD_TESTING)
   target_compile_options(knurl_provider_fixture PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -Wvla -Walloca -UNDEBUG)
   target_compile_definitions(knurl_provider_fixture PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   target_link_libraries(knurl_provider_fixture PRIVATE knurl::lua)
+  add_library(knurl_async_fixture MODULE ../tests/lua/async-adapter.c)
+  set_target_properties(knurl_async_fixture PROPERTIES PREFIX "" SUFFIX ".so"
+    C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden
+    BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR}/tests/installed/lib/lua/5.5/knurl")
+  target_compile_options(knurl_async_fixture PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -Wvla -Walloca -UNDEBUG)
+  target_compile_definitions(knurl_async_fixture PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  target_link_libraries(knurl_async_fixture PRIVATE knurl::lua)
+  if(KNURL_TARGET MATCHES "-linux-musl$" OR (KNURL_TARGET MATCHES "-linux-gnu$" AND CMAKE_BUILD_TYPE STREQUAL "Debug"))
+    target_compile_definitions(knurl_async_fixture PRIVATE KNURL_TEST_SMALL_STACK=1)
+  endif()
   add_library(knurl_acme_fixture MODULE ../tests/lua/acme.c ../tests/acme-ca.c)
   set_target_properties(knurl_acme_fixture PROPERTIES PREFIX "" SUFFIX ".so"
     C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO C_VISIBILITY_PRESET hidden)
@@ -79,7 +94,7 @@ if(BUILD_TESTING)
   target_compile_definitions(knurl_acme_fixture PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   target_link_libraries(knurl_acme_fixture PRIVATE knurl::lua cpkt::openssl_ssl_shared lonejson::lonejson)
   foreach(mode preload dynamic)
-    add_executable(knurl_lua_${mode}_host ../tests/lua/host.c ../tests/lua/events.c ../tests/acl-wire.c)
+    add_executable(knurl_lua_${mode}_host ../tests/lua/host.c ../tests/lua/events.c ../tests/lua/curl-fixture.c ../tests/acl-wire.c)
     set_target_properties(knurl_lua_${mode}_host PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
     target_compile_options(knurl_lua_${mode}_host PRIVATE -std=c89 -Wall -Wextra -Wpedantic -Werror -Wstrict-prototypes -Wmissing-prototypes -Wvla -Walloca -UNDEBUG)
     target_compile_definitions(knurl_lua_${mode}_host PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
@@ -138,6 +153,10 @@ if(BUILD_TESTING)
       "-DSCRIPT=${knurl_root}/tests/lua/proxy.lua" "-DWORKSPACE=${CMAKE_CURRENT_BINARY_DIR}/tests/proxy"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
     set_tests_properties(knurl.lua-proxy-${mode} PROPERTIES TIMEOUT 10)
+    add_test(NAME knurl.lua-curl-${mode} COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"
+      "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/tests/installed" "-DHOST=$<TARGET_FILE:knurl_lua_${mode}_host>"
+      "-DSCRIPT=${knurl_root}/tests/lua/curl.lua" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunFixture.cmake")
+    set_tests_properties(knurl.lua-curl-${mode} PROPERTIES TIMEOUT 15)
     foreach(failure error oom)
       add_test(NAME knurl.lua-proxy-terminal-${failure}-${mode}
         COMMAND "${CMAKE_COMMAND}" "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}"

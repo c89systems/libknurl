@@ -60,6 +60,8 @@ struct knurl_request_impl {
     int close_notified;
     int rejection_status;
     int in_headers;
+    unsigned int route_phase;
+    int route_pending;
 };
 
 knurl_bytes knurl_view(const char *text);

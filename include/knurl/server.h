@@ -994,6 +994,8 @@ struct pslog_logger;
  * argument to its methods. Obtain it through the documented constructor or
  * borrowed accessor. Do not copy, initialize or modify the shell or impl.
  */
+struct knurl_task_pool;
+struct knurl_task_pool_config;
 struct knurl_server {
     /** Return the packaged Kore commit string in static storage. */
     const char *(*kore_revision)(const struct knurl_server *server);
@@ -1121,6 +1123,10 @@ struct knurl_server {
     /** Consume one copied event; EOF still reports any queue losses. */
     knurl_status (*autoblock_next)(knurl_server *, knurl_autoblock_event *,
                                    knurl_u64 *, knurl_error *);
+    /** Create a bounded native task pool in an active post-fork HTTP worker. */
+    knurl_status (*task_pool)(knurl_server *,
+                              const struct knurl_task_pool_config *,
+                              struct knurl_task_pool **, knurl_error *);
     /** Private library state; applications must not access it. */
     struct knurl_server_impl *impl;
 };

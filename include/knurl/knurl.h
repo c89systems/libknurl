@@ -17,6 +17,7 @@
 #include <knurl/openapi.h>
 #include <knurl/request.h>
 #include <knurl/loop.h>
+#include <knurl/task.h>
 #include <knurl/response.h>
 #include <knurl/dispatch.h>
 #include <knurl/body.h>

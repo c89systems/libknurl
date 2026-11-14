@@ -13,6 +13,7 @@ set(knurl_public_docs
   docs/mmdb.md
   docs/logging.md
   docs/lua.md
+  docs/async-bindings.md
   docs/openapi.md
   docs/overview.md
   docs/policy.md

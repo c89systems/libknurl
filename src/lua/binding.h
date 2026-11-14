@@ -42,6 +42,7 @@ struct rl_server {
     knurl_error callback_error;
     long process_id;
     unsigned long run_epoch;
+    knurl_task_pool *async_pool;
     pslog_lua_logger_ref logger, access_logger;
 };
 struct rl_rule {
@@ -62,6 +63,7 @@ struct rl_request {
     struct rl_rule *upload;
     int native_reply;
     int typed_records[2];
+    struct rl_async *async;
 };
 struct rl_source {
     knurl_source *native;
@@ -86,10 +88,35 @@ struct rl_call {
     const char *name;
     const knurl_process_context *process;
     int hook, finish;
+    int view, invoke;
     knurl_status status;
     knurl_error *error;
     struct rl_reply_view *reply_view;
 };
+struct rl_async {
+    struct rl_call call;
+    knurl_error error;
+    lua_State *co;
+    int root;
+    size_t refs;
+    void *waiting;
+    void (*cancel)(void *);
+    int queued;
+};
+struct rl_async *rl_async_current(lua_State *);
+void rl_async_retain(struct rl_async *);
+void rl_async_release(void *);
+knurl_status rl_async_schedule(struct rl_async *, knurl_error *);
+void rl_async_cancel(struct rl_request *);
+knurl_status rl_async_call(struct rl_call *, lua_CFunction, knurl_error *);
+int rl_sleep(lua_State *);
+int rl_curl_core(lua_State *);
+int rl_curl_loader(lua_State *);
+int rl_async_curl_loader(lua_State *);
+int rl_async_curl_core(lua_State *);
+int rl_async_configure(lua_State *);
+extern char rl_curl_core_key, rl_curl_facade_key;
+extern char rl_async_curl_core_key, rl_async_curl_facade_key;
 knurl_status rl_fail(knurl_error *, knurl_status, const char *);
 int rl_error(lua_State *, const knurl_error *);
 void rl_push_error(lua_State *, const knurl_error *);

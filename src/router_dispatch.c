@@ -216,14 +216,49 @@ knurl_status knurl_router_hooks_after(knurl_request *request,
 }
 knurl_status knurl_router_invoke(knurl_request *request, knurl_error *error)
 {
+    const knurl_route_config *local = &request->impl->route->impl->config;
+    knurl_route_hooks empty = {0};
+    const knurl_route_hooks *group =
+        request->impl->route->impl->group != NULL
+            ? &request->impl->route->impl->group->impl->config.hooks
+            : &empty;
     knurl_status status;
     int finish;
-    status = knurl_router_hooks_before(request, &finish, error);
-    if (status != KNURL_OK || finish)
-        return status;
-    status = request->impl->route->impl->config.handler(
-        request, request->impl->reply,
-        request->impl->route->impl->config.userdata, error);
-    return status == KNURL_OK ? knurl_router_hooks_after(request, error)
-                              : status;
+    unsigned int phase;
+    while (request->impl->route_phase < 7) {
+        phase = request->impl->route_phase++;
+        finish = 0;
+        switch (phase) {
+        case 0:
+            status = hook(group->auth, group, request, &finish, error);
+            break;
+        case 1:
+            status =
+                hook(local->hooks.auth, &local->hooks, request, &finish, error);
+            break;
+        case 2:
+            status = hook(group->before, group, request, &finish, error);
+            break;
+        case 3:
+            status = hook(local->hooks.before, &local->hooks, request, &finish,
+                          error);
+            break;
+        case 4:
+            status = local->handler(request, request->impl->reply,
+                                    local->userdata, error);
+            break;
+        case 5:
+            status = hook(local->hooks.after, &local->hooks, request, &finish,
+                          error);
+            break;
+        default:
+            status = hook(group->after, group, request, &finish, error);
+            break;
+        }
+        if (status != KNURL_OK)
+            return status;
+        if (finish && phase < 4)
+            request->impl->route_phase = 7;
+    }
+    return KNURL_OK;
 }

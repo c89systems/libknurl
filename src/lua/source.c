@@ -211,13 +211,15 @@ knurl_status rl_source_create(lua_State *L, int index, int legacy,
     index = lua_absindex(L, index);
     if (!lua_istable(L, index))
         return rl_fail(error, KNURL_INVALID, "source callbacks table required");
-    s = lua_newuserdatauv(L, sizeof(*s), 2);
+    s = lua_newuserdatauv(L, sizeof(*s), 3);
     memset(s, 0, sizeof(*s));
     s->root = LUA_NOREF;
     s->L = L;
     s->owned = 1;
     s->legacy = legacy;
     luaL_setmetatable(L, RL_SOURCE);
+    lua_pushthread(L);
+    lua_setiuservalue(L, -2, 3);
     lua_newtable(L);
     callbacks = lua_absindex(L, -1);
     for (i = 0; i < 3; ++i) {
@@ -387,13 +389,15 @@ struct rl_source *rl_source_native_new(lua_State *L, int owner,
     struct rl_source *s;
     knurl_source_config config;
     owner = lua_absindex(L, owner);
-    s = lua_newuserdatauv(L, sizeof(*s), 2);
+    s = lua_newuserdatauv(L, sizeof(*s), 3);
     memset(s, 0, sizeof(*s));
     s->L = L;
     s->root = LUA_NOREF;
     s->owned = s->delegated = 1;
     s->retire = retire;
     luaL_setmetatable(L, RL_SOURCE);
+    lua_pushthread(L);
+    lua_setiuservalue(L, -2, 3);
     lua_pushvalue(L, owner);
     lua_setiuservalue(L, -2, 1);
     knurl_source_config_init(&config);
@@ -413,7 +417,7 @@ int rl_source_wrap_reader(lua_State *L, int owner, struct rl_request *request,
     knurl_status status;
     int index;
     owner = lua_absindex(L, owner);
-    s = lua_newuserdatauv(L, sizeof(*s), 2);
+    s = lua_newuserdatauv(L, sizeof(*s), 3);
     memset(s, 0, sizeof(*s));
     s->L = L;
     s->root = LUA_NOREF;
@@ -422,6 +426,8 @@ int rl_source_wrap_reader(lua_State *L, int owner, struct rl_request *request,
     s->result_body = result;
     index = lua_absindex(L, -1);
     luaL_setmetatable(L, RL_SOURCE);
+    lua_pushthread(L);
+    lua_setiuservalue(L, -2, 3);
     lua_pushvalue(L, owner);
     lua_setiuservalue(L, index, 1);
     if (request != NULL) {
