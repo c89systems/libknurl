@@ -574,6 +574,145 @@ KNURL_API knurl_storage_code knurl_storage_filesystem_move(
 KNURL_API knurl_storage_code knurl_storage_filesystem_list(
     const knurl_storage_filesystem_config *config, const char *path,
     knurl_filesystem_list_fn callback, void *userdata);
+
+struct knurl_error;
+struct knurl_loop;
+struct knurl_storage_arguments;
+struct knurl_storage_operation;
+struct knurl_storage_operation_config;
+/** Library-owned storage provider receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_storage_provider {
+    /** Read the provider's immutable capability flags. */
+    unsigned int (*capabilities)(const struct knurl_storage_provider *);
+    /** Borrow the provider's commit/durability description until provider
+     * close. */
+    const char *(*commit_description)(const struct knurl_storage_provider *);
+    /** Release the provider owner; pending operations/resources retain it until
+     * retirement.
+     */
+    knurl_status (*close)(struct knurl_storage_provider *,
+                          struct knurl_error *);
+    /** Active HTTP worker loop only (on_worker_start or later). Success accepts
+     * one operation and owns one terminal retirement, even when
+     * invoke completes synchronously or reports a domain/protocol failure. Bad
+     * declarations/capabilities/allocation failures before invoke take nothing.
+     * Provider invoke returns OK synchronously or AGAIN with responsibility for
+     * later completion. Staged results and callbacks are always delivered
+     * later. Arguments/chunks are copied and pinned through provider
+     * acknowledgement. Timeout zero selects 30000 ms, including queue/lock
+     * wait. */
+    knurl_status (*start)(struct knurl_storage_provider *, struct knurl_loop *,
+                          const struct knurl_storage_arguments *,
+                          const struct knurl_storage_operation_config *,
+                          struct knurl_storage_operation **,
+                          struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    struct knurl_storage_provider_impl *impl;
+};
+
+struct knurl_asset;
+struct knurl_error;
+struct knurl_loop;
+struct knurl_storage_arguments;
+struct knurl_storage_resource;
+struct knurl_storage_resource_config;
+struct knurl_storage_result;
+/** Library-owned storage operation receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_storage_operation {
+    /** Owner-loop only, including during invoke/cancel. Copies metadata and
+     * takes asset/resource results only on success. Failure takes nothing and
+     * permits retry. A successful completion acknowledges that no job still
+     * uses the operation/arguments; completion occurs once. Native work
+     * publishes through its owner-loop completion callback or a public waker,
+     * never directly. */
+    knurl_status (*complete)(struct knurl_storage_operation *,
+                             const struct knurl_storage_result *,
+                             struct knurl_error *);
+    /** Borrow the operation's owner loop through retirement. */
+    struct knurl_loop *(*loop)(const struct knurl_storage_operation *);
+    /** Borrow the immutable copied operation arguments through provider
+     * acknowledgement.
+     */
+    const struct knurl_storage_arguments *(*arguments)(
+        const struct knurl_storage_operation *);
+    /** Read provider-associated operation state through retirement. */
+    void *(*userdata)(const struct knurl_storage_operation *);
+    /** Associate provider-owned state with an operation on its owner loop; does
+     * not transfer allocation ownership.
+     */
+    knurl_status (*set_userdata)(struct knurl_storage_operation *, void *,
+                                 struct knurl_error *);
+    /** Immutable query may be used by retained native work. A configured
+     * checker requires CAN_SCOPE_CHECK before accepting a mutation.
+     * Scope-capable providers check every affected physical descendant, mapped
+     * destination and overwritten destination descendant inside the same atomic
+     * mutation scope. */
+    int (*has_scope_check)(const struct knurl_storage_operation *);
+    /** Owner-loop only. Invokes check_scope synchronously; never yields.
+     * Retained native jobs must marshal checks to this loop, never invoke
+     * policy directly. Cancellation suppresses policy callbacks and denies the
+     * check. */
+    knurl_status (*check_scope)(struct knurl_storage_operation *, const char *,
+                                const char *, int *, struct knurl_error *);
+    /** Cooperative native-thread check. Explicit cancellation revokes consumer
+     * callbacks immediately. Timeout/shutdown may first deliver interrupted on
+     * the owner loop. Retirement still waits for acknowledgement and preserves
+     * actual committed/partial/recovery results. No rollback is implied by
+     * cancellation.
+     */
+    int (*cancelled)(const struct knurl_storage_operation *);
+    /** Revoke consumer delivery and request provider cancellation; actual
+     * retirement still waits for acknowledgement.
+     */
+    knurl_status (*cancel)(struct knurl_storage_operation *,
+                           struct knurl_error *);
+    /** Transfer a completed opened asset to its consumer once; only succeeds
+     * for an available asset result.
+     */
+    knurl_status (*take_asset)(struct knurl_storage_operation *,
+                               struct knurl_asset **, struct knurl_error *);
+    /** Transfer a completed provider resource to its consumer once. */
+    knurl_status (*take_resource)(struct knurl_storage_operation *,
+                                  struct knurl_storage_resource **,
+                                  struct knurl_error *);
+    /** Provider-owned resource constructors run on the operation's loop. An
+     * open operation retains its argument resource after its caller closes that
+     * owner. Returned resources transfer through
+     * operation_complete/take_resource. */
+    knurl_status (*resource_new)(struct knurl_storage_operation *,
+                                 const struct knurl_storage_resource_config *,
+                                 struct knurl_storage_resource **,
+                                 struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    struct knurl_storage_operation_impl *impl;
+};
+
+struct knurl_error;
+/** Library-owned storage resource receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_storage_resource {
+    /** Read caller-supplied resource state while the resource remains alive. */
+    void *(*userdata)(const struct knurl_storage_resource *);
+    /** Inspect whether the resource is a listing cursor or write transaction.
+     */
+    knurl_storage_resource_kind (*type)(const struct knurl_storage_resource *);
+    /** Release the resource owner; operations already using it retain it
+     * through acknowledgement.
+     */
+    knurl_status (*close)(struct knurl_storage_resource *,
+                          struct knurl_error *);
+    /** Private library state; applications must not access it. */
+    struct knurl_storage_resource_impl *impl;
+};
+
 #ifdef __cplusplus
 }
 #endif

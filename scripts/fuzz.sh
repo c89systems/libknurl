@@ -33,7 +33,7 @@ if [[ -e "$output/default/fuzzer_stats" ]]; then
 else
   seeds="$root/tests/fuzz/corpus"
 fi
-"$afl_fuzz" -i "$seeds" -o "$output" -V "$seconds" -m none -t 1000 -- "$build_dir/knurl_fuzz" @@
+"$afl_fuzz" -i "$seeds" -o "$output" -x "$root/tests/fuzz/parsers.dict" -V "$seconds" -m none -t 1000 -- "$build_dir/knurl_fuzz" @@
 stats="$output/default/fuzzer_stats"
 [[ -f "$stats" ]] || { printf 'AFL produced no run statistics\n' >&2; exit 1; }
 check_findings "$stats"

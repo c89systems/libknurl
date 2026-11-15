@@ -61,7 +61,7 @@ static void ready_source(knurl_loop *loop, void *data)
     (void)loop;
     VERIFY(c->f, pthread_equal(pthread_self(), c->f->owner));
     c->f->source_wakes++;
-    VERIFY(c->f, knurl_source_resume(c->source, NULL) == KNURL_OK);
+    VERIFY(c->f, c->source->resume(c->source, NULL) == KNURL_OK);
     __atomic_store_n(&c->resumed, 1u, __ATOMIC_RELEASE);
 }
 static knurl_status read_source(void *buffer, size_t capacity, size_t *count,
@@ -78,7 +78,7 @@ static knurl_status read_source(void *buffer, size_t capacity, size_t *count,
         VERIFY(f, !pthread_equal(pthread_self(), f->owner));
     if (c->mode == CANCEL) {
         __atomic_add_fetch(&f->started, 1u, __ATOMIC_RELEASE);
-        while (!knurl_source_cancelled(c->source))
+        while (!c->source->cancelled(c->source))
             (void)poll(NULL, 0, 1);
         __atomic_add_fetch(&f->cancelled, 1u, __ATOMIC_RELEASE);
         return KNURL_CANCELLED;
@@ -86,20 +86,20 @@ static knurl_status read_source(void *buffer, size_t capacity, size_t *count,
     if (c->mode == BLOCKED && c->calls == 1) {
         __atomic_add_fetch(&f->blocked, 1u, __ATOMIC_RELEASE);
         while (!__atomic_load_n(&f->released, __ATOMIC_ACQUIRE)) {
-            if (knurl_source_cancelled(c->source))
+            if (c->source->cancelled(c->source))
                 return KNURL_CANCELLED;
             (void)poll(NULL, 0, 1);
         }
     }
     if ((c->mode == EARLY || c->mode == OWNER_EARLY) && c->calls == 1) {
         if (c->mode == EARLY) {
-            VERIFY(f, knurl_waker_signal(c->waker, NULL) == KNURL_OK);
+            VERIFY(f, c->waker->signal(c->waker, NULL) == KNURL_OK);
             /* Deliver readiness before this native read acknowledges AGAIN. */
             while (!__atomic_load_n(&c->resumed, __ATOMIC_ACQUIRE) &&
-                   !knurl_source_cancelled(c->source))
+                   !c->source->cancelled(c->source))
                 (void)poll(NULL, 0, 1);
         } else
-            VERIFY(f, knurl_source_resume(c->source, NULL) == KNURL_OK);
+            VERIFY(f, c->source->resume(c->source, NULL) == KNURL_OK);
         return KNURL_AGAIN;
     }
     if (c->mode == PAUSED && c->calls == 1)
@@ -150,7 +150,7 @@ static void close_source(void *data, knurl_status outcome)
     if (c->mode != OWNER_EARLY && c->mode != PRE_EOF)
         f->native_reads += c->calls;
     if (c->waker != NULL)
-        VERIFY(f, knurl_waker_destroy(c->waker, NULL) == KNURL_OK);
+        VERIFY(f, c->waker->destroy(c->waker, NULL) == KNURL_OK);
     else
         free(c);
 }
@@ -161,46 +161,45 @@ static knurl_status route(knurl_request *request, knurl_reply *reply,
     struct context *c;
     knurl_source_config config;
     knurl_status status;
-    const char *path = knurl_request_path(request).data;
+    const char *path = request->path(request).data;
     char byte;
     size_t count;
     if (!strcmp(path, "/release")) {
         __atomic_store_n(&f->released, 1u, __ATOMIC_RELEASE);
-        return knurl_reply_text(reply, 200, "text/plain", "released", error);
+        return reply->text(reply, 200, "text/plain", "released", error);
     }
     if (!strcmp(path, "/probe")) {
-        return knurl_reply_text(
-            reply, 200, "text/plain",
-            __atomic_load_n(&f->blocked, __ATOMIC_ACQUIRE) >= 2 ? "running"
-                                                                : "waiting",
-            error);
+        return reply->text(reply, 200, "text/plain",
+                           __atomic_load_n(&f->blocked, __ATOMIC_ACQUIRE) >= 2
+                               ? "running"
+                               : "waiting",
+                           error);
     }
     if (!strcmp(path, "/wake")) {
         VERIFY(f, f->paused != NULL);
         if (f->paused != NULL)
-            VERIFY(f, knurl_source_resume(f->paused, NULL) == KNURL_OK);
-        return knurl_reply_text(reply, 200, "text/plain", "awake", error);
+            VERIFY(f, f->paused->resume(f->paused, NULL) == KNURL_OK);
+        return reply->text(reply, 200, "text/plain", "awake", error);
     }
     if (!strcmp(path, "/cancelled"))
-        return knurl_reply_text(
+        return reply->text(
             reply, 200, "text/plain",
             __atomic_load_n(&f->cancelled, __ATOMIC_ACQUIRE) ? "yes" : "no",
             error);
     if (!strcmp(path, "/first-started") || !strcmp(path, "/started"))
-        return knurl_reply_text(
-            reply, 200, "text/plain",
-            __atomic_load_n(&f->started, __ATOMIC_ACQUIRE) >=
-                    (!strcmp(path, "/first-started") ? 1u : 2u)
-                ? "yes"
-                : "no",
-            error);
+        return reply->text(reply, 200, "text/plain",
+                           __atomic_load_n(&f->started, __ATOMIC_ACQUIRE) >=
+                                   (!strcmp(path, "/first-started") ? 1u : 2u)
+                               ? "yes"
+                               : "no",
+                           error);
     if (!strcmp(path, "/stop")) {
-        (void)knurl_server_request_stop(knurl_request_server(request), NULL);
-        return knurl_reply_text(reply, 200, "text/plain",
-                                __atomic_load_n(&f->failed, __ATOMIC_ACQUIRE)
-                                    ? "failed"
-                                    : "stopped",
-                                error);
+        (void)knurl_server_request_stop(request->server(request), NULL);
+        return reply->text(reply, 200, "text/plain",
+                           __atomic_load_n(&f->failed, __ATOMIC_ACQUIRE)
+                               ? "failed"
+                               : "stopped",
+                           error);
     }
     c = calloc(1, sizeof(*c));
     if (c == NULL)
@@ -239,32 +238,32 @@ static knurl_status route(knurl_request *request, knurl_reply *reply,
         return status;
     }
     ++f->opened;
-    VERIFY(f, knurl_source_resume(c->source, NULL) == KNURL_STATE);
+    VERIFY(f, c->source->resume(c->source, NULL) == KNURL_STATE);
     if (c->mode == EARLY) {
-        status = knurl_waker_new(knurl_request_loop(request), ready_source,
+        status = knurl_waker_new(request->loop(request), ready_source,
                                  free_context, c, &c->waker, error);
         if (status != KNURL_OK) {
-            (void)knurl_source_destroy(c->source, NULL);
+            (void)c->source->destroy(c->source, NULL);
             return status;
         }
     }
     if (c->mode == PRE_EOF)
-        VERIFY(f, knurl_source_read(c->source, &byte, 1, &count, error) ==
+        VERIFY(f, c->source->read(c->source, &byte, 1, &count, error) ==
                           KNURL_EOF &&
                       count == 0);
     if (c->mode == PAUSED)
         f->paused = c->source;
-    status = knurl_reply_source_take(reply,
-                                     !strcmp(path, "/204")   ? 204
-                                     : !strcmp(path, "/304") ? 304
-                                                             : 200,
-                                     "text/plain", c->source, error);
+    status = reply->source_take(reply,
+                                !strcmp(path, "/204")   ? 204
+                                : !strcmp(path, "/304") ? 304
+                                                        : 200,
+                                "text/plain", c->source, error);
     if (status != KNURL_OK) {
-        (void)knurl_source_destroy(c->source, NULL);
+        (void)c->source->destroy(c->source, NULL);
         return status;
     }
     if (c->mode == REPLACE)
-        return knurl_reply_text(reply, 200, "text/plain", "replaced", error);
+        return reply->text(reply, 200, "text/plain", "replaced", error);
     return KNURL_OK;
 }
 static int connect_request(unsigned short port, const char *path, int head)
@@ -428,9 +427,9 @@ static knurl_status parent_ready(knurl_server *server,
     knurl_bound_listener listener;
     int status;
     (void)process;
-    if (knurl_server_listener_at(server, 0, &listener, error) != KNURL_OK)
+    if (server->listener_at(server, 0, &listener, error) != KNURL_OK)
         return KNURL_STATE;
-    if (knurl_server_set_serving(server, 1, error) != KNURL_OK)
+    if (server->set_serving(server, 1, error) != KNURL_OK)
         return KNURL_STATE;
     f->child = fork();
     if (f->child < 0)
@@ -478,14 +477,14 @@ int main(void)
     handler.path_kind = KNURL_PATH_REGEX;
     handler.handler = route;
     handler.userdata = &f;
-    CHECK(knurl_router_route(knurl_server_router(server), &handler, NULL,
-                             &error) == KNURL_OK);
-    status = knurl_server_run(server, &result, &error);
+    CHECK(knurl_router_route(server->router(server), &handler, NULL, &error) ==
+          KNURL_OK);
+    status = server->run(server, &result, &error);
     if (status != KNURL_OK)
         fprintf(stderr, "%s: %s\n", error.operation, error.message);
     CHECK(waitpid(f.child, &child, 0) == f.child && WIFEXITED(child) &&
           WEXITSTATUS(child) == 0);
     CHECK(status == KNURL_OK && !result.escalated);
-    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(server->destroy(server, &error) == KNURL_OK);
     return 0;
 }

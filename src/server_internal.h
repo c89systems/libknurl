@@ -14,7 +14,8 @@ struct knurl_proxy_worker;
 struct knurl_autoblock;
 struct knurl_logging;
 
-struct knurl_server {
+struct knurl_server_impl {
+    knurl_server receiver;
     knurl_server_config config;
     knurl_timeout_config requested_timeouts;
     size_t requested_worker_count;
@@ -25,6 +26,9 @@ struct knurl_server {
     knurl_loop *loop;
     struct knurl_proxy_worker *proxy;
     struct knurl_autoblock *autoblock;
+    struct knurl_autoblock *autoblock_history;
+    knurl_autoblock_notifications_config autoblock_notifications;
+    int autoblock_notifying;
     struct knurl_logging *logging;
     volatile sig_atomic_t notify_fd;
     volatile sig_atomic_t stop_requested;

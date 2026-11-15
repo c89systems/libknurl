@@ -93,6 +93,8 @@ typedef struct knurl_webdav_config {
      * submission.
      */
     knurl_route_hooks hooks;
+    /** Optional retained route ACL. */
+    knurl_acl *acl;
     /** Explicit mount body admission override; zero uses the documented
      * server/file-quota policy.
      */

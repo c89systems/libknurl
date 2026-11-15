@@ -1,11 +1,8 @@
+# make build prepares this database plus generated and dependency headers.
 CompileFlags:
   CompilationDatabase: build/debug
 ---
-If:
-  PathMatch: (src/lua/.*|lua/include/.*|tests/lua/.*)
-CompileFlags:
-  CompilationDatabase: build/debug/lua
----
+# Optional harness database, prepared by make fuzz-build.
 If:
   PathMatch: tests/fuzz/.*
 CompileFlags:

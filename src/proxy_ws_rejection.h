@@ -1,7 +1,7 @@
 #ifndef KNURL_PROXY_WS_REJECTION_H
 #define KNURL_PROXY_WS_REJECTION_H
 
-#include "proxy_framing.h"
+#include "http_framing.h"
 #include "proxy_http_wire.h"
 
 #include <knurl/proxy.h>
@@ -17,7 +17,7 @@ typedef enum knurl_proxy_ws_rejection_mode {
 typedef struct knurl_proxy_ws_rejection {
     knurl_proxy_http_response response;
     knurl_proxy_http_wire_plan wire;
-    knurl_proxy_body_framer framer;
+    knurl_http_body_framer framer;
     knurl_proxy_ws_rejection_mode mode;
     int downstream_status;
 } knurl_proxy_ws_rejection;

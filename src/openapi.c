@@ -99,13 +99,13 @@ static void clear_doc(knurl_openapi_route_doc *doc)
 void knurl_openapi_clear(knurl_router *router)
 {
     struct knurl_openapi_entry *entry, *next;
-    for (entry = router->openapi; entry != NULL; entry = next) {
+    for (entry = router->impl->openapi; entry != NULL; entry = next) {
         next = entry->next;
         clear_doc(&entry->doc);
         free(entry->path);
         free(entry);
     }
-    router->openapi = NULL;
+    router->impl->openapi = NULL;
 }
 static int copy_string(const char *source, const char **out)
 {
@@ -199,7 +199,7 @@ knurl_status knurl_router_openapi_doc(knurl_router *router,
         return knurl_fail(
             error, KNURL_INVALID, "openapi_doc",
             "provide router, methods, path and valid metadata vectors");
-    if (router->frozen)
+    if (router->impl->frozen)
         return knurl_fail(error, KNURL_STATE, "openapi_doc",
                           "annotations cannot change during a run");
     for (i = 0; i < doc->response_count; ++i) {
@@ -216,7 +216,7 @@ knurl_status knurl_router_openapi_doc(knurl_router *router,
     if (normalized == NULL)
         return knurl_fail(error, KNURL_NOMEM, "openapi_doc",
                           "copying normalized path");
-    for (tail = &router->openapi; *tail != NULL; tail = &(*tail)->next)
+    for (tail = &router->impl->openapi; *tail != NULL; tail = &(*tail)->next)
         if (((*tail)->methods & methods) &&
             !strcmp((*tail)->path, normalized)) {
             free(normalized);
@@ -301,7 +301,8 @@ knurl_status knurl_router_openapi(const knurl_router *router,
                           "allocating document generation");
     out->buffer.bound =
         document->max_bytes != 0 ? document->max_bytes : (size_t)-1;
-    for (e = router->openapi; e != NULL && status == KNURL_OK; e = e->next) {
+    for (e = router->impl->openapi; e != NULL && status == KNURL_OK;
+         e = e->next) {
         status = collect(out, e->doc.request_schema, error);
         for (i = 0; i < e->doc.response_count && status == KNURL_OK; ++i)
             status = collect(out, e->doc.responses[i].schema, error);

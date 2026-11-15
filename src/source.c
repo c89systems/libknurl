@@ -1,4 +1,7 @@
 #include "source_internal.h"
+#include <knurl/xml.h>
+#include <knurl/lonejson.h>
+#include <knurl/io.h>
 #include "loop_internal.h"
 
 #include <stdlib.h>
@@ -31,15 +34,16 @@ knurl_status knurl_source_new(const knurl_source_config *config,
         return knurl_fail(error, KNURL_INVALID, "source_new",
                           "provide callbacks, an execution policy and a valid "
                           "optional length");
-    source = calloc(1, sizeof(*source));
+    source = calloc(1, sizeof(struct knurl_source_impl));
     if (source == NULL)
         return knurl_fail(error, KNURL_NOMEM, "source_new",
                           "cannot allocate source");
-    source->config = *config;
-    source->position.high = source->position.low = 0;
-    source->owner = NULL;
-    source->busy = source->eof = 0;
-    source->failure = KNURL_OK;
+    knurl_source_receiver_init(source);
+    source->impl->config = *config;
+    source->impl->position.high = source->impl->position.low = 0;
+    source->impl->owner = NULL;
+    source->impl->busy = source->impl->eof = 0;
+    source->impl->failure = KNURL_OK;
     *out = source;
     knurl_error_clear(error);
     return KNURL_OK;
@@ -56,17 +60,18 @@ knurl_status knurl_source_pull(knurl_source *source, void *owner, void *buffer,
     if (source == NULL || buffer == NULL || capacity == 0 || produced == NULL)
         return knurl_fail(error, KNURL_INVALID, "source_read",
                           "provide source, buffer and positive capacity");
-    if (source->busy || source->owner != owner || source->failure != KNURL_OK)
+    if (source->impl->busy || source->impl->owner != owner ||
+        source->impl->failure != KNURL_OK)
         return knurl_fail(error, KNURL_STATE, "source_read",
                           "source is owned, busy or failed");
     knurl_error_clear(error);
-    if (source->eof)
+    if (source->impl->eof)
         return KNURL_EOF;
     count = 0;
-    source->busy = 1;
-    status = source->config.read(buffer, capacity, &count,
-                                 source->config.userdata, error);
-    source->busy = 0;
+    source->impl->busy = 1;
+    status = source->impl->config.read(buffer, capacity, &count,
+                                       source->impl->config.userdata, error);
+    source->impl->busy = 0;
     status = knurl_source_validate(source, capacity, count, status, error);
     if (status == KNURL_OK)
         *produced = count;
@@ -79,32 +84,34 @@ knurl_status knurl_source_validate(knurl_source *source, size_t capacity,
     knurl_u64 amount, next;
     int order;
     if (status < KNURL_OK || status > KNURL_BACKEND) {
-        source->failure = KNURL_INVALID;
+        source->impl->failure = KNURL_INVALID;
         return knurl_fail(error, KNURL_INVALID, "source_read",
                           "callback returned an unknown status");
     }
     if ((status == KNURL_OK && (count == 0 || count > capacity)) ||
         (status != KNURL_OK && count != 0)) {
-        source->failure = KNURL_INVALID;
+        source->impl->failure = KNURL_INVALID;
         return knurl_fail(error, KNURL_INVALID, "source_read",
                           "callback returned an invalid byte count");
     }
     if (status == KNURL_AGAIN || status == KNURL_EOF) {
         if (status == KNURL_EOF) {
-            if (source->config.has_length &&
-                (source->position.high != source->config.length.high ||
-                 source->position.low != source->config.length.low)) {
-                source->failure = KNURL_IO;
+            if (source->impl->config.has_length &&
+                (source->impl->position.high !=
+                     source->impl->config.length.high ||
+                 source->impl->position.low !=
+                     source->impl->config.length.low)) {
+                source->impl->failure = KNURL_IO;
                 return knurl_fail(error, KNURL_IO, "source_read",
                                   "source ended before its declared length");
             }
-            source->eof = 1;
+            source->impl->eof = 1;
         }
         knurl_error_clear(error);
         return status;
     }
     if (status != KNURL_OK) {
-        source->failure = status;
+        source->impl->failure = status;
         if (error == NULL || error->status != status)
             return knurl_fail(error, status, "source_read",
                               "source callback failed");
@@ -112,18 +119,19 @@ knurl_status knurl_source_validate(knurl_source *source, size_t capacity,
     }
     status = knurl_u64_from_size(count, &amount, error);
     if (status == KNURL_OK)
-        status = knurl_u64_add(source->position, amount, &next, error);
-    if (status == KNURL_OK && source->config.has_length) {
-        status = knurl_u64_compare(next, source->config.length, &order, error);
+        status = knurl_u64_add(source->impl->position, amount, &next, error);
+    if (status == KNURL_OK && source->impl->config.has_length) {
+        status =
+            knurl_u64_compare(next, source->impl->config.length, &order, error);
         if (status == KNURL_OK && order > 0)
             status = knurl_fail(error, KNURL_IO, "source_read",
                                 "source exceeded its declared length");
     }
     if (status != KNURL_OK) {
-        source->failure = status;
+        source->impl->failure = status;
         return status;
     }
-    source->position = next;
+    source->impl->position = next;
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -141,56 +149,57 @@ knurl_status knurl_source_reset(knurl_source *source, knurl_error *error)
     if (source == NULL)
         return knurl_fail(error, KNURL_INVALID, "source_reset",
                           "source is required");
-    if (source->borrowed || source->busy || source->owner != NULL)
+    if (source->impl->borrowed || source->impl->busy ||
+        source->impl->owner != NULL)
         return knurl_fail(error, KNURL_STATE, "source_reset",
                           "source is owned or busy");
-    if (source->config.reset == NULL)
+    if (source->impl->config.reset == NULL)
         return knurl_fail(error, KNURL_NOT_SUPPORTED, "source_reset",
                           "source has no reset callback");
-    source->busy = 1;
+    source->impl->busy = 1;
     knurl_error_clear(error);
-    status = source->config.reset(source->config.userdata, error);
-    source->busy = 0;
+    status = source->impl->config.reset(source->impl->config.userdata, error);
+    source->impl->busy = 0;
     if (status < KNURL_OK || status > KNURL_BACKEND)
         status = KNURL_INVALID;
     if (status != KNURL_OK) {
         if (status == KNURL_AGAIN || status == KNURL_EOF)
             status = KNURL_INVALID;
-        source->failure = status;
+        source->impl->failure = status;
         if (error == NULL || error->status != status)
             return knurl_fail(error, status, "source_reset",
                               "source reset failed");
         return status;
     }
-    source->position.high = source->position.low = 0;
-    source->eof = 0;
-    source->failure = KNURL_OK;
+    source->impl->position.high = source->impl->position.low = 0;
+    source->impl->eof = 0;
+    source->impl->failure = KNURL_OK;
     knurl_error_clear(error);
     return KNURL_OK;
 }
 
 void knurl_source_release_now(knurl_source *source, knurl_status outcome)
 {
-    source->busy = 1;
-    if (source->config.close != NULL)
-        source->config.close(source->config.userdata, outcome);
+    source->impl->busy = 1;
+    if (source->impl->config.close != NULL)
+        source->impl->config.close(source->impl->config.userdata, outcome);
     free(source);
 }
 
 void knurl_source_revoke(knurl_source *source)
 {
-    __atomic_store_n(&source->cancelled, 1u, __ATOMIC_RELEASE);
-    source->resume = NULL;
-    source->resume_data = NULL;
-    if (source->native != NULL)
+    __atomic_store_n(&source->impl->cancelled, 1u, __ATOMIC_RELEASE);
+    source->impl->resume = NULL;
+    source->impl->resume_data = NULL;
+    if (source->impl->native != NULL)
         knurl_source_native_revoke(source);
 }
 void knurl_source_release(knurl_source *source, knurl_status outcome)
 {
-    __atomic_store_n(&source->cancelled, 1u, __ATOMIC_RELEASE);
-    source->resume = NULL;
-    source->resume_data = NULL;
-    if (source->native != NULL) {
+    __atomic_store_n(&source->impl->cancelled, 1u, __ATOMIC_RELEASE);
+    source->impl->resume = NULL;
+    source->impl->resume_data = NULL;
+    if (source->impl->native != NULL) {
         knurl_source_native_retire(source, outcome);
         return;
     }
@@ -199,39 +208,40 @@ void knurl_source_release(knurl_source *source, knurl_status outcome)
 knurl_status knurl_source_resume(knurl_source *source, knurl_error *error)
 {
     knurl_status status;
-    if (source == NULL || source->loop == NULL)
+    if (source == NULL || source->impl->loop == NULL)
         return knurl_fail(error, KNURL_STATE, "source_resume",
                           "source has no live runtime owner");
-    status = knurl_loop_owner(source->loop, error);
+    status = knurl_loop_owner(source->impl->loop, error);
     if (status != KNURL_OK)
         return status;
-    if (source->resume == NULL ||
-        __atomic_load_n(&source->cancelled, __ATOMIC_ACQUIRE))
+    if (source->impl->resume == NULL ||
+        __atomic_load_n(&source->impl->cancelled, __ATOMIC_ACQUIRE))
         return knurl_fail(error, KNURL_STATE, "source_resume",
                           "source owner is retired");
-    source->resume_requested = 1;
-    if (source->native != NULL)
+    source->impl->resume_requested = 1;
+    if (source->impl->native != NULL)
         knurl_source_native_resume(source);
-    source->resume(source->resume_data);
+    source->impl->resume(source->impl->resume_data);
     knurl_error_clear(error);
     return KNURL_OK;
 }
 int knurl_source_cancelled(const knurl_source *source)
 {
     return source == NULL ||
-           __atomic_load_n(&source->cancelled, __ATOMIC_ACQUIRE) ||
-           (source->native_job != NULL &&
-            knurl_job_cancelled(source->native_job));
+           __atomic_load_n(&source->impl->cancelled, __ATOMIC_ACQUIRE) ||
+           (source->impl->native_job != NULL &&
+            knurl_job_cancelled(source->impl->native_job));
 }
 knurl_status knurl_source_destroy(knurl_source *source, knurl_error *error)
 {
     knurl_status outcome;
     if (source != NULL) {
-        if (source->borrowed || source->busy || source->owner != NULL)
+        if (source->impl->borrowed || source->impl->busy ||
+            source->impl->owner != NULL)
             return knurl_fail(error, KNURL_STATE, "source_destroy",
                               "source is owned or busy");
-        outcome = source->failure;
-        if (outcome == KNURL_OK && !source->eof)
+        outcome = source->impl->failure;
+        if (outcome == KNURL_OK && !source->impl->eof)
             outcome = KNURL_CANCELLED;
         knurl_source_release(source, outcome);
     }
@@ -319,4 +329,20 @@ knurl_status knurl_source_bytes(knurl_bytes bytes, knurl_source **out,
     if (status != KNURL_OK)
         bytes_close(copy, status);
     return status;
+}
+
+void knurl_source_receiver_init(knurl_source *receiver)
+{
+    static const knurl_source methods = {knurl_xml_parse_source,
+                                         knurl_json_parse_source,
+                                         knurl_json_array_each_source,
+                                         knurl_json_array_rewrite_source,
+                                         knurl_source_read,
+                                         knurl_source_reset,
+                                         knurl_source_resume,
+                                         knurl_source_cancelled,
+                                         knurl_source_destroy,
+                                         NULL};
+    *receiver = methods;
+    receiver->impl = (struct knurl_source_impl *)receiver;
 }

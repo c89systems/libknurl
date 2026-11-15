@@ -70,7 +70,9 @@ static int xml_stack_fixture_new(struct xml_stack_fixture *f, size_t depth)
     if (!f->runtime || knurl_json_schema_from_map(
                            f->runtime, f->maps, &f->schema, &error) != KNURL_OK)
         return 1;
-    lonejson_init(f->runtime, f->maps, &f->record);
+    if (lonejson_init(f->runtime, f->maps, &f->record, NULL) !=
+        LONEJSON_STATUS_OK)
+        abort();
     p = f->input;
     memcpy(p, "<r>", 3);
     p += 3;
@@ -111,7 +113,8 @@ static knurl_status xml_stack_parse(struct xml_stack_fixture *f, size_t limit,
 }
 static void xml_stack_fixture_destroy(struct xml_stack_fixture *f)
 {
-    lonejson_cleanup(f->maps, &f->record);
+    if (lonejson_cleanup(f->maps, &f->record, NULL) != LONEJSON_STATUS_OK)
+        abort();
     lonejson_free(f->runtime);
     free(f->input);
     free(f->fields);

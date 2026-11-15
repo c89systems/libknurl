@@ -1,0 +1,64 @@
+.TH KNURL 1 "2026" "Knurl" "User Commands"
+.SH NAME
+knurl \- Lua programmable HTTP server and reverse proxy
+.SH SYNOPSIS
+.B knurl
+.I FILE.lua
+.br
+.B knurl --check
+.I FILE.lua
+.br
+.B knurl --dump-examples
+.RI [ DIRECTORY ]
+.br
+.B knurl
+.RB [ --help | --version ]
+.SH DESCRIPTION
+Knurl embeds Lua, Knurl, curl, LoneJSON and pslog in a static Linux executable.
+The trusted Lua configuration must return a configured Knurl server.
+Knurl validates it, runs in the foreground, and closes it on termination.
+Relative configuration paths use the current working directory.
+Lua code has the process's privileges; it is not sandboxed.
+.SH OPTIONS
+.TP
+.B --check FILE.lua
+Execute the configuration and validate declarations without starting listeners.
+Configuration code still runs and can have side effects.
+.TP
+.B --dump-examples [DIRECTORY]
+Write four example servers into an existing directory (default: current directory).
+Never replace existing files or symlinks. Roll back files created by a failed dump.
+.TP
+.B --help
+Print usage.
+.TP
+.B --version
+Print the release version.
+.SH DEFAULTS
+The production webserver profile bounds request bodies and enables autoblocking.
+Automatic 5xx responses omit diagnostic messages; http.hide_server_errors can override this.
+One HTTP worker serves multiple connections. Lua can configure worker count.
+Outbound async.curl waits by yielding its coroutine; other connections continue.
+The curl module is synchronous. Streaming callbacks cannot yield.
+Defaults include a 10 second absolute TLS handshake deadline, 5 second header
+deadline, 15 second body and write idle deadlines, 30 second connection idle
+and deferred response deadlines, and 5 second keepalive and worker shutdown.
+Lua timeout values are milliseconds; zero inherits defaults.
+Use a deadline table with disabled=true to disable explicitly.
+Inspect server:effective_config() for resolved settings.
+.SH TLS TRUST
+No CA bundle is embedded. Explicit ca_file or ca_path controls outbound trust.
+Otherwise CURL_CA_BUNDLE, SSL_CERT_FILE and SSL_CERT_DIR are honored, followed
+by conventional system CA files, including /etc/ssl/certs/ca-certificates.crt.
+TLS peer and hostname verification default to enabled.
+.SH SIGNALS
+SIGTERM and SIGINT request shutdown. As container PID 1, libpid0 forwards signals,
+reaps adopted children and propagates child exit status.
+PID0_STOP_TIMEOUT controls the outer supervisor stop budget (default: 30s).
+.SH EXIT STATUS
+0 on success, 1 on execution or configuration failure, 2 on invalid arguments.
+.SH FILES
+.I share/doc/knurl/examples/knurl-example-*.lua
+.SH SEE ALSO
+.BR curl (1),
+.BR lua (1)

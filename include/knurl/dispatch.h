@@ -37,7 +37,8 @@ typedef struct knurl_request_outcome {
     int body_complete;
     /** Nonzero when the request became a WebSocket/tunnel. */
     int upgraded;
-    /** Exact input-body bytes received from transport. */
+    /** Exact decoded input-body bytes received from transport, independently
+     * of consumer acceptance. Excludes transfer framing and pipeline tails. */
     knurl_u64 received_body_bytes;
     /** Exact input-body bytes delivered to the managed consumer. */
     knurl_u64 delivered_body_bytes;

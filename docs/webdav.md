@@ -1,6 +1,6 @@
 # WebDAV mounts
 
-[`<knurl/webdav.h>`](../include/knurl/webdav.h) registers filesystem, read-only
+[`<knurl/webdav.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/webdav.h) registers filesystem, read-only
 and custom storage mounts through `knurl_router_webdav` and
 `knurl_route_group_webdav`. The same [storage operation contract](storage.md)
 provides conditional mutations, transactions, quotas, cancellation and recovery.
@@ -64,13 +64,12 @@ HTTP delivery is cancelled; cancellation does not imply rollback.
 
 `operation_timeout_ms` zero selects 30000 ms, including queue/lock/policy wait.
 `operation_timeout_disabled` explicitly removes that deadline. The Vectis
-reference translator and Lua facade disable this additional deadline by default;
-an explicit Lua timeout enables it unless explicitly disabled. The facade reports
+reference translator disables this additional deadline by default. The facade reports
 an interrupted live operation as 504 for timeout, while storage retirement still
 waits for native acknowledgement. Worker shutdown retains its bounded escalation
 contract. Core `max_body_bytes` zero inherits the server's body policy.
-Vectis translation and Lua's omitted body limit forward `max_file_bytes`; an
-explicit Lua body limit overrides that translation, including zero inheritance.
+Vectis translation forwards `max_file_bytes` for the body limit unless an
+explicit body policy overrides that translation, including zero inheritance.
 WebDAV caps the selected body allowance at the server hard limit, admitting
 smaller valid requests and returning 413 above the resulting allowance.
 
@@ -114,12 +113,12 @@ opened-file asset path uses bounded ordinary pread calls, which may block in the
 filesystem. The generic [source API](responses.md) separately supports
 native-reader execution; WebDAV file delivery does not select that mode.
 
-The [HTTP fixture](../tests/webdav-runtime.c) drives real sockets with 128-byte
+The [HTTP fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/webdav-runtime.c) drives real sockets with 128-byte
 transport chunks. It covers auth/challenge/redirect, middleware and principal/
 userdata ownership, read-only/packed mounts, validators/ranges/HEAD, incremental
 PUT before end-of-body, empty/conditional uploads, disconnect cleanup, MKCOL,
 finite-depth XML, hidden children, recursive/mapped/overwritten authorization,
 request abort during native policy handoff, destination confinement and COPY/MOVE.
-It also runs against relocated installed static/shared consumers. The [verification record](verification.md) covers the accumulated transport and
+It also runs against relocated installed static/shared consumers. The [verification record](https://github.com/c89systems/libknurl/blob/trunk/docs/verification.md) covers the accumulated transport and
 installed-consumer gate; it does not establish exhaustive fault combinations or
 a slow-peer memory bound.

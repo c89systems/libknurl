@@ -1,4 +1,5 @@
 #include "websocket_internal.h"
+#include <knurl/websocket.h>
 #include "loop_internal.h"
 #include "server_internal.h"
 
@@ -10,7 +11,7 @@ static knurl_status owner(knurl_websocket *ws, knurl_error *error)
     if (ws == NULL)
         return knurl_fail(error, KNURL_INVALID, "websocket",
                           "provide a WebSocket");
-    return knurl_loop_owner(ws->server->loop, error);
+    return knurl_loop_owner(ws->impl->server->impl->loop, error);
 }
 
 void knurl_websocket_config_init(knurl_websocket_config *config)
@@ -27,27 +28,29 @@ void knurl_websocket_route_config_init(knurl_websocket_route_config *config)
 
 knurl_websocket_phase knurl_websocket_state(const knurl_websocket *ws)
 {
-    return ws != NULL ? ws->phase : KNURL_WEBSOCKET_CLOSED;
+    return ws != NULL ? ws->impl->phase : KNURL_WEBSOCKET_CLOSED;
 }
 
 knurl_server *knurl_websocket_server(const knurl_websocket *ws)
 {
-    return ws != NULL ? ws->server : NULL;
+    return ws != NULL ? ws->impl->server : NULL;
 }
 
 knurl_loop *knurl_websocket_loop(const knurl_websocket *ws)
 {
-    return ws != NULL ? ws->server->loop : NULL;
+    return ws != NULL ? ws->impl->server->impl->loop : NULL;
 }
 
 size_t knurl_websocket_queued_bytes(const knurl_websocket *ws)
 {
-    return ws != NULL && ws->channel != NULL ? ws->channel->retained : 0;
+    return ws != NULL && ws->impl->channel != NULL
+               ? ws->impl->channel->impl->retained
+               : 0;
 }
 
 void *knurl_websocket_userdata(const knurl_websocket *ws)
 {
-    return ws != NULL ? ws->config.userdata : NULL;
+    return ws != NULL ? ws->impl->config.userdata : NULL;
 }
 
 knurl_status knurl_websocket_set_userdata(knurl_websocket *ws, void *data,
@@ -57,10 +60,10 @@ knurl_status knurl_websocket_set_userdata(knurl_websocket *ws, void *data,
     status = owner(ws, error);
     if (status != KNURL_OK)
         return status;
-    if (ws->phase == KNURL_WEBSOCKET_CLOSED)
+    if (ws->impl->phase == KNURL_WEBSOCKET_CLOSED)
         return knurl_fail(error, KNURL_STATE, "websocket_userdata",
                           "WebSocket is closed");
-    ws->config.userdata = data;
+    ws->impl->config.userdata = data;
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -111,10 +114,10 @@ int knurl_websocket_utf8(const unsigned char *s, size_t n)
     return 1;
 }
 
-knurl_status knurl_websocket_queue(knurl_websocket *ws,
-                                   knurl_websocket_opcode opcode,
-                                   const void *data, size_t length,
-                                   knurl_error *error)
+static knurl_status queue_frame(knurl_websocket *ws,
+                                knurl_websocket_opcode opcode, int final,
+                                const void *data, size_t length,
+                                knurl_error *error)
 {
     unsigned char *wire;
     size_t head;
@@ -123,16 +126,17 @@ knurl_status knurl_websocket_queue(knurl_websocket *ws,
     knurl_status status;
     head = length < 126 ? 2 : (length <= 65535 ? 4 : 10);
     if (length > (size_t)-1 - head ||
-        length + head > ws->channel->config.send_bytes)
+        length + head > ws->impl->channel->impl->config.send_bytes)
         return knurl_fail(error, KNURL_LIMIT, "websocket_send",
                           "complete frame exceeds output budget");
-    if (length + head > ws->channel->config.send_bytes - ws->channel->retained)
+    if (length + head > ws->impl->channel->impl->config.send_bytes -
+                            ws->impl->channel->impl->retained)
         return KNURL_AGAIN;
     wire = malloc(head + length);
     if (wire == NULL)
         return knurl_fail(error, KNURL_NOMEM, "websocket_send",
                           "cannot allocate complete frame");
-    wire[0] = (unsigned char)(128 | opcode);
+    wire[0] = (unsigned char)((final ? 128 : 0) | opcode);
     wire[1] = (unsigned char)(head == 2 ? length : (head == 4 ? 126 : 127));
     value = length;
     for (at = head; at > 2;) {
@@ -141,23 +145,35 @@ knurl_status knurl_websocket_queue(knurl_websocket *ws,
     }
     if (length != 0)
         memcpy(wire + head, data, length);
-    status = knurl_channel_enqueue(ws->channel, wire, head + length, error);
+    status =
+        knurl_channel_enqueue(ws->impl->channel, wire, head + length, error);
     if (status != KNURL_OK)
         free(wire);
     return status;
 }
 
-knurl_status knurl_websocket_send(knurl_websocket *ws,
-                                  knurl_websocket_opcode opcode,
-                                  const void *data, size_t length,
-                                  knurl_error *error)
+knurl_status knurl_websocket_queue(knurl_websocket *ws,
+                                   knurl_websocket_opcode opcode,
+                                   const void *data, size_t length,
+                                   knurl_error *error)
+{
+    return queue_frame(ws, opcode, 1, data, length, error);
+}
+
+knurl_status knurl_websocket_send_frame(knurl_websocket *ws,
+                                        knurl_websocket_opcode opcode,
+                                        int final, const void *data,
+                                        size_t length, knurl_error *error)
 {
     knurl_status status;
     size_t head;
+    struct knurl_websocket_message next;
+    const unsigned char *bytes = data;
+    int code;
     status = owner(ws, error);
     if (status != KNURL_OK)
         return status;
-    if (ws->phase != KNURL_WEBSOCKET_OPEN || ws->channel == NULL)
+    if (ws->impl->phase != KNURL_WEBSOCKET_OPEN || ws->impl->channel == NULL)
         return knurl_fail(error, KNURL_STATE, "websocket_send",
                           "send requires an open WebSocket");
     if ((data == NULL && length != 0) ||
@@ -167,15 +183,55 @@ knurl_status knurl_websocket_send(knurl_websocket *ws,
          opcode != KNURL_WEBSOCKET_CLOSE))
         return knurl_fail(error, KNURL_INVALID, "websocket_send",
                           "invalid frame bytes or opcode");
-    status = knurl_websocket_queue(ws, opcode, data, length, error);
+    if (final != 0 && final != 1)
+        return knurl_fail(error, KNURL_INVALID, "websocket_send",
+                          "FIN must be zero or one");
+    next = ws->impl->outgoing;
+    if (opcode >= KNURL_WEBSOCKET_CLOSE) {
+        if (!final || length > 125 ||
+            (opcode == KNURL_WEBSOCKET_CLOSE &&
+             knurl_websocket_close_check(bytes, length) != 0))
+            return knurl_fail(error, KNURL_INVALID, "websocket_send",
+                              "invalid control frame or close payload");
+    } else {
+        if (length > ws->impl->config.max_frame_bytes)
+            return knurl_fail(error, KNURL_LIMIT, "websocket_send",
+                              "frame exceeds configured payload limit");
+        code =
+            knurl_websocket_message_check(&next, opcode, final, bytes, length,
+                                          ws->impl->config.max_message_bytes);
+        if (code != 0)
+            return knurl_fail(
+                error, code == 1009 ? KNURL_LIMIT : KNURL_INVALID,
+                "websocket_send",
+                "invalid message sequence, UTF-8 or message size");
+    }
+    status = queue_frame(ws, opcode, final, data, length, error);
+    if (status == KNURL_OK) {
+        ws->impl->outgoing = next;
+        if (opcode == KNURL_WEBSOCKET_CLOSE) {
+            knurl_websocket_stop(
+                ws, KNURL_OK,
+                length == 0 ? 0 : (unsigned short)(bytes[0] * 256 + bytes[1]));
+            ws->impl->close_queued = 1;
+        }
+    }
     if (status == KNURL_AGAIN) {
         head = length < 126 ? 2 : (length <= 65535 ? 4 : 10);
-        ws->writable_need = length + head;
+        ws->impl->writable_need = length + head;
         knurl_websocket_schedule(ws);
     }
     if (status == KNURL_OK || status == KNURL_AGAIN)
         knurl_error_clear(error);
     return status;
+}
+
+knurl_status knurl_websocket_send(knurl_websocket *ws,
+                                  knurl_websocket_opcode opcode,
+                                  const void *data, size_t length,
+                                  knurl_error *error)
+{
+    return knurl_websocket_send_frame(ws, opcode, 1, data, length, error);
 }
 
 knurl_status knurl_websocket_send_text(knurl_websocket *ws, const char *text,
@@ -197,11 +253,11 @@ knurl_status knurl_websocket_resume(knurl_websocket *ws, knurl_error *error)
     status = owner(ws, error);
     if (status != KNURL_OK)
         return status;
-    if (ws->phase != KNURL_WEBSOCKET_OPEN)
+    if (ws->impl->phase != KNURL_WEBSOCKET_OPEN)
         return knurl_fail(error, KNURL_STATE, "websocket_resume",
                           "resume requires an open WebSocket");
-    if (ws->paused || ws->in_frame) {
-        ws->resume_requested = 1;
+    if (ws->impl->paused || ws->impl->in_frame) {
+        ws->impl->resume_requested = 1;
         knurl_websocket_schedule(ws);
     }
     knurl_error_clear(error);
@@ -215,7 +271,7 @@ knurl_status knurl_websocket_close(knurl_websocket *ws, unsigned short code,
     status = owner(ws, error);
     if (status != KNURL_OK)
         return status;
-    if (ws->phase == KNURL_WEBSOCKET_CLOSED || ws->close_started) {
+    if (ws->impl->phase == KNURL_WEBSOCKET_CLOSED || ws->impl->close_started) {
         knurl_error_clear(error);
         return KNURL_OK;
     }
@@ -227,8 +283,8 @@ knurl_status knurl_websocket_close(knurl_websocket *ws, unsigned short code,
                           "provide a valid close code and UTF-8 reason");
     knurl_websocket_stop(ws, KNURL_OK, code);
     if (code != 0 && reason.length != 0) {
-        memcpy(ws->close_payload + 2, reason.data, reason.length);
-        ws->close_length += reason.length;
+        memcpy(ws->impl->close_payload + 2, reason.data, reason.length);
+        ws->impl->close_length += reason.length;
     }
     knurl_error_clear(error);
     return KNURL_OK;
@@ -237,21 +293,40 @@ knurl_status knurl_websocket_close(knurl_websocket *ws, unsigned short code,
 void knurl_websocket_stop(knurl_websocket *ws, knurl_status cause,
                           unsigned short code)
 {
-    if (ws->phase == KNURL_WEBSOCKET_CLOSED)
+    if (ws->impl->phase == KNURL_WEBSOCKET_CLOSED)
         return;
-    if (ws->outcome.cause == KNURL_OK)
-        ws->outcome.cause = cause;
-    if (!ws->close_started) {
-        ws->close_started = 1;
-        ws->phase = KNURL_WEBSOCKET_CLOSING;
-        ws->outcome.local_code = code;
-        ws->close_length = code == 0 ? 0 : 2;
-        ws->close_payload[0] = (unsigned char)(code >> 8);
-        ws->close_payload[1] = (unsigned char)(code & 255);
-        (void)knurl_loop_monotonic(&ws->close_start, NULL);
-        ws->paused = 0;
-        if (ws->frame_ready)
+    if (ws->impl->outcome.cause == KNURL_OK)
+        ws->impl->outcome.cause = cause;
+    if (!ws->impl->close_started) {
+        ws->impl->close_started = 1;
+        ws->impl->phase = KNURL_WEBSOCKET_CLOSING;
+        ws->impl->outcome.local_code = code;
+        ws->impl->close_length = code == 0 ? 0 : 2;
+        ws->impl->close_payload[0] = (unsigned char)(code >> 8);
+        ws->impl->close_payload[1] = (unsigned char)(code & 255);
+        (void)knurl_loop_monotonic(&ws->impl->close_start, NULL);
+        ws->impl->paused = 0;
+        if (ws->impl->frame_ready)
             knurl_websocket_reset_frame(ws);
     }
     knurl_websocket_schedule(ws);
+}
+
+void knurl_websocket_receiver_init(knurl_websocket *receiver)
+{
+    static const knurl_websocket methods = {knurl_websocket_send_frame,
+                                            knurl_websocket_send,
+                                            knurl_websocket_send_text,
+                                            knurl_websocket_send_binary,
+                                            knurl_websocket_resume,
+                                            knurl_websocket_close,
+                                            knurl_websocket_state,
+                                            knurl_websocket_server,
+                                            knurl_websocket_loop,
+                                            knurl_websocket_queued_bytes,
+                                            knurl_websocket_userdata,
+                                            knurl_websocket_set_userdata,
+                                            NULL};
+    *receiver = methods;
+    receiver->impl = (struct knurl_websocket_impl *)receiver;
 }

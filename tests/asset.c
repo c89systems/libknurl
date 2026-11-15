@@ -48,7 +48,7 @@ static knurl_status reader(knurl_u64 offset, void *bytes, size_t capacity,
         return KNURL_OK;
     }
     if (s->mode == 4) {
-        knurl_asset_close(s->asset, error);
+        s->asset->close(s->asset, error);
         return KNURL_OK;
     }
     *n = capacity;
@@ -91,62 +91,53 @@ static int custom(void)
     config.userdata = &s;
     CHECK(knurl_asset_provider_new(&config, &p, &error) == KNURL_OK &&
           s.opened == 0);
-    CHECK(knurl_asset_provider_open(p, "/%252e", &a, &error) == KNURL_INVALID &&
-          s.opened == 0);
-    CHECK(knurl_asset_provider_open(p, "/../file", &a, &error) ==
-          KNURL_INVALID);
-    CHECK(knurl_asset_provider_open(p, "/file/", &a, &error) == KNURL_INVALID);
-    CHECK(knurl_asset_provider_open(p, "/missing", &a, &error) == KNURL_EOF &&
-          a == NULL);
-    CHECK(knurl_asset_provider_open(p, "/file", &a, &error) == KNURL_OK);
+    CHECK(p->open(p, "/%252e", &a, &error) == KNURL_INVALID && s.opened == 0);
+    CHECK(p->open(p, "/../file", &a, &error) == KNURL_INVALID);
+    CHECK(p->open(p, "/file/", &a, &error) == KNURL_INVALID);
+    CHECK(p->open(p, "/missing", &a, &error) == KNURL_EOF && a == NULL);
+    CHECK(p->open(p, "/file", &a, &error) == KNURL_OK);
     start.high = 1;
     start.low = 4;
     length.high = 0;
     length.low = 3;
-    CHECK(knurl_asset_source_take(a, start, length, &source, &error) ==
-              KNURL_OK &&
+    CHECK(a->source_take(a, start, length, &source, &error) == KNURL_OK &&
           s.read == 0);
-    CHECK(knurl_asset_close(a, &error) == KNURL_STATE);
-    CHECK(knurl_asset_provider_close(p, &error) == KNURL_OK &&
-          s.provider_closed == 0);
+    CHECK(a->close(a, &error) == KNURL_STATE);
+    CHECK(p->close(p, &error) == KNURL_OK && s.provider_closed == 0);
     s.mode = 1;
-    CHECK(knurl_source_read(source, bytes, sizeof(bytes), &n, &error) ==
+    CHECK(source->read(source, bytes, sizeof(bytes), &n, &error) ==
               KNURL_AGAIN &&
           n == 0);
     s.mode = 0;
-    CHECK(knurl_source_read(source, bytes, sizeof(bytes), &n, &error) ==
-              KNURL_OK &&
+    CHECK(source->read(source, bytes, sizeof(bytes), &n, &error) == KNURL_OK &&
           n == 3 && s.offset.high == 1 && s.offset.low == 4);
-    CHECK(knurl_source_read(source, bytes, sizeof(bytes), &n, &error) ==
-              KNURL_EOF &&
+    CHECK(source->read(source, bytes, sizeof(bytes), &n, &error) == KNURL_EOF &&
           n == 0);
-    CHECK(knurl_source_reset(source, &error) == KNURL_OK);
-    CHECK(knurl_source_read(source, bytes, 1, &n, &error) == KNURL_OK &&
-          n == 1 && s.offset.high == 1 && s.offset.low == 4);
-    CHECK(knurl_source_destroy(source, &error) == KNURL_OK && s.closed == 1 &&
+    CHECK(source->reset(source, &error) == KNURL_OK);
+    CHECK(source->read(source, bytes, 1, &n, &error) == KNURL_OK && n == 1 &&
+          s.offset.high == 1 && s.offset.low == 4);
+    CHECK(source->destroy(source, &error) == KNURL_OK && s.closed == 1 &&
           s.provider_closed == 1);
     CHECK(knurl_asset_provider_new(&config, &p, &error) == KNURL_OK);
-    CHECK(knurl_asset_provider_open(p, "/file", &a, &error) == KNURL_OK);
+    CHECK(p->open(p, "/file", &a, &error) == KNURL_OK);
     start.high = start.low = 0;
     s.mode = 2;
-    CHECK(knurl_asset_read(a, start, bytes, sizeof(bytes), &n, &error) ==
-              KNURL_IO &&
+    CHECK(a->read(a, start, bytes, sizeof(bytes), &n, &error) == KNURL_IO &&
           n == 0);
-    CHECK(knurl_asset_close(a, &error) == KNURL_OK);
-    CHECK(knurl_asset_provider_open(p, "/file", &a, &error) == KNURL_OK);
+    CHECK(a->close(a, &error) == KNURL_OK);
+    CHECK(p->open(p, "/file", &a, &error) == KNURL_OK);
     s.mode = 3;
-    CHECK(knurl_asset_read(a, start, bytes, sizeof(bytes), &n, &error) ==
+    CHECK(a->read(a, start, bytes, sizeof(bytes), &n, &error) ==
               KNURL_INVALID &&
           n == 0);
-    CHECK(knurl_asset_close(a, &error) == KNURL_OK);
-    CHECK(knurl_asset_provider_open(p, "/file", &a, &error) == KNURL_OK);
+    CHECK(a->close(a, &error) == KNURL_OK);
+    CHECK(p->open(p, "/file", &a, &error) == KNURL_OK);
     s.asset = a;
     s.mode = 4;
-    CHECK(knurl_asset_read(a, start, bytes, sizeof(bytes), &n, &error) ==
-              KNURL_STATE &&
+    CHECK(a->read(a, start, bytes, sizeof(bytes), &n, &error) == KNURL_STATE &&
           n == 0);
-    CHECK(knurl_asset_close(a, &error) == KNURL_OK);
-    CHECK(knurl_asset_provider_close(p, &error) == KNURL_OK);
+    CHECK(a->close(a, &error) == KNURL_OK);
+    CHECK(p->close(p, &error) == KNURL_OK);
     return 0;
 }
 static int put(const char *path, const char *text)
@@ -188,30 +179,26 @@ static int filesystem(void)
     snprintf(path, sizeof(path), "%s/pipe", root);
     CHECK(mkfifo(path, 0600) == 0);
     CHECK(knurl_asset_filesystem_new(root, &p, &error) == KNURL_OK);
-    CHECK(knurl_asset_provider_open(p, "/link", &a, &error) == KNURL_EOF);
-    CHECK(knurl_asset_provider_open(p, "/pipe", &a, &error) == KNURL_EOF);
-    CHECK(knurl_asset_provider_open(p, "/file", &a, &error) == KNURL_OK &&
-          knurl_asset_stat(a)->size.low == 8 &&
-          knurl_asset_stat(a)->last_modified != NULL);
-    snprintf(etag, sizeof(etag), "%s", knurl_asset_stat(a)->etag);
+    CHECK(p->open(p, "/link", &a, &error) == KNURL_EOF);
+    CHECK(p->open(p, "/pipe", &a, &error) == KNURL_EOF);
+    CHECK(p->open(p, "/file", &a, &error) == KNURL_OK &&
+          a->stat(a)->size.low == 8 && a->stat(a)->last_modified != NULL);
+    snprintf(etag, sizeof(etag), "%s", a->stat(a)->etag);
     snprintf(path, sizeof(path), "%s/file", root);
     CHECK(unlink(path) == 0 && put(path, "replaced"));
-    CHECK(knurl_asset_read(a, zero, bytes, sizeof(bytes), &n, &error) ==
-              KNURL_OK &&
+    CHECK(a->read(a, zero, bytes, sizeof(bytes), &n, &error) == KNURL_OK &&
           n == 8 && memcmp(bytes, "original", 8) == 0 &&
-          strcmp(etag, knurl_asset_stat(a)->etag) == 0);
-    CHECK(knurl_asset_close(a, &error) == KNURL_OK);
+          strcmp(etag, a->stat(a)->etag) == 0);
+    CHECK(a->close(a, &error) == KNURL_OK);
     CHECK(rename(root, moved) == 0 && mkdir(root, 0700) == 0);
     snprintf(path, sizeof(path), "%s/file", root);
     CHECK(put(path, "new-root"));
-    CHECK(knurl_asset_provider_open(p, "/file", &a, &error) == KNURL_OK);
-    CHECK(knurl_asset_read(a, zero, bytes, sizeof(bytes), &n, &error) ==
-              KNURL_OK &&
+    CHECK(p->open(p, "/file", &a, &error) == KNURL_OK);
+    CHECK(a->read(a, zero, bytes, sizeof(bytes), &n, &error) == KNURL_OK &&
           n == 8 && memcmp(bytes, "replaced", 8) == 0);
-    CHECK(knurl_asset_close(a, &error) == KNURL_OK);
-    CHECK(knurl_asset_provider_open(p, "/", &listing, &error) == KNURL_OK);
-    while ((status = knurl_asset_list_next(listing, &entry, &error)) ==
-               KNURL_OK ||
+    CHECK(a->close(a, &error) == KNURL_OK);
+    CHECK(p->open(p, "/", &listing, &error) == KNURL_OK);
+    while ((status = listing->list_next(listing, &entry, &error)) == KNURL_OK ||
            status == KNURL_AGAIN) {
         if (status == KNURL_AGAIN)
             continue;
@@ -219,9 +206,9 @@ static int filesystem(void)
         count++;
     }
     CHECK(status == KNURL_EOF && count == 1 &&
-          knurl_asset_list_next(listing, &entry, &error) == KNURL_EOF);
-    CHECK(knurl_asset_provider_close(p, &error) == KNURL_OK &&
-          knurl_asset_close(listing, &error) == KNURL_OK);
+          listing->list_next(listing, &entry, &error) == KNURL_EOF);
+    CHECK(p->close(p, &error) == KNURL_OK &&
+          listing->close(listing, &error) == KNURL_OK);
     snprintf(path, sizeof(path), "%s/file", root);
     CHECK(unlink(path) == 0 && rmdir(root) == 0);
     snprintf(path, sizeof(path), "%s/file", moved);
@@ -242,28 +229,26 @@ static int declarations(void)
     knurl_error error;
     CHECK(knurl_asset_filesystem_new("asset-missing-root-should-not-exist",
                                      &provider, &error) == KNURL_OK);
-    CHECK(knurl_asset_provider_open(provider, "/missing", &asset, &error) ==
-              KNURL_EOF &&
+    CHECK(provider->open(provider, "/missing", &asset, &error) == KNURL_EOF &&
           asset == NULL);
-    CHECK(knurl_asset_provider_close(provider, &error) == KNURL_OK);
+    CHECK(provider->close(provider, &error) == KNURL_OK);
     CHECK(knurl_router_new(&router, &error) == KNURL_OK);
     knurl_static_config_init(&config);
     config.path = "/files";
     config.root_dir = "asset-missing-root-should-not-exist";
     CHECK(config.index_enabled == 0 &&
-          knurl_router_static_directory(router, &config, NULL, &error) ==
-              KNURL_OK);
+          router->static_directory(router, &config, NULL, &error) == KNURL_OK);
     config.path = "/bad";
     config.methods = KNURL_HTTP_METHODS_POST;
-    CHECK(knurl_router_static_directory(router, &config, NULL, &error) ==
+    CHECK(router->static_directory(router, &config, NULL, &error) ==
               KNURL_INVALID &&
-          knurl_router_route_count(router) == 1);
+          router->route_count(router) == 1);
     config.methods = 0;
     config.index_file = "../index.html";
-    CHECK(knurl_router_static_directory(router, &config, NULL, &error) ==
+    CHECK(router->static_directory(router, &config, NULL, &error) ==
               KNURL_INVALID &&
-          knurl_router_route_count(router) == 1);
-    CHECK(knurl_router_destroy(router, &error) == KNURL_OK);
+          router->route_count(router) == 1);
+    CHECK(router->destroy(router, &error) == KNURL_OK);
     CHECK(strcmp(knurl_static_content_type("/a.HTML"),
                  "text/html; charset=utf-8") == 0);
     CHECK(strcmp(knurl_static_content_type("/a.mjs"),
@@ -307,11 +292,11 @@ static int listing_names(void)
         config.next = list_name;
         config.userdata = (void *)names[i];
         CHECK(knurl_asset_new(&config, &asset, &error) == KNURL_OK);
-        CHECK(knurl_asset_list_next(asset, &entry, &error) ==
+        CHECK(asset->list_next(asset, &entry, &error) ==
               (i ? KNURL_INVALID : KNURL_OK));
         if (!i)
             CHECK(strcmp(entry.name, names[i]) == 0);
-        CHECK(knurl_asset_close(asset, &error) == KNURL_OK);
+        CHECK(asset->close(asset, &error) == KNURL_OK);
     }
     return 0;
 }

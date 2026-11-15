@@ -1,7 +1,7 @@
 # Read-only assets and static serving
 
-[`<knurl/asset.h>`](../include/knurl/asset.h) supplies read-only opened assets,
-providers and bounded source adapters. [`<knurl/static.h>`](../include/knurl/static.h)
+[`<knurl/asset.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/asset.h) supplies read-only opened assets,
+providers and bounded source adapters. [`<knurl/static.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/static.h)
 registers files, directory roots and custom providers through the ordinary router.
 Both headers are included by the umbrella and expose no filesystem, Kore or
 Vectis layouts. Vectis retains pack manifest/payload ownership and supplies an
@@ -60,12 +60,6 @@ and `root_dir` for `knurl_router_static_directory`, or `path` and a borrowed
 `provider` for `knurl_router_static_assets`. Enabling indexes selects `index.html`
 unless `index_file` is supplied. Strings/options are copied during registration.
 Custom providers and hook userdata remain borrowed through router destruction.
-The Lua facade accepts host providers through public Lua interop values for
-`static_assets` and `webdav` declarations. Each value pins its optional Lua owner,
-and copied route declarations retain it through server close. The binding does
-not close borrowed providers. Packed lookup stays with the host, while these
-mounts use the same C static/storage/WebDAV implementation. See the
-[host-provider workflow](lua.md#host-providers).
 Literal route groups provide the corresponding convenience registrations.
 Filesystem single-file registration preserves Vectis's configured GET/HEAD masks,
 so a separate POST route can use the same literal path. Directory/asset mounts
@@ -95,10 +89,11 @@ Defaults cover audio/video (MP3, MP4/M4A, FLAC, AAC, Ogg/Opus, WebM, QuickTime),
 HLS/DASH playlists and segments, subtitles, modern images, fonts, archives,
 office documents, ebooks and web/data formats. `.md`/`.markdown` remain
 `text/markdown; charset=utf-8`; `.mp3` is `audio/mpeg` and `.mp4` is `video/mp4`.
-The checked-in [catalogue](../src/mime.c) uses registered
+The checked-in [catalogue](https://github.com/c89systems/libknurl/blob/trunk/src/mime.c) uses registered
 [media types](https://www.iana.org/assignments/media-types/) where available and
 conventional types otherwise. Extension inference never reads or sniffs content.
-Compression suffixes do not set Content-Encoding or decompress the payload.
+Compression suffixes alone do not set Content-Encoding or decompress payloads.
+Negotiated sidecars follow the policy below.
 
 Resolution precedence, for GET/HEAD and ranged responses alike:
 
@@ -134,20 +129,6 @@ built-ins without filesystem access; its result is borrowed until destruction.
 `knurl_static_content_type(filename)` remains the built-in-only helper.
 The latter, and a NULL-server lookup, return strings with static lifetime.
 
-Lua uses dictionaries, forwarded to those same public C declarations:
-
-```lua
-local server = assert(knurl.server{
-  port = 8080,
-  http = {mime_types = {custom = 'application/vnd.example.resource'}},
-})
-assert(server:static_directory{
-  path = '/files', root_dir = './public',
-  mime_types = {ts = 'text/plain; charset=utf-8'},
-})
-assert(server:content_type('item.custom') == 'application/vnd.example.resource')
-```
-
 Strings and mapping arrays are copied at server creation or route registration;
 there is no process-global registry or live mutation. Zero entries inherit the
 next layer. Extensions are ASCII letters/digits or `+`, `-`, `_`, optionally
@@ -170,29 +151,77 @@ must contain both a token name and a token or quoted value with no whitespace
 around `=`. Validation checks syntax, not whether a vendor type is registered.
 Quoted parameter values allow escaped quotes/backslashes, delimiters and the
 legacy opaque bytes permitted by HTTP; HTAB is accepted only in allowed whitespace
-or quoted positions. C strings are NUL-terminated; Lua also rejects embedded NUL
-using the string's explicit length. The same Core validator protects mappings,
+or quoted positions. C strings are NUL-terminated. The same Core validator
+protects mappings,
 explicit static/404 types, asset metadata, DAV types and staged reply/header types.
 
 Assets default to no-cache and a `not found\n` 404 with
 no-store; filesystem 404 replies are empty unless configured otherwise. Cache
 and not-found policies are explicit. ETag/If-Match/If-None-Match checks validate
 complete lists, including malformed tails, and distinguish weak/strong comparison.
+Repeated If-Match/If-None-Match fields are evaluated as one ordered list. Up to
+32 empty members per conditional list, including repeated fields, are ignored;
+larger counts and mixed wildcard/tag lists are invalid. Empty lists do not match.
 Last-Modified uses the same opened metadata, formats English HTTP dates
-independently of locale, and preserves the existing equal-timestamp
-If-Modified-Since response when If-None-Match is absent. Live HTTP handling uses
+independently of locale, and returns 304 for If-Modified-Since dates at or after
+Last-Modified when If-None-Match is absent. Live HTTP handling uses
 libcurl's public [date parser](https://curl.se/libcurl/c/curl_getdate.html); asset
-construction does not initialize curl or perform network work. Only GET applies
-Range. Preserve one `bytes` range, suffix/open-ended forms,
-If-Range's strong validator rule, 206 Content-Range and 416 unsatisfiable results.
-Multiple/malformed byte ranges are unsatisfiable; unknown range units are ignored.
+construction does not initialize curl or perform network work. If-Unmodified-Since
+returns 412 when the opened representation is newer, unless If-Match is present.
+It runs before If-None-Match, If-Modified-Since and ranges; invalid dates,
+repeated date fields and unavailable modification metadata are ignored.
+All three HTTP-date forms are accepted. Invalid or repeated If-Range falls back
+to the complete response. Only GET applies Range. Up to 16 `bytes` ranges support
+suffix/open-ended forms. Unsatisfiable
+members are dropped when another member is satisfiable. One selected member
+uses 206 Content-Range; several use streamed multipart/byteranges with per-part
+types/ranges and a checked complete length. Request order and overlaps are
+preserved. Up to 32 empty list members are ignored and do not consume the
+16-range budget. Malformed, excessive or wholly unsatisfiable lists return 416;
+unknown units are ignored. If-Range accepts strong ETags or exact matching dates
+when the provider explicitly sets `last_modified_strong`. Filesystem timestamps
+alone do not assert that strength.
 HEAD retains representation length without reading content. Counters remain wide
 on armhf, including ranges beyond 4 GiB.
 
-The [asset fixture](../tests/asset.c) covers ownership transfer, provider retention,
+Static configuration enables negotiated compression by default. Set
+`compression_disabled=true` to disable it, or `precompressed_disabled=true` to
+disable sidecar lookup while retaining dynamic gzip. Missing Accept-Encoding
+selects identity. Up to 32 empty list members
+are ignored across all Accept-Encoding fields; a larger count is rejected.
+Explicit weights, wildcard and identity exclusions determine selection; equal
+quality prefers Brotli sidecar, gzip sidecar, dynamic gzip, then identity.
+Malformed qvalues fail; no acceptable available representation returns 406.
+Vary includes Accept-Encoding without discarding other Vary fields during
+submission, including on HEAD and 304. Negotiated Content-Encoding describes
+successful asset replies and 304 metadata; plain error replies and pretty HTML
+errors do not inherit it. Range selects identity, returning 406 if identity
+is excluded; Cache-Control no-transform suppresses transformations.
+
+Sidecars `original.br` and `original.gz` are opened through the same confined
+provider. They must be regular files at least as fresh as the original. Filesystem
+providers supply precise modification metadata. Custom providers can set
+`has_modification_time`, `modification_seconds` and `modification_nanoseconds`;
+otherwise both Last-Modified values must explicitly assert strength. Missing or
+stale sidecars fall back to another acceptable representation. All unused opened
+assets close; the selected asset stays pinned through delivery. MIME inference
+uses the original path/type, encoding has a distinct ETag, and sidecar length is
+known. A sidecar extension served directly still does not imply Content-Encoding.
+
+Dynamic gzip uses bounded input/output chunks from the pinned zlib dependency,
+with deterministic headers, reset and normal source ownership. It never reads
+the full asset, compresses to determine its length, or stages a temporary file.
+Eligible types are text/*, JSON/+json, XML/+xml, JavaScript and WASM. Empty assets
+and already compressed binary types skip dynamic compression. Its validator is
+distinct and weak; compressed Content-Length is unknown. HEAD selects normally
+but never reads/compresses content. Brotli generation is not provided. Replacing
+a static payload in an after-hook retires its source and drops automatic
+representation encoding/validator/range metadata.
+
+The [asset fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/asset.c) covers ownership transfer, provider retention,
 source pause/reset, invalid counts, premature EOF, reentry, path/symlink/special-
 file confinement, opened-file/root replacement and incremental listing. It runs
-on a default-stack pthread. The [wire fixture](../tests/static-runtime.c) covers
+on a default-stack pthread. The [wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/static-runtime.c) covers
 filesystem and packed responses, conditions/ranges, HEAD, redirects/query encoding,
 trailing-slash precedence, method denial before 100 Continue, group registration,
 source replacement and a range beyond 4 GiB. Both also run against relocated

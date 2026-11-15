@@ -113,17 +113,18 @@ knurl_status knurl_router_websocket(knurl_router *router,
     }
     if (status == KNURL_OK) {
         state->config.websocket.protocol = state->protocol;
-        state->config.websocket.headers = state->fields->headers;
+        state->config.websocket.headers = state->fields->impl->headers;
         state->config.path = NULL;
         knurl_route_config_init(&config);
         config.method = KNURL_HTTP_GET;
         config.path = input->path;
         config.path_kind = input->path_kind;
         config.on_headers = dispatch;
+        config.acl = input->acl;
         config.userdata = state;
         status = knurl_router_route(router, &config, &route, error);
         if (status == KNURL_OK) {
-            route->release_userdata = release;
+            route->impl->release_userdata = release;
             if (out != NULL)
                 *out = route;
             return KNURL_OK;

@@ -1,0 +1,44 @@
+--- a/src/http.c
++++ b/src/http.c
+@@ -985,7 +985,7 @@
+ 			return (KORE_RESULT_OK);
+ 		}
+ 
+-		if (*value == '\0') {
++		if (*value == '\0' && !strcmp(headers[i], "host")) {
+ 			req->flags |= HTTP_REQUEST_DELETE;
+ 			http_error_response(c, HTTP_STATUS_BAD_REQUEST);
+ 			return (KORE_RESULT_OK);
+@@ -2002,13 +2002,17 @@
+ 	u_int8_t	idx;
+ 	char		*p, *value;
+ 
++	value = NULL;
+ 	for (p = header; *p != '\0'; p++) {
+ 		idx = *p;
+ 		if (idx > HTTP_MAP_LIMIT)
+ 			return (NULL);
+ 
+ 		if (*p == ':') {
++			if (p == header)
++				return (NULL);
+ 			*(p)++ = '\0';
++			value = p;
+ 			break;
+ 		}
+ 
+@@ -2019,11 +2023,10 @@
+ 			return (NULL);
+ 	}
+ 
+-	while (isspace(*(unsigned char *)p))
+-		p++;
+-
+-	if (*p == '\0')
++	if (value == NULL)
+ 		return (NULL);
++	while (*p == ' ' || *p == '\t')
++		p++;
+ 
+ 	value = p;
+ 	while (*p != '\0') {

@@ -19,8 +19,8 @@ static knurl_status select_bytes(knurl_reply *reply,
                                      : "application/json; charset=utf-8",
         empty, error);
     if (status == KNURL_OK) {
-        reply->body = sink->bytes.data;
-        reply->body_length = sink->bytes.length;
+        reply->impl->body = sink->bytes.data;
+        reply->impl->body_length = sink->bytes.length;
         knurl_owned_bytes_init(&sink->bytes);
     }
     return status;

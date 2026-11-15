@@ -1,5 +1,11 @@
 # TLS listeners
 
+`timeouts.tls_handshake` is an absolute accept-to-handshake deadline, default
+10000 milliseconds. Partial handshake progress does not renew it. Set the
+deadline's `disabled` field to 1 to turn it off; zero milliseconds inherits the
+default.
+Kore checks connection deadlines on its regular timeout sweep (up to 500 ms).
+
 Declare a `KNURL_LISTENER_HTTPS` listener and set `identity_index` to an entry in
 `config.tls.identities`. A manual identity has explicit domains and either a
 certificate/key PEM bundle or separate certificate and private-key material.
@@ -12,9 +18,9 @@ Each material accepts a regular file, copied bytes or an opener returning an
 unowned public `knurl_source`. Construction only copies declarations. Explicit
 validation and each run open their own inputs and consume them synchronously to
 EOF, under `max_material_bytes` per input (zero adds no caller ceiling). The
-PEM reader enforces OpenSSL's signed-int input range on consumed bytes. AGAIN fails with
-STATE; no background material reader is implied. Successful opener transfer
-receives one close notification on consumption or failure. The source must be
+PEM reader enforces OpenSSL's signed-int input range on consumed bytes. AGAIN
+fails with STATE; no background material reader is implied. Successful opener
+transfer receives one close notification on consumption or failure. The source must be
 ready for bounded synchronous consumption; a host adapter owns any blocking
 client lifetime or cooperative deadline. Validation performs no bind, fork,
 RESTORE/PERSIST callback or ACME traffic.
@@ -43,7 +49,7 @@ omits port 443. It validates the Host authority, handles bracketed IPv6, and
 rejects an unapproved or malformed host. Local bind ports and presented ports are
 distinct. Redirects use the application serving gate.
 
-The [public TLS fixture](../tests/tls-runtime.c) covers file/memory/callback input,
+The [public TLS fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/tls-runtime.c) covers file/memory/callback input,
 bundles and extra chains, incorrect keys/trust/ciphers, source AGAIN and file
 bounds, SNI/Host checks, required/optional client authentication, TLS 1.2/1.3,
 multiple listeners and raw-URI redirects. Its channel echo preserves early bytes,
@@ -79,16 +85,18 @@ installation changes, worker availability changes and key-manager failures.
 Repeated USABLE observations can reflect certificate replacement; they are not
 a remote issuance count. Failure events retain the current state, include the
 bounded cause, and identify the domain when the interrupted operation knew it.
+An event captures one observation; a later state query can already reflect
+independent worker progress, including PENDING advancing to USABLE.
 
 TLS-ALPN-01 challenge certificates remain pending and are not application
 identities. Challenges work while application serving is paused and bypass
 client authentication only for the negotiated challenge connection. Ordinary
 HTTP remains gated and subject to the identity's client-auth policy.
 
-The [runtime fixture](../tests/acme-runtime.c) exercises actual private
+The [runtime fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/acme-runtime.c) exercises actual private
 key-manager signing, TLS 1.2/1.3, mTLS, repeated listeners, two HTTP workers,
 pending challenge handling, certificate replacement, persistence failure and
-parent-enforced timeout/recovery. Its [private driver](../tests/acme-backend.c)
+parent-enforced timeout/recovery. Its [private driver](https://github.com/c89systems/libknurl/blob/trunk/tests/acme-backend.c)
 submits the real ACME-to-key-manager certificate/challenge messages; it does not
 simulate a remote ACME directory, JWS account/order exchange or renewal schedule.
 The separate [protocol fixture](acme.md#account-order-and-recovery-flow) drives a local HTTPS CA through
@@ -96,53 +104,25 @@ account recovery, signed orders, CSR, TLS-ALPN-01, issuance and renewal selectio
 after ACME-process restart. It also covers captured trust and transport bounds.
 Complete allocation/fatal unwinding and in-flight protocol fault coverage remain.
 
-## Lua callbacks
+## Outbound system trust
 
-Lua identities accept `mode='acme'` and callback materials. A material declaration
-is `{kind='callback', open=function() ... end}`, with kind optional when open is
-supplied. The opener returns an unowned `knurl.source`, a legacy read/reset/close
-table, or nil/error. Callback declarations and their owners remain pinned through
-server close; changing the original open field does not change the declaration.
-A source already transferred, closed or currently executing cannot be transferred again.
-Legacy reset executes once before the first pull, and each accepted source closes
-once on success or failure. Consumption reuses the bounded synchronous C material
-reader; AGAIN fails with STATE. No TLS transport or PEM parser is implemented in
-the binding.
+`knurl_tls_system_ca_file()` borrows a CA bundle path for outbound HTTPS. It
+selects nonempty `CURL_CA_BUNDLE`, then `SSL_CERT_FILE`. Those explicit overrides
+are returned even when invalid, so their consumers fail rather than silently
+switching trust. With neither bundle override, nonempty `SSL_CERT_DIR` suppresses
+fallback bundle discovery in favor of directory trust.
 
-Each explicit validate and run opens fresh material. The same server cannot be
-closed, run or recursively validated inside its material callbacks. The complete
-opener/read/reset/close boundary is protected, including result conversion and
-allocation failures. Cleanup errors do not replace a native operation failure;
-a close callback failure makes an otherwise successful validation/run fail. A stop requested
-while preparing material prevents subsequent worker forks. Lua callbacks own the
-lifetime of any Lua strings they retain; the C core cleanses its own copies.
+Otherwise it selects the first readable, nonempty regular file from
+`/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`,
+`/etc/ssl/ca-bundle.pem` and `/etc/ssl/cert.pem`. NULL means no bundle was selected;
+the helper does not itself configure a TLS connection or load a trust store.
+Retain environment strings unchanged while their borrowed paths are in use.
 
-`tls.acme` accepts email, directory_url, runtime_directory, ca_file, ca_directory,
-persist_timeout_ms and `state(server, context)`. Context copies event
-(restore/persist/error), domain, runtime_directory and process. ERROR also copies
-the public cause as context.error. Nil/true succeeds, false rejects with STATE,
-and nil/error propagates the supplied status. Thrown errors and OOM are caught
-before returning through the C frame. ERROR return/failure follows the native
-notification contract and cannot replace the primary persistence/restore failure.
-
-RESTORE runs in the quiescent parent; PERSIST runs in the key manager after fork,
-after Kore writes a certificate and before distribution. Clients with threads must be created in the
-owning process. The callback owns durable storage selection and hydration; it
-receives the configured runtime directory, with no Vectis/Lockd type or implicit XDG path.
-The configured deadline and restart policy remain in the public C ACME engine.
-Runtime files remain after failed persistence; there is no generation-store rollback.
-Construction and validate invoke no ACME state callback or
-CA traffic. A successful RESTORE callback which requests stop completes cleanup
-without starting children. Effective configuration copies ordinary ACME values.
-
-The [installed Lua fixture](../tests/lua/tls.lua) covers live mutual TLS with
-callback certificate/key/chain, copied declarations, source reset/close and
-busy/closed ownership, bounded input, callback/OOM failures and startup reentry.
-It also exercises actual parent RESTORE/ERROR delivery, stop before fork and
-startup without an extra PERSIST call. The C reference provider exercises
-real key-manager PERSIST during issuance/renewal. The [Lua issuance fixture](../tests/lua/acme.lua)
-reuses that local CA in the host VM, with actual challenge verification and live
-certificate serving. Returned, thrown and OOM persistence failures reach the
-parent; ERROR observer failure preserves their cause. Callback owners remain
-retained after the registration table changes. In-flight fault combinations
-remain part of the final integration review.
+Proxy connections use this selection and `SSL_CERT_DIR` when no explicit CA PEM
+is configured. ACME's `ca_file` overrides bundle discovery and `ca_directory`
+overrides `SSL_CERT_DIR`. An explicit directory without an explicit file also
+suppresses bundle discovery. ACME captures that policy before starting children;
+later child environment changes do not replace it. Without a selected file or
+directory, the curl/OpenSSL SDK defaults apply. Peer and hostname verification
+stay enabled. This outbound
+policy is independent of an HTTPS listener's client-certificate trust.

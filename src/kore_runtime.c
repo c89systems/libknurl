@@ -2,16 +2,22 @@
 #define _POSIX_C_SOURCE 200809L
 #include "kore_internal.h"
 #include "executor_internal.h"
+#include "acl_internal.h"
 #include "storage_internal.h"
 #include "body_internal.h"
 #include "autoblock_internal.h"
 #include "logging_internal.h"
+#include "access_log_file.h"
+#include "file_internal.h"
 
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include <netinet/tcp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -28,8 +34,8 @@ knurl_status knurl_runtime_hook(struct knurl_runtime *runtime,
     if (function == NULL)
         return KNURL_OK;
     knurl_error_clear(&error);
-    status = function(runtime->server, &runtime->server->process,
-                      runtime->server->config.callbacks.userdata, &error);
+    status = function(runtime->server, &runtime->server->impl->process,
+                      runtime->server->impl->config.callbacks.userdata, &error);
     if (status < KNURL_OK || status == KNURL_AGAIN || status == KNURL_EOF ||
         status > KNURL_BACKEND)
         status = KNURL_INVALID;
@@ -114,12 +120,12 @@ void knurl_server_notify_signal(knurl_server *server, int number)
     ssize_t count;
     saved = errno;
     wake = 1;
-    if (server != NULL && server->notify_fd >= 0) {
+    if (server != NULL && server->impl->notify_fd >= 0) {
         if ((number == SIGINT || number == SIGTERM || number == SIGQUIT) &&
-            server->terminating_signal == 0)
-            server->terminating_signal = number;
+            server->impl->terminating_signal == 0)
+            server->impl->terminating_signal = number;
         do {
-            count = write((int)server->notify_fd, &wake, 1);
+            count = write((int)server->impl->notify_fd, &wake, 1);
         } while (count == -1 && errno == EINTR);
     }
     errno = saved;
@@ -133,14 +139,15 @@ knurl_status knurl_server_request_stop(knurl_server *server, knurl_error *error)
     wake = 1;
     status = KNURL_OK;
     (void)pthread_mutex_lock(&runtime_lock);
-    if (server == NULL || server->runtime == NULL || server->notify_fd < 0 ||
-        server->process.process_id != (long)getpid()) {
+    if (server == NULL || server->impl->runtime == NULL ||
+        server->impl->notify_fd < 0 ||
+        server->impl->process.process_id != (long)getpid()) {
         status = knurl_fail(error, KNURL_STATE, "server_request_stop",
                             "server has no active run");
-    } else if (!server->stop_requested) {
-        server->stop_requested = 1;
+    } else if (!server->impl->stop_requested) {
+        server->impl->stop_requested = 1;
         do {
-            count = write((int)server->notify_fd, &wake, 1);
+            count = write((int)server->impl->notify_fd, &wake, 1);
         } while (count == -1 && errno == EINTR);
         if (count == -1 && errno != EAGAIN)
             status = knurl_fail(error, KNURL_IO, "server_request_stop",
@@ -162,8 +169,8 @@ static void wake_event(void *userdata, int failed)
     do {
         count = read(runtime->wake[0], bytes, sizeof(bytes));
     } while (count > 0 || (count == -1 && errno == EINTR));
-    if (failed || runtime->server->stop_requested ||
-        runtime->server->terminating_signal) {
+    if (failed || runtime->server->impl->stop_requested ||
+        runtime->server->impl->terminating_signal) {
         if (worker != NULL) {
             if (!runtime->stop_sent) {
                 runtime->stop_sent = 1;
@@ -189,7 +196,7 @@ static int wake_open(struct knurl_runtime *runtime)
             fcntl(runtime->wake[i], F_SETFD, FD_CLOEXEC) == -1)
             return 0;
     }
-    runtime->server->notify_fd = runtime->wake[1];
+    runtime->server->impl->notify_fd = runtime->wake[1];
     runtime->wake_event.type = 0;
     runtime->wake_event.flags = 0;
     runtime->wake_event.handle = wake_event;
@@ -198,7 +205,7 @@ static int wake_open(struct knurl_runtime *runtime)
 
 static void wake_close(struct knurl_runtime *runtime)
 {
-    runtime->server->notify_fd = -1;
+    runtime->server->impl->notify_fd = -1;
     if (runtime->wake[0] >= 0)
         (void)close(runtime->wake[0]);
     if (runtime->wake[1] >= 0)
@@ -211,18 +218,18 @@ static int child_start(void *userdata, struct kore_worker *child)
     struct knurl_runtime *runtime;
     knurl_process_context *process;
     runtime = userdata;
-    process = &runtime->server->process;
+    process = &runtime->server->impl->process;
     knurl_kore_logging_child(runtime);
     wake_close(runtime);
     kore_platform_event_cleanup();
     kore_timer_cleanup();
-    knurl_loop_discard_after_fork(runtime->server->loop);
-    runtime->server->loop = NULL;
+    knurl_loop_discard_after_fork(runtime->server->impl->loop);
+    runtime->server->impl->loop = NULL;
     runtime->control_watch = NULL;
-    if (runtime->server->config.supervision.enabled &&
-        runtime->server->config.supervision.control_fd >= 0) {
-        (void)close(runtime->server->config.supervision.control_fd);
-        runtime->server->config.supervision.control_fd = -1;
+    if (runtime->server->impl->config.supervision.enabled &&
+        runtime->server->impl->config.supervision.control_fd >= 0) {
+        (void)close(runtime->server->impl->config.supervision.control_fd);
+        runtime->server->impl->config.supervision.control_fd = -1;
     }
     process->process_id = (long)getpid();
     process->role = child->id == KORE_WORKER_KEYMGR
@@ -234,14 +241,16 @@ static int child_start(void *userdata, struct kore_worker *child)
     process->restarted = child->restarted;
     runtime->worker_started = runtime->worker_stopped = 0;
     runtime->stop_sent = 0;
-    runtime->server->stop_requested = runtime->server->terminating_signal = 0;
+    runtime->server->impl->stop_requested =
+        runtime->server->impl->terminating_signal = 0;
     if (!wake_open(runtime))
         return 0;
     if (knurl_kore_loop_create(runtime, &runtime->error) != KNURL_OK)
         return 0;
     runtime->worker_started = 1;
     return knurl_runtime_hook(
-               runtime, runtime->server->config.callbacks.on_process_start) ==
+               runtime,
+               runtime->server->impl->config.callbacks.on_process_start) ==
            KNURL_OK;
 }
 
@@ -253,18 +262,25 @@ static int worker_start(void *userdata)
     runtime->status = worker_signals(runtime);
     if (runtime->status == KNURL_OK)
         runtime->status =
-            knurl_loop_activate(runtime->server->loop, &runtime->error);
+            knurl_loop_activate(runtime->server->impl->loop, &runtime->error);
     if (runtime->status != KNURL_OK) {
         knurl_kore_child_failure(runtime, &runtime->error);
         return 0;
     }
     runtime->worker_started = 1;
-    if (runtime->server->process.role != KNURL_PROCESS_HTTP)
+    if (runtime->server->impl->process.role != KNURL_PROCESS_HTTP)
         return 1;
-    runtime->server->loop->http_worker = 1;
-    knurl_kore_tls_worker(runtime, runtime->server->process.worker_index, 1);
+    runtime->server->impl->loop->impl->http_worker = 1;
+    runtime->status = knurl_acl_worker_start(runtime->server, &runtime->error);
+    if (runtime->status != KNURL_OK) {
+        knurl_kore_child_failure(runtime, &runtime->error);
+        return 0;
+    }
+    knurl_kore_tls_worker(runtime, runtime->server->impl->process.worker_index,
+                          1);
     return knurl_runtime_hook(
-               runtime, runtime->server->config.callbacks.on_worker_start) ==
+               runtime,
+               runtime->server->impl->config.callbacks.on_worker_start) ==
            KNURL_OK;
 }
 
@@ -274,13 +290,14 @@ static void worker_stopping(void *userdata)
     runtime = userdata;
     if (runtime->worker_started && !runtime->worker_stopped) {
         runtime->worker_stopped = 1;
-        runtime->server->state = KNURL_SERVER_STOPPING;
+        runtime->server->impl->state = KNURL_SERVER_STOPPING;
         (void)knurl_runtime_hook(
-            runtime, runtime->server->config.callbacks.on_worker_stopping);
+            runtime,
+            runtime->server->impl->config.callbacks.on_worker_stopping);
         knurl_kore_channels_stopping(runtime);
         knurl_kore_websockets_stopping(runtime);
-        knurl_storage_stopping(runtime->server->loop);
-        knurl_executors_stopping(runtime->server->loop);
+        knurl_storage_stopping(runtime->server->impl->loop);
+        knurl_executors_stopping(runtime->server->impl->loop);
     }
 }
 
@@ -298,8 +315,9 @@ static int startup_cancel(void *userdata)
                 break;
             }
     }
-    return runtime->status != KNURL_OK || runtime->server->stop_requested ||
-           runtime->server->terminating_signal;
+    return runtime->status != KNURL_OK ||
+           runtime->server->impl->stop_requested ||
+           runtime->server->impl->terminating_signal;
 }
 
 static void fork_prepare(void *userdata)
@@ -334,16 +352,16 @@ static int worker_exit(void *userdata)
         knurl_kore_child_failure(runtime, &runtime->error);
     child = worker;
     server = runtime->server;
-    process = server->process;
-    callback = server->config.callbacks.on_worker_exit;
-    data = server->config.callbacks.userdata;
+    process = server->impl->process;
+    callback = server->impl->config.callbacks.on_worker_exit;
+    data = server->impl->config.callbacks.userdata;
     /* Vectis's terminal fork callback may reclaim its app and this fork's
      * server. Publish native cleanup first and retain no host state afterward.
      */
     (void)pthread_mutex_lock(&runtime_lock);
-    server->state = failed ? KNURL_SERVER_FAILED : KNURL_SERVER_STOPPED;
-    server->runtime = NULL;
-    server->router->frozen = 0;
+    server->impl->state = failed ? KNURL_SERVER_FAILED : KNURL_SERVER_STOPPED;
+    server->impl->runtime = NULL;
+    server->impl->router->impl->frozen = 0;
     active_runtime = NULL;
     runtime->server = NULL;
     (void)pthread_mutex_unlock(&runtime_lock);
@@ -358,10 +376,11 @@ static int worker_pending(void *userdata)
     struct knurl_runtime *runtime;
     runtime = userdata;
     return runtime->websockets != NULL ||
-           knurl_loop_pending(runtime->server->loop);
+           knurl_loop_pending(runtime->server->impl->loop);
 }
 
-static knurl_status validate_config(knurl_server *server, knurl_error *error)
+static knurl_status validate_config(knurl_server *server, int *spool,
+                                    knurl_error *error)
 {
     size_t i;
     knurl_status status;
@@ -375,16 +394,16 @@ static knurl_status validate_config(knurl_server *server, knurl_error *error)
     if (knurl_server_running(server))
         return knurl_fail(error, KNURL_STATE, "server_validate",
                           "server is running");
-    if (server->config.listener_count == 0)
+    if (server->impl->config.listener_count == 0)
         return knurl_fail(error, KNURL_INVALID, "server_validate",
                           "declare at least one listener");
-    if (server->config.supervision.enabled &&
-        server->config.supervision.control_fd < 0)
+    if (server->impl->config.supervision.enabled &&
+        server->impl->config.supervision.control_fd < 0)
         return knurl_fail(
             error, KNURL_STATE, "server_validate",
             "supervised rerun requires a fresh control descriptor");
-    for (i = 0; i < server->router->count; ++i) {
-        route = &server->router->routes[i]->config;
+    for (i = 0; i < server->impl->router->impl->count; ++i) {
+        route = &server->impl->router->impl->routes[i]->impl->config;
         if (route->on_headers != NULL)
             continue;
         if (route->body.mode != KNURL_BODY_NONE &&
@@ -398,29 +417,34 @@ static knurl_status validate_config(knurl_server *server, knurl_error *error)
         if (route->body.mode == KNURL_BODY_NONE)
             continue;
         limit = knurl_body_policy_limit(
-            &route->body, server->config.limits.default_body_bytes);
+            &route->body, server->impl->config.limits.default_body_bytes);
         policy = route->body;
         policy.max_bytes = limit;
         status = knurl_body_create(
-            &policy, server->config.limits.body_spool_directory, &body, error);
+            &policy, server->impl->config.limits.body_spool_directory, &body,
+            error);
         if (status != KNURL_OK)
             return status;
+        if (spool != NULL && !policy.disk_spool_disabled &&
+            (route->methods & KNURL_KORE_BODY_METHODS)) {
+            size_t size;
+            if (knurl_u64_to_size(limit, &size, NULL) != KNURL_OK ||
+                size > body->impl->memory_limit)
+                *spool = 1;
+        }
         knurl_body_release(body);
     }
     knurl_error_clear(error);
     return KNURL_OK;
 }
 
-knurl_status knurl_server_validate(knurl_server *server, knurl_error *error)
+static knurl_status validate_material(knurl_server *server, knurl_error *error)
 {
     struct knurl_tls_prepared tls;
     struct knurl_runtime preparation;
     knurl_status status;
-    status = validate_config(server, error);
-    if (status != KNURL_OK)
-        return status;
-    status = knurl_tls_prepare(&server->config.tls, KORE_DEFAULT_CIPHER_LIST,
-                               &tls, error);
+    status = knurl_tls_prepare(&server->impl->config.tls,
+                               KORE_DEFAULT_CIPHER_LIST, &tls, error);
     knurl_tls_prepared_clear(&tls);
     if (status == KNURL_OK) {
         memset(&preparation, 0, sizeof(preparation));
@@ -431,11 +455,181 @@ knurl_status knurl_server_validate(knurl_server *server, knurl_error *error)
     return status;
 }
 
+knurl_status knurl_server_validate(knurl_server *server, knurl_error *error)
+{
+    knurl_status status = validate_config(server, NULL, error);
+    return status == KNURL_OK ? validate_material(server, error) : status;
+}
+
+static knurl_status resource_error(knurl_error *error, knurl_status status,
+                                   const char *operation, const char *message,
+                                   knurl_error_source source, int code)
+{
+    knurl_fail(error, status, operation, message);
+    if (error != NULL) {
+        error->source = source;
+        error->native_code = code;
+    }
+    return status;
+}
+
+static knurl_status listener_error(const knurl_listener_config *config,
+                                   const char *operation,
+                                   knurl_error_source source, int code,
+                                   knurl_error *error)
+{
+    resource_error(error, KNURL_BACKEND, operation,
+                   source == KNURL_ERROR_SYSTEM ? strerror(code)
+                                                : gai_strerror(code),
+                   source, code);
+    if (error != NULL)
+        (void)snprintf(error->detail, sizeof(error->detail), "port %u at %s",
+                       (unsigned int)config->port, config->bind);
+    return KNURL_BACKEND;
+}
+
+/* Open the same TCP listener for preflight and for adoption by Kore at run. */
+static knurl_status open_listener(const knurl_listener_config *config,
+                                  unsigned int backlog, int *out, int *family,
+                                  knurl_error *error)
+{
+    struct addrinfo hints, *address;
+    const char *operation;
+    char port[8];
+    int fd, code, enabled = 1;
+
+    *out = -1;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    (void)snprintf(port, sizeof(port), "%u", (unsigned int)config->port);
+    code = getaddrinfo(config->bind, port, &hints, &address);
+    if (code != 0)
+        return listener_error(config, "listener_resolve",
+                              code == EAI_SYSTEM ? KNURL_ERROR_SYSTEM
+                                                 : KNURL_ERROR_BACKEND,
+                              code == EAI_SYSTEM ? errno : code, error);
+
+    operation = "listener_socket";
+    fd = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
+    if (fd == -1)
+        goto failed;
+    operation = "listener_configure";
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1 ||
+        !kore_connection_nonblock(fd, 0) ||
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled)) ==
+            -1)
+        goto failed;
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof(enabled));
+    operation = "listener_bind";
+    if (bind(fd, address->ai_addr, address->ai_addrlen) == -1)
+        goto failed;
+    operation = "listener_listen";
+    if (listen(fd, (int)backlog) == -1)
+        goto failed;
+    if (family != NULL)
+        *family = address->ai_family;
+    freeaddrinfo(address);
+    *out = fd;
+    return KNURL_OK;
+
+failed:
+    code = errno;
+    if (fd != -1)
+        (void)close(fd);
+    freeaddrinfo(address);
+    return listener_error(config, operation, KNURL_ERROR_SYSTEM, code, error);
+}
+
+static knurl_status probe_spool(const char *directory, knurl_error *error)
+{
+    struct rlimit limit;
+    knurl_status status = KNURL_OK;
+    int fd, code;
+    char *path;
+
+    /* A one-byte write under a zero file-size limit raises SIGXFSZ. */
+    code = getrlimit(RLIMIT_FSIZE, &limit) == -1 ? errno : 0;
+    if (code == 0 && limit.rlim_cur == 0)
+        code = EFBIG;
+    if (code == 0) {
+        status = knurl_private_file(directory, "knurl-body", &fd, &path, error);
+        if (status == KNURL_OK) {
+            status = knurl_file_write(fd, "\0", 1, error);
+            code = unlink(path) == -1 ? errno : 0;
+            if (close(fd) == -1 && code == 0)
+                code = errno;
+            free(path);
+        }
+    }
+    if (status == KNURL_OK && code != 0)
+        status = resource_error(error, KNURL_IO, "body_spool", strerror(code),
+                                KNURL_ERROR_SYSTEM, code);
+    if (status != KNURL_OK && error != NULL) {
+        (void)snprintf(error->operation, sizeof(error->operation),
+                       "body_spool");
+        (void)snprintf(error->detail, sizeof(error->detail), "%s", directory);
+    }
+    return status;
+}
+
+knurl_status knurl_server_preflight(knurl_server *server, knurl_error *error)
+{
+    const knurl_server_config *config;
+    struct knurl_access_file *log;
+    knurl_status status;
+    int spool = 0, dispatches_routes = 0, code, *listeners;
+    size_t opened = 0;
+
+    status = validate_config(server, &spool, error);
+    if (status == KNURL_OK)
+        status = validate_material(server, error);
+    if (status != KNURL_OK)
+        return status;
+    config = &server->impl->config;
+    listeners = calloc(config->listener_count, sizeof(*listeners));
+    if (listeners == NULL)
+        return knurl_fail(error, KNURL_NOMEM, "server_preflight",
+                          "cannot allocate listener probes");
+    /* Hold all sockets until the last bind to catch conflicting declarations.
+     */
+    while (opened < config->listener_count && status == KNURL_OK) {
+        if (config->listeners[opened].kind != KNURL_LISTENER_REDIRECT)
+            dispatches_routes = 1;
+        status = open_listener(&config->listeners[opened],
+                               config->http.socket_backlog, &listeners[opened],
+                               NULL, error);
+        if (status == KNURL_OK)
+            ++opened;
+    }
+    while (opened != 0)
+        (void)close(listeners[--opened]);
+    free(listeners);
+    if (status == KNURL_OK && spool && dispatches_routes &&
+        config->limits.body_spool_directory != NULL)
+        status = probe_spool(config->limits.body_spool_directory, error);
+    if (status == KNURL_OK && config->http.access_log_path != NULL) {
+        status = knurl_access_file_open(&config->http, &log, error);
+        if (status == KNURL_OK) {
+            code = knurl_access_file_close(log);
+            if (code != 0)
+                status =
+                    resource_error(error, KNURL_IO, "access_log_close",
+                                   strerror(code), KNURL_ERROR_SYSTEM, code);
+        }
+        if (status != KNURL_OK && error != NULL)
+            (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                           config->http.access_log_path);
+    }
+    return status;
+}
+
 static void configure(struct knurl_runtime *runtime)
 {
     const knurl_server_config *config;
     size_t ceiling;
-    config = &runtime->server->config;
+    config = &runtime->server->impl->config;
     worker_count = (u_int8_t)config->workers.count;
     worker_set_affinity = !config->workers.affinity_disabled;
     worker_accept_threshold = (u_int32_t)config->workers.accept_threshold;
@@ -447,6 +641,8 @@ static void configure(struct knurl_runtime *runtime)
     worker_policy = config->workers.death_policy == KNURL_WORKER_RESTART
                         ? KORE_WORKER_POLICY_RESTART
                         : KORE_WORKER_POLICY_TERMINATE;
+    kore_tls_handshake_timeout_ms =
+        (u_int64_t)config->timeouts.tls_handshake.milliseconds;
     worker_idle_timeout =
         (u_int64_t)config->timeouts.connection_idle.milliseconds;
     http_header_max = config->limits.max_request_header_bytes;
@@ -496,7 +692,7 @@ static void configure(struct knurl_runtime *runtime)
             config->http.backend_curl_recv_max_bytes.low;
 }
 
-static void bind_listeners(struct knurl_runtime *runtime)
+static knurl_status bind_listeners(struct knurl_runtime *runtime)
 {
     const knurl_listener_config *config;
     struct kore_server *server;
@@ -509,26 +705,34 @@ static void bind_listeners(struct knurl_runtime *runtime)
     char port[8];
     size_t i;
     size_t count;
-    count = runtime->server->config.listener_count;
+    knurl_status status;
+    count = runtime->server->impl->config.listener_count;
     runtime->bound = calloc(count, sizeof(*runtime->bound));
     runtime->addresses = calloc(count, sizeof(*runtime->addresses));
     runtime->native_servers = calloc(count, sizeof(*runtime->native_servers));
     if (runtime->bound == NULL || runtime->addresses == NULL ||
         runtime->native_servers == NULL)
-        fatal("cannot allocate bound listener registry");
+        return knurl_fail(&runtime->error, KNURL_NOMEM, "listener_bind",
+                          "cannot allocate bound listener registry");
     for (i = 0; i < count; ++i) {
-        config = &runtime->server->config.listeners[i];
+        config = &runtime->server->impl->config.listeners[i];
         (void)snprintf(name, sizeof(name), "knurl-%lu", (unsigned long)i);
         (void)snprintf(port, sizeof(port), "%u", (unsigned int)config->port);
         server = kore_server_create(name);
         runtime->native_servers[i] = server;
         server->tls = config->kind == KNURL_LISTENER_HTTPS;
-        if (!kore_server_bind(server, config->bind, port, NULL))
-            fatal("cannot bind listener %s", name);
-        listener = LIST_FIRST(&server->listeners);
+        listener = kore_listener_create(server);
+        listener->host = kore_strdup(config->bind);
+        listener->port = kore_strdup(port);
+        status = open_listener(
+            config, runtime->server->impl->config.http.socket_backlog,
+            &listener->fd, &listener->family, &runtime->error);
+        if (status != KNURL_OK)
+            return status;
         size = sizeof(address);
         if (getsockname(listener->fd, (struct sockaddr *)&address, &size) != 0)
-            fatal("cannot inspect bound listener %s", name);
+            return listener_error(config, "listener_inspect",
+                                  KNURL_ERROR_SYSTEM, errno, &runtime->error);
         if (address.ss_family == AF_INET) {
             ipv4 = (struct sockaddr_in *)&address;
             (void)inet_ntop(AF_INET, &ipv4->sin_addr, runtime->addresses[i],
@@ -546,6 +750,7 @@ static void bind_listeners(struct knurl_runtime *runtime)
         ++runtime->bound_count;
         knurl_kore_listener_domains(runtime, server, config);
     }
+    return KNURL_OK;
 }
 
 knurl_status knurl_server_listener_at(const knurl_server *server, size_t index,
@@ -555,13 +760,13 @@ knurl_status knurl_server_listener_at(const knurl_server *server, size_t index,
     if (server == NULL || out == NULL)
         return knurl_fail(error, KNURL_INVALID, "server_listener_at",
                           "server and output are required");
-    if (server->runtime == NULL)
+    if (server->impl->runtime == NULL)
         return knurl_fail(error, KNURL_STATE, "server_listener_at",
                           "listener addresses belong to the active run");
-    if (index >= server->runtime->bound_count)
+    if (index >= server->impl->runtime->bound_count)
         return knurl_fail(error, KNURL_INVALID, "server_listener_at",
                           "listener index is outside the bound registry");
-    *out = server->runtime->bound[index];
+    *out = server->impl->runtime->bound[index];
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -570,22 +775,24 @@ knurl_status knurl_server_set_serving(knurl_server *server, int serving,
                                       knurl_error *error)
 {
     struct knurl_runtime *runtime;
-    if (server == NULL || server->runtime == NULL)
+    if (server == NULL || server->impl->runtime == NULL)
         return knurl_fail(error, KNURL_STATE, "server_set_serving",
                           "server has no active run");
-    runtime = server->runtime;
-    if (serving && (server->stop_requested || server->terminating_signal))
+    runtime = server->impl->runtime;
+    if (serving &&
+        (server->impl->stop_requested || server->impl->terminating_signal))
         return knurl_fail(error, KNURL_STATE, "server_set_serving",
                           "a stop has already been requested");
     if (getpid() != runtime->parent_pid ||
         !pthread_equal(pthread_self(), runtime->owner_thread) ||
-        (server->state != KNURL_SERVER_SERVING &&
-         server->state != KNURL_SERVER_READY_PAUSED))
+        (server->impl->state != KNURL_SERVER_SERVING &&
+         server->impl->state != KNURL_SERVER_READY_PAUSED))
         return knurl_fail(error, KNURL_STATE, "server_set_serving",
                           "serving gate is a ready parent-loop operation");
     __atomic_store_n(&runtime->shared->serving, serving != 0, __ATOMIC_RELEASE);
     runtime->gate_selected = 1;
-    server->state = serving ? KNURL_SERVER_SERVING : KNURL_SERVER_READY_PAUSED;
+    server->impl->state =
+        serving ? KNURL_SERVER_SERVING : KNURL_SERVER_READY_PAUSED;
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -603,7 +810,7 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
         out->reason = KNURL_RUN_STARTUP_FAILURE;
         out->signal_number = out->escalated = 0;
     }
-    status = validate_config(server, error);
+    status = validate_config(server, NULL, error);
     if (status != KNURL_OK)
         return status;
     runtime = calloc(1, sizeof(*runtime));
@@ -631,17 +838,17 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
                           "Kore supports one active server per process");
     }
     active_runtime = runtime;
-    server->runtime = runtime;
-    server->stop_requested = server->terminating_signal = 0;
-    server->state = KNURL_SERVER_STARTING;
-    server->router->frozen = 1;
-    server->process.role = KNURL_PROCESS_PARENT;
-    server->process.process_id = (long)runtime->parent_pid;
+    server->impl->runtime = runtime;
+    server->impl->stop_requested = server->impl->terminating_signal = 0;
+    server->impl->state = KNURL_SERVER_STARTING;
+    server->impl->router->impl->frozen = 1;
+    server->impl->process.role = KNURL_PROCESS_PARENT;
+    server->impl->process.process_id = (long)runtime->parent_pid;
     (void)pthread_mutex_unlock(&runtime_lock);
     if (setjmp(runtime->unwind) == 0) {
         if (!wake_open(runtime))
             fatal_error(runtime, "cannot allocate runtime notification pipe");
-        if (server->config.signals.mode == KNURL_SIGNALS_LIBRARY) {
+        if (server->impl->config.signals.mode == KNURL_SIGNALS_LIBRARY) {
             memset(&action, 0, sizeof(action));
             action.sa_handler = signal_received;
             (void)sigemptyset(&action.sa_mask);
@@ -661,20 +868,22 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
                 knurl_kore_control_start(runtime, &runtime->error);
         if (runtime->status == KNURL_OK)
             runtime->status = knurl_runtime_hook(
-                runtime, server->config.callbacks.on_process_start);
+                runtime, server->impl->config.callbacks.on_process_start);
         if (runtime->status == KNURL_OK)
             runtime->status = knurl_runtime_hook(
-                runtime, server->config.callbacks.on_parent_prepare);
+                runtime, server->impl->config.callbacks.on_parent_prepare);
         if (runtime->status == KNURL_OK)
             runtime->status = knurl_autoblock_open(server, &runtime->error);
+        if (runtime->status == KNURL_OK)
+            runtime->status = knurl_acl_router_prepare(server, &runtime->error);
         if (runtime->status == KNURL_OK)
             runtime->status =
                 knurl_kore_logging_start(runtime, &runtime->error);
         runtime->cancelled = startup_cancel(runtime);
         if (runtime->status == KNURL_OK && !runtime->cancelled)
-            runtime->status =
-                knurl_tls_prepare(&server->config.tls, KORE_DEFAULT_CIPHER_LIST,
-                                  &runtime->tls, &runtime->error);
+            runtime->status = knurl_tls_prepare(&server->impl->config.tls,
+                                                KORE_DEFAULT_CIPHER_LIST,
+                                                &runtime->tls, &runtime->error);
         runtime->cancelled = startup_cancel(runtime);
         if (runtime->status == KNURL_OK && !runtime->cancelled)
             runtime->status = knurl_kore_acme_prepare(runtime, &runtime->error);
@@ -683,7 +892,7 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
         if (runtime->status == KNURL_OK && !runtime->cancelled &&
             runtime->acme_root != NULL)
             runtime->status = knurl_acme_state_call(
-                &server->config.tls, server, &server->process,
+                &server->impl->config.tls, server, &server->impl->process,
                 KNURL_ACME_RESTORE, NULL, runtime->acme_root, &runtime->error);
         runtime->cancelled = startup_cancel(runtime);
         if (runtime->status == KNURL_OK && !runtime->cancelled) {
@@ -724,8 +933,8 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
             knurl_kore_acme_configure(runtime);
             runtime->callbacks.http_request = knurl_kore_dispatch;
             runtime->callbacks.http_request_free = knurl_kore_request_free;
-            bind_listeners(runtime);
-            if (!kore_library_parent_start()) {
+            runtime->status = bind_listeners(runtime);
+            if (runtime->status == KNURL_OK && !kore_library_parent_start()) {
                 runtime->cancelled = startup_cancel(runtime);
                 if (!runtime->cancelled)
                     if (runtime->status == KNURL_OK)
@@ -737,7 +946,7 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
                             "required worker did not initialize");
             }
             if (runtime->status == KNURL_OK &&
-                server->config.http.access_log_path != NULL)
+                server->impl->config.http.access_log_path != NULL)
                 kore_timer_add(kore_accesslog_run, 10, NULL, 0);
             runtime->cancelled = startup_cancel(runtime);
         }
@@ -745,33 +954,34 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
             kore_platform_event_level_read(runtime->wake[0],
                                            &runtime->wake_event);
             runtime->status =
-                knurl_loop_activate(server->loop, &runtime->error);
+                knurl_loop_activate(server->impl->loop, &runtime->error);
         }
         if (runtime->status == KNURL_OK && !runtime->cancelled) {
-            server->state = KNURL_SERVER_READY_PAUSED;
+            server->impl->state = KNURL_SERVER_READY_PAUSED;
             runtime->status = knurl_runtime_hook(
-                runtime, server->config.callbacks.on_parent_ready);
+                runtime, server->impl->config.callbacks.on_parent_ready);
             if (runtime->status == KNURL_OK) {
                 runtime->ready = 1;
                 if (!runtime->gate_selected)
                     (void)knurl_server_set_serving(
-                        server, !server->config.start_paused, NULL);
+                        server, !server->impl->config.start_paused, NULL);
                 knurl_kore_tls_observe(runtime, NULL);
             }
         }
         while (runtime->status == KNURL_OK && runtime->ready &&
                kore_quit == KORE_QUIT_NONE) {
-            if (server->stop_requested || server->terminating_signal) {
+            if (server->impl->stop_requested ||
+                server->impl->terminating_signal) {
                 kore_quit = KORE_QUIT_NORMAL;
                 break;
             }
             kore_library_parent_step(1000);
         }
     }
-    server->state = KNURL_SERVER_STOPPING;
+    server->impl->state = KNURL_SERVER_STOPPING;
     __atomic_store_n(&runtime->shared->serving, 0, __ATOMIC_RELEASE);
     stopped_status = knurl_runtime_hook(
-        runtime, server->config.callbacks.on_parent_stopping);
+        runtime, server->impl->config.callbacks.on_parent_stopping);
     if (runtime->status == KNURL_OK && stopped_status != KNURL_OK)
         runtime->status = stopped_status;
     if (runtime->initialized) {
@@ -802,8 +1012,8 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
                 knurl_fail(&runtime->error, KNURL_BACKEND, "server_run",
                            "backend or worker failed");
     }
-    stopped_status =
-        knurl_runtime_hook(runtime, server->config.callbacks.on_parent_stopped);
+    stopped_status = knurl_runtime_hook(
+        runtime, server->impl->config.callbacks.on_parent_stopped);
     if (runtime->status == KNURL_OK && stopped_status != KNURL_OK)
         runtime->status = stopped_status;
     knurl_kore_control_close(runtime);
@@ -811,10 +1021,10 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
         out->reason = runtime->status != KNURL_OK
                           ? (runtime->ready ? KNURL_RUN_BACKEND_FAILURE
                                             : KNURL_RUN_STARTUP_FAILURE)
-                          : (server->terminating_signal != 0
+                          : (server->impl->terminating_signal != 0
                                  ? KNURL_RUN_TERMINATING_SIGNAL
                                  : KNURL_RUN_REQUESTED_STOP);
-        out->signal_number = (int)server->terminating_signal;
+        out->signal_number = (int)server->impl->terminating_signal;
         out->escalated = runtime->initialized && kore_library_escalated;
         out->has_failure = runtime->has_failure;
         out->last_failure = runtime->last_failure;
@@ -825,11 +1035,11 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
         *error = runtime->error;
     (void)pthread_mutex_lock(&runtime_lock);
     wake_close(runtime);
-    server->runtime = NULL;
+    server->impl->runtime = NULL;
     active_runtime = NULL;
-    server->state =
+    server->impl->state =
         status == KNURL_OK ? KNURL_SERVER_STOPPED : KNURL_SERVER_FAILED;
-    server->router->frozen = 0;
+    server->impl->router->impl->frozen = 0;
     (void)pthread_mutex_unlock(&runtime_lock);
     (void)munmap(runtime->shared, sizeof(*runtime->shared));
     knurl_kore_tls_clear(runtime);

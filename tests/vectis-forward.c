@@ -52,7 +52,8 @@ reference_status reference_xml_parse_source(
         status = reference_input_open(in, &source, &native);
     if (status == KNURL_OK) {
         /* Baseline parse accepts fresh, uninitialized mapped storage. */
-        lonejson_init(NULL, map, record);
+        if (lonejson_init(NULL, map, record, NULL) != LONEJSON_STATUS_OK)
+            abort();
         status =
             knurl_xml_parse_source(source, &schema, options, record, &native);
     }

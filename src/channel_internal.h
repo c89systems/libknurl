@@ -24,7 +24,8 @@ struct knurl_channel_backend {
     void (*release)(knurl_channel *, int);
 };
 
-struct knurl_channel {
+struct knurl_channel_impl {
+    knurl_channel receiver;
     knurl_request *request;
     knurl_server *server;
     knurl_response *response;

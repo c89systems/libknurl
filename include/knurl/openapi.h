@@ -5,13 +5,6 @@
 extern "C" {
 #endif
 struct lonejson_map;
-/** Values for openapi format. */
-typedef enum knurl_openapi_format {
-    /** OpenAPI output encoding: json. */
-    KNURL_OPENAPI_JSON = 0,
-    /** OpenAPI output encoding: yaml. */
-    KNURL_OPENAPI_YAML
-} knurl_openapi_format;
 /** Openapi schema. */
 typedef struct knurl_openapi_schema {
     /** Name of this declaration, field or listed resource. */

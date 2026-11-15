@@ -1,6 +1,6 @@
 # HTTP and SSE reverse proxy routes
 
-Include [`<knurl/proxy.h>`](../include/knurl/proxy.h), or the umbrella
+Include [`<knurl/proxy.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/proxy.h), or the umbrella
 `<knurl/knurl.h>`. Initialize `knurl_proxy_config`, set a route pattern and
 HTTP/HTTPS base target, then call `knurl_router_proxy`. Registration copies
 patterns, target URLs, TLS PEM bundles and callbacks without connecting or
@@ -40,9 +40,11 @@ The worker rebuilds forwarding headers from connection metadata and the inbound
 Host, removing spoofed forwarding fields and connection-nominated fields. The
 forwarding source is the real TCP socket peer. Server trusted-client resolution
 is available separately as request effective-address metadata; it does not
-replace the proxy transport's socket-peer forwarding source. Configured default trust uses the selected curl
-SDK; optional copied CA/client identity bundles are passed in memory. Peer and
-hostname verification stay enabled. HTTPS auto mode prefers HTTP/2 with HTTP/1.1
+replace the proxy transport's socket-peer forwarding source. Default trust uses
+the [system CA selection](tls.md#outbound-system-trust), with SDK defaults when no
+file or directory is selected; optional copied CA/client identity bundles are
+passed in memory. Peer and hostname verification stay enabled. HTTPS auto mode
+prefers HTTP/2 with HTTP/1.1
 fallback; cleartext uses HTTP/1.1. This adapter accepts HTTP/1.1 downstream
 requests. Request trailers force HTTP/1.1 upstream.
 
@@ -88,7 +90,7 @@ standalone deadline. Cancellation retires curl watches before owner-loop teardow
 queued callbacks keep their exchange alive until retirement and never dereference
 a closed request.
 
-The [public live fixture](../tests/proxy-runtime.c) covers copied routes, raw
+The [public live fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/proxy-runtime.c) covers copied routes, raw
 fallback, rewrite/Host/forwarding policy, repeated fields, binary and 64 KiB local
 replies, HEAD, hard limits, 100/103 queue pressure and replacement, 64 KiB duplex
 upload/download before upload completion, request/response trailers, SSE progress
@@ -99,6 +101,6 @@ and shared installed SDKs, without private headers or Kore declarations.
 The same registrations also execute [WebSocket/WSS relays](proxy-websocket.md),
 with validated opening responses, opaque duplex bytes and streamed non-101
 rejections. Their admission and deadlines use this worker policy. Upstream
-The [HTTP/2 fixture](../tests/proxy-h2.c) proves live TLS/ALPN duplex delivery
+The [HTTP/2 fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/proxy-h2.c) proves live TLS/ALPN duplex delivery
 before upload EOF. Forced retry/fault combinations and slow-peer RSS claims
-require their own evidence; see [verification](verification.md).
+require their own evidence; see [verification](https://github.com/c89systems/libknurl/blob/trunk/docs/verification.md).

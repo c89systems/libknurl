@@ -207,11 +207,10 @@ static void completed(knurl_storage_operation *op,
     if (r->code != KNURL_STORAGE_OK)
         return;
     if (s->action == KNURL_STORAGE_PUT_BEGIN) {
-        VERIFY(f, knurl_storage_operation_take_resource(
-                      op, &f->writers[s->resource], &error) == KNURL_OK);
-    } else if (s->action == KNURL_STORAGE_LIST_OPEN) {
-        VERIFY(f, knurl_storage_operation_take_resource(op, &f->list, &error) ==
+        VERIFY(f, op->take_resource(op, &f->writers[s->resource], &error) ==
                       KNURL_OK);
+    } else if (s->action == KNURL_STORAGE_LIST_OPEN) {
+        VERIFY(f, op->take_resource(op, &f->list, &error) == KNURL_OK);
     } else if (s->action == KNURL_STORAGE_PUT_WRITE)
         VERIFY(f, r->accepted == strlen(s->bytes));
     else if (s->action == KNURL_STORAGE_PUT_FINISH) {
@@ -231,15 +230,14 @@ static void completed(knurl_storage_operation *op,
         char bytes[16];
         size_t n;
         zero.high = zero.low = 0;
-        VERIFY(f, knurl_storage_operation_take_asset(op, &asset, &error) ==
-                      KNURL_OK);
+        VERIFY(f, op->take_asset(op, &asset, &error) == KNURL_OK);
         if (f->step == 6)
             f->snapshot = asset;
         else {
-            VERIFY(f, knurl_asset_read(asset, zero, bytes, sizeof(bytes), &n,
-                                       &error) == KNURL_OK &&
+            VERIFY(f, asset->read(asset, zero, bytes, sizeof(bytes), &n,
+                                  &error) == KNURL_OK &&
                           n == 3 && memcmp(bytes, "won", 3) == 0);
-            VERIFY(f, knurl_asset_close(asset, &error) == KNURL_OK);
+            VERIFY(f, asset->close(asset, &error) == KNURL_OK);
         }
     } else if (s->action == KNURL_STORAGE_LIST_NEXT) {
         VERIFY(f, r->has_entry && r->entry.info.size.low == 3);
@@ -256,10 +254,10 @@ static void completed(knurl_storage_operation *op,
         size_t n;
         char bytes[8];
         zero.high = zero.low = 0;
-        VERIFY(f, knurl_asset_read(f->snapshot, zero, bytes, sizeof(bytes), &n,
-                                   &error) == KNURL_OK &&
+        VERIFY(f, f->snapshot->read(f->snapshot, zero, bytes, sizeof(bytes), &n,
+                                    &error) == KNURL_OK &&
                       n == 6 && memcmp(bytes, "abcdef", 6) == 0);
-        VERIFY(f, knurl_asset_close(f->snapshot, &error) == KNURL_OK);
+        VERIFY(f, f->snapshot->close(f->snapshot, &error) == KNURL_OK);
         f->snapshot = NULL;
     }
 }
@@ -270,22 +268,20 @@ static void retired(const knurl_storage_outcome *outcome, void *data)
     const struct step *s;
     f->pending = NULL;
     if (f->step == STEP_TIMEOUT) {
-        knurl_timer_cancel(f->timer);
+        f->timer->cancel(f->timer);
         f->timer = NULL;
         VERIFY(f, outcome->cause == KNURL_TIMEOUT && outcome->cancelled);
         VERIFY(f, flock(f->lock, LOCK_UN) == 0);
         close(f->lock);
         f->lock = -1;
-        VERIFY(f, knurl_storage_provider_close(f->file_limited, &error) ==
-                      KNURL_OK);
+        VERIFY(f, f->file_limited->close(f->file_limited, &error) == KNURL_OK);
         f->file_limited = NULL;
-        VERIFY(f, knurl_storage_provider_close(f->limited, &error) == KNURL_OK);
+        VERIFY(f, f->limited->close(f->limited, &error) == KNURL_OK);
         f->limited = NULL;
-        VERIFY(f,
-               knurl_storage_provider_close(f->provider, &error) == KNURL_OK);
+        VERIFY(f, f->provider->close(f->provider, &error) == KNURL_OK);
         f->provider = NULL;
         f->done = 1;
-        VERIFY(f, knurl_server_request_stop(f->server, &error) == KNURL_OK);
+        VERIFY(f, f->server->request_stop(f->server, &error) == KNURL_OK);
         return;
     }
     s = &steps[f->step];
@@ -296,7 +292,7 @@ static void retired(const knurl_storage_outcome *outcome, void *data)
         f->writers[s->resource] = NULL;
     }
     if ((f->step == 24 || f->step == 27) && f->list != NULL) {
-        VERIFY(f, knurl_storage_resource_close(f->list, &error) == KNURL_OK);
+        VERIFY(f, f->list->close(f->list, &error) == KNURL_OK);
         f->list = NULL;
     }
     if (f->step == 24)
@@ -322,7 +318,7 @@ static void advance(struct fixture *f)
     const struct step *s;
     char bytes[16], path[4096];
     if (f->failed) {
-        (void)knurl_server_request_stop(f->server, NULL);
+        (void)f->server->request_stop(f->server, NULL);
         return;
     }
     if (f->step == 21) {
@@ -367,9 +363,9 @@ static void advance(struct fixture *f)
         config.timeout_ms = 30;
         arguments.action = KNURL_STORAGE_MKCOL;
         arguments.path = "/blocked";
-        VERIFY(f, knurl_loop_timer(knurl_server_loop(f->server), 1, 1,
-                                   unlock_probe, NULL, f, &f->timer,
-                                   &error) == KNURL_OK);
+        VERIFY(f,
+               knurl_loop_timer(f->server->loop(f->server), 1, 1, unlock_probe,
+                                NULL, f, &f->timer, &error) == KNURL_OK);
     } else {
         s = &steps[f->step];
         arguments.action = s->action;
@@ -413,12 +409,12 @@ static void advance(struct fixture *f)
         f->step == STEP_TIMEOUT - 1
             ? f->limited
             : (f->step == STEP_TIMEOUT - 2 ? f->file_limited : f->provider),
-        knurl_server_loop(f->server), &arguments, &config, &f->pending, &error);
+        f->server->loop(f->server), &arguments, &config, &f->pending, &error);
     memset(bytes, 'x', sizeof(bytes));
     VERIFY(f, status == KNURL_OK);
     if (status != KNURL_OK) {
         fprintf(stderr, "start: %s\n", error.message);
-        (void)knurl_server_request_stop(f->server, NULL);
+        (void)f->server->request_stop(f->server, NULL);
     }
 }
 static void probe_retired(const knurl_storage_outcome *outcome, void *data)
@@ -467,28 +463,26 @@ static knurl_status worker_start(knurl_server *server,
     knurl_storage_arguments_init(&arguments);
     arguments.path = "/never";
     for (i = 0; i < PROBES; ++i) {
-        if (knurl_storage_filesystem_new(server, &config, &provider, error) !=
+        if (server->storage_filesystem(server, &config, &provider, error) !=
             KNURL_OK)
             return KNURL_INVALID;
-        if (knurl_storage_operation_start(provider, knurl_server_loop(server),
-                                          &arguments, &operation, &handle,
-                                          error) != KNURL_OK)
+        if (provider->start(provider, server->loop(server), &arguments,
+                            &operation, &handle, error) != KNURL_OK)
             return KNURL_INVALID;
-        if (knurl_storage_provider_close(provider, error) != KNURL_OK)
+        if (provider->close(provider, error) != KNURL_OK)
             return KNURL_INVALID;
     }
     operation.retired = admission_cancelled;
     for (i = 0; i < 3; ++i) {
-        if (knurl_storage_filesystem_new(server, &config, &provider, error) !=
+        if (server->storage_filesystem(server, &config, &provider, error) !=
             KNURL_OK)
             return KNURL_INVALID;
-        if (knurl_storage_operation_start(provider, knurl_server_loop(server),
-                                          &arguments, &operation, &handle,
-                                          error) != KNURL_OK)
+        if (provider->start(provider, server->loop(server), &arguments,
+                            &operation, &handle, error) != KNURL_OK)
             return KNURL_INVALID;
-        if (knurl_storage_operation_cancel(handle, error) != KNURL_OK)
+        if (handle->cancel(handle, error) != KNURL_OK)
             return KNURL_INVALID;
-        if (knurl_storage_provider_close(provider, error) != KNURL_OK)
+        if (provider->close(provider, error) != KNURL_OK)
             return KNURL_INVALID;
     }
     VERIFY(f, f->cancelled_probes == 0);
@@ -599,31 +593,31 @@ int main(int argc, char **argv)
           path[0] == 0);
     snprintf(path, sizeof(path), "%s/../cache/.", f.cache);
     storage.cache_dir = path;
-    CHECK(knurl_storage_filesystem_new(server, &storage, &f.provider, &error) ==
+    CHECK(server->storage_filesystem(server, &storage, &f.provider, &error) ==
           KNURL_OK);
     storage.cache_dir = f.cache;
     storage.max_resources = 1;
-    CHECK(knurl_storage_filesystem_new(server, &storage, &f.limited, &error) ==
+    CHECK(server->storage_filesystem(server, &storage, &f.limited, &error) ==
           KNURL_OK);
     storage.max_resources = 64;
     storage.max_file_bytes = 2;
     storage.max_total_bytes = 64;
-    CHECK(knurl_storage_filesystem_new(server, &storage, &f.file_limited,
-                                       &error) == KNURL_OK);
+    CHECK(server->storage_filesystem(server, &storage, &f.file_limited,
+                                     &error) == KNURL_OK);
     CHECK(knurl_storage_provider_capabilities(f.provider) ==
           (KNURL_STORAGE_CAN_WRITE | KNURL_STORAGE_CAN_CONDITIONAL |
            KNURL_STORAGE_CAN_COPY | KNURL_STORAGE_CAN_MOVE |
            KNURL_STORAGE_CAN_SCOPE_CHECK));
     snprintf(path, sizeof(path), "%s/webdav/test/.lock", f.cache);
     CHECK(access(path, F_OK) != 0);
-    status = knurl_server_run(server, &result, &error);
+    status = server->run(server, &result, &error);
     if (status != KNURL_OK)
         fprintf(stderr, "run %s: %s\n", error.operation, error.message);
     CHECK(status == KNURL_OK && !result.escalated && !result.has_failure);
     CHECK(knurl_storage_provider_close(f.file_limited, &error) == KNURL_OK);
     CHECK(knurl_storage_provider_close(f.limited, &error) == KNURL_OK);
     CHECK(knurl_storage_provider_close(f.provider, &error) == KNURL_OK);
-    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(server->destroy(server, &error) == KNURL_OK);
     CHECK(remove_fixture(f.root));
     return 0;
 }

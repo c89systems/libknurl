@@ -12,8 +12,13 @@ Initialize `knurl_access_log_config` and call
 Registration copies the access rules and borrows both logger pointers. It
 creates no logger, opens no file and invokes no sink. Invalid registration
 preserves the previous configuration. Logger instances must remain alive
-through every run and use sinks capable of native process callbacks. Lua
-interop must enforce that capability through its public pslog descriptor.
+through every run and use sinks capable of native process callbacks.
+
+A host can create one root pslog instance and pass it to this registration and
+its other native components. Derived context loggers share its sink. Retain the
+host-owned root until the server and all borrowing native work have retired;
+component shutdown does not destroy it. Runtime bindings and their script-level
+logger construction are deferred until Luthrum.
 
 The root receives backend runtime logs. A NULL root selects a library-owned JSON
 logger during the run, preserving the ordinary INFO filter. Structured access
@@ -47,8 +52,7 @@ individual structured status is disabled. The parent skips contended worker
 buffers instead of waiting on an unfinished record; a worker killed while holding
 that buffer can lose its unfinished records.
 
-File rotation is enabled by default, with these `config.http` settings (also
-available under Lua's `http` table):
+File rotation is enabled by default, with these `config.http` settings:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -87,16 +91,16 @@ incoming records are rejected before sink emission. The parent never needs an
 arbitrary Lua state to emit them. A fresh run clears backend logger/resolver
 pointers and recreates owned logger state.
 
-The [public live fixture](../tests/policy-logs-runtime.c) covers copied rules,
+The [public live fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/policy-logs-runtime.c) covers copied rules,
 override/disabled sinks, independent file output, client identity and long IDs,
 status replacement, startup open failure, logger survival and server reuse.
 It also verifies final address/count records after a client resets a paused
 response connection, and runs against relocated static/shared SDKs. The
-[backend fixture](../tests/log-backend.c) covers sender bounds, short/mismatched/
+[backend fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/log-backend.c) covers sender bounds, short/mismatched/
 oversized IPC records and a locked unfinished access buffer without delaying
 shutdown. The [policy API](policy.md) supplies admission and observations;
 application loggers and metrics aggregation remain application-owned.
-The [file fixture](../tests/access-log-file.c) checks retention, exact thresholds,
+The [file fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/access-log-file.c) checks retention, exact thresholds,
 oversized records, restart append, permissions, truncate/disable options, failed
 rotation recovery, partial writes, ENOSPC and nonregular paths. Its two-worker,
 two-listener wire case verifies continued HTTP delivery, error diagnostics,

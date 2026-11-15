@@ -5,8 +5,7 @@ repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 source "$script_dir/lifecycle/require-host-bash.sh"
 source "$script_dir/acquire-archive.sh"
 target=${1:-x86_64-linux-gnu}
-lua_sources=${2:-}
-case "$lua_sources" in ''|lua) ;; *) printf 'Usage: deps.sh TARGET [lua]\n' >&2; exit 2 ;; esac
+if (( $# > 1 )); then printf 'Usage: deps.sh [TARGET]\n' >&2; exit 2; fi
 case "$target" in
   x86_64-linux-gnu|x86_64-linux-musl|aarch64-linux-gnu|aarch64-linux-musl|armhf-linux-gnu|armhf-linux-musl|arm64-apple-darwin) ;;
   *) printf 'Unknown SDK target: %s\n' "$target" >&2; exit 2 ;;
@@ -27,10 +26,6 @@ while IFS=$'\t' read -r kind name version pin_target digest url; do
   if [[ "$kind" == sdk && "$pin_target" == "$target" ]]; then
     prefix="$sdk_root/$name"
     marker="$sdk_root/.prepared-$name"
-  elif [[ "$kind" == lua && "$pin_target" == all && "$lua_sources" == lua ]]; then
-    prefix="$archive_cache/sources/$name-lua-$version"
-    marker="$archive_cache/sources/.prepared-$name-lua-$version"
-    mkdir -p "$archive_cache/sources"
   else
     continue
   fi
@@ -48,9 +43,9 @@ while IFS=$'\t' read -r kind name version pin_target digest url; do
       case "$entry" in /*|../*|*/../*|*/..) printf 'Unsafe SDK archive path: %s\n' "$entry" >&2; exit 1;; esac
     done <"$staging/.entries"
     rm -f -- "$staging/.entries"
-    # Reproducible archives carry old mtimes. New SDK bytes must invalidate
-    # existing CMake/Ninja header and linker dependencies after an upgrade.
-    tar -xmzf "$archive" -C "$staging" --strip-components=1
+    # Preserve manifest-declared permissions independently of the caller's umask.
+    # Ignore old archive mtimes so new SDK bytes invalidate build dependencies.
+    tar -xmpzf "$archive" -C "$staging" --strip-components=1
     rm -rf -- "$prefix"
     mv -- "$staging" "$prefix"
     staging=

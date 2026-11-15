@@ -3,20 +3,41 @@
 This is the complete product contract. Feature guides describe the implementation;
 they cannot enlarge this contract or establish compatibility.
 
+Product decision, 2026-11-15: only the C library and C SDK ship. The standalone
+executable and Lua binding are archived until Luthrum is ready. This document
+defines the active C product. The
+[historical contract](https://github.com/c89systems/libknurl/blob/trunk/archive/pre-luthrum/docs/server-api-spec.md)
+preserves the former Lua requirements; [runtime direction](runtime-direction.md)
+governs their deferral.
+
 ## Purpose and boundary
 
 Extract Vectis's working enhanced Kore HTTP server, reverse proxy, WebDAV and
-server helpers into libknurl. libknurl owns their implementation, its public
-`knurl_` C API and its `knurl` Lua module. Kore is the private backend.
+server helpers into libknurl. libknurl owns their implementation and its public
+`knurl_` C API. Kore is the private backend.
 Vectis consumes the library and removes the extracted implementations.
-The cutover preserves existing application C/Lua calls, handlers, declarations,
+The C cutover preserves existing application calls, handlers, declarations,
 configuration, output, streaming and lifecycle behavior through forwarding.
 
 Behavioral baseline: Vectis commit
 `6b1e263e0436687f68a7768ca55f4361a6e59e19`. Its public declarations, implementation
 and regressions specify existing defaults, accepted inputs, errors and lifetimes.
-The [integration contract](vectis-integration-contract.md) identifies the sources.
+The [integration contract](https://github.com/c89systems/libknurl/blob/trunk/docs/vectis-integration-contract.md) identifies the sources.
 A discrepancy is resolved by tracing that baseline, not by inventing a new default.
+
+The authorized HTTP completeness extension supersedes that baseline for exact
+C input helpers, managed chunked bodies and separate trailers, static
+multipart ranges/date conditions/negotiated compression, and application
+WebSocket fragmentation/UTF-8/close validation. This includes the explicit final
+callback argument, bounded default output and transactional fragment sending.
+The corresponding public guides define these delivered interfaces:
+[input](input.md), [requests](requests.md), [assets](assets.md) and
+[WebSockets](websockets.md). The 0.2.0 release retains shared-library ABI 0.
+Use the current headers and matching dependencies as described in [SDK delivery](sdk.md).
+HTTP/2/3 listeners and SOAP
+remain excluded; proxy upstream HTTP/2 remains supported. The authorized ACL/MMDB, native-task and operational
+extensions below also extend this baseline. Other extraction behavior retains
+its baseline.
 
 Vectis retains its app/service graph, outer supervision, business handlers,
 credentials/sessions, application admission/proxy decisions, metrics aggregation,
@@ -24,12 +45,12 @@ packed-asset lookup, Lockd/Pouch/durable-storage clients, XDG path selection,
 DSV/MCP adapters and outbound HTTP/REST/WebDAV/SSH clients. libknurl exposes
 callbacks/providers for these integrations; it never imports their private types.
 
-## Executable surface
+## Public C surface
 
 These are required operation families, not permission to invent independent
 products. C registrations use configuration values, callbacks and userdata.
-Lua normalizes arguments and binds the same C operations. Exact C spellings may
-change before release; each operation must map to a concrete baseline consumer.
+Exact C spellings may change before release. Extracted operations map to concrete
+baseline consumers; authorized additions have their own contracts and tests.
 
 | Family | Operations and preserved behavior |
 | --- | --- |
@@ -37,7 +58,7 @@ change before release; each operation must map to a concrete baseline consumer.
 | Routes | Register ordinary and verb routes, literal/parameter/regex paths, method masks, prefixes/groups, fixed text/JSON/redirects, route count and captures. Preserve registration order/conflicts, auth/before/handler/after order, short circuit, empty 204 and phase-specific failures. One registry serves routing and OpenAPI. |
 | Requests/bodies | Method/version, raw target/path/query/Host, decoded captures and ordered duplicate headers/query pairs, first lookup, peer/local/TLS/listener metadata, resolved IP/correlation ID, host userdata and close outcome. Preserve NONE/BUFFERED/MATERIALIZED/STREAM/upload policies, limits, live chunks, read/rewind, borrowed readers, caller-buffer materialization, independent copy/spill/path results and explicit cleanup. |
 | Replies/sources | Staged status, append/set headers, text, binary bytes, files, materialized sources, file-backed sources and live sources; read/reset/close and cancellation. Copying, replacement, reset timing and exactly-once cleanup match Vectis. After-hooks finish before transport submission. Explicit live output retains write/end/abort, backpressure and commitment; ordinary builders do not acquire live-output timing. |
-| Uploads | Chunk open/write/finish/close, file destination and bounded native-reader handlers; partial input, completion, cancellation and reply publication. The library owns queues and transport execution. Native parsers consume bounded readers; Lua callbacks execute on their owning Lua thread. |
+| Uploads | Chunk open/write/finish/close, file destination and bounded native-reader handlers; partial input, completion, cancellation and reply publication. The library owns queues and transport execution. Native parsers consume bounded readers; callbacks that access live requests run on the owning loop. |
 | JSON | LoneJSON mapped parse/validate, request/source selected-array iteration and source rewriting with caller-owned item storage, typed input/output routes and per-response output schemas/statuses; materialized serialization, synchronous sink output and explicit live generators. Ordinary JSON replies and ordinary typed-route output finish serialization before after-hooks. Existing generated-file replies finish writing their private file before returning. |
 | XML | Lift libxml2 mapped parse/parse-record, serialize/write, typed routes, owned DOM/root/node/name/text/attribute/edit/append operations, namespace-aware XPath and incremental SAX feed/finish/close. XML routes parse live bounded upload input into their record; they do not first collect or spool the whole transport body. Preserve mapping options and separate mapped/DOM/SAX limits. |
 | REST/OpenAPI | Buffered REST JSON decode, validation, handler/error handling, response and error-envelope helpers, route/group convenience; encode replies once. Route annotations include summaries, operation IDs, tags, request/response schemas; generate OpenAPI JSON/YAML from the route registry. Vectis retains application error policy and outbound REST clients. |
@@ -48,6 +69,32 @@ change before release; each operation must map to a concrete baseline consumer.
 | TLS/ACME | HTTP/HTTPS listeners, TLS versions/cipher list, manual bundle or separate key/certificate/chain from files/memory/sources, client CA/mTLS, SNI/Host policy and 308 redirects with presented ports. Lift Kore ACME account/order/challenge/renewal/recovery; expose restore/persist/error hooks for the host's durable store, preserving activation/failure ordering. Runtime files are working state, not a new durable product. |
 | Policy/logging | Trusted-proxy resolution, admission, shared autoblock status/event/window/capacity rules and named events; request/lifecycle/transport observations. Borrow public pslog root/access loggers, preserve derived sub=http, enable/disable, category/status levels and independent file access logs. File logs default to 10 MiB per file and three total files, preserving whole records; size/count/disable are configurable. File write/rotation errors, including ENOSPC, report an error and drop that record while HTTP continues; later records retry. Host metrics and policy decisions stay external. |
 | Host/backend integration | Parent/worker/key-manager/ACME start/ready/stopping/stopped/exit/error notifications, process context, control FD/readiness and parent timers; request start/close and TLS-state observations. Supply only the loop/watch/timer/defer/wake operations needed by these consumers. An opt-in Kore request accessor preserves vectis_request_kore(). |
+| Native tasks | Bounded post-fork HTTP-worker pools, native work, owner-loop calls, cooperative cancellation/deadlines and retirement acknowledgment; suspend/resume ordinary router callbacks without occupying the HTTP event loop. No arbitrary runtime closure offloading or general standalone job scheduler. |
+
+## C receivers
+
+Library-owned handles expose receiver methods. Obtain a handle through its
+constructor or borrowed accessor, then pass that handle as the first argument.
+For example, `server->preflight(server, &error)` probes startup resources and
+`server->router(server)` borrows its router. Register routes with
+`router->route(router, &route, NULL, &error)`.
+
+Server, router, group, route, request, body, reply, response, source, channel,
+WebSocket, loop, watch, timer, waker, asset, asset-provider, storage-provider,
+storage-operation, storage-resource, XML, MMDB, ACL and task/pool handles expose
+their own operations.
+Cross-surface registrations belong to the receiving router or group. Mapped
+codecs belong to the source, request or reply they consume. Factories and
+stateless configuration, numeric and serialization helpers are module functions.
+
+Receiver methods point to the corresponding exported C implementations. Their
+ownership, lifetime and error contracts apply to both call forms. Applications
+must not allocate, copy or modify a receiver or access its `impl` field. A
+borrowed receiver expires with its documented owner. Public headers expose
+method signatures and opaque state pointers.
+
+C headers document both call forms for editors and installed consumers. Deferred
+runtime bindings must follow Luthrum's eventual execution and ownership contracts.
 
 ## Configuration and ownership
 
@@ -80,26 +127,39 @@ file-backed operation. Blocked consumers pause producers; cancellation retains
 native work owners until acknowledgement. Keep supporting machinery private
 unless a demonstrated consumer requires it as public API. In particular, a
 standalone framer and general-purpose job SDK are not extraction deliverables.
+The authorized [native task surface](tasks.md) is specifically tied to an active
+post-fork HTTP worker and its owner loop.
 
-## Lua and dependency reuse
+## Dependency and runtime boundaries
 
-Ship `knurl` as a Lua facade and C binding against installed public shared
-libknurl. Use the host's Lua 5.5.1 VM, including embedded hosts; supply a public
-preload entry point. The binding owns neither a second VM nor a private runtime.
-Expose the operation families above with existing Vectis argument/result shapes:
-server/verb/group helpers; scoped request tables; nil/string/response declarations;
-source read/reset/close; uploads, codecs, DOM/SAX, REST/OpenAPI, mounts, proxy,
-WebSocket/SSE, logging and lifecycle callbacks. Errors, binary strings, exact
-integer counts, owner retention, callback protection and finalizers are preserved.
+LoneJSON owns JSON parsing, mapping and generation. Reuse its public schema and
+record operations, retaining borrowed owners and cleaning partial records.
+Preserve buffered external-record support and callback-writer input restrictions.
+No encode/reparse workaround, private userdata cast, parallel route engine or
+speculative dependency extension. libxml2 owns XML parsing; pslog owns logging.
 
-LoneJSON owns JSON parsing, mapping and generation. Reuse its public schema/record
-interop: create Lua-owned records, assign private writer inputs through schema
-assignment, retain owners and clear records. Preserve buffered external-record
-support and callback-writer input restrictions. No encode/reparse workaround,
-private userdata cast, parallel route engine or speculative dependency extension.
-libxml2 owns XML parsing; pslog owns logging. Vectis's packed/static executable
-keeps one runtime and its existing Lua facade over the C adapter; loading a second
-shared runtime beside it is not a supported cutover strategy.
+The C library neither embeds a Lua VM nor supplies a runtime binding. Future
+Luthrum integration requires a separate execution/ownership contract before any
+archived sources are restored. Application supervision stays downstream.
+
+## Authorized operational additions
+
+The [native task contract](tasks.md) defines separate bounded pools and owner-loop
+request continuation. Blocking work must use retained native state, never a live
+request on a foreign thread. Deadlines and cancellation are cooperative; native
+acknowledgment precedes retirement, and parent shutdown bounds uncooperative work.
+
+The production initializer enables suppression of automatic 5xx diagnostic bodies;
+explicit application bodies remain application-owned policy. TLS handshakes have
+an absolute accept-to-handshake deadline, default 10000 ms, independently disabled
+through the deadline configuration. The [response](responses.md) and [TLS](tls.md)
+guides define these settings.
+
+The optional [ACME file-state policy](acme.md) uses an explicitly configured private
+directory on durable storage. Certificate replacement is atomic and persistence
+acknowledgment follows file/directory synchronization. Host storage selection and
+custom restore/persist callbacks remain available. Outbound proxy and ACME trust
+reuse the public system-CA helper without disabling peer or hostname verification.
 
 ## Build and delivery
 
@@ -108,21 +168,32 @@ apply them only to disposable build/test copies. Preserve all 42 Vectis patches;
 additional patches need a concrete extraction, C89 or parity reason. Upgrade by
 replacing the pristine revision and replaying/fixing the external patches.
 
-Compile owned C, binding and selected Kore backend with strict -std=c89. Public
+Compile owned C and the selected Kore backend with strict -std=c89. Public
 headers support C89/C++; dependency/private layouts stay private. Consume pinned
 released c89systems cpkt, LoneJSON and libpslog packages, preferring the newest
-compatible closure. Current pins are cpkt 0.7.0, LoneJSON 0.47.0 and pslog 0.13.0;
-cpkt provides OpenSSL/curl/nghttp2/libxml2 and the Lua runtime/link closure.
+compatible closure. Current pins are cpkt 0.8.0, LoneJSON 0.50.0 and pslog 0.13.0;
+cpkt provides OpenSSL/curl/nghttp2/libxml2 and their native link closure. Unused
+runtime components in an external cpkt SDK are not libknurl dependencies.
 No sibling checkout is a build input or writable under this task.
+The [route ACL contract](acl-spec.md) adds reusable IP/CIDR, forward-DNS and
+country policies, group intersection, C declarations and enforcement before
+route resources, including proxies. The standalone
+[MMDB country reader contract](mmdb.md) adds a public provider, free functions and
+receiver shell independent of server initialization. Use only
+Knurl's C89 implementation, with bounded pread and lazy cache allocation under a
+configurable total requested heap limit. Never mmap the database. Include cache
+bookkeeping in the bound, retain thread-safe access and exclude downloaded GeoIP
+data and local test oracles from all products.
 
 Follow pkt-systems-cmake-lifecycle: explicit selected toolchains, serial operations,
 static/shared installed SDKs and relocated consumers for x86_64-linux-gnu,
 x86_64-linux-musl, aarch64-linux-gnu, aarch64-linux-musl, armhf-linux-gnu,
 armhf-linux-musl and arm64-apple-darwin. Default selected-target builds use
 build/debug or build/release; others use build/<target>/<configuration>.
-Ship the Lua source archive, rockspec and source rock, using the same shared
-closure. Complete required final artifact checks before release; no push or
-release is authorized by this contract. HTTP/2/3 listeners, Windows, Kore's
+Ship the seven C SDK archives and their final checksum inventory; no Lua or
+standalone-server packages. Complete required final artifact checks before
+release; no push or release is authorized by this contract. HTTP/2/3 listeners,
+Windows, Kore's
 standalone CLI/optional language/database modules and new application services
 are outside this extraction.
 
@@ -139,6 +210,6 @@ live XML parsing before request EOF, selected-array caller storage, one-pass RES
 encoding, source cleanup, proxy pressure, DAV conditions and lifecycle failures.
 Tests must preserve the baseline inputs and results. Add short invariant/failure
 checks; batch broader checks after coherent implementation work. Prove installed
-C/Lua workflows and all target builds. Vectis cutover verification needs separately
+C workflows and all target builds. Vectis cutover verification needs separately
 authorized Vectis edits and its existing normal/packed regressions. An existing
 knurl test pass or the previous implementation is not a substitute for parity.

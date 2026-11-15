@@ -52,9 +52,9 @@ set(kore_source_dir "${CMAKE_CURRENT_BINARY_DIR}/kore")
 knurl_add_kore_sources("${CMAKE_CURRENT_SOURCE_DIR}" "${kore_source_dir}")
 include(cmake/KoreBackend.cmake)
 
-add_library(knurl_objects OBJECT src/common.c src/u64.c src/sse.c
+add_library(knurl_objects OBJECT src/common.c src/u64.c src/input.c src/input_request.c src/sse.c
   src/json.c src/json_buffer.c src/rest.c src/rest_reply.c src/openapi.c src/openapi_json.c src/openapi_yaml.c src/json_array.c src/json_route.c src/xml.c src/xml_sax.c src/xml_mapping.c src/xml_generator.c src/xml_route.c
-  src/executor.c src/native_io.c src/source_native.c src/storage.c src/storage_assets.c src/storage_filesystem.c src/storage_fs_disk.c src/storage_fs_scope.c src/asset.c src/asset_filesystem.c src/static.c src/static_reply.c src/static_policy.c src/mime.c
+  src/executor.c src/native_io.c src/source_native.c src/storage.c src/storage_assets.c src/storage_filesystem.c src/storage_fs_disk.c src/storage_fs_scope.c src/asset.c src/asset_filesystem.c src/static.c src/static_reply.c src/static_policy.c src/static_multipart.c src/mime.c
   src/webdav.c src/webdav_http.c src/webdav_propfind.c src/upload.c src/upload_metadata.c src/upload_reader.c src/upload_file.c
   src/autoblock.c src/logging.c src/access_log_file.c src/kore_logging.c src/address.c src/policy.c src/kore_policy.c src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
   src/config_normalize.c src/server.c src/router.c src/route_path.c
@@ -64,8 +64,8 @@ add_library(knurl_objects OBJECT src/common.c src/u64.c src/sse.c
   src/response.c src/kore_response.c src/body.c src/body_materialize.c
   src/file.c src/dispatch.c src/kore_body.c src/body_reader.c
   src/channel.c src/channel_upgrade.c src/kore_channel.c
-  src/websocket.c src/websocket_frame.c src/kore_websocket.c src/websocket_route.c
-  src/proxy_common.c src/proxy_framing.c src/proxy_headers.c
+  src/websocket.c src/websocket_frame.c src/websocket_protocol.c src/kore_websocket.c src/websocket_route.c
+  src/proxy_common.c src/http_framing.c src/proxy_headers.c
   src/proxy_transport.c
   src/proxy_route.c src/proxy_runtime.c src/proxy_ws_runtime.c
   src/proxy_upload.c src/proxy_http.c src/proxy_http_upstream.c src/proxy_http_wire.c
@@ -73,9 +73,17 @@ add_library(knurl_objects OBJECT src/common.c src/u64.c src/sse.c
   src/proxy_ws_handshake.c src/proxy_ws_wire.c src/proxy_ws_rejection.c
   src/tls.c src/tls_material.c src/kore_tls.c src/kore_process.c
   src/acme_state.c src/kore_acme.c src/kore_tls_state.c)
+target_sources(knurl_objects PRIVATE src/static_gzip.c src/static_encoding.c)
+target_sources(knurl_objects PRIVATE src/ca.c)
+target_sources(knurl_objects PRIVATE src/task.c)
+target_sources(knurl_objects PRIVATE src/acme_file.c)
+target_sources(knurl_objects PRIVATE src/mmdb.c src/mmdb_decode.c src/mmdb_file.c src/mmdb_cache.c)
+target_sources(knurl_objects PRIVATE src/mmdb_prefix.c)
+target_sources(knurl_objects PRIVATE src/ip.c src/forwarded.c src/acl.c src/acl_dns.c src/acl_runtime.c)
 target_include_directories(knurl_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(knurl_objects PRIVATE "${kore_source_dir}/include/kore")
 target_link_libraries(knurl_objects PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::LibXml2 lonejson::lonejson pslog::pslog_shared)
+target_link_libraries(knurl_objects PRIVATE ZLIB::ZLIB)
 file(STRINGS vendor/kore.revision kore_revision LIMIT_COUNT 1)
 target_compile_definitions(knurl_objects PRIVATE KNURL_VERSION="${PROJECT_VERSION}"
   KNURL_KORE_REVISION="${kore_revision}"
@@ -93,12 +101,16 @@ knurl_kore_object_dependencies("${kore_source_dir}/.patched"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_acme.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_tls_state.c")
 knurl_c89(knurl_objects)
+# ABI 0 is retained for 0.2.0.
+set(KNURL_ABI_VERSION 0)
 foreach(variant static shared)
   string(TOUPPER "${variant}" kind)
   add_library(knurl_${variant} ${kind} $<TARGET_OBJECTS:knurl_objects> $<TARGET_OBJECTS:knurl_kore>)
   add_library(knurl::${variant} ALIAS knurl_${variant})
   set_target_properties(knurl_${variant} PROPERTIES OUTPUT_NAME knurl
-    EXPORT_NAME ${variant} VERSION ${PROJECT_VERSION} SOVERSION 0)
+    EXPORT_NAME ${variant} VERSION ${PROJECT_VERSION} SOVERSION ${KNURL_ABI_VERSION}
+    MACHO_COMPATIBILITY_VERSION "${KNURL_ABI_VERSION}.0.0"
+    MACHO_CURRENT_VERSION "${KNURL_ABI_VERSION}.0.0")
   target_include_directories(knurl_${variant} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
   install(TARGETS knurl_${variant} EXPORT knurlTargets
@@ -107,6 +119,7 @@ endforeach()
 target_link_libraries(knurl_shared PRIVATE cpkt::openssl_ssl_shared cpkt::curl_shared
   cpkt::libxml2_shared pslog::pslog_shared Threads::Threads)
 target_link_libraries(knurl_shared PUBLIC lonejson::lonejson)
+target_link_libraries(knurl_shared PRIVATE cpkt::zlib_shared)
 target_link_libraries(knurl_shared INTERFACE "$<LINK_ONLY:pslog::pslog_shared>")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(knurl_shared PRIVATE -Wl,--no-undefined)
@@ -116,10 +129,11 @@ endif()
 target_link_libraries(knurl_static PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::LibXml2
   pslog::pslog_static Threads::Threads)
 target_link_libraries(knurl_static PUBLIC lonejson::lonejson_static)
-set(knurl_core_headers include/knurl/common.h include/knurl/http.h include/knurl/knurl.h
+target_link_libraries(knurl_static PRIVATE ZLIB::ZLIB)
+set(knurl_core_headers include/knurl/mmdb.h include/knurl/common.h include/knurl/input.h include/knurl/http.h include/knurl/knurl.h
   include/knurl/io.h include/knurl/reply.h include/knurl/tls.h
   include/knurl/server.h include/knurl/pslog.h include/knurl/openapi.h include/knurl/router.h include/knurl/request.h include/knurl/kore.h
-  include/knurl/loop.h include/knurl/response.h include/knurl/dispatch.h
+  include/knurl/loop.h include/knurl/task.h include/knurl/response.h include/knurl/dispatch.h
   include/knurl/body.h include/knurl/upload.h include/knurl/channel.h include/knurl/websocket.h
   include/knurl/proxy.h include/knurl/xml.h include/knurl/lonejson.h
   include/knurl/asset.h include/knurl/static.h include/knurl/storage.h include/knurl/webdav.h)
@@ -150,6 +164,17 @@ endif()
 include(cmake/SDK.cmake)
 
 if(BUILD_TESTING)
+  foreach(name ca acme-file)
+    add_executable(knurl_${name} tests/${name}.c)
+    target_link_libraries(knurl_${name} PRIVATE knurl::shared)
+    target_compile_definitions(knurl_${name} PRIVATE $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+    knurl_c89(knurl_${name})
+    knurl_local_runtime(knurl_${name})
+    add_test(NAME knurl.${name} COMMAND knurl_${name})
+  endforeach()
+  include(cmake/MMDBTests.cmake)
+  add_test(NAME knurl.receiver-surface COMMAND "${CMAKE_COMMAND}"
+    "-DKNURL_ROOT=${CMAKE_CURRENT_SOURCE_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ReceiverSurface.cmake")
   include(cmake/DebugTestStacks.cmake)
   add_test(NAME lifecycle.stack-allocation-policy COMMAND "${CMAKE_COMMAND}"
     "-DCOMPILER=${CMAKE_C_COMPILER}" "-DBUILD=${CMAKE_CURRENT_BINARY_DIR}"
@@ -226,6 +251,40 @@ if(BUILD_TESTING)
   knurl_c89(knurl_log_backend)
   knurl_local_runtime(knurl_log_backend)
   add_test(NAME knurl.log-backend COMMAND knurl_log_backend)
+  add_executable(knurl_input tests/input.c)
+  target_include_directories(knurl_input PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(knurl_input PRIVATE knurl::static)
+  knurl_c89(knurl_input)
+  knurl_local_runtime(knurl_input)
+  add_test(NAME knurl.input COMMAND knurl_input)
+  set_tests_properties(knurl.input PROPERTIES TIMEOUT 8)
+  add_executable(knurl_static_ranges tests/static-ranges.c)
+  target_include_directories(knurl_static_ranges PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(knurl_static_ranges PRIVATE knurl::static)
+  knurl_c89(knurl_static_ranges)
+  knurl_local_runtime(knurl_static_ranges)
+  add_test(NAME knurl.static-ranges COMMAND knurl_static_ranges)
+  set_tests_properties(knurl.static-ranges PROPERTIES TIMEOUT 8)
+
+  add_executable(knurl_static_encoding tests/static-encoding.c)
+  target_include_directories(knurl_static_encoding PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(knurl_static_encoding PRIVATE knurl::static ZLIB::ZLIB)
+  knurl_c89(knurl_static_encoding)
+  knurl_local_runtime(knurl_static_encoding)
+  add_test(NAME knurl.static-encoding COMMAND knurl_static_encoding)
+  set_tests_properties(knurl.static-encoding PROPERTIES TIMEOUT 8)
+  add_executable(knurl_websocket_protocol tests/websocket-protocol.c)
+  target_include_directories(knurl_websocket_protocol PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(knurl_websocket_protocol PRIVATE knurl::static)
+  knurl_c89(knurl_websocket_protocol)
+  knurl_local_runtime(knurl_websocket_protocol)
+  add_test(NAME knurl.websocket-protocol COMMAND knurl_websocket_protocol)
+  add_executable(knurl_http_completeness_failure tests/http-completeness-failure.c)
+  target_include_directories(knurl_http_completeness_failure PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(knurl_http_completeness_failure PRIVATE knurl::static ZLIB::ZLIB CURL::libcurl)
+  knurl_c89(knurl_http_completeness_failure)
+  knurl_local_runtime(knurl_http_completeness_failure)
+  add_test(NAME knurl.http-completeness-failure COMMAND knurl_http_completeness_failure)
   set_tests_properties(knurl.log-backend PROPERTIES TIMEOUT 5)
   add_executable(knurl_access_log_file tests/access-log-file.c src/access_log_file.c)
   target_compile_definitions(knurl_access_log_file PRIVATE write=knurl_test_write rename=knurl_test_rename open=knurl_test_open
@@ -262,6 +321,11 @@ if(BUILD_TESTING)
     endif()
     if(codec STREQUAL "policy-runtime" OR codec STREQUAL "policy-logs-runtime" OR codec STREQUAL "vectis-config" OR codec STREQUAL "vectis-response-head")
       target_link_libraries(knurl_${codec} PRIVATE pslog::pslog_shared)
+    endif()
+    if(codec STREQUAL "static-runtime")
+      target_link_libraries(knurl_${codec} PRIVATE ZLIB::ZLIB)
+      add_test(NAME knurl.static-runtime-pretty COMMAND knurl_static-runtime pretty)
+      set_tests_properties(knurl.static-runtime-pretty PROPERTIES TIMEOUT 8)
     endif()
     target_compile_definitions(knurl_${codec} PRIVATE
       $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
@@ -408,6 +472,7 @@ if(BUILD_TESTING)
   set_tests_properties(knurl.process-backend PROPERTIES TIMEOUT 8)
   add_executable(knurl_tls_runtime tests/tls-runtime.c tests/vectis-services.c tests/vectis-route.c)
   target_link_libraries(knurl_tls_runtime PRIVATE knurl::shared cpkt::openssl_ssl_shared Threads::Threads)
+  target_compile_definitions(knurl_tls_runtime PRIVATE $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   knurl_c89(knurl_tls_runtime)
   knurl_local_runtime(knurl_tls_runtime)
   add_test(NAME knurl.tls-runtime COMMAND knurl_tls_runtime)
@@ -466,11 +531,34 @@ if(BUILD_TESTING)
   add_test(NAME knurl.loop-smoke COMMAND knurl_loop_smoke)
   set_tests_properties(knurl.loop-smoke PROPERTIES TIMEOUT 10)
   add_executable(knurl_server_runtime tests/server-runtime.c)
+  add_executable(knurl_route_resume tests/route-resume.c tests/acl-wire.c)
+  target_link_libraries(knurl_route_resume PRIVATE knurl::shared)
+  target_compile_definitions(knurl_route_resume PRIVATE $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  knurl_c89(knurl_route_resume)
+  knurl_local_runtime(knurl_route_resume)
+  add_test(NAME knurl.route-resume COMMAND knurl_route_resume)
+  set_tests_properties(knurl.route-resume PROPERTIES TIMEOUT 12)
+  add_executable(knurl_task tests/task.c tests/acl-wire.c)
+  target_link_libraries(knurl_task PRIVATE knurl::static Threads::Threads)
+  target_compile_definitions(knurl_task PRIVATE $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  knurl_c89(knurl_task)
+  knurl_local_runtime(knurl_task)
+  add_test(NAME knurl.task COMMAND knurl_task)
+  set_tests_properties(knurl.task PROPERTIES TIMEOUT 12)
   target_link_libraries(knurl_server_runtime PRIVATE knurl::shared Threads::Threads)
   knurl_c89(knurl_server_runtime)
   knurl_local_runtime(knurl_server_runtime)
   add_test(NAME knurl.server-runtime COMMAND knurl_server_runtime)
   set_tests_properties(knurl.server-runtime PROPERTIES TIMEOUT 30)
+  foreach(variant static shared)
+    add_executable(knurl_server_preflight_${variant} tests/server-preflight.c)
+    target_link_libraries(knurl_server_preflight_${variant} PRIVATE knurl::${variant})
+    target_compile_definitions(knurl_server_preflight_${variant} PRIVATE $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+    knurl_c89(knurl_server_preflight_${variant})
+    knurl_local_runtime(knurl_server_preflight_${variant})
+    add_test(NAME knurl.server-preflight.${variant} COMMAND knurl_server_preflight_${variant})
+    set_tests_properties(knurl.server-preflight.${variant} PROPERTIES TIMEOUT 10)
+  endforeach()
   add_executable(knurl_kore_runtime tests/kore-runtime.c $<TARGET_OBJECTS:knurl_kore>)
   add_dependencies(knurl_kore_runtime kore-source)
   knurl_kore_object_dependencies("${kore_source_dir}/.patched"
@@ -557,7 +645,7 @@ if(BUILD_TESTING)
     "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/lifecycle"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/Lifecycle.cmake")
   set_tests_properties(lifecycle.version lifecycle.failures PROPERTIES TIMEOUT 15)
-  foreach(contract OwnedPaths SourceInputs Testing KoreOwnership Privacy)
+  foreach(contract OwnedPaths Testing KoreOwnership Privacy CProduct)
     add_test(NAME lifecycle.${contract} COMMAND "${CMAKE_COMMAND}"
       "-DKNURL_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
       "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/${contract}"

@@ -151,6 +151,14 @@ static void metadata(const struct stat *s, knurl_asset_info *info, char *etag,
              info->size.low, (unsigned long)((s->st_mtime >> 16) >> 16),
              (unsigned long)s->st_mtime & 0xffffffffUL, (unsigned long)nanos);
     info->etag = etag;
+    if (s->st_mtime >= 0 && nanos >= 0 && nanos < 1000000000L) {
+        info->has_modification_time = 1;
+        info->modification_seconds.high =
+            (unsigned long)((s->st_mtime >> 16) >> 16);
+        info->modification_seconds.low =
+            (unsigned long)s->st_mtime & 0xffffffffUL;
+        info->modification_nanoseconds = (unsigned long)nanos;
+    }
     if (gmtime_r(&s->st_mtime, &utc) != NULL && utc.tm_year >= -299 &&
         utc.tm_year <= 8099) {
         snprintf(modified, date_capacity, "%s, %02d %s %04d %02d:%02d:%02d GMT",

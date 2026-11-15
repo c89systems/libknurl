@@ -14,6 +14,11 @@
 #include <setjmp.h>
 #include <pthread.h>
 
+#define KNURL_KORE_BODY_METHODS                                                \
+    (KNURL_HTTP_METHODS_POST | KNURL_HTTP_METHODS_PUT |                        \
+     KNURL_HTTP_METHODS_PATCH | KNURL_HTTP_METHODS_DELETE |                    \
+     KNURL_HTTP_METHODS_PROPFIND | KNURL_HTTP_METHODS_MKCOL)
+
 struct knurl_runtime_shared {
     int serving;
     int acme_identity_valid;

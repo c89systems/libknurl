@@ -1,5 +1,6 @@
 #include "vectis-forward.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #define CHECK(x)                                                               \
     do {                                                                       \
@@ -234,7 +235,8 @@ static int rewriting(void)
                   strstr(error.message,
                          scenario == 1 ? "rewrite callback stopped"
                                        : "intentional sink failure") != NULL);
-        lonejson_cleanup(&map, &item);
+        if (lonejson_cleanup(&map, &item, NULL) != LONEJSON_STATUS_OK)
+            abort();
     }
     return 0;
 }
@@ -308,13 +310,15 @@ static int xml_helpers(void)
     CHECK(bytes.size == output.length &&
           !memcmp(bytes.data, output.bytes, bytes.size + 1));
     reference_mutable_bytes_cleanup(&bytes);
-    lonejson_cleanup(&map, &record);
+    if (lonejson_cleanup(&map, &record, NULL) != LONEJSON_STATUS_OK)
+        abort();
     input.position = 4;
     options.skip_unknown_disabled = 1;
     CHECK(reference_xml_parse(&input.source, &map, &options, &record, &error) ==
               REFERENCE_INVALID &&
           error.source == 1);
-    lonejson_cleanup(&map, &record);
+    if (lonejson_cleanup(&map, &record, NULL) != LONEJSON_STATUS_OK)
+        abort();
     input.text = "<item><value>one</value></item>";
     input.position = 0;
     input.fail = 2;
@@ -322,7 +326,8 @@ static int xml_helpers(void)
               REFERENCE_STATE &&
           strstr(error.message, "input failed"));
     CHECK(input.closed == 0 && input.resets == 0);
-    lonejson_cleanup(&map, &record);
+    if (lonejson_cleanup(&map, &record, NULL) != LONEJSON_STATUS_OK)
+        abort();
     source.source = NULL;
     source.path = NULL;
     source.memory = input.text;
@@ -339,7 +344,8 @@ static int xml_helpers(void)
     CHECK(reference_xml_bytes(NULL, &options, &record, &bytes, &error) ==
               REFERENCE_INVALID &&
           bytes.data == NULL && bytes.size == 0);
-    lonejson_cleanup(&map, &record);
+    if (lonejson_cleanup(&map, &record, NULL) != LONEJSON_STATUS_OK)
+        abort();
     return 0;
 }
 int main(void)

@@ -1,0 +1,41 @@
+diff --git a/src/keymgr_openssl.c b/src/keymgr_openssl.c
+--- a/src/keymgr_openssl.c
++++ b/src/keymgr_openssl.c
+@@ -1116,10 +1116,17 @@
+ {
+ 	int		fd;
+ 	ssize_t		ret;
++	char		*pending;
++	size_t		capacity;
+ 
+-	fd = open(key->dom->certfile, O_CREAT | O_TRUNC | O_WRONLY, 0700);
++	capacity = strlen(key->dom->certfile) + sizeof(".pending-XXXXXX");
++	pending = kore_malloc(capacity);
++	(void)snprintf(pending, capacity, "%s.pending-XXXXXX", key->dom->certfile);
++	fd = mkstemp(pending);
+ 	if (fd == -1)
+ 		fatalx("open(%s): %s", key->dom->certfile, errno_s);
++	if (fchmod(fd, 0600) == -1)
++		fatalx("fchmod ACME certificate: %s", errno_s);
+ 
+ 	kore_log(LOG_INFO, "writing %lu bytes of data", (unsigned long)(len));
+ 
+@@ -1138,6 +1145,8 @@
+ 		    key->dom->certfile, (long)(ret), (unsigned long)(len));
+ 	}
+ 
++	if (fsync(fd) == -1)
++		fatalx("fsync ACME certificate: %s", errno_s);
+ 	if (close(fd) == -1) {
+ 		kore_log(LOG_NOTICE,
+ 		    "close error on '%s' (%s)", key->dom->certfile, errno_s);
+@@ -1145,6 +1154,9 @@
+ 	}
+ 
++	if (rename(pending, key->dom->certfile) == -1)
++		fatalx("rename ACME certificate: %s", errno_s);
++	kore_free(pending);
+ 	if (kore_library_hooks.acme_persist != NULL &&
+ 	    !kore_library_hooks.acme_persist(kore_library_hooks.arg, key->dom->domain))
+ 		fatalx("failed to persist ACME candidate state");
+ 

@@ -22,6 +22,9 @@ closure for every provider; do not substitute host libraries in a cross build.
 `examples/server.c` uses only the public API. It serves `/` on 127.0.0.1:8080;
 `--check` validates declarations without binding listeners. Its CMake project
 accepts `KNURL_VARIANT=static|shared` and `KNURL_DISCOVERY=cmake|pkgconfig`.
+On macOS its build runtime paths include the selected `KNURL_SDK_ROOT` provider
+directories, so the executable can load external shared libraries.
 
-The Lua facade/binding is a separate install using this shared SDK, the matching
-Lua providers and the host's Lua VM. The C SDK does not embed a second VM.
+The active product is the C library and SDK. The Lua binding and standalone
+server are archived pending Luthrum; see the installed
+[runtime direction guide](../docs/runtime-direction.md).

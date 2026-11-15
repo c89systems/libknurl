@@ -191,6 +191,8 @@ typedef struct knurl_limit_config {
  * applying overrides.
  */
 typedef struct knurl_timeout_config {
+    /** Absolute accept-to-TLS-handshake deadline; default 10000 ms. */
+    knurl_deadline tls_handshake;
     /** Server startup/readiness deadline. */
     knurl_deadline startup;
     /** Downstream request-head receive deadline. */
@@ -207,8 +209,9 @@ typedef struct knurl_timeout_config {
     knurl_deadline keepalive;
     /** Application WebSocket idle deadline. */
     knurl_deadline websocket_idle;
-    /** Deferred application response deadline; Vectis adapters and the Lua
-     * facade explicitly disable the extra deadline by default.
+    /** Application response deadline after body completion. Zero selects
+     * 30000 ms; set disabled to suppress it. Downstream write-idle limits apply
+     * independently. Baseline Vectis adapters explicitly disable this deadline.
      */
     knurl_deadline deferred_response;
 } knurl_timeout_config;
@@ -259,6 +262,10 @@ typedef struct knurl_http_config {
     int backend_quiet;
     /** Nonzero selects formatted backend error pages. */
     int pretty_error_pages;
+    /** Nonzero hides diagnostic messages in automatic 5xx responses.
+     * Enabled by the production profile; explicit application bodies remain
+     * under application control. */
+    int hide_server_errors;
 } knurl_http_config;
 
 /** Infer a filename's Content-Type using this instance's overrides, then
@@ -617,7 +624,8 @@ typedef struct knurl_supervision_config {
  */
 #define KNURL_CORRELATION_ID_MAX 128U
 /** Write into the supplied bounded buffer and return its length (no trailing
- * NUL required). Address resolvers return a numeric IPv4/IPv6 address;
+ * NUL required). Address resolvers return a numeric IPv4/IPv6 address, or zero
+ * length to preserve the default identity and its trust validity;
  * correlation IDs may be empty but cannot contain NUL/control bytes. */
 typedef knurl_status (*knurl_request_resolve_fn)(knurl_request *, char *,
                                                  size_t capacity,
@@ -637,6 +645,10 @@ typedef struct knurl_identifier_config {
 /** Configuration for client ip. Use the owning operation's initializer before
  * applying overrides.
  */
+typedef enum knurl_forwarded_format {
+    KNURL_FORWARDED_COMMA = 0,
+    KNURL_FORWARDED_RFC7239 = 1
+} knurl_forwarded_format;
 typedef struct knurl_client_ip_config {
     /** Trusted numeric proxy addresses/CIDRs; arbitrary forwarded addresses
      * remain untrusted.
@@ -644,6 +656,14 @@ typedef struct knurl_client_ip_config {
     const char *const *trusted_proxies;
     /** Number of entries in trusted_proxies. */
     size_t trusted_proxy_count;
+    /** NULL selects X-Forwarded-For; empty disables this header. */
+    const char *forwarded_header;
+    /** NULL selects X-Real-IP; empty disables this fallback header. */
+    const char *real_ip_header;
+    /** Comma-separated numeric addresses or RFC 7239 for parameters. */
+    knurl_forwarded_format forwarded_format;
+    /** Zero selects 16 hops; maximum 64. Oversized chains use the peer. */
+    size_t max_hops;
     /** Host resolver callback; its bounded output is copied before return. */
     knurl_request_resolve_fn resolve;
     /** Caller-owned callback context; retain it for the enclosing
@@ -695,6 +715,84 @@ typedef struct knurl_autoblock_config {
     /** Number of event_rules entries. */
     size_t event_rule_count;
 } knurl_autoblock_config;
+
+/** Maximum copied trusted-proxy hops in one autoblock notification. */
+#define KNURL_AUTOBLOCK_MAX_VIA 16U
+/** Maximum copied application-event name bytes in a notification. */
+#define KNURL_AUTOBLOCK_NAME_MAX 256U
+/** Address provenance used by the request identity policy. */
+typedef enum knurl_client_address_source {
+    KNURL_CLIENT_ADDRESS_PEER = 0,
+    KNURL_CLIENT_ADDRESS_FORWARDED_FOR,
+    KNURL_CLIENT_ADDRESS_REAL_IP,
+    KNURL_CLIENT_ADDRESS_RESOLVER
+} knurl_client_address_source;
+/** The rule that produced an autoblock decision. */
+typedef enum knurl_autoblock_reason {
+    KNURL_AUTOBLOCK_HTTP_STATUS = 0,
+    KNURL_AUTOBLOCK_TCP_STALL,
+    KNURL_AUTOBLOCK_TLS_FAILURE,
+    KNURL_AUTOBLOCK_APPLICATION
+} knurl_autoblock_reason;
+/** A newly applied block or a change to an existing block's deadline. */
+typedef enum knurl_autoblock_change {
+    KNURL_AUTOBLOCK_BLOCKED = 0,
+    KNURL_AUTOBLOCK_EXTENDED
+} knurl_autoblock_change;
+/** Self-contained copied decision. Address is the blocked numeric client key;
+ * peer is the actual TCP peer. Via lists known trusted proxies from client
+ * towards server. Resolver overrides report the known peer only. Transport
+ * events use peer identity. A truncated via list retains the nearest-server
+ * suffix; a truncated name retains its prefix. Times are monotonic
+ * milliseconds, suitable for duration arithmetic rather than wall-clock
+ * display. Expiry is the engine's scheduled deadline.
+ */
+typedef struct knurl_autoblock_event {
+    knurl_autoblock_change change;
+    knurl_autoblock_reason reason;
+    knurl_client_address_source address_source;
+    char address[46];
+    char peer_address[46];
+    char local_address[46];
+    unsigned short peer_port, local_port;
+    /** Zero-based listener index, or (size_t)-1 when unavailable. */
+    size_t listener_index;
+    knurl_process_context process;
+    int tls;
+    char via[KNURL_AUTOBLOCK_MAX_VIA][46];
+    size_t via_count;
+    int via_truncated;
+    char name[KNURL_AUTOBLOCK_NAME_MAX + 1];
+    int name_truncated;
+    /** Triggering HTTP status, or zero for another reason. */
+    int status;
+    /** Zero-based status/event rule index, or (size_t)-1 for transport rules.
+     */
+    size_t rule_index;
+    unsigned int threshold, count, window_seconds;
+    knurl_u64 occurred_at_ms, expires_at_ms, duration_ms;
+} knurl_autoblock_event;
+/** Native notification in the process that changed the block, after releasing
+ * the shared lock. Event is borrowed during the call. Keep work bounded; do not
+ * enter a Lua VM or recursively emit events. Querying notifications or
+ * requesting server stop is allowed. Callback failure cannot undo the block.
+ */
+typedef void (*knurl_autoblock_fn)(knurl_server *,
+                                   const knurl_autoblock_event *, void *);
+/** Inert notification declaration. Zero queue_capacity disables polling;
+ * callback and queue may be selected independently. The queue overwrites its
+ * oldest event when full and reports that loss on the next poll. The
+ * declaration is copied; callback userdata is borrowed until replaced or server
+ * destruction.
+ */
+typedef struct knurl_autoblock_notifications_config {
+    size_t queue_capacity;
+    knurl_autoblock_fn callback;
+    void *userdata;
+} knurl_autoblock_notifications_config;
+/** Initialize notifications with queue and callback disabled. */
+KNURL_API void knurl_autoblock_notifications_config_init(
+    knurl_autoblock_notifications_config *);
 
 /** Configuration for proxy resource. Use the owning operation's initializer
  * before applying overrides.
@@ -833,6 +931,16 @@ KNURL_API knurl_status knurl_server_destroy(knurl_server *server,
  */
 KNURL_API knurl_status knurl_server_validate(knurl_server *server,
                                              knurl_error *error);
+/** Validate an inactive server and probe its startup resources in the caller.
+ * Opens all configured listeners together, then closes them. Probes an explicit
+ * body spool directory when a declared ordinary handler can spill and opens the
+ * configured access log with the runtime's file rules. The log may be created.
+ * TLS material callbacks may run. Request-time header callbacks choose their
+ * body policy at dispatch. The call leaves the server inactive and releases
+ * probe resources. Resource availability may change before the subsequent run.
+ */
+KNURL_API knurl_status knurl_server_preflight(knurl_server *server,
+                                              knurl_error *error);
 /** Run the server lifecycle until stop/failure; return the run outcome after
  * worker/native cleanup.
  */
@@ -860,6 +968,175 @@ KNURL_API knurl_status knurl_server_listener_at(const knurl_server *server,
                                                 size_t index,
                                                 knurl_bound_listener *out,
                                                 knurl_error *error);
+/** Copy an inactive server's notification declaration. NULL disables delivery.
+ * Registration clears retained history. A run starts a fresh queue, shared by
+ * all workers. Polling history remains available after run returns. */
+KNURL_API knurl_status knurl_server_set_autoblock_notifications(
+    knurl_server *, const knurl_autoblock_notifications_config *,
+    knurl_error *);
+/** Consume one copied notification from the shared FIFO, or return EOF.
+ * Coordinate one logical polling consumer across processes. dropped reports
+ * overwrite/recovery losses since the last poll requesting that count,
+ * including on EOF. Active polling requires the current process owner loop.
+ * Inactive polling is serialized with lifecycle operations. No callback is
+ * invoked by polling. Queue contents last until the next run, notification
+ * registration or server destruction. */
+KNURL_API knurl_status knurl_server_autoblock_next(knurl_server *,
+                                                   knurl_autoblock_event *,
+                                                   knurl_u64 *dropped,
+                                                   knurl_error *);
+
+struct knurl_access_log_config;
+struct knurl_bound_listener;
+struct knurl_error;
+struct knurl_loop;
+struct knurl_router;
+struct knurl_run_result;
+struct knurl_server_effective;
+struct knurl_storage_filesystem_config;
+struct knurl_storage_provider;
+struct knurl_supervision_config;
+struct pslog_logger;
+/** Library-owned server receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_task_pool;
+struct knurl_task_pool_config;
+struct knurl_server {
+    /** Return the packaged Kore commit string in static storage. */
+    const char *(*kore_revision)(const struct knurl_server *server);
+    /** Active-run view; outside a run returns STATE. An identity with no HTTPS
+     * listener remains pending. The output borrows no backend structures. */
+    knurl_status (*tls_identity_state)(const struct knurl_server *server,
+                                       size_t index,
+                                       knurl_tls_identity_state *out,
+                                       struct knurl_error *error);
+    /** Inert outside-run registration. Both logger pointers are borrowed for
+     * every run; their sinks must support native process callbacks. Rules are
+     * copied. NULL configuration uses trace/warn/error; NULL root uses a
+     * library-owned default logger during run. Without an override, access
+     * derives sub=http. logger_disabled affects structured access only,
+     * independently of file logs.
+     */
+    knurl_status (*set_pslog)(struct knurl_server *, struct pslog_logger *,
+                              const struct knurl_access_log_config *,
+                              struct knurl_error *);
+    /** Borrow the current process's loop during an active server run. Captured
+     * handles cannot cross a fork or run boundary. All operations require the
+     * owner thread except waker_signal and server_request_stop.
+     */
+    struct knurl_loop *(*loop)(struct knurl_server *server);
+    /** Infer a filename's Content-Type using this instance's overrides, then
+     * built-ins, then application/octet-stream. NULL server uses only
+     * built-ins. No filesystem access. Result is borrowed until server
+     * destruction (or has static lifetime for built-ins); path is a
+     * filename/path, not a URL.
+     */
+    const char *(*content_type)(const struct knurl_server *, const char *path);
+    /** Copy normalized settings into a view borrowing server-owned storage;
+     * includes requested timeout choices.
+     */
+    knurl_status (*effective_config)(const struct knurl_server *server,
+                                     struct knurl_server_effective *out,
+                                     struct knurl_error *error);
+    /** Inspect the declared/run/stop lifecycle state without changing it. */
+    knurl_server_state (*get_state)(const struct knurl_server *server);
+    /** Borrow the server-owned route registry until server destruction. */
+    struct knurl_router *(*router)(struct knurl_server *server);
+    /** Replace the server's inert router; transfer ownership only on success.
+     */
+    knurl_status (*router_take)(struct knurl_server *server,
+                                struct knurl_router *router,
+                                struct knurl_error *error);
+    /** Attach host control-FD supervision; successful transfer owns FD cleanup,
+     * failure retains caller ownership.
+     */
+    knurl_status (*supervision_take)(
+        struct knurl_server *server,
+        const struct knurl_supervision_config *config,
+        struct knurl_error *error);
+    /** Change control-descriptor interest on its owner loop; zero suspends
+     * notifications.
+     */
+    knurl_status (*control_interest)(struct knurl_server *server,
+                                     unsigned int interest,
+                                     struct knurl_error *error);
+    /** Destroy an inactive server and owned declarations; rejects active or
+     * reentrant destruction.
+     */
+    knurl_status (*destroy)(struct knurl_server *server,
+                            struct knurl_error *error);
+    /** Validate declarations and TLS material without binding listeners or
+     * forking; material callbacks may run.
+     */
+    knurl_status (*validate)(struct knurl_server *server,
+                             struct knurl_error *error);
+    /** Validate an inactive server and probe its startup resources in the
+     * caller. Opens all configured listeners together, then closes them. Probes
+     * an explicit body spool directory when a declared ordinary handler can
+     * spill and opens the configured access log with the runtime's file rules.
+     * The log may be created. TLS material callbacks may run. Request-time
+     * header callbacks choose their body policy at dispatch. The call leaves
+     * the server inactive and releases probe resources. Resource availability
+     * may change before the subsequent run.
+     */
+    knurl_status (*preflight)(struct knurl_server *server,
+                              struct knurl_error *error);
+    /** Run the server lifecycle until stop/failure; return the run outcome
+     * after worker/native cleanup.
+     */
+    knurl_status (*run)(struct knurl_server *server,
+                        struct knurl_run_result *out,
+                        struct knurl_error *error);
+    /** Request graceful stop of an active run; callable from another thread
+     * while the server remains alive.
+     */
+    knurl_status (*request_stop)(struct knurl_server *server,
+                                 struct knurl_error *error);
+    /** Async-signal-safe during a run; the caller keeps the server alive. */
+    void (*notify_signal)(struct knurl_server *server, int signal_number);
+    /** Open or pause serving on the ready parent owner loop, including from
+     * on_parent_ready. Readiness remains separate. Nonzero opens the gate; a
+     * stop already requested prevents opening it. Other processes/threads or a
+     * server outside READY_PAUSED/SERVING return STATE.
+     */
+    knurl_status (*set_serving)(struct knurl_server *server, int serving,
+                                struct knurl_error *error);
+    /** Borrows addresses acquired by the active run, including ephemeral ports.
+     */
+    knurl_status (*listener_at)(const struct knurl_server *server, size_t index,
+                                struct knurl_bound_listener *out,
+                                struct knurl_error *error);
+    /** Inert declaration over a borrowed server. Filesystem providers share one
+     * bounded executor in that HTTP worker, created on its first operation.
+     * Absolute cache/root paths; NULL root
+     * selects cache_dir/webdav/site_id/content and the existing tombstone tree.
+     * Zero quotas select 16 MiB/file, 128 MiB total and 4096 resources.
+     * PUT transactions are capped by max_file_bytes and admitted by server
+     * limits; native execution uses the worker's bounded queue with
+     * backpressure. Conditions are rechecked with quota accounting under the
+     * mutation lock at finish. No filesystem I/O or threads are started by
+     * construction. Server outlives the provider; bound providers are not
+     * reusable across runs. */
+    knurl_status (*storage_filesystem)(
+        struct knurl_server *, const struct knurl_storage_filesystem_config *,
+        struct knurl_storage_provider **, struct knurl_error *);
+    /** Configure native callbacks and the shared polling queue while inactive.
+     */
+    knurl_status (*set_autoblock_notifications)(
+        knurl_server *, const knurl_autoblock_notifications_config *,
+        knurl_error *);
+    /** Consume one copied event; EOF still reports any queue losses. */
+    knurl_status (*autoblock_next)(knurl_server *, knurl_autoblock_event *,
+                                   knurl_u64 *, knurl_error *);
+    /** Create a bounded native task pool in an active post-fork HTTP worker. */
+    knurl_status (*task_pool)(knurl_server *,
+                              const struct knurl_task_pool_config *,
+                              struct knurl_task_pool **, knurl_error *);
+    /** Private library state; applications must not access it. */
+    struct knurl_server_impl *impl;
+};
 
 #ifdef __cplusplus
 }

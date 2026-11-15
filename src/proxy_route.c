@@ -319,13 +319,14 @@ knurl_status knurl_router_proxy(knurl_router *router,
     route.methods = config->methods;
     route.path_kind = config->path_kind;
     route.on_headers = knurl_proxy_dispatch;
+    route.acl = config->acl;
     route.userdata = data;
     status = knurl_router_route(router, &route, &registered, error);
     if (status != KNURL_OK)
         knurl_proxy_route_data_free(data);
     else {
-        registered->release_userdata = knurl_proxy_route_data_free;
-        registered->raw_path = 1;
+        registered->impl->release_userdata = knurl_proxy_route_data_free;
+        registered->impl->raw_path = 1;
         if (out != NULL)
             *out = registered;
     }

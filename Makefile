@@ -16,8 +16,6 @@ endif
 BUILD_DIR ?= build/$(if $(filter $(TARGET),$(DEFAULT_TARGET)),,$(TARGET)/)$(CONFIG)
 TOOLCHAIN := cmake/toolchains/selected.cmake
 PREFIX ?= $(CURDIR)/build/install/$(TARGET)/$(CONFIG)
-DEPENDENCY_CACHE := $(if $(CPKT_DEPENDENCY_CACHE),$(CPKT_DEPENDENCY_CACHE),$(CURDIR)/.cache/deps)
-LUA_PROVIDER_BUILD := build/$(if $(filter $(TARGET),$(DEFAULT_TARGET)),,$(TARGET)/)release/lua-deps
 CANDIDATE_VERSION ?=
 VERSION_ARG := -DKNURL_CANDIDATE_VERSION=$(CANDIDATE_VERSION)
 FUZZ_SECONDS ?= 300
@@ -33,7 +31,7 @@ $(error QEMU smoke requires one of the four ARM Linux TARGET values)
 endif
 endif
 
-.PHONY: help deps deps-all toolchain toolchains configure build build-all lua lua-all lua-package sdk-package sdk-verify prepare-kore test install format format-check update-kore clean
+.PHONY: help deps deps-all toolchain toolchains configure build build-all sdk-package sdk-verify prepare-kore test install format format-check update-kore clean
 .NOTPARALLEL:
 .PHONY: memcheck qemu-smoke fuzz-toolchain fuzz-build fuzz-smoke fuzz verify-all prerelease release-check release-local
 
@@ -41,13 +39,11 @@ help:
 	@printf '%s\n' \
 	  'make build                 Compile the selected target (default: x86_64-linux-gnu).' \
 	  'make build-all             Compile all seven lifecycle/cpkt targets, serially.' \
-	  'make lua / lua-all         Build the Lua binding against the installed shared core SDK.' \
-	  'make lua-package           Stage the Lua source archive, rockspec and source rock.' \
 	  'make sdk-package           Stage the selected-target Core SDK binary rehearsal.' \
 	  'make sdk-verify            Verify that archive and its relocated example consumers.' \
 	  'make test                  Build, then run registered CTest checks.' \
-	  'make memcheck              Valgrind Core/Lua checks; reuses the selected GNU build.' \
-	  'make qemu-smoke            Basic Core/HTTP/Lua checks for an ARM Linux TARGET; no fuzzing.' \
+	  'make memcheck              Valgrind C library checks; reuses the selected GNU build.' \
+	  'make qemu-smoke            Basic C/HTTP checks for an ARM Linux TARGET; no fuzzing.' \
 	  'make fuzz-toolchain        Explicitly prepare pinned native GNU AFL++ tooling.' \
 	  'make fuzz-smoke / fuzz     AFL++ parser smoke (10s) / longer run (FUZZ_SECONDS=300).' \
 	  'make verify-all            Build each target once, then run native, memory, QEMU and SDK gates.' \
@@ -87,29 +83,11 @@ configure: deps
 build: configure
 	"$(CMAKE)" --build '$(BUILD_DIR)' --parallel '$(JOBS)'
 
-lua: build
-	"$(CMAKE)" --install '$(BUILD_DIR)' --prefix '$(CURDIR)/$(BUILD_DIR)/lua-core-sdk'
-	bash scripts/deps.sh '$(TARGET)' lua
-	"$(CMAKE)" -S lua/dependencies/lonejson -B '$(LUA_PROVIDER_BUILD)/lonejson' -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DKNURL_TARGET='$(TARGET)' -DKNURL_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)' -DLONEJSON_LUA_SOURCE='$(DEPENDENCY_CACHE)/sources/lonejson-lua-0.47.0' -DCMAKE_INSTALL_PREFIX='$(CURDIR)/.cache/sdk/$(TARGET)/lonejson-lua'
-	"$(CMAKE)" --build '$(LUA_PROVIDER_BUILD)/lonejson' --parallel '$(JOBS)'
-	"$(CMAKE)" --install '$(LUA_PROVIDER_BUILD)/lonejson'
-	"$(CMAKE)" -S lua/dependencies/pslog -B '$(LUA_PROVIDER_BUILD)/pslog' -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DKNURL_TARGET='$(TARGET)' -DKNURL_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)' -DPSLOG_LUA_SOURCE='$(DEPENDENCY_CACHE)/sources/pslog-lua-0.13.0' -DCMAKE_INSTALL_PREFIX='$(CURDIR)/.cache/sdk/$(TARGET)/pslog-lua'
-	"$(CMAKE)" --build '$(LUA_PROVIDER_BUILD)/pslog' --parallel '$(JOBS)'
-	"$(CMAKE)" --install '$(LUA_PROVIDER_BUILD)/pslog'
-	"$(CMAKE)" -S lua -B '$(BUILD_DIR)/lua' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DBUILD_TESTING=ON -DCMAKE_TOOLCHAIN_FILE='$(CURDIR)/$(TOOLCHAIN)' -DKNURL_TARGET='$(TARGET)' -DKNURL_CORE_PREFIX='$(CURDIR)/$(BUILD_DIR)/lua-core-sdk' -DKNURL_SDK_ROOT='$(CURDIR)/.cache/sdk/$(TARGET)' '$(VERSION_ARG)'
-	"$(CMAKE)" --build '$(BUILD_DIR)/lua' --parallel '$(JOBS)'
-
-lua-all:
-	@for target in $(SUPPORTED_TARGETS); do $(MAKE) --no-print-directory lua TARGET="$$target" || exit $$?; done
-
-lua-package:
-	"$(CMAKE)" '$(VERSION_ARG)' -P lua/cmake/Package.cmake
-
-memcheck: lua
+memcheck: build
 	"$(CMAKE)" -S cmake/checks -B '$(BUILD_DIR)/checks/memory' '-DKNURL_BUILD=$(CURDIR)/$(BUILD_DIR)' -DCHECK_KIND=memory
 	"$(CTEST)" --test-dir '$(BUILD_DIR)/checks/memory' --parallel 1 --stop-on-failure --output-on-failure --no-tests=error
 
-qemu-smoke: lua
+qemu-smoke: build
 	"$(CMAKE)" -S cmake/checks -B '$(BUILD_DIR)/checks/qemu' '-DKNURL_BUILD=$(CURDIR)/$(BUILD_DIR)' -DCHECK_KIND=qemu
 	"$(CTEST)" --test-dir '$(BUILD_DIR)/checks/qemu' --parallel 1 --stop-on-failure --output-on-failure --no-tests=error
 
@@ -117,8 +95,9 @@ fuzz-toolchain:
 	bash scripts/lifecycle/cpkt-aflpp.sh ensure
 
 fuzz-build:
-	$(MAKE) --no-print-directory lua TARGET=x86_64-linux-gnu CONFIG=release
-	"$(CMAKE)" -S tests/fuzz -B '$(FUZZ_BUILD_DIR)' -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo '-DCMAKE_TOOLCHAIN_FILE=$(CURDIR)/$(TOOLCHAIN)' -DKNURL_TARGET=x86_64-linux-gnu -DKNURL_AFL=ON '-DKNURL_CORE_PREFIX=$(CURDIR)/build/release/lua-core-sdk' '-DKNURL_SDK_ROOT=$(CURDIR)/.cache/sdk/x86_64-linux-gnu' '$(VERSION_ARG)'
+	$(MAKE) --no-print-directory build TARGET=x86_64-linux-gnu CONFIG=release
+	"$(CMAKE)" --install '$(CURDIR)/build/release' --prefix '$(CURDIR)/build/release/core-sdk'
+	"$(CMAKE)" -S tests/fuzz -B '$(FUZZ_BUILD_DIR)' -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo '-DCMAKE_TOOLCHAIN_FILE=$(CURDIR)/$(TOOLCHAIN)' -DKNURL_TARGET=x86_64-linux-gnu -DKNURL_AFL=ON '-DKNURL_CORE_PREFIX=$(CURDIR)/build/release/core-sdk' '-DKNURL_SDK_ROOT=$(CURDIR)/.cache/sdk/x86_64-linux-gnu' '$(VERSION_ARG)'
 	"$(CMAKE)" --build '$(FUZZ_BUILD_DIR)' --parallel '$(JOBS)'
 
 fuzz-smoke: fuzz-build
@@ -160,10 +139,10 @@ install: build
 	"$(CMAKE)" --install '$(BUILD_DIR)' --prefix '$(PREFIX)'
 
 format:
-	clang-format -i include/knurl/*.h src/*.c src/*.h src/lua/*.c src/lua/*.h lua/include/knurl/*.h examples/*.c tests/*.c tests/*.h tests/*.cpp tests/lua/*.c tests/lua/*.h tests/fuzz/*.c
+	clang-format -i include/knurl/*.h src/*.c src/*.h examples/*.c tests/*.c tests/*.h tests/*.cpp tests/fuzz/*.c
 
 format-check:
-	clang-format --dry-run --Werror include/knurl/*.h src/*.c src/*.h src/lua/*.c src/lua/*.h lua/include/knurl/*.h examples/*.c tests/*.c tests/*.h tests/*.cpp tests/lua/*.c tests/lua/*.h tests/fuzz/*.c
+	clang-format --dry-run --Werror include/knurl/*.h src/*.c src/*.h examples/*.c tests/*.c tests/*.h tests/*.cpp tests/fuzz/*.c
 
 update-kore:
 	bash scripts/update-kore.sh '$(KORE_REVISION)'

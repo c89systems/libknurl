@@ -18,8 +18,8 @@ static int valid_level(pslog_level level)
 }
 void knurl_logging_clear(knurl_server *server)
 {
-    free(server->logging);
-    server->logging = NULL;
+    free(server->impl->logging);
+    server->impl->logging = NULL;
 }
 knurl_status knurl_server_set_pslog(knurl_server *server, pslog_logger *logger,
                                     const knurl_access_log_config *input,
@@ -70,7 +70,7 @@ knurl_status knurl_server_set_pslog(knurl_server *server, pslog_logger *logger,
                config.status_level_rule_count * sizeof(copy->rules[0]));
     copy->access.status_level_rules = copy->rules;
     knurl_logging_clear(server);
-    server->logging = copy;
+    server->impl->logging = copy;
     knurl_error_clear(error);
     return KNURL_OK;
 }

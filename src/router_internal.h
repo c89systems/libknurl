@@ -5,7 +5,8 @@
 #include <knurl/router.h>
 #include <regex.h>
 
-struct knurl_route {
+struct knurl_route_impl {
+    knurl_route receiver;
     knurl_route_config config;
     regex_t pattern;
     int has_pattern;
@@ -13,16 +14,19 @@ struct knurl_route {
     int directory_mount;
     knurl_headers_fn preflight;
     knurl_route_group *group;
+    knurl_router *router;
     void (*release_userdata)(void *);
 };
 
-struct knurl_route_group {
+struct knurl_route_group_impl {
+    knurl_route_group receiver;
     knurl_router *router;
     knurl_route_group_config config;
     knurl_route_group *next;
 };
 
-struct knurl_router {
+struct knurl_router_impl {
+    knurl_router receiver;
     struct knurl_openapi_entry *openapi;
     knurl_route **routes;
     size_t count;

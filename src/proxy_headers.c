@@ -1,6 +1,6 @@
 #include "proxy_headers.h"
 
-#include "proxy_framing.h"
+#include "http_framing.h"
 
 #include <arpa/inet.h>
 #include <stdint.h>
@@ -95,7 +95,7 @@ static int knurl_proxy_token_list(const char *value, const char *wanted,
                 return 0;
             }
         }
-        if (trailers && !knurl_proxy_trailer_field_allowed(start, length)) {
+        if (trailers && !knurl_http_trailer_field_allowed(start, length)) {
             return 0;
         }
         if (wanted != NULL && knurl_proxy_ascii_equal(start, length, wanted)) {
@@ -675,7 +675,7 @@ int knurl_proxy_request_trailer_declared(const knurl_proxy_headers *headers,
     int found;
 
     if (headers == NULL || name == NULL ||
-        !knurl_proxy_trailer_field_allowed(name, strlen(name))) {
+        !knurl_http_trailer_field_allowed(name, strlen(name))) {
         return 0;
     }
     return knurl_proxy_has_list_token(headers, "trailer", name, 1, &found) &&

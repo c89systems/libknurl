@@ -419,6 +419,11 @@ static int live_case(const char *directory)
     routes.handler = route;
     CHECK(knurl_router_route(knurl_server_router(server), &routes, NULL,
                              &error) == KNURL_OK);
+    CHECK(knurl_server_preflight(server, &error) == KNURL_IO);
+    CHECK(error.source == KNURL_ERROR_SYSTEM && error.native_code == ENOSPC &&
+          strcmp(error.operation, "access_log_open") == 0 &&
+          strcmp(error.detail, active_path) == 0);
+    open_failures = 1;
     CHECK(knurl_server_run(server, &result, &error) == KNURL_OK &&
           !result.escalated);
     CHECK(waitpid(fixture.child, &status, 0) == fixture.child &&

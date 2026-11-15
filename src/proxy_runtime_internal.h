@@ -58,6 +58,7 @@ struct proxy_exchange {
     int local_begun;
     int local_status;
     knurl_error failure;
+    char upstream_error[CURL_ERROR_SIZE];
     knurl_u64 started;
     knurl_u64 progress;
     curl_off_t uploaded;

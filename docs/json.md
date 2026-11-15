@@ -1,9 +1,18 @@
 # LoneJSON codecs and typed routes
 
-Include [`<knurl/lonejson.h>`](../include/knurl/lonejson.h) explicitly. The core
+Include [`<knurl/lonejson.h>`](https://github.com/c89systems/libknurl/blob/trunk/include/knurl/lonejson.h) explicitly. The core
 umbrella remains independent of LoneJSON declarations. CMake consumers link
 `knurl::shared` or `knurl::static`; both expose the matching public LoneJSON
 dependency. Its header and library come from the selected released SDK.
+
+The selected LoneJSON 0.50.0 SDK uses ABI 29. Record lifecycle calls
+`lonejson_init`, `lonejson_reset` and `lonejson_cleanup` return a status and take
+an optional error output. Check initialization/reset before using records.
+Deep-map traversal grows checked heap workspaces; allocation failure leaves the
+record unchanged and can be retried after restoring allocator availability.
+Array-stream constructors initialize all diagnostics on success and failure,
+including allocator failures; callers do not need to preinitialize their error
+output.
 
 `knurl_json_validate_cstr` preserves Vectis's standalone validation helper:
 NULL is INVALID, one NUL-terminated value is validated by LoneJSON, and parser
@@ -65,9 +74,7 @@ input shape/field-overflow failures become HTTP 400 in the typed facade.
 source's current position. It never resets or closes the source. The caller
 initializes and cleans the record, including partial failures. `AGAIN` is a
 terminal STATE error for this synchronous call; a live blocking source belongs
-on a native reader thread. Lua `parse`/`parse_record` and `request.json_record`
-create their own record with public LoneJSON interop and use these Core parse
-operations. The binding has no separate body-reader or rewind implementation.
+on a native reader thread.
 
 Auth/before hooks finish before typed decoding and handler execution. After hooks
 may inspect or replace the selected staged source before transport submission.
@@ -99,7 +106,7 @@ constructs no full JSON buffer, so stack records are safe. The directory default
 to `/tmp`; this explicit file-backed helper adds no payload bound. Replacement
 and failure preserve headers and release file ownership through the common
 [reply materialization path](responses.md). The
-[spooled fixture](../tests/reply-spooled.c) verifies independent serialized bytes
+[spooled fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/reply-spooled.c) verifies independent serialized bytes
 after record mutation, descriptor cleanup and actual disk-write failure.
 
 `knurl_source_json` and `knurl_reply_json` use LoneJSON's public pull generator.
@@ -116,7 +123,7 @@ selected-array pull loop. The caller supplies initialized, empty mapped item
 storage; each item is reset, parsed, passed with a zero-based index, and reset
 before the next read, including callback/parse failures. Reset retains
 caller-owned fixed-capacity array backing and enforces its declared capacity;
-the caller owns final cleanup. Record reuse is selected with LoneJSON 0.47.0's
+the caller owns final cleanup. Record reuse is selected with LoneJSON's
 public per-stream operation for both owned and supplied runtimes. A supplied
 runtime can retain its default clearing policy; its configuration is unchanged.
 The source stays borrowed and open. NULL/empty selector selects a root array;
@@ -135,40 +142,16 @@ append operations, and emits output before input EOF. Neither the document nor
 selected array is collected. The C reference adapter preserves the original
 source/path/memory declaration precedence and legacy error translation.
 
-Lua `knurl.json.array_each{schema,selector,callback,source=...}` binds that public
-C operation. Supply exactly one of `source`, `path` or already-buffered `data`.
-`request.json_array_each{schema,selector,callback}` binds its request counterpart.
-Both call `callback(table,index)` and return `true,count` or `nil,error`; callbacks
-can throw or return `nil,error` to stop. Each table comes from the binding's own
-Lua-owned record via released `lonejson_lua_record_to_table`, before C cleans the
-record. Retaining a table therefore does not require exposing C-owned storage or
-adding dependency APIs. A borrowed Lua Source rejects read/reset/close/transfer
-during iteration, remains open afterward, and retains its normal error state.
-
-The [API fixture](../tests/json.c) checks small generator reads over a 128 KiB
+The [API fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/json.c) checks small generator reads over a 128 KiB
 record, explicit output limits, release ownership, caller-owned selected items
 before EOF, source failures, callback stopping, cleanup and truncation. The
-[wire fixture](../tests/json-runtime.c) checks
+[wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/json-runtime.c) checks
 copied registrations, group hooks, file-backed input and rewind, malformed and
 overflowing input, after-hook replacement, auth short circuit, per-response output
 schemas, a 64 KiB reply borrowing its input record, file-backed array iteration
 through the reference adapter, rewind after callback failure and startup spool
-policy. Lua cases also cover retained tables, GC, allocation/callback failure,
-borrowed source ownership and request iteration.
+policy.
 Both also run against relocated static/shared SDKs.
-
-The [Lua codecs](lua.md) now bind materialized serialization and generated
-Source/callback output through these public operations and released LoneJSON
-interop. Their private table preparation, mutation/GC/reentry, spooled input and
-buffered external-record cases preserve Vectis's writer policy. Lua mapped input
-uses the provider's public owned-record parser over knurl body/file readers.
-Fixed-schema and general typed Lua routes bind the public C typed registrations,
-using their optional record provider to supply pinned Lua-owned storage. C owns
-input parsing, dispatch, serialization and hook ordering. The binding releases
-its record reference on completion/failure; a record retained by Lua remains
-owned by Lua. No second route preparation path or record conversion is needed.
-Their [installed fixture](../tests/lua/typed.lua) covers captured JSON, file/spooled
-input, record lifetime, multiple output schemas and the shared hook chain.
 
 [Buffered REST](rest.md) adds generic decode/validate/error policy over ordinary
 staged routes and explicit materialized replies. [OpenAPI](openapi.md) projects

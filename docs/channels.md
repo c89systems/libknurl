@@ -71,13 +71,13 @@ The TLS adapter retains retry storage and calculates read/write readiness
 separately, following OpenSSL's [read](https://docs.openssl.org/3.6/man3/SSL_read/),
 [write](https://docs.openssl.org/3.6/man3/SSL_write/) and
 [shutdown](https://docs.openssl.org/3.6/man3/SSL_shutdown/) contracts. The
-[TLS fixture](../tests/tls-runtime.c) exercises a public HTTPS channel with early
+[TLS fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/tls-runtime.c) exercises a public HTTPS channel with early
 input, bounded output and orderly half-close. Forced cross-direction retries and
 slow/disconnected TLS peers remain integration coverage under
-[development](development.md).
+[development](https://github.com/c89systems/libknurl/blob/trunk/docs/development.md).
 
-The [public fixture](../tests/channel-runtime.c) demonstrates takeover, raw
+The [public fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/channel-runtime.c) demonstrates takeover, raw
 framing, bounded echo, half-close and reuse through the public shared API. The
-[private fixture](../tests/channel-backend.c) adds queued native streams to prove
+[private fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/channel-backend.c) adds queued native streams to prove
 their ownership/order survives handoff. The complete requirements remain in the
 [server specification](server-api-spec.md).

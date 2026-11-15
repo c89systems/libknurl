@@ -1,0 +1,17 @@
+FROM docker.io/library/alpine@sha256:9db2934886712d877c932e07249c75a59e6ca27adfbccc05261987a17bef2d63 AS trust
+COPY ca.pem /fixture-ca.pem
+ARG WITH_TEST_CA=0
+RUN cp /etc/ssl/certs/ca-certificates.crt /bundle && \
+    if [ "$WITH_TEST_CA" = 1 ]; then cat /fixture-ca.pem >> /bundle; fi
+
+FROM scratch
+COPY knurl /bin/knurl
+COPY orphan /test/orphan
+COPY --from=trust /bundle /etc/ssl/certs/ca-certificates.crt
+COPY server.lua /server.lua
+COPY cert.pem /cert.pem
+COPY key.pem /key.pem
+COPY www /www
+COPY country.mmdb /country.mmdb
+ENTRYPOINT ["/bin/knurl"]
+CMD ["/server.lua"]

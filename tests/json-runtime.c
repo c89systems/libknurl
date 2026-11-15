@@ -36,6 +36,10 @@ static const lonejson_field output_fields[] = {LONEJSON_FIELD_STRING_FIXED_REQ(
 static const lonejson_field problem_fields[] = {LONEJSON_FIELD_STRING_FIXED_REQ(
     struct problem, reason, "reason", LONEJSON_OVERFLOW_FAIL)};
 LONEJSON_MAP_DEFINE(input_map, struct input, input_fields);
+static const lonejson_map cycle_map;
+static const lonejson_field cycle_fields[] = {
+    LONEJSON_FIELD_OBJECT_REQ(struct input, message, "child", &cycle_map)};
+LONEJSON_MAP_DEFINE(cycle_map, struct input, cycle_fields);
 LONEJSON_MAP_DEFINE(output_map, struct output, output_fields);
 LONEJSON_MAP_DEFINE(problem_map, struct problem, problem_fields);
 static lonejson_schema_view problem_schema;
@@ -74,7 +78,9 @@ static knurl_status acquire_record(knurl_request *request, int output,
     owner->record = calloc(1, schema->record_size);
     if (owner->runtime == NULL || owner->record == NULL)
         return KNURL_NOMEM;
-    lonejson_init(owner->runtime, owner->map, owner->record);
+    if (lonejson_init(owner->runtime, owner->map, owner->record, NULL) !=
+        LONEJSON_STATUS_OK)
+        abort();
     storage->view.size = sizeof(storage->view);
     storage->view.abi_version = LONEJSON_VIEW_ABI_VERSION;
     storage->view.schema = *schema;
@@ -95,7 +101,9 @@ static void release_record(knurl_record_storage *storage, void *data)
     ++record_released;
     if (owner != NULL) {
         if (owner->record != NULL && owner->runtime != NULL)
-            lonejson_cleanup(owner->map, owner->record);
+            if (lonejson_cleanup(owner->map, owner->record, NULL) !=
+                LONEJSON_STATUS_OK)
+                abort();
         free(owner->record);
         lonejson_free(owner->runtime);
         free(owner);
@@ -239,10 +247,12 @@ static reference_status host_echo(struct reference_app *app,
     if (reference_request_json_into(request, &input_map, &repeated, error) !=
             REFERENCE_OK ||
         repeated.message == NULL || strcmp(repeated.message, in->message)) {
-        lonejson_cleanup(&input_map, &repeated);
+        if (lonejson_cleanup(&input_map, &repeated, NULL) != LONEJSON_STATUS_OK)
+            abort();
         return REFERENCE_STATE;
     }
-    lonejson_cleanup(&input_map, &repeated);
+    if (lonejson_cleanup(&input_map, &repeated, NULL) != LONEJSON_STATUS_OK)
+        abort();
     ++called;
     (void)snprintf(out->result, sizeof(out->result), "%s", in->message);
     return REFERENCE_OK;
@@ -479,6 +489,9 @@ static int client(unsigned short port, int ready_fd)
                    "duplicate field 'message'", 0, 0) == 0);
     CHECK(exchange(port, "/spilled", "{\"message\":\"file\"}", 200,
                    "{\"result\":\"file\"}", 0, 0) == 0);
+    CHECK(exchange(port, "/init-input-fail", "{}", 400, NULL, 0, 0) == 0);
+    CHECK(exchange(port, "/init-output-fail", "{\"message\":\"hidden\"}", 400,
+                   NULL, 0, 0) == 0);
     CHECK(exchange(port, "/replace", "{\"message\":\"hidden\"}", 201,
                    "replaced", 0, 0) == 0);
     CHECK(exchange(port, "/provider-fail", "{\"message\":\"hidden\"}", 500, "",
@@ -576,6 +589,7 @@ int main(int argc, char **argv)
     knurl_server_config config;
     knurl_listener_config listener;
     knurl_json_route_config json;
+    knurl_json_route_config failed;
     knurl_record_provider provider;
     struct reference_typed_route forwarded, typed_forwarded, generated;
     struct reference_json_config host_json;
@@ -636,6 +650,18 @@ int main(int argc, char **argv)
     json.body.memory_buffer_limit_bytes = 8;
     json.userdata = "spilled";
     CHECK(knurl_router_json_route(knurl_server_router(server), &json, NULL,
+                                  &error) == KNURL_OK);
+    failed = json;
+    failed.path = "/init-input-fail";
+    CHECK(knurl_json_schema_from_map(NULL, &cycle_map, &failed.input, &error) ==
+          KNURL_OK);
+    CHECK(knurl_router_json_route(knurl_server_router(server), &failed, NULL,
+                                  &error) == KNURL_OK);
+    failed = json;
+    failed.path = "/init-output-fail";
+    CHECK(knurl_json_schema_from_map(NULL, &cycle_map, &failed.output,
+                                     &error) == KNURL_OK);
+    CHECK(knurl_router_json_route(knurl_server_router(server), &failed, NULL,
                                   &error) == KNURL_OK);
     json.path = "/replace";
     json.hooks.after = after;

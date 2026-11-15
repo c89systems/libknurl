@@ -6,12 +6,14 @@ execute on the HTTP worker's owning loop. Configuration is inert: construction
 and validation do not invoke them. Function and userdata pointers are borrowed
 for the server lifetime.
 
-`config.client_ip.trusted_proxies` retains Vectis's numeric-address trust list.
+`config.client_ip.trusted_proxies` accepts numeric addresses, CIDRs and immediate
+peer wildcard trust; see [ACLs and forwarding trust](acl.md).
 The server copies the list and its strings. Untrusted TCP peers cannot select
 their effective address through forwarding headers. For trusted peers, the first
 X-Forwarded-For field is walked from right to left, returning the nearest
 untrusted address or the leftmost address when the entire chain is trusted.
-Malformed chains fall back to a valid trimmed X-Real-IP, then to the TCP peer.
+Absent chains may use a valid trimmed X-Real-IP. Malformed, duplicate or overlong
+chain headers use the TCP peer without trying a second identity header.
 IPv6 trust comparisons use address bytes, so equivalent textual forms match.
 Transport admission and observations always retain the actual TCP peer.
 
@@ -19,6 +21,9 @@ Transport admission and observations always retain the actual TCP peer.
 changing `knurl_request_peer`. An optional `client_ip.resolve` callback sees
 that default and writes a replacement numeric IPv4/IPv6 address into a supplied
 46-byte buffer. An optional `correlation_id.resolve` writes at most 128 bytes.
+An address resolver returning zero bytes preserves the default identity and its
+forwarding validity; a zero-length result uses this path. A nonempty valid host replacement
+explicitly overrides that decision.
 It may return an empty identifier; NUL, control bytes and DEL are rejected.
 Neither callback must append a terminator. The server validates and retains
 successful results through request close. Correlation is empty by default:
@@ -83,87 +88,14 @@ initialization have transport events instead. Redirect listeners use managed
 output for truthful terminal counts and preserve their raw target without a
 routing decode. Their decoded path/query collections can be empty.
 
-The [policy fixture](../tests/policy-runtime.c) covers trusted-chain behavior,
+The [policy fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/policy-runtime.c) covers trusted-chain behavior,
 copied configuration, resolver failure, bounded admission, rejection before
 upload open, independent application/plan state, callback ordering, response
 replacement, interim output, post-commit abort and transport stalls/status.
-The [TLS fixture](../tests/tls-runtime.c) covers handshake failures and redirect
+The [TLS fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/tls-runtime.c) covers handshake failures and redirect
 accounting. The public policy fixture also runs against relocated static/shared
 SDKs. [Structured and file access logging](logging.md) use the same resolved
 identity without retaining application-owned request state.
-
-## Lua callbacks
-
-The Lua binding adapts these public C callbacks without a second policy engine.
-`client_ip.resolve(request)` and `correlation_id.resolve(request)` return a string
-or nil/error. Nil without error preserves the default address or empty correlation
-identifier. The C core enforces numeric address syntax, the 128-byte identifier
-bound and control-byte rejection. Configured callbacks are copied at declaration;
-construction and validation do not invoke them.
-
-`callbacks.on_request_start(server, request)` runs after resolution and before
-admission. It returns nil/true or nil/error; false rejects with STATE.
-`callbacks.on_request_close(server, request, outcome)` runs once after final
-observation and before request handles expire, including resolution/start/admission
-failure. Both callbacks and route hooks share the same Lua request table, so host
-state stored there survives into routing and cleanup. The facade refreshes resolved
-identity during the early phases and fills completed body metadata once when the
-route chain begins. Later hooks retain ordinary Lua body edits.
-
-`admission.on_connection(info)` sees copied peer/local endpoints, one-based
-listener index, TLS flag and process identity. `admission.on_request(request)`
-runs before body storage or proxy/upload allocation. Both return nil/true/allow,
-false/reject, close, or a table containing that action; nil/error propagates a
-failure. A request reject table may additionally contain status/status_code,
-headers, content_type and body. An action alone retains the native default 403;
-the native output queue bounds copied rejection bytes. File/source/codec payloads
-are rejected before acquiring them. CLOSE sends no HTTP response. Allow ignores
-unselected payload fields.
-
-`callbacks.on_observe(server, event)` receives copied fields named after the C
-snapshot. Kind is connection_accepted, tcp_stall, tls_failure, http_status,
-request_started, request_rejected, response_committed, request_complete or
-application. Disconnect side is unknown/downstream/upstream/host. Connection
-metadata is copied separately from request identity. A managed event's request
-uses the same scoped Lua table; transport events omit it. Only has_outcome events
-include final outcome/counts. Recursive events and response I/O remain forbidden.
-Saving copied event/count metadata does not retain native request lifetime.
-
-Outcome tables copy cause, body_cause, body_complete, upgraded, received_body_bytes
-and delivered_body_bytes, plus response cause/status/committed and wire, interim,
-body and monotonic duration counts. Wide quantities use the ordinary exact Lua
-integer/count representation. No borrowed native snapshot pointer reaches Lua.
-
-`callbacks.on_worker_event(server, event)` copies kind (started/exited/restarted/
-escalated), process, exit_status, signal_number, abandoned, expected and error.
-`callbacks.on_tls_identity(server, event)` copies one-based identity_index,
-pending/usable state, domain and error. `server:tls_identity_state(index)` queries
-the public active-run view. Run results also expose has_failure, last_failure and
-recovered_failures. These additions preserve native process roles and worker
-indices; they do not infer application service ownership.
-
-The whole Lua callback boundary, including metadata/result conversion, is
-protected. Status-bearing callbacks propagate errors into their native operation.
-Void callback exceptions retain the first local failure and request orderly server
-stop; request scope retirement still runs. Parent failures reach run directly;
-worker failures follow the native worker-exit/failure event path. Return values of
-void notifications are discarded. Worker signal traps also wake the existing
-runtime event loop, retaining Kore's signal priority and meaning even when a
-signal arrives just before its blocking wait. This adds no polling or host stop
-request for an ordinary worker signal. The [installed Lua fixture](../tests/lua/policy.lua)
-checks wire failures, shared request state/body timing, copied snapshots, exact
-close notification, event reentry, allocation failure and callback-error cleanup.
-
-Lua supervision uses `supervision={enabled, control_fd, interest, on_event}` and
-`server:supervision_take(options)`. The descriptor transfers only on success.
-`on_event(server, flags)` uses `knurl.control.READ/WRITE/EOF/ERROR`; host code
-owns reading/writing its protocol. `server:control_interest(mask)` updates the
-native parent watch. Child processes close the inherited server endpoint; the
-host closes its other inherited pipe/socket endpoints in its process hook.
-The core closes its endpoint at stop, and a new run requires a fresh transfer.
-The same fixture proves normal/EOF/error paths, failed replacement preserving
-the previous callback, and constructor/allocation failures retaining caller FD
-ownership. No framing, polling loop or application control protocol is added.
 
 ## Process-shared autoblock
 
@@ -192,15 +124,79 @@ information allows admission and does not invent a block.
 Linux uses a process-shared robust mutex. Recovery after owner death clears the
 potentially partial table before marking the mutex consistent. Darwin retains
 Vectis's process-local mutex plus an unlinked-file POSIX record lock, released
-by the kernel when a worker dies. The parent destroys the mapping after workers
-are reaped. There is no per-address heap allocation on the HTTP loop.
+by the kernel when a worker dies. Without notification polling, the parent destroys
+the mapping after workers are reaped. Polling retains it until the next run,
+notification registration or server destruction. There is no per-address heap
+allocation on the HTTP loop.
 
 `knurl_server_config_init_production_webserver` enables the mechanism with
 Vectis's thresholds: 20 TCP stalls, 10 TLS failures, 10 responses each for
 401/403, 50 for 404 and five for 429. It retains the default positive body
 ceiling. Routes, authentication, TLS, persistence and application event rules
-remain explicit declarations. The [table fixture](../tests/autoblock.c) covers
+remain explicit declarations. The [table fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/autoblock.c) covers
 shared counters, capacity, expiry/window reset, wide duration, saturation,
 worker-death recovery and fresh-table reuse. The
-[public live fixture](../tests/policy-logs-runtime.c) covers blocking and identity,
+[public live fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/policy-logs-runtime.c) covers blocking and identity,
 including 100 Continue, with no observer installed.
+
+### Block notifications
+
+Notifications are disabled by default. Configure an inactive server through its
+public C receiver before `run`. Native callbacks and polling are independent.
+
+```c
+static void blocked(knurl_server *server, const knurl_autoblock_event *event,
+                    void *userdata)
+{
+    /* Copy or record event->address, event->via, event->reason and
+       event->duration_ms here. Keep this callback bounded. */
+    (void)server;
+    (void)userdata;
+    (void)event;
+}
+
+/* After creating server, with autoblock enabled in its configuration. */
+knurl_autoblock_notifications_config notifications;
+knurl_autoblock_notifications_config_init(&notifications);
+notifications.callback = blocked;
+notifications.queue_capacity = 256;
+if (server->set_autoblock_notifications(server, &notifications, &error) != KNURL_OK)
+    /* handle error */;
+```
+
+The callback executes in the process applying the block, after releasing the
+shared table lock. Its event is borrowed for that call. Configuration is copied,
+while callback userdata remains caller-owned. Do not enter Lua or recursively
+emit events from this callback. Delivery does not alter the block decision.
+
+Each event identifies a new block or an extension of its scheduled deadline.
+It contains the resolved client address, actual TCP peer and local endpoint,
+listener/process identity, TLS flag, address provenance, known proxy path,
+HTTP/status/application/transport reason, rule index, threshold and count.
+Occurrence, expiry and effective hold duration use exact monotonic milliseconds,
+not wall-clock timestamps. Expiry describes the scheduled deadline at that
+decision, not an eventual unblock notification. Existing fixed-window resets
+still apply. Further matching observations that leave the deadline unchanged do
+not produce notifications.
+
+`via` runs from client towards server, ending at the socket peer. It includes
+only the trusted suffix used by forwarded-address resolution. Untrusted tokens
+before the effective client are excluded. A custom resolver reports its
+provenance and known socket peer without inventing intermediate hops. Transport
+events use the socket peer directly and have no proxy path. At most 16 hops are
+copied; `via_truncated` identifies an omitted client-side prefix. Application
+names retain at most 256 bytes with `name_truncated`. Addresses are numeric IPv4
+or IPv6 strings. Unknown listener indices are `(size_t)-1` in C.
+
+The optional queue is a bounded process-shared FIFO collecting all workers.
+Coordinate one logical consumer across the application, since each poll consumes an
+event. Overflow overwrites the oldest event. `autoblock_next` reports accumulated
+overwrite/recovery losses, including when returning EOF. The loss count resets
+only when the caller requests it. Linux owner-death recovery discards pending
+events along with the partial policy table and counts those discarded events.
+This queue is in memory and has no persistence guarantee across process failure.
+Polling is allowed on the current process's owner loop, in serialized lifecycle
+callbacks, or after `run` returns. Retained events clear on the next run,
+notification registration or destruction.
+
+Set `queue_capacity=0` to disable polling on an inactive server.

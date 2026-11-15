@@ -10,6 +10,8 @@ cp "$root/scripts/deps.sh" "$root/scripts/acquire-archive.sh" "$owner/scripts/"
 cp "$root/scripts/lifecycle/require-host-bash.sh" "$root/scripts/lifecycle/cpkt-archive-cache.sh" "$owner/scripts/lifecycle/"
 cp "$root/cmake/OwnedPaths.cmake" "$owner/cmake/"
 printf 'fixture header\n' >"$work/fixture/include/fixture.h"
+chmod 664 "$work/fixture/include/fixture.h"
+chmod 775 "$work/fixture/include"
 tar -czf "$work/fixture.tar.gz" -C "$work" fixture
 digest=$(cpkt_cached_archive_sha256 "$work/fixture.tar.gz")
 archive="$owner/.cache/deps/archives/sha256/$digest"
@@ -18,9 +20,20 @@ cp "$work/fixture.tar.gz" "$archive/fixture.tar.gz"
 printf 'sdk\tfixture\t1.2.3\tx86_64-linux-gnu\t%s\thttps://github.com/c89systems/fixture/fixture.tar.gz\n' \
   "$digest" >"$owner/scripts/dependency-pins.tsv"
 deps() { CPKT_DEPENDENCY_CACHE="$owner/.cache/deps" bash "$owner/scripts/deps.sh" x86_64-linux-gnu >"$work/deps.log" 2>&1; }
-deps
+(umask 077; deps)
 sdk="$owner/.cache/sdk/x86_64-linux-gnu"
 cmp "$work/fixture/include/fixture.h" "$sdk/fixture/include/fixture.h"
+check_mode() {
+  local actual
+  if [[ $(uname -s) == Darwin ]]; then actual=$(stat -f %Lp "$1")
+  else actual=$(stat -c %a "$1"); fi
+  [[ "$actual" == "$2" ]] || {
+    printf 'SDK extraction changed archived mode: %s (%s != %s)\n' "$1" "$actual" "$2" >&2
+    exit 1
+  }
+}
+check_mode "$sdk/fixture/include/fixture.h" 664
+check_mode "$sdk/fixture/include" 775
 printf 'preserve warm output\n' >"$sdk/fixture/warm"
 deps
 [[ -f "$sdk/fixture/warm" ]]

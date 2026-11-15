@@ -543,11 +543,13 @@ static knurl_status ws_open(knurl_websocket *ws, void *data, knurl_error *error)
     return KNURL_OK;
 }
 static knurl_status ws_message(knurl_websocket *ws, knurl_websocket_opcode op,
-                               knurl_bytes bytes, void *data,
+                               int final, knurl_bytes bytes, void *data,
                                knurl_error *error)
 {
     struct reference_websocket_binding *b = data;
     (void)error;
+    if (!final || op == KNURL_WEBSOCKET_CONTINUATION)
+        return KNURL_NOT_SUPPORTED;
     b->config.message(b->app, ws, (int)op, bytes.data, bytes.length,
                       b->config.userdata);
     return KNURL_OK;

@@ -7,7 +7,7 @@ list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES KNURL_TARGET CPKT_OSXCROSS_HOST
 if(KNURL_TARGET STREQUAL "arm64-apple-darwin" AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
   set(CMAKE_SYSTEM_NAME Darwin)
   set(CMAKE_SYSTEM_PROCESSOR arm64)
-  foreach(key cc cxx ld ar ranlib strip nm otool)
+  foreach(key cc cxx ld ar ranlib strip nm otool libtool)
     if(key STREQUAL "cc")
       set(tool clang)
     elseif(key STREQUAL "cxx")
@@ -27,6 +27,15 @@ if(KNURL_TARGET STREQUAL "arm64-apple-darwin" AND CMAKE_HOST_SYSTEM_NAME STREQUA
     message(FATAL_ERROR "Selected Apple macOS SDK is unavailable")
   endif()
   set(selected_root "${selected_sysroot}")
+  # Native ar preserves member ownership. libtool -D normalizes every member,
+  # including archive inputs, before the package strip step rewrites the index.
+  foreach(lang C CXX)
+    set(CMAKE_${lang}_ARCHIVE_CREATE
+      "\"${selected_libtool}\" -static -D -o <TARGET> <LINK_FLAGS> <OBJECTS>")
+    set(CMAKE_${lang}_ARCHIVE_APPEND
+      "\"${selected_libtool}\" -static -D -o <TARGET> <TARGET> <LINK_FLAGS> <OBJECTS>")
+    set(CMAKE_${lang}_ARCHIVE_FINISH "")
+  endforeach()
 else()
   execute_process(COMMAND "${knurl_resolver}" discover "${KNURL_TARGET}"
     RESULT_VARIABLE result OUTPUT_VARIABLE description ERROR_VARIABLE diagnostic)

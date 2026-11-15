@@ -65,49 +65,8 @@ independently, with an 8192-byte output bound and optional HTTP status override.
 These helpers materialize output before returning. Fast typed routes and live
 JSON producers retain their separate [record/generator APIs](json.md).
 
-The [public wire fixture](../tests/rest-runtime.c) exercises hooks, parse and
+The [public wire fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/rest-runtime.c) exercises hooks, parse and
 validation failures, empty versus null input, custom decode/release, a reply
 source borrowing decoded state, custom and failed error handlers, bounds,
 bodyless/raw routes, JSON newline behavior and OpenAPI generation during a run.
 It also runs against relocated static and shared SDKs.
-
-`knurl.rest` lifts the server half of Vectis's Lua REST facade. `route(server,
-options)` and `group(server, options)` bind the public C REST registrations and their
-auth/before/after chain. Nonempty buffered input becomes `request.json` through
-the released LoneJSON Lua decoder; empty input leaves it nil and JSON null uses
-LoneJSON's null sentinel. `decode_json=false` leaves explicit buffered input raw.
-Body policy accepts BUFFERED or NONE, defaulting to a 1 MiB input limit when
-decoding is enabled. Memory/spill policy follows the ordinary route; the facade
-does not impose a separate 1 MiB memory threshold. Buffered decoding uses
-`request.body` when present, otherwise the public C decoder's buffered input for
-completed spills. File-backed requests retain their ordinary `body_spooled`,
-`body_path` and absent `body` snapshot fields; no transport storage changes.
-A before hook may provide replacement `request.body` bytes, or an empty string
-to skip JSON decoding. Body-reader and explicit materialization operations retain
-their own ownership.
-
-`validate(json, request)` may return nil/true to continue, an ordinary reply to
-short-circuit, or false/detail to reject with 400. Validator exceptions also
-produce 400. `handler(request)` returns an ordinary reply or a generic JSON
-value, optionally followed by response options; nil without options means 204.
-`response` supplies default JSON options. `error_handler(original_error,
-request)` receives the original thrown Lua value and may return a reply.
-Unhandled exceptions produce a 500 envelope. After hooks receive the original
-selected Lua declaration, with conversion deferred until the hook chain ends.
-Group defaults and per-route overrides retain Vectis's existing forms.
-
-`rest.json(value, options)` composes an ordinary buffered response. Options are
-status/status_code, content_type, headers, newline (default true) and max_bytes
-(zero/default adds no output-size ceiling; an explicit bound includes newline).
-Generic traversal/validation uses the released LoneJSON Lua encoder once. Its
-encoded bytes become the buffered response body directly, with an optional
-newline; no second JSON parser/writer or native reply buffer is involved.
-Invalid keys/types, cycles, nonfinite numbers
-and output limits return nil/error. This explicitly materialized path does not
-replace typed-record or live JSON APIs. `rest.error_response(error, options)`
-preserves custom error fields, decorates a copied value, maps the public statuses
-to HTTP, and uses a finite fallback if that envelope cannot be encoded.
-
-The [installed Lua fixture](../tests/lua/rest.lua) covers these server workflows,
-raw/null/empty bodies, validation/handler errors, recovery identity, live source
-replies, group middleware, admission limits and allocation failures.

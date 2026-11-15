@@ -10,7 +10,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <knurl/xml.h>
-#include "xml_internal.h"
 #include "internal.h"
 typedef struct xml_document_state {
     xmlDoc *native;
@@ -124,6 +123,7 @@ static knurl_status xml_view(xml_document_state *owner, xmlNode *node,
     ++owner->references;
     state->generation = owner->generation;
     state->native = node;
+    knurl_xml_node_receiver_init(&state->receiver);
     state->receiver.impl = state;
     *out = &state->receiver;
     return KNURL_OK;
@@ -203,6 +203,7 @@ knurl_status knurl_xml_document_parse(const void *data, size_t size,
         free(receiver);
         return status;
     }
+    knurl_xml_document_receiver_init(receiver);
     receiver->impl = state;
     *out = receiver;
     return KNURL_OK;
@@ -712,4 +713,27 @@ knurl_xml_document_serialize_materialized(knurl_xml_document *receiver,
     status = xml_copy(bytes, (size_t)size, state->config.max_bytes, out, error);
     xmlFree(bytes);
     return status;
+}
+
+void knurl_xml_document_receiver_init(knurl_xml_document *receiver)
+{
+    static const knurl_xml_document methods = {
+        knurl_xml_document_root, knurl_xml_document_xpath,
+        knurl_xml_document_serialize_materialized, knurl_xml_document_close,
+        NULL};
+    *receiver = methods;
+}
+
+void knurl_xml_node_receiver_init(knurl_xml_node *receiver)
+{
+    static const knurl_xml_node methods = {knurl_xml_node_name,
+                                           knurl_xml_node_text,
+                                           knurl_xml_node_attribute,
+                                           knurl_xml_node_set_text,
+                                           knurl_xml_node_set_attribute,
+                                           knurl_xml_node_append_child,
+                                           knurl_xml_node_remove,
+                                           knurl_xml_node_close,
+                                           NULL};
+    *receiver = methods;
 }

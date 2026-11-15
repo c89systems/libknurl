@@ -11,7 +11,9 @@ userdata remains caller-owned. It opens no resource and invokes no callback.
 The default body policy retains Vectis's upload bound; set `body.max_bytes` for
 the route and respect the server's hard ceiling. STREAMING_UPLOAD and STREAM
 both select the same live STREAM delivery here. They never materialize or spool
-the body. Managed POST/PUT/PATCH still require Content-Length.
+the body. Managed POST/PUT/PATCH accept Content-Length or HTTP/1.1 chunked
+framing. Callbacks receive decoded payload bytes; byte limits apply to those
+bytes. A chunked body completes only after its zero chunk and trailer block.
 
 Auth and before hooks run before body admission. An early staged reply bypasses
 the upload callbacks. Open runs on the first admitted body callback, or at body
@@ -38,7 +40,7 @@ request metadata and the terminal cause. Cancel application timers and watches
 there. The facade does not consume `knurl_request_userdata`; hooks and handlers
 retain its application meaning.
 
-The [public-only fixture](../tests/upload-runtime.c) demonstrates registration,
+The [public-only fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/upload-runtime.c) demonstrates registration,
 group hooks, prefix consumption, a timer-driven resume, empty input, rejection
 before open, error cleanup, and disconnect during input. It also checks the
 stateless form with no open callback.
@@ -72,16 +74,18 @@ There is no complete-body buffer or hidden file spool.
 Only the native handler may call `knurl_source_read` on its borrowed reader.
 It can wait for incremental input there and query `knurl_source_cancelled`.
 Reset, destroy and ownership transfer of this reader return STATE. Consume all
-admitted input. An unselected successful reply becomes 204. EOF is supported; a parser that finishes at
-exactly the declared length need not add a redundant EOF read. Early return
-without consuming the input or a callback error fails the
+admitted input. An unselected successful reply becomes 204. A parser that finishes
+at exactly the declared length need not add a redundant EOF read. Chunked input
+requires EOF, including an empty chunked body. A missing Content-Length alone
+does not establish an empty body; an unframed request is known empty and need
+not be read. Early return without consuming the input or a callback error fails the
 request. After acknowledgement, the owner runs after hooks and submits the
 result. Reader/result views expire when the handler returns. Copied metadata
 remains valid through request cleanup and native acknowledgement (and the
 optional host release). Caller userdata stays retained by the caller until server run returns.
 Cancellation revokes HTTP delivery immediately and retains native work until its
 acknowledgement; an uncooperative callback remains subject to the existing worker
-shutdown deadline. Lua uses the owner-loop stream callbacks above.
+shutdown deadline.
 
 `knurl_router_upload_file` and `knurl_route_group_upload_file` reuse that reader
 path. Initialize `knurl_upload_file_config`, set the route and explicit
@@ -94,7 +98,7 @@ Empty uploads truncate the destination and return `0`. The counter uses checked
 wide arithmetic on every target. No temporary file or transactional rename is
 introduced. File queue capacity uses `body.memory_buffer_limit_bytes`.
 
-The same [public fixture](../tests/upload-runtime.c) exercises a three-byte queue,
+The same [public fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/upload-runtime.c) exercises a three-byte queue,
 36 simultaneous readers with an unrelated control request, native versus owner
 thread callbacks, metadata after cancellation, request/header/query copies,
 borrowed-reader rejection, staged source results, empty uploads and file errors.

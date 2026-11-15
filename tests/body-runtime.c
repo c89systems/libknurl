@@ -74,7 +74,7 @@ static knurl_status reply(knurl_request *request, int status, const char *text,
     knurl_bytes bytes;
     bytes.data = text;
     bytes.length = strlen(text);
-    return knurl_response_bytes(knurl_request_response(request), status,
+    return knurl_response_bytes(request->response(request), status,
                                 "text/plain", bytes, error);
 }
 
@@ -86,8 +86,8 @@ static void resumed(knurl_timer *timer, void *userdata)
     c->timer = NULL;
     OBSERVE(c->calls == 1 && pthread_equal(c->owner, pthread_self()));
     c->resumed = 1;
-    OBSERVE(knurl_request_body_resume(c->request, NULL) == KNURL_OK);
-    OBSERVE(knurl_request_body_resume(c->request, NULL) == KNURL_OK);
+    OBSERVE(c->request->body_resume(c->request, NULL) == KNURL_OK);
+    OBSERVE(c->request->body_resume(c->request, NULL) == KNURL_OK);
     OBSERVE(c->calls == 1);
 }
 
@@ -115,26 +115,30 @@ static knurl_status consume(knurl_request *request, const void *data,
     *consumed = 0;
     OBSERVE(pthread_equal(c->owner, pthread_self()) && length > 0 &&
             length <= 32);
-    OBSERVE(knurl_request_body(request) == NULL &&
-            knurl_request_body_bytes(request, &view, NULL) == KNURL_STATE);
+    OBSERVE(request->body(request) == NULL &&
+            request->body_bytes(request, &view, NULL) == KNURL_STATE);
+    OBSERVE(request->trailer_count(request) == 0 &&
+            request->trailer_first(request, "X-Trace", &view, NULL) ==
+                KNURL_STATE);
     if (is(c, "/invalid")) {
         *consumed = 1;
         return KNURL_AGAIN;
     }
-    if (is(c, "/body-error"))
+    if (is(c, "/body-error") ||
+        (c->calls > 1 && (is(c, "/pause-error") || is(c, "/again-error"))))
         return KNURL_IO;
-    if (c->calls == 1 && (is(c, "/stream") || is(c, "/again"))) {
+    if (c->calls == 1 && (is(c, "/stream") || is(c, "/again") ||
+                          is(c, "/pause-error") || is(c, "/again-error"))) {
         if (is(c, "/stream")) {
             count = 0;
-            OBSERVE(knurl_response_write(knurl_request_response(request), "r",
-                                         1, &count, error) == KNURL_OK &&
+            OBSERVE(knurl_response_write(request->response(request), "r", 1,
+                                         &count, error) == KNURL_OK &&
                     count == 1);
         }
-        if (knurl_loop_timer(knurl_request_loop(request),
-                             is(c, "/again") ? 1100 : 5, 0, resumed, NULL, c,
-                             &c->timer, error) != KNURL_OK)
+        if (knurl_loop_timer(request->loop(request), is(c, "/again") ? 1100 : 5,
+                             0, resumed, NULL, c, &c->timer, error) != KNURL_OK)
             return KNURL_IO;
-        if (is(c, "/again"))
+        if (is(c, "/again") || is(c, "/again-error"))
             return KNURL_AGAIN;
         *consumed = 1;
     } else {
@@ -153,13 +157,14 @@ static void closed(knurl_request *request, const knurl_request_outcome *out,
                    void *userdata)
 {
     struct context *c;
+    int previous_failures = failures;
     c = userdata;
     ++closed_count;
     OBSERVE(pthread_equal(c->owner, pthread_self()));
-    OBSERVE(knurl_request_target(request).length != 0 &&
-            knurl_response_state(knurl_request_response(request)) >=
+    OBSERVE(request->target(request).length != 0 &&
+            knurl_response_state(request->response(request)) >=
                 KNURL_RESPONSE_COMPLETE);
-    OBSERVE(knurl_request_body_resume(request, NULL) == KNURL_STATE);
+    OBSERVE(request->body_resume(request, NULL) == KNURL_STATE);
     if (is(c, "/immediate")) {
         OBSERVE(out->body_complete && out->body_cause == KNURL_OK && !c->ended);
     } else if (is(c, "/early") || is(c, "/chunked")) {
@@ -167,10 +172,12 @@ static void closed(knurl_request *request, const knurl_request_outcome *out,
                 !c->ended && !c->calls);
     } else if (is(c, "/invalid") || is(c, "/bad-plan") || is(c, "/no-end") ||
                is(c, "/dispatch-error") || is(c, "/reply-invalid") ||
-               is(c, "/oversize")) {
+               is(c, "/oversize") || is(c, "/chunk-invalid") ||
+               is(c, "/chunk-limit")) {
         OBSERVE(!out->body_complete && out->body_cause != KNURL_OK &&
                 !c->ended);
-    } else if (is(c, "/body-error") || is(c, "/truncated")) {
+    } else if (is(c, "/body-error") || is(c, "/pause-error") ||
+               is(c, "/again-error") || is(c, "/truncated")) {
         OBSERVE(!out->body_complete && out->body_cause == KNURL_IO &&
                 !c->ended);
     } else if (is(c, "/idle")) {
@@ -188,8 +195,27 @@ static void closed(knurl_request *request, const knurl_request_outcome *out,
     if (is(c, "/stream") || is(c, "/again"))
         OBSERVE(c->delivered == 64 && out->delivered_body_bytes.low == 64 &&
                 out->received_body_bytes.low == 64);
+    if (is(c, "/body-error") || is(c, "/pause-error") ||
+        is(c, "/again-error") || is(c, "/invalid")) {
+        OBSERVE(out->received_body_bytes.high == 0 &&
+                out->received_body_bytes.low == 3 &&
+                out->delivered_body_bytes.high == 0 &&
+                out->delivered_body_bytes.low ==
+                    (unsigned long)(is(c, "/pause-error") ? 1 : 0));
+    }
+    if (is(c, "/chunk-stream") || is(c, "/chunk-buffer") ||
+        is(c, "/chunk-spill"))
+        OBSERVE(out->received_body_bytes.low == 5 &&
+                out->delivered_body_bytes.low == 5);
+    if (is(c, "/chunk-limit"))
+        OBSERVE(out->received_body_bytes.low == 5 &&
+                out->delivered_body_bytes.low == 0);
+    if (failures != previous_failures)
+        fprintf(
+            stderr, "body close %s: cause=%d body=%d complete=%d ended=%d\n",
+            c->path, out->cause, out->body_cause, out->body_complete, c->ended);
     if (c->timer != NULL)
-        knurl_timer_cancel(c->timer);
+        c->timer->cancel(c->timer);
     free(c);
 }
 
@@ -202,7 +228,7 @@ static knurl_status spill(knurl_request *request, const char *directory,
     config.memory_limit_bytes = 4;
     config.directory = directory;
     config.prefix = prefix;
-    return knurl_request_body_spill(request, &config, out, error);
+    return request->body_spill(request, &config, out, error);
 }
 
 static knurl_status complete(knurl_request *request, void *userdata,
@@ -219,56 +245,78 @@ static knurl_status complete(knurl_request *request, void *userdata,
     unsigned char buffer[128];
     size_t count;
     size_t i;
-    int fd;
+    int fd, present;
     c = userdata;
     ++c->ended;
     OBSERVE(c->ended == 1 && pthread_equal(c->owner, pthread_self()));
+    if (is(c, "/chunk-stream") || is(c, "/chunk-buffer") ||
+        is(c, "/chunk-spill")) {
+        OBSERVE(request->content_length(request, &present, &result.length,
+                                        NULL) == KNURL_OK &&
+                !present);
+        OBSERVE(request->trailer_count(request) == 2);
+        OBSERVE(request->trailer_first(request, "x-trace", &bytes, NULL) ==
+                    KNURL_OK &&
+                bytes.length == 4 && memcmp(bytes.data, "done", 4) == 0);
+        OBSERVE(request->header_first(request, "x-trace", &bytes, NULL) ==
+                KNURL_EOF);
+        if (is(c, "/chunk-stream"))
+            OBSERVE(c->delivered == 5);
+        else {
+            body = request->body(request);
+            OBSERVE(body != NULL &&
+                    body->read(body, buffer, sizeof(buffer), &count, error) ==
+                        KNURL_OK &&
+                    count == 5 && memcmp(buffer, "abcde", 5) == 0);
+            OBSERVE(
+                body->kind(body) ==
+                (is(c, "/chunk-spill") ? KNURL_BODY_FILE : KNURL_BODY_MEMORY));
+        }
+    }
     if (is(c, "/deadline"))
         return KNURL_OK;
     if (is(c, "/deferred"))
-        return knurl_loop_timer(knurl_request_loop(request), 5, 0, deferred,
-                                NULL, c, &c->timer, error);
+        return knurl_loop_timer(request->loop(request), 5, 0, deferred, NULL, c,
+                                &c->timer, error);
     if (is(c, "/stream")) {
-        OBSERVE(knurl_response_write(knurl_request_response(request), "d", 1,
-                                     &count, error) == KNURL_OK &&
+        OBSERVE(knurl_response_write(request->response(request), "d", 1, &count,
+                                     error) == KNURL_OK &&
                 count == 1);
-        return knurl_response_end(knurl_request_response(request), NULL, 0,
-                                  error);
+        return knurl_response_end(request->response(request), NULL, 0, error);
     }
     if (is(c, "/buffer") || is(c, "/spill") || is(c, "/spill-failure")) {
-        body = knurl_request_body(request);
+        body = request->body(request);
         OBSERVE(body != NULL);
-        OBSERVE(knurl_body_read(body, buffer, 1, &count, error) == KNURL_OK &&
+        OBSERVE(body->read(body, buffer, 1, &count, error) == KNURL_OK &&
                 count == 1);
         knurl_body_result_init(&result);
-        OBSERVE(knurl_request_body_copy(request, buffer, sizeof(buffer),
-                                        &result, error) == KNURL_OK);
+        OBSERVE(request->body_copy(request, buffer, sizeof(buffer), &result,
+                                   error) == KNURL_OK);
         OBSERVE(result.kind == KNURL_BODY_MEMORY &&
                 result.memory.length == 64 && result.memory.data == buffer &&
                 !result.owns_memory);
         for (i = 0; i < 64; ++i)
             OBSERVE(buffer[i] == (unsigned char)('a' + i % 26));
         knurl_body_result_cleanup(&result);
-        OBSERVE(knurl_body_read(body, buffer, 1, &count, error) == KNURL_OK &&
+        OBSERVE(body->read(body, buffer, 1, &count, error) == KNURL_OK &&
                 count == 1 && buffer[0] == 'a');
         if (is(c, "/buffer")) {
-            OBSERVE(knurl_request_body_copy(request, NULL, 0, &retained,
-                                            error) == KNURL_OK);
+            OBSERVE(request->body_copy(request, NULL, 0, &retained, error) ==
+                    KNURL_OK);
             OBSERVE(retained.owns_memory && retained.memory.length == 64);
             OBSERVE(knurl_body_result_open_reader(&retained, &reader, error) ==
                     KNURL_OK);
-            OBSERVE(knurl_source_read(reader, buffer, 3, &count, error) ==
+            OBSERVE(reader->read(reader, buffer, 3, &count, error) ==
                         KNURL_OK &&
                     count == 3 && memcmp(buffer, "abc", 3) == 0);
-            OBSERVE(knurl_source_reset(reader, error) == KNURL_OK);
-            OBSERVE(knurl_source_destroy(reader, error) == KNURL_OK);
+            OBSERVE(reader->reset(reader, error) == KNURL_OK);
+            OBSERVE(reader->destroy(reader, error) == KNURL_OK);
         } else if (is(c, "/spill")) {
-            OBSERVE(knurl_body_kind(body) == KNURL_BODY_FILE);
-            if (knurl_body_file(body, &fd, &path, error) != KNURL_OK)
+            OBSERVE(body->kind(body) == KNURL_BODY_FILE);
+            if (body->file(body, &fd, &path, error) != KNURL_OK)
                 return KNURL_INVALID;
-            OBSERVE(knurl_body_bytes(body, &bytes, NULL) == KNURL_STATE &&
-                    knurl_request_body_bytes(request, &bytes, NULL) ==
-                        KNURL_STATE);
+            OBSERVE(body->bytes(body, &bytes, NULL) == KNURL_STATE &&
+                    request->body_bytes(request, &bytes, NULL) == KNURL_STATE);
             OBSERVE(fcntl(fd, F_GETFD) >= 0);
             transport_path = copy_text(path);
             OBSERVE(transport_path != NULL);
@@ -278,23 +326,23 @@ static knurl_status complete(knurl_request *request, void *userdata,
             materialize.memory_limit_bytes = 0;
             materialize.directory = ".";
             buffer[4] = 'z';
-            OBSERVE(knurl_request_body_spill(request, &materialize, &result,
-                                             error) == KNURL_OK);
+            OBSERVE(request->body_spill(request, &materialize, &result,
+                                        error) == KNURL_OK);
             OBSERVE(buffer[4] == 'z');
             artifact_path = copy_text(result.path);
             OBSERVE(knurl_body_result_open_reader(&result, &reader, error) ==
                     KNURL_OK);
-            OBSERVE(knurl_source_read(reader, buffer, sizeof(buffer), &count,
-                                      error) == KNURL_OK &&
+            OBSERVE(reader->read(reader, buffer, sizeof(buffer), &count,
+                                 error) == KNURL_OK &&
                     count == 64);
-            OBSERVE(knurl_source_read(reader, buffer, sizeof(buffer), &count,
-                                      error) == KNURL_EOF &&
+            OBSERVE(reader->read(reader, buffer, sizeof(buffer), &count,
+                                 error) == KNURL_EOF &&
                     count == 0);
-            OBSERVE(knurl_source_reset(reader, error) == KNURL_OK);
-            OBSERVE(knurl_source_read(reader, buffer, 3, &count, error) ==
+            OBSERVE(reader->reset(reader, error) == KNURL_OK);
+            OBSERVE(reader->read(reader, buffer, 3, &count, error) ==
                         KNURL_OK &&
                     count == 3 && memcmp(buffer, "abc", 3) == 0);
-            OBSERVE(knurl_source_destroy(reader, error) == KNURL_OK);
+            OBSERVE(reader->destroy(reader, error) == KNURL_OK);
             OBSERVE(result.kind == KNURL_BODY_FILE && artifact_path != NULL &&
                     strcmp(result.path, transport_path) != 0);
             knurl_body_result_cleanup(&result);
@@ -322,7 +370,7 @@ static knurl_status configure_plan(knurl_request *request,
     if (c == NULL)
         return KNURL_NOMEM;
     c->request = request;
-    c->path = knurl_request_path(request).data;
+    c->path = request->path(request).data;
     c->owner = pthread_self();
     plan->userdata = c;
     plan->on_close = closed;
@@ -331,7 +379,7 @@ static knurl_status configure_plan(knurl_request *request,
     if (is(c, "/stop")) {
         OBSERVE(opened == closed_count + 1 &&
                 (rate_mode != 0 || methods == KNURL_HTTP_METHODS_ALL));
-        (void)knurl_server_request_stop(knurl_request_server(request), NULL);
+        (void)knurl_server_request_stop(request->server(request), NULL);
         return failures ? KNURL_INVALID : KNURL_OK;
     }
     if (is(c, "/survives")) {
@@ -366,37 +414,39 @@ static knurl_status configure_plan(knurl_request *request,
         return KNURL_OK;
     }
     if (is(c, "/method")) {
-        methods |= KNURL_HTTP_METHOD_MASK(knurl_request_method(request));
+        methods |= KNURL_HTTP_METHOD_MASK(request->method(request));
         return KNURL_OK;
     }
-    if (is(c, "/buffer") || is(c, "/spill") || is(c, "/spill-failure") ||
-        is(c, "/bad-plan")) {
-        if (is(c, "/spill"))
+    if (is(c, "/chunk-buffer") || is(c, "/chunk-spill") || is(c, "/buffer") ||
+        is(c, "/spill") || is(c, "/spill-failure") || is(c, "/bad-plan")) {
+        if (is(c, "/spill") || is(c, "/chunk-spill"))
             knurl_body_policy_init_materialized(&plan->body);
         else
             knurl_body_policy_init_buffered(&plan->body);
         plan->body.max_bytes.low = 4096;
-        plan->body.memory_buffer_limit_bytes = is(c, "/bad-plan") ? 8192
-                                               : is(c, "/spill")  ? 4
-                                                                  : 4096;
+        plan->body.memory_buffer_limit_bytes =
+            is(c, "/bad-plan")                           ? 8192
+            : (is(c, "/spill") || is(c, "/chunk-spill")) ? 4
+                                                         : 4096;
         return KNURL_OK;
     }
     if (is(c, "/ping") || is(c, "/survives") || is(c, "/deferred") ||
         is(c, "/deadline"))
         return KNURL_OK;
     knurl_body_policy_init_stream(&plan->body);
-    plan->body.max_bytes.low = is(c, "/oversize") ? 4 : 4096;
+    plan->body.max_bytes.low =
+        is(c, "/oversize") || is(c, "/chunk-limit") ? 4 : 4096;
     plan->on_body = consume;
     if (is(c, "/stream") || is(c, "/truncated")) {
         length.high = 0;
         length.low = 2;
-        OBSERVE(knurl_response_known_length(knurl_request_response(request),
-                                            length, error) == KNURL_OK);
-        OBSERVE(knurl_response_begin(knurl_request_response(request), error) ==
+        OBSERVE(knurl_response_known_length(request->response(request), length,
+                                            error) == KNURL_OK);
+        OBSERVE(knurl_response_begin(request->response(request), error) ==
                 KNURL_OK);
         if (is(c, "/truncated"))
-            OBSERVE(knurl_response_write(knurl_request_response(request), "r",
-                                         1, &count, error) == KNURL_OK &&
+            OBSERVE(knurl_response_write(request->response(request), "r", 1,
+                                         &count, error) == KNURL_OK &&
                     count == 1);
     }
     return KNURL_OK;
@@ -406,10 +456,10 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
                             void *userdata, knurl_error *error)
 {
     const char *path;
-    path = knurl_request_path(request).data;
+    path = request->path(request).data;
     if (strcmp(path, "/route") == 0 || strcmp(path, "/raw") == 0)
         return knurl_router_dispatch_headers(
-            knurl_server_router(knurl_request_server(request)), request, plan,
+            knurl_server_router(request->server(request)), request, plan,
             error);
     return configure_plan(request, plan, userdata, error);
 }
@@ -419,7 +469,7 @@ static knurl_status facade(knurl_request *request, knurl_reply *result,
 {
     (void)request;
     (void)userdata;
-    return knurl_reply_text(result, 200, "text/plain", "routed", error);
+    return result->text(result, 200, "text/plain", "routed", error);
 }
 
 static int connect_to(unsigned short port)
@@ -527,7 +577,7 @@ static int progressive(unsigned short port, const char *pattern)
     return 0;
 }
 
-static int truncated(unsigned short port)
+static int truncated(unsigned short port, int early)
 {
     char response[512];
     const char *request = "POST /truncated HTTP/1.1\r\nHost: "
@@ -538,6 +588,15 @@ static int truncated(unsigned short port)
     fd = connect_to(port);
     CHECK(fd >= 0 &&
           write(fd, request, strlen(request)) == (ssize_t)strlen(request));
+    if (early) {
+        CHECK(shutdown(fd, SHUT_WR) == 0);
+        do {
+            count = read(fd, response, sizeof(response));
+            CHECK(count >= 0);
+        } while (count != 0);
+        CHECK(close(fd) == 0);
+        return 0;
+    }
     used = 0;
     do {
         count = read(fd, response + used, sizeof(response) - used - 1);
@@ -556,37 +615,57 @@ static int pipeline(unsigned short port)
     const char *request =
         "GET /immediate HTTP/1.1\r\nHost: localhost\r\n\r\n"
         "GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    const char *chunked =
+        "POST /chunk-buffer HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: "
+        "chunked\r\n\r\n"
+        "3;foo=\"a b\"\r\nabc\r\n2\r\nde\r\n0\r\nX-Trace: done\r\nX-Trace: "
+        "second\r\n\r\n"
+        "GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     char response[512];
     char *second;
     size_t used;
     ssize_t count;
     int fd;
-    fd = connect_to(port);
-    CHECK(fd >= 0);
-    CHECK(write(fd, request, strlen(request)) == (ssize_t)strlen(request));
-    used = 0;
-    while (used < sizeof(response) - 1) {
-        count = read(fd, response + used, sizeof(response) - used - 1);
-        if (count == -1 && errno == EINTR)
-            continue;
-        CHECK(count >= 0);
-        if (count == 0)
-            break;
-        used += (size_t)count;
+    int turn;
+    for (turn = 0; turn < 2; ++turn) {
+        if (turn)
+            request = chunked;
+        fd = connect_to(port);
+        CHECK(fd >= 0);
+        CHECK(write(fd, request, strlen(request)) == (ssize_t)strlen(request));
+        used = 0;
+        while (used < sizeof(response) - 1) {
+            count = read(fd, response + used, sizeof(response) - used - 1);
+            if (count == -1 && errno == EINTR)
+                continue;
+            CHECK(count >= 0);
+            if (count == 0)
+                break;
+            used += (size_t)count;
+        }
+        response[used] = '\0';
+        CHECK(strncmp(response, "HTTP/1.1 200 ", 13) == 0);
+        second = strstr(response, "\r\n\r\nokHTTP/1.1 200 ");
+        CHECK(second != NULL);
+        second = strstr(second + 6, "\r\n\r\n");
+        CHECK(second != NULL && strcmp(second + 4, "ok") == 0);
+        CHECK(close(fd) == 0);
     }
-    response[used] = '\0';
-    CHECK(strncmp(response, "HTTP/1.1 200 ", 13) == 0);
-    second = strstr(response, "\r\n\r\nokHTTP/1.1 200 ");
-    CHECK(second != NULL);
-    second = strstr(second + 6, "\r\n\r\n");
-    CHECK(second != NULL && strcmp(second + 4, "ok") == 0);
-    CHECK(close(fd) == 0);
     return 0;
 }
 
 static int client(unsigned short port)
 {
-    char pattern[65];
+    char pattern[65], chunked[96];
+    static const char *const invalid_chunks[] = {
+        "z\r\n",
+        "10000000000000000\r\n",
+        "1;=bad\r\na\r\n0\r\n\r\n",
+        "1\r\naX\n",
+        "1\na\r\n0\r\n\r\n",
+        "0\r\nContent-Length: 1\r\n\r\n",
+        "0\r\nHost: changed\r\n\r\n",
+        "0\r\nBad Trailer: x\r\n\r\n"};
     const char *method[] = {"GET",    "POST", "PUT",     "PATCH",
                             "DELETE", "HEAD", "OPTIONS", "PROPFIND",
                             "MKCOL",  "COPY", "MOVE"};
@@ -600,6 +679,9 @@ static int client(unsigned short port)
                            408, "") == 0);
             CHECK(exchange(port, "POST", "/idle", "Content-Length: 3\r\n", "a",
                            408, "") == 0);
+            CHECK(exchange(port, "POST", "/idle",
+                           "Transfer-Encoding: chunked\r\n",
+                           "1;metadata=only\r\n", 408, "") == 0);
             /* Application backpressure must not spend the rate budget. */
             CHECK(exchange(port, "POST", "/again", "Content-Length: 64\r\n",
                            pattern, 200, "ok") == 0);
@@ -612,6 +694,26 @@ static int client(unsigned short port)
         return 0;
     }
     CHECK(pipeline(port) == 0);
+    for (i = 0; i < sizeof(invalid_chunks) / sizeof(invalid_chunks[0]); ++i)
+        CHECK(exchange(port, "POST", "/chunk-invalid",
+                       "Transfer-Encoding: chunked\r\n", invalid_chunks[i], 400,
+                       "malformed request body framing") == 0);
+    CHECK(exchange(port, "POST", "/chunk-limit",
+                   "Transfer-Encoding: chunked\r\n", "5\r\nabcde\r\n0\r\n\r\n",
+                   413, "failed to stream request body") == 0);
+    snprintf(chunked, sizeof(chunked), "40\r\n%s\r\n0\r\n\r\n", pattern);
+    CHECK(exchange(port, "POST", "/again", "Transfer-Encoding: chunked\r\n",
+                   chunked, 200, "ok") == 0);
+    CHECK(exchange(port, "POST", "/chunk-stream",
+                   "Transfer-Encoding: chunked\r\n",
+                   "3;foo=\"a b\"\r\nabc\r\n2\r\nde\r\n0\r\nX-Trace: "
+                   "done\r\nX-Trace: second\r\n\r\n",
+                   200, "ok") == 0);
+    CHECK(exchange(port, "POST", "/chunk-spill",
+                   "Transfer-Encoding: chunked\r\n",
+                   "3\r\nabc\r\n2\r\nde\r\n0\r\nX-Trace: done\r\nX-Trace: "
+                   "second\r\n\r\n",
+                   200, "ok") == 0);
     CHECK(progressive(port, pattern) == 0);
     CHECK(exchange(port, "POST", "/again", "Content-Length: 64\r\n", pattern,
                    200, "ok") == 0);
@@ -626,6 +728,19 @@ static int client(unsigned short port)
                    500, "") == 0);
     CHECK(exchange(port, "POST", "/body-error", "Content-Length: 3\r\n", "abc",
                    500, "") == 0);
+    CHECK(exchange(port, "POST", "/body-error",
+                   "Transfer-Encoding: chunked\r\n",
+                   "1\r\na\r\n2\r\nbc\r\n0\r\n\r\n", 500, "") == 0);
+    CHECK(exchange(port, "POST", "/pause-error", "Content-Length: 3\r\n", "abc",
+                   500, "") == 0);
+    CHECK(exchange(port, "POST", "/again-error", "Content-Length: 3\r\n", "abc",
+                   500, "") == 0);
+    CHECK(exchange(port, "POST", "/pause-error",
+                   "Transfer-Encoding: chunked\r\n",
+                   "2\r\nab\r\n1\r\nc\r\n0\r\n\r\n", 500, "") == 0);
+    CHECK(exchange(port, "POST", "/again-error",
+                   "Transfer-Encoding: chunked\r\n",
+                   "2\r\nab\r\n1\r\nc\r\n0\r\n\r\n", 500, "") == 0);
     CHECK(exchange(port, "POST", "/early",
                    "Expect: 100-continue\r\nContent-Length: 64\r\n", "", 403,
                    "denied") == 0);
@@ -644,7 +759,8 @@ static int client(unsigned short port)
     CHECK(exchange(port, "GET", "/deadline", "", "", 500, "") == 0);
     CHECK(exchange(port, "POST", "/idle", "Content-Length: 3\r\n", "", 408,
                    "") == 0);
-    CHECK(truncated(port) == 0);
+    CHECK(truncated(port, 0) == 0);
+    CHECK(truncated(port, 1) == 0);
     CHECK(exchange(port, "GET", "/route", "", "", 200, "routed") == 0);
     CHECK(exchange(port, "GET", "/raw", "", "", 200, "ok") == 0);
     for (i = 0; i < sizeof(method) / sizeof(method[0]); ++i)
@@ -666,9 +782,9 @@ static knurl_status ready(knurl_server *server,
     int result;
     (void)process;
     fixture = userdata;
-    if (knurl_server_listener_at(server, 0, &listener, error) != KNURL_OK)
+    if (server->listener_at(server, 0, &listener, error) != KNURL_OK)
         return KNURL_INVALID;
-    if (knurl_server_set_serving(server, 1, error) != KNURL_OK)
+    if (server->set_serving(server, 1, error) != KNURL_OK)
         return KNURL_STATE;
     fixture->client = fork();
     if (fixture->client == -1)
@@ -705,7 +821,8 @@ int main(int argc, char **argv)
     config.listeners = &listener;
     config.listener_count = config.workers.count = 1;
     config.workers.affinity_disabled = config.http.backend_quiet = 1;
-    config.workers.shutdown_timeout_ms = 100;
+    /* Cleanup under memory instrumentation must fit the shutdown budget. */
+    config.workers.shutdown_timeout_ms = 5000;
     config.dispatch.mode = KNURL_DISPATCH_CALLBACK;
     config.dispatch.on_headers = headers;
     config.limits.body_spool_directory = ".";
@@ -723,19 +840,19 @@ int main(int argc, char **argv)
     knurl_route_config_init(&route);
     route.path = "/route";
     route.handler = facade;
-    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
-                             &error) == KNURL_OK);
+    CHECK(knurl_router_route(server->router(server), &route, NULL, &error) ==
+          KNURL_OK);
     route.path = "/raw";
     route.handler = NULL;
     route.on_headers = configure_plan;
-    CHECK(knurl_router_route(knurl_server_router(server), &route, NULL,
-                             &error) == KNURL_OK);
-    status = knurl_server_run(server, &result, &error);
+    CHECK(knurl_router_route(server->router(server), &route, NULL, &error) ==
+          KNURL_OK);
+    status = server->run(server, &result, &error);
     if (status != KNURL_OK)
         (void)fprintf(stderr, "%s: %s\n", error.operation, error.message);
     CHECK(status == KNURL_OK && !result.escalated);
     CHECK(waitpid(fixture.client, &child_status, 0) == fixture.client);
     CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
-    CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
+    CHECK(server->destroy(server, &error) == KNURL_OK);
     return 0;
 }

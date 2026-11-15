@@ -16,34 +16,34 @@ knurl_status knurl_upload_metadata_copy(knurl_request *r,
     memset(m, 0, sizeof(*m));
     *text = NULL;
     *pairs = NULL;
-    input[0] = r->method_token;
+    input[0] = r->impl->method_token;
     output[0] = &m->method_token;
-    input[1] = r->version;
+    input[1] = r->impl->version;
     output[1] = &m->version;
-    input[2] = r->target;
+    input[2] = r->impl->target;
     output[2] = &m->target;
-    input[3] = r->raw_path;
+    input[3] = r->impl->raw_path;
     output[3] = &m->raw_path;
-    input[4] = r->path;
+    input[4] = r->impl->path;
     output[4] = &m->path;
-    input[5] = r->query;
+    input[5] = r->impl->query;
     output[5] = &m->query;
-    input[6] = r->authority;
+    input[6] = r->impl->authority;
     output[6] = &m->authority;
-    input[7] = r->peer.address;
+    input[7] = r->impl->peer.address;
     output[7] = &m->peer.address;
-    input[8] = r->local.address;
+    input[8] = r->impl->local.address;
     output[8] = &m->local.address;
-    input[9] = r->effective_address;
+    input[9] = r->impl->effective_address;
     output[9] = &m->effective_address;
-    input[10] = r->correlation_id;
+    input[10] = r->impl->correlation_id;
     output[10] = &m->correlation_id;
-    groups[0] = r->headers;
-    sizes[0] = r->header_count;
-    groups[1] = r->queries;
-    sizes[1] = r->query_count;
-    groups[2] = r->params;
-    sizes[2] = r->param_count;
+    groups[0] = r->impl->headers;
+    sizes[0] = r->impl->header_count;
+    groups[1] = r->impl->queries;
+    sizes[1] = r->impl->query_count;
+    groups[2] = r->impl->params;
+    sizes[2] = r->impl->param_count;
     for (i = 0; i < 11; ++i) {
         if (input[i].length == (size_t)-1 ||
             total > (size_t)-1 - input[i].length - 1)
@@ -105,13 +105,13 @@ knurl_status knurl_upload_metadata_copy(knurl_request *r,
             cursor[p->value.length] = 0;
             cursor += p->value.length + 1;
         }
-    m->method = r->method;
-    m->peer.port = r->peer.port;
-    m->local.port = r->local.port;
-    m->listener_index = r->listener;
-    m->tls = r->tls;
-    m->content_length = r->content_length;
-    m->has_content_length = r->has_length;
+    m->method = r->impl->method;
+    m->peer.port = r->impl->peer.port;
+    m->local.port = r->impl->local.port;
+    m->listener_index = r->impl->listener;
+    m->tls = r->impl->tls;
+    m->content_length = r->impl->content_length;
+    m->has_content_length = r->impl->has_length;
     return KNURL_OK;
 overflow:
     return knurl_fail(error, KNURL_OVERFLOW, "upload_metadata",

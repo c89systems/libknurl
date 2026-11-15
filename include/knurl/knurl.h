@@ -6,6 +6,9 @@
  */
 
 #include <knurl/common.h>
+#include <knurl/input.h>
+#include <knurl/mmdb.h>
+#include <knurl/acl.h>
 #include <knurl/http.h>
 #include <knurl/io.h>
 #include <knurl/reply.h>
@@ -14,6 +17,7 @@
 #include <knurl/openapi.h>
 #include <knurl/request.h>
 #include <knurl/loop.h>
+#include <knurl/task.h>
 #include <knurl/response.h>
 #include <knurl/dispatch.h>
 #include <knurl/body.h>

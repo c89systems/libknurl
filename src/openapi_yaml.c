@@ -138,15 +138,15 @@ knurl_status knurl_openapi_yaml(const knurl_router *router,
     append(o, "openapi: 3.1.0\n");
     pair(o, "info:\n  title: ", document->title);
     pair(o, "  version: ", document->version);
-    append(o, router->openapi != NULL ? "paths:\n" : "paths: {}\n");
-    for (entry = router->openapi;
+    append(o, router->impl->openapi != NULL ? "paths:\n" : "paths: {}\n");
+    for (entry = router->impl->openapi;
          entry != NULL && o->code == LONEJSON_STATUS_OK; entry = entry->next) {
-        if (knurl_openapi_path_seen(router->openapi, entry))
+        if (knurl_openapi_path_seen(router->impl->openapi, entry))
             continue;
         append(o, "  ");
         quote(o, entry->path);
         append(o, ":\n");
-        for (same = router->openapi; same != NULL; same = same->next)
+        for (same = router->impl->openapi; same != NULL; same = same->next)
             if (!strcmp(same->path, entry->path))
                 for (method = KNURL_HTTP_GET; method <= KNURL_HTTP_MOVE;
                      ++method)

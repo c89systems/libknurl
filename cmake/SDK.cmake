@@ -28,15 +28,19 @@ foreach(index RANGE ${last_component})
     string(APPEND sdk_dependencies "${name}=${version}\n")
   endif()
 endforeach()
-string(APPEND sdk_dependencies "\nStatic consumers require provider archives and their link closure.\nShared consumers require the matching provider runtime libraries.\nLua 5.5.1 and Lua providers belong to the separate facade/binding product.\nOther components supplied in cpkt are not libknurl dependencies.\n")
+string(APPEND sdk_dependencies "\nStatic consumers require provider archives and their link closure.\nShared consumers require the matching provider runtime libraries.\nOnly the C library/SDK is shipped; Lua and executable products are deferred until Luthrum.\nOther components supplied in cpkt are not libknurl dependencies.\n")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/DEPENDENCIES" "${sdk_dependencies}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/BACKEND" "kore_revision=${sdk_kore_revision}\nseries_sha256=${sdk_series_sha}\n${sdk_patches}")
 get_target_property(sdk_abi knurl_shared SOVERSION)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/SDK" "project=libknurl\nversion=${PROJECT_VERSION}\nabi=${sdk_abi}\ntarget=${KNURL_TARGET}\nconfiguration=${CMAKE_BUILD_TYPE}\n")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/SDK" "${CMAKE_CURRENT_BINARY_DIR}/DEPENDENCIES"
   "${CMAKE_CURRENT_BINARY_DIR}/BACKEND" DESTINATION "${CMAKE_INSTALL_DATADIR}/knurl")
-install(FILES examples/README.md DESTINATION "${CMAKE_INSTALL_DATADIR}/knurl")
-install(FILES examples/server.c examples/CMakeLists.txt
+include("${CMAKE_CURRENT_LIST_DIR}/PublicDocs.cmake")
+foreach(path IN LISTS knurl_public_docs)
+  get_filename_component(directory "${path}" DIRECTORY)
+  install(FILES "${path}" DESTINATION "${CMAKE_INSTALL_DATADIR}/knurl/${directory}")
+endforeach()
+install(FILES examples/README.md examples/server.c examples/CMakeLists.txt
   DESTINATION "${CMAKE_INSTALL_DATADIR}/knurl/examples")
 # Internal build description used by the package/verifier, never shipped.
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SDKBuild.cmake.in"

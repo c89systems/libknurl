@@ -7,7 +7,7 @@ static knurl_status hello(knurl_request *request, knurl_reply *reply,
 {
     (void)request;
     (void)data;
-    return knurl_reply_text(reply, 200, "text/plain", "hello\n", error);
+    return reply->text(reply, 200, "text/plain", "hello\n", error);
 }
 int main(int argc, char **argv)
 {
@@ -17,6 +17,7 @@ int main(int argc, char **argv)
     knurl_run_result result;
     knurl_error error;
     knurl_server *server = NULL;
+    knurl_router *router;
     knurl_status status;
     if (argc > 2 || (argc == 2 && strcmp(argv[1], "--check"))) {
         fprintf(stderr, "usage: %s [--check]\n", argv[0]);
@@ -34,15 +35,17 @@ int main(int argc, char **argv)
     route.method = KNURL_HTTP_GET;
     route.path = "/";
     route.handler = hello;
+    if (status == KNURL_OK) {
+        router = server->router(server);
+        status = router->route(router, &route, NULL, &error);
+    }
     if (status == KNURL_OK)
-        status = knurl_router_route(knurl_server_router(server), &route, NULL,
-                                    &error);
-    if (status == KNURL_OK)
-        status = knurl_server_validate(server, &error);
+        status = server->validate(server, &error);
     if (status == KNURL_OK && argc == 1)
-        status = knurl_server_run(server, &result, &error);
+        status = server->run(server, &result, &error);
     if (status != KNURL_OK)
         fprintf(stderr, "%s: %s\n", error.operation, error.message);
-    knurl_server_destroy(server, NULL);
+    if (server != NULL)
+        server->destroy(server, NULL);
     return status == KNURL_OK ? 0 : 1;
 }

@@ -561,8 +561,10 @@ done:
     free(protected_data);
     free(body);
     free(signature);
-    lonejson_cleanup(&jws_map, &jws);
-    lonejson_cleanup(&protected_map, &header);
+    if (lonejson_cleanup(&jws_map, &jws, NULL) != LONEJSON_STATUS_OK)
+        abort();
+    if (lonejson_cleanup(&protected_map, &header, NULL) != LONEJSON_STATUS_OK)
+        abort();
     return okay;
 }
 
@@ -819,7 +821,8 @@ static int request(struct test_ca *ca, SSL *ssl, const char *endpoint,
             okay = 1;
     }
 done:
-    lonejson_cleanup(&payload_map, &payload);
+    if (lonejson_cleanup(&payload_map, &payload, NULL) != LONEJSON_STATUS_OK)
+        abort();
     free(body);
     return okay;
 }

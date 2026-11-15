@@ -428,6 +428,8 @@ static void completed(knurl_watch *watch, unsigned int events, void *userdata)
     size_t i;
     char command_byte;
     int status;
+    pid_t waited;
+    knurl_tls_identity_state identity;
     (void)watch;
     (void)events;
     fixture = userdata;
@@ -450,9 +452,19 @@ static void completed(knurl_watch *watch, unsigned int events, void *userdata)
         case 'B':
         case 'C':
         case 'D':
-            if (waitpid(fixture->client, &status, 0) != fixture->client ||
-                !WIFEXITED(status) || WEXITSTATUS(status))
+            status = 0;
+            do {
+                waited = waitpid(fixture->client, &status, 0);
+            } while (waited < 0 && errno == EINTR);
+            if (waited != fixture->client || !WIFEXITED(status) ||
+                WEXITSTATUS(status)) {
+                (void)fprintf(stderr,
+                              "ACME runtime client wait: expected %ld, got "
+                              "%ld, status %d, errno %d\n",
+                              (long)fixture->client, (long)waited, status,
+                              waited < 0 ? errno : 0);
                 fixture->failure = 1;
+            }
             fixture->client = 0;
             if (bytes[i] == 'A') {
                 (void)knurl_server_set_serving(fixture->server, 1, NULL);
@@ -467,8 +479,13 @@ static void completed(knurl_watch *watch, unsigned int events, void *userdata)
                 (void)knurl_server_set_serving(fixture->server, 1, NULL);
                 command_byte = 'I';
                 (void)write(fixture->command[1], &command_byte, 1);
-            } else
+            } else {
+                if (knurl_server_tls_identity_state(
+                        fixture->server, 0, &identity, NULL) != KNURL_OK ||
+                    identity != KNURL_TLS_USABLE)
+                    fixture->failure = 1;
                 (void)knurl_server_request_stop(fixture->server, NULL);
+            }
             break;
         default:
             fixture->failure = 1;
@@ -534,11 +551,28 @@ static void identity_changed(knurl_server *server,
 {
     struct fixture *fixture;
     knurl_tls_identity_state current;
+    knurl_status status;
+    struct timespec observation_delay;
     fixture = userdata;
-    if (knurl_server_tls_identity_state(server, event->identity_index, &current,
-                                        NULL) != KNURL_OK ||
-        current != event->state)
+    observation_delay.tv_sec = 0;
+    /* Workers may install a certificate while the parent observes a snapshot.
+     * Exercise that scheduling window before querying the current state. */
+    observation_delay.tv_nsec = 5000000;
+    (void)nanosleep(&observation_delay, NULL);
+    current = KNURL_TLS_PENDING;
+    status = knurl_server_tls_identity_state(server, event->identity_index,
+                                             &current, NULL);
+    if (status != KNURL_OK ||
+        (current != event->state &&
+         !(event->state == KNURL_TLS_PENDING && current == KNURL_TLS_USABLE))) {
+        (void)fprintf(stderr,
+                      "ACME identity observation: mode %d phase %d identity "
+                      "%lu event %d query %d status %d\n",
+                      fixture->mode, fixture->phase,
+                      (unsigned long)event->identity_index, event->state,
+                      current, status);
         fixture->failure = 1;
+    }
     if (event->error.status != KNURL_OK) {
         if (event->identity_index != 0 || event->state != KNURL_TLS_USABLE ||
             event->domain.length != 9 ||

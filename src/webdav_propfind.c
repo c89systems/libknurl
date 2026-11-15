@@ -153,7 +153,7 @@ knurl_status knurl_dav_propfind(struct dav_request *s, knurl_error *error)
     if (status != KNURL_OK)
         return status;
     knurl_dav_ref(s);
-    status = knurl_reply_source_take(s->request->reply, 207,
+    status = knurl_reply_source_take(s->request->impl->reply, 207,
                                      "application/xml; charset=utf-8", source,
                                      error);
     if (status != KNURL_OK) {

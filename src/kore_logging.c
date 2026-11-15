@@ -57,9 +57,9 @@ static const char *effective(struct http_request *native, const char *peer,
     knurl_request *request = native->hdlr_extra;
     (void)buffer;
     (void)size;
-    return request != NULL && request->lifecycle_started &&
-                   request->effective_address.length
-               ? request->effective_address.data
+    return request != NULL && request->impl->lifecycle_started &&
+                   request->impl->effective_address.length
+               ? request->impl->effective_address.data
                : peer;
 }
 static const char *correlation(struct http_request *native, char *buffer,
@@ -68,16 +68,16 @@ static const char *correlation(struct http_request *native, char *buffer,
     knurl_request *request = native->hdlr_extra;
     (void)buffer;
     (void)size;
-    return request != NULL && request->lifecycle_started &&
-                   request->correlation_id.length
-               ? request->correlation_id.data
+    return request != NULL && request->impl->lifecycle_started &&
+                   request->impl->correlation_id.length
+               ? request->impl->correlation_id.data
                : NULL;
 }
 knurl_status knurl_kore_logging_start(struct knurl_runtime *runtime,
                                       knurl_error *error)
 {
     struct knurl_log_runtime *log;
-    const struct knurl_logging *configured = runtime->server->logging;
+    const struct knurl_logging *configured = runtime->server->impl->logging;
     knurl_access_log_config access;
     struct kore_accesslog_status_level_rule
         rules[KNURL_ACCESS_LOG_MAX_STATUS_LEVEL_RULES];
@@ -132,8 +132,8 @@ knurl_status knurl_kore_logging_start(struct knurl_runtime *runtime,
                               access.status_level_rule_count);
     kore_accesslog_set_real_ip_resolver(effective);
     kore_accesslog_set_correlation_id_resolver(correlation);
-    if (runtime->server->config.http.access_log_path != NULL) {
-        log->file_config = &runtime->server->config.http;
+    if (runtime->server->impl->config.http.access_log_path != NULL) {
+        log->file_config = &runtime->server->impl->config.http;
         status = knurl_access_file_open(log->file_config, &log->file, error);
         if (status == KNURL_IO && error != NULL &&
             error->native_code == ENOSPC) {

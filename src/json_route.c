@@ -30,13 +30,13 @@ static void release_records(void *data)
     if (r->output_acquired)
         r->provider.release(&r->output_storage, r->userdata);
     else if (r->output.record != NULL) {
-        lonejson_cleanup(r->output.schema.map, r->output.record);
+        (void)lonejson_cleanup(r->output.schema.map, r->output.record, NULL);
         free(r->output.record);
     }
     if (r->input_acquired)
         r->provider.release(&r->input_storage, r->userdata);
     else if (r->input.record != NULL) {
-        lonejson_cleanup(r->input.schema.map, r->input.record);
+        (void)lonejson_cleanup(r->input.schema.map, r->input.record, NULL);
         free(r->input.record);
     }
     if (r->output_runtime)
@@ -50,6 +50,8 @@ static knurl_status allocate_record(const lonejson_schema_view *schema,
                                     knurl_error *error)
 {
     knurl_status status;
+    lonejson_error native;
+    lonejson_status code;
     memset(view, 0, sizeof(*view));
     view->size = sizeof(*view);
     view->abi_version = LONEJSON_VIEW_ABI_VERSION;
@@ -63,8 +65,13 @@ static knurl_status allocate_record(const lonejson_schema_view *schema,
     if (view->record == NULL)
         return knurl_fail(error, KNURL_NOMEM, "json_route",
                           "cannot allocate typed record");
-    lonejson_init(view->schema.runtime, schema->map, view->record);
-    return KNURL_OK;
+    code =
+        lonejson_init(view->schema.runtime, schema->map, view->record, &native);
+    if (code != LONEJSON_STATUS_OK) {
+        free(view->record);
+        view->record = NULL;
+    }
+    return knurl_json_error(code, &native, error);
 }
 static knurl_status dispatch(knurl_request *request, knurl_reply *reply,
                              void *data, knurl_error *error)
@@ -78,8 +85,8 @@ static knurl_status dispatch(knurl_request *request, knurl_reply *reply,
     if (records == NULL)
         return knurl_fail(error, KNURL_NOMEM, "json_route",
                           "cannot allocate route records");
-    request->codec_data = records;
-    request->codec_cleanup = release_records;
+    request->impl->codec_data = records;
+    request->impl->codec_cleanup = release_records;
     records->provider = route->provider;
     records->userdata = route->userdata;
     if (route->input.map != NULL && route->provider.acquire != NULL) {
@@ -132,8 +139,8 @@ static knurl_status dispatch(knurl_request *request, knurl_reply *reply,
             reply, 200, &records->output.schema, records->output.record,
             route->max_output_bytes != 0 ? route->max_output_bytes : (size_t)-1,
             error);
-    request->codec_data = NULL;
-    request->codec_cleanup = NULL;
+    request->impl->codec_data = NULL;
+    request->impl->codec_cleanup = NULL;
     release_records(records);
     return status;
 }
@@ -212,13 +219,14 @@ static knurl_status add_route(knurl_router *router, knurl_route_group *group,
     route.handler = dispatch;
     route.userdata = data;
     route.hooks = config->hooks;
+    route.acl = config->acl;
     status = group != NULL
                  ? knurl_route_group_route(group, &route, &registered, error)
                  : knurl_router_route(router, &route, &registered, error);
     if (status != KNURL_OK)
         free(data);
     else {
-        registered->release_userdata = free;
+        registered->impl->release_userdata = free;
         if (out != NULL)
             *out = registered;
     }
@@ -255,6 +263,7 @@ static knurl_status typed_route(knurl_router *router, knurl_route_group *group,
     declaration.input = config->input;
     declaration.userdata = config->userdata;
     declaration.hooks = config->hooks;
+    declaration.acl = config->acl;
     declaration.records = config->records;
     return add_route(router, group, &declaration, config->handler, out, error);
 }

@@ -90,7 +90,8 @@ knurl_status knurl_job_result_copy(knurl_job *job, knurl_bytes result,
                                    knurl_error *error)
 {
     unsigned char *copy = NULL;
-    if (job == NULL || job->executor->loop->process_id != (long)getpid() ||
+    if (job == NULL ||
+        job->executor->loop->impl->process_id != (long)getpid() ||
         !__atomic_load_n(&job->started, __ATOMIC_ACQUIRE) ||
         __atomic_load_n(&job->done, __ATOMIC_ACQUIRE) ||
         !pthread_equal(job->thread, pthread_self()))
@@ -189,7 +190,7 @@ void knurl_job_config_init(knurl_job_config *config)
 }
 static void unlink_executor(knurl_executor *e)
 {
-    knurl_executor **p = &e->loop->executors;
+    knurl_executor **p = &e->loop->impl->executors;
     if (!e->linked)
         return;
     while (*p != NULL && *p != e)
@@ -197,7 +198,7 @@ static void unlink_executor(knurl_executor *e)
     if (*p == e)
         *p = e->next;
     e->linked = 0;
-    --e->loop->executor_count;
+    --e->loop->impl->executor_count;
 }
 static void release_executor(knurl_executor *e)
 {
@@ -393,16 +394,16 @@ knurl_status knurl_executor_new(knurl_server *server,
         *out = NULL;
     loop = server != NULL ? knurl_server_loop(server) : NULL;
     if (out == NULL || server == NULL || loop == NULL ||
-        server->process.role != KNURL_PROCESS_HTTP || !loop->native_ready ||
-        !loop->http_worker)
+        server->impl->process.role != KNURL_PROCESS_HTTP ||
+        !loop->impl->native_ready || !loop->impl->http_worker)
         return fail(error, KNURL_STATE,
                     "create executors only in an active post-fork HTTP worker");
     status = knurl_loop_owner(loop, error);
     if (status != KNURL_OK)
         return status;
-    if (!loop->accepting || loop->executor_stopping)
+    if (!loop->impl->accepting || loop->impl->executor_stopping)
         return fail(error, KNURL_STATE, "worker is stopping");
-    if (loop->executor_count >= KNURL_EXECUTOR_MAX_POOLS)
+    if (loop->impl->executor_count >= KNURL_EXECUTOR_MAX_POOLS)
         return fail(error, KNURL_LIMIT, "worker executor pool budget is full");
     knurl_executor_config_init(&defaults);
     if (config != NULL)
@@ -451,10 +452,10 @@ knurl_status knurl_executor_new(knurl_server *server,
         return status;
     }
     ++e->registrations;
-    e->next = loop->executors;
-    loop->executors = e;
+    e->next = loop->impl->executors;
+    loop->impl->executors = e;
     e->linked = 1;
-    ++loop->executor_count;
+    ++loop->impl->executor_count;
     code = pthread_attr_init(&attributes);
     if (code == 0) {
         code =
@@ -593,7 +594,7 @@ void knurl_executors_stopping(knurl_loop *loop)
     knurl_executor *e;
     if (loop == NULL)
         return;
-    loop->executor_stopping = 1;
-    for (e = loop->executors; e != NULL; e = e->next)
+    loop->impl->executor_stopping = 1;
+    for (e = loop->impl->executors; e != NULL; e = e->next)
         (void)knurl_executor_close(e, NULL);
 }

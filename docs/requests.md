@@ -61,12 +61,35 @@ Kore's already bounded header allocation; subsequent socket reads use one bounde
 chunk. Body-idle/minimum-rate accounting excludes explicit application pauses.
 Independent application deadlines still apply.
 
+Received-body accounting tracks decoded payload arrival independently of
+consumer acceptance, including paused and failed callbacks. Delivered bytes
+track accepted input. Retries count neither byte span twice; chunk framing,
+trailers and pipelined successor bytes are excluded. Chunked receive accounting
+uses a separate bounded framing cursor, with no extra payload buffer.
+
 Successful EOF invokes `on_body_end` once; it means input completed, not that a
 reply drained. Truncation, disconnect, timeout and callback errors reach close
-without a false EOF. Managed POST/PUT/PATCH require Content-Length; DELETE,
+without a false EOF. An incomplete managed body reports IO when its transport
+disconnects, regardless of whether the response queue or request release
+observes the disconnect first. Managed POST/PUT/PATCH require Content-Length or
+HTTP/1.1 chunked framing; DELETE,
 PROPFIND and MKCOL permit an absent length. The managed method rules
-reject positive lengths for GET/HEAD/OPTIONS/COPY/MOVE. Chunked transfer coding
-reaches the headers decision and requires takeover for actual body delivery.
+reject payload framing for GET/HEAD/OPTIONS/COPY/MOVE. Chunked delivery uses the
+same bounded private HTTP framer as the proxy. STREAM receives decoded chunks
+without collecting the body; other plans retain their explicit storage policy.
+Decoded bytes determine limits and minimum-rate progress. Content-Length plus
+Transfer-Encoding, ambiguous framing, invalid chunks and forbidden trailers fail
+and close the connection. Unsupported transfer coding returns 501.
+
+Trailers remain separate from initial headers. `request->trailer_count`,
+`trailer_at` and `trailer_first` expose ordered fields after body completion.
+Before completion, count is zero and lookups return STATE. Trailer names are
+case-insensitive, repeated fields retain order, and views expire with the request.
+Limits are 100 fields,
+8192 bytes per line and 16384 bytes for the complete block. Trailer values never
+change routing, authentication or initial headers. A pipelined suffix is retained
+for the next request. See [input helpers](input.md) for exact typed query/capture
+validation and duplicate rejection.
 
 A request remains live through asynchronous body/response work. Returning from
 a low-level callback does not invent or end a reply. The deferred-response
@@ -95,8 +118,8 @@ remove. `knurl_body_result_open_reader` returns an independently closed public
 source: memory readers borrow the result/buffer; file readers pin an open FD.
 Keep memory owners alive until reader close. File readers do not remove artifacts.
 
-The [focused body fixture](../tests/body-runtime.c) is an executable public API
+The [focused body fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/body-runtime.c) is an executable public API
 example. [Connection channels](channels.md) provide exclusive raw input and
 tunnel takeover. The [full specification](server-api-spec.md) and
-[integration contract](vectis-integration-contract.md) define the related
+[integration contract](https://github.com/c89systems/libknurl/blob/trunk/docs/vectis-integration-contract.md) define the related
 codec, provider and language-facade behavior.

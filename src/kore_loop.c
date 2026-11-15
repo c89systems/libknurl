@@ -56,10 +56,10 @@ static knurl_status watch_update(void *userdata, knurl_watch *watch,
     int result;
     if (previous == interest)
         return KNURL_OK;
-    if (interest != 0 && previous == 0 && managed_fd(userdata, watch->fd))
+    if (interest != 0 && previous == 0 && managed_fd(userdata, watch->impl->fd))
         return knurl_fail(error, KNURL_CONFLICT, "loop_watch",
                           "descriptor belongs to managed transport");
-    native = watch->backend;
+    native = watch->impl->backend;
     if (native == NULL) {
         native = calloc(1, sizeof(*native));
         if (native == NULL)
@@ -67,9 +67,10 @@ static knurl_status watch_update(void *userdata, knurl_watch *watch,
                               "cannot allocate native watch");
         native->event.handle = native_ready;
         native->watch = watch;
-        watch->backend = native;
+        watch->impl->backend = native;
     }
-    result = kore_library_watch_update(watch->fd, previous, interest, native);
+    result =
+        kore_library_watch_update(watch->impl->fd, previous, interest, native);
     if (result != 0) {
         (void)knurl_fail(error, result == EEXIST ? KNURL_CONFLICT : KNURL_IO,
                          "loop_watch",
@@ -86,8 +87,8 @@ static knurl_status watch_update(void *userdata, knurl_watch *watch,
 static void watch_release(void *userdata, knurl_watch *watch)
 {
     (void)userdata;
-    free(watch->backend);
-    watch->backend = NULL;
+    free(watch->impl->backend);
+    watch->impl->backend = NULL;
 }
 
 static void loop_wake(void *userdata)
@@ -115,7 +116,7 @@ knurl_status knurl_kore_loop_create(struct knurl_runtime *runtime,
     backend.watch_update = watch_update;
     backend.watch_release = watch_release;
     backend.wake = loop_wake;
-    return knurl_loop_create(&backend, &runtime->server->loop, error);
+    return knurl_loop_create(&backend, &runtime->server->impl->loop, error);
 }
 
 u_int64_t knurl_kore_loop_wait(void *userdata, u_int64_t maximum)
@@ -127,8 +128,8 @@ u_int64_t knurl_kore_loop_wait(void *userdata, u_int64_t maximum)
         maximum = 0;
     maximum = knurl_kore_responses_wait(runtime, maximum);
     maximum = knurl_kore_websockets_wait(runtime, maximum);
-    if (runtime->server->loop != NULL) {
-        wait = knurl_loop_wait(runtime->server->loop);
+    if (runtime->server->impl->loop != NULL) {
+        wait = knurl_loop_wait(runtime->server->impl->loop);
         if ((u_int64_t)wait < maximum)
             maximum = (u_int64_t)wait;
     }
@@ -142,23 +143,24 @@ void knurl_kore_loop_turn(void *userdata)
     struct knurl_runtime *runtime;
     knurl_loop *loop;
     runtime = userdata;
-    loop = runtime->server->loop;
+    loop = runtime->server->impl->loop;
     if (worker == NULL)
         knurl_kore_tls_observe(runtime, NULL);
     knurl_kore_responses_turn(runtime);
     knurl_kore_websockets_turn(runtime);
     if (loop != NULL) {
         knurl_loop_turn(loop);
-        if (loop->failure.status != KNURL_OK && runtime->status == KNURL_OK) {
-            runtime->status = loop->failure.status;
-            runtime->error = loop->failure;
+        if (loop->impl->failure.status != KNURL_OK &&
+            runtime->status == KNURL_OK) {
+            runtime->status = loop->impl->failure.status;
+            runtime->error = loop->impl->failure;
             if (worker != NULL)
                 knurl_kore_child_failure(runtime, &runtime->error);
             kore_quit = KORE_QUIT_FATAL;
         }
     }
-    if (runtime->server->stop_requested ||
-        runtime->server->terminating_signal) {
+    if (runtime->server->impl->stop_requested ||
+        runtime->server->impl->terminating_signal) {
         if (worker != NULL) {
             if (!runtime->stop_sent) {
                 runtime->stop_sent = 1;
@@ -173,7 +175,8 @@ void knurl_kore_parent_drain(void *userdata, u_int64_t maximum)
 {
     struct knurl_runtime *runtime;
     runtime = userdata;
-    if (runtime->server->loop != NULL && runtime->server->loop->native_ready)
+    if (runtime->server->impl->loop != NULL &&
+        runtime->server->impl->loop->impl->native_ready)
         kore_library_parent_drain(maximum);
     else
         (void)usleep((useconds_t)(maximum * 1000));
@@ -186,11 +189,11 @@ void knurl_kore_loop_shutdown(void *userdata)
     knurl_proxy_worker_clear(runtime->server);
     knurl_kore_responses_shutdown(runtime);
     knurl_kore_websockets_shutdown(runtime);
-    knurl_loop_shutdown(runtime->server->loop);
-    if (runtime->server->loop != NULL &&
-        runtime->server->loop->failure.status != KNURL_OK &&
+    knurl_loop_shutdown(runtime->server->impl->loop);
+    if (runtime->server->impl->loop != NULL &&
+        runtime->server->impl->loop->impl->failure.status != KNURL_OK &&
         runtime->status == KNURL_OK) {
-        runtime->error = runtime->server->loop->failure;
+        runtime->error = runtime->server->impl->loop->impl->failure;
         runtime->status = runtime->error.status;
     }
     runtime->control_watch = NULL;
@@ -198,6 +201,6 @@ void knurl_kore_loop_shutdown(void *userdata)
 
 void knurl_kore_loop_finish(struct knurl_runtime *runtime)
 {
-    knurl_loop_release(runtime->server->loop);
-    runtime->server->loop = NULL;
+    knurl_loop_release(runtime->server->impl->loop);
+    runtime->server->impl->loop = NULL;
 }

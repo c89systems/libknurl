@@ -101,7 +101,7 @@ static knurl_status serve(knurl_request *request, knurl_reply *reply,
             return not_found(r, reply, error);
         }
         return knurl_static_reply_asset(&r->config, r->custom, request, reply,
-                                        asset, r->file, error);
+                                        r->provider, asset, r->file, error);
     }
     prefix = strlen(r->prefix);
     relative = strcmp(r->prefix, "/") == 0 ? path : path + prefix;
@@ -138,7 +138,7 @@ static knurl_status serve(knurl_request *request, knurl_reply *reply,
             return redirect(request, reply, error);
         }
         status = knurl_static_reply_asset(&r->config, r->custom, request, reply,
-                                          asset, copy, error);
+                                          r->provider, asset, copy, error);
         free(copy);
         return status;
     }
@@ -182,7 +182,7 @@ static knurl_status serve(knurl_request *request, knurl_reply *reply,
         return redirect(request, reply, error);
     }
     status = knurl_static_reply_asset(&r->config, r->custom, request, reply,
-                                      selected, index, error);
+                                      r->provider, selected, index, error);
     free(index);
     return status;
 }
@@ -295,17 +295,17 @@ static knurl_status add_route(knurl_router *router, knurl_route_group *group,
         return status;
     }
     if (group != NULL) {
-        if (group->config.prefix[0] != 0) {
-            status = knurl_route_path_validate(group->config.prefix,
+        if (group->impl->config.prefix[0] != 0) {
+            status = knurl_route_path_validate(group->impl->config.prefix,
                                                KNURL_PATH_LITERAL, error);
             if (status != KNURL_OK) {
                 free(path);
                 return status;
             }
         }
-        group_length = strcmp(group->config.prefix, "/") == 0
+        group_length = strcmp(group->impl->config.prefix, "/") == 0
                            ? 0
-                           : strlen(group->config.prefix);
+                           : strlen(group->impl->config.prefix);
     }
     if (n > KNURL_ASSET_PATH_MAX || group_length > KNURL_ASSET_PATH_MAX - n) {
         free(path);
@@ -324,6 +324,8 @@ static knurl_status add_route(knurl_router *router, knurl_route_group *group,
                             ? config->methods
                             : KNURL_HTTP_METHODS_GET | KNURL_HTTP_METHODS_HEAD;
     r->config.index_enabled = config->index_enabled;
+    r->config.compression_disabled = config->compression_disabled;
+    r->config.precompressed_disabled = config->precompressed_disabled;
     status = knurl_mime_copy(config->mime_types, config->mime_type_count,
                              &r->config.mime_types, error);
     if (status != KNURL_OK) {
@@ -335,7 +337,7 @@ static knurl_status add_route(knurl_router *router, knurl_route_group *group,
     r->prefix = malloc(group_length + n + 1);
     if (r->prefix != NULL) {
         if (group_length)
-            memcpy(r->prefix, group->config.prefix, group_length);
+            memcpy(r->prefix, group->impl->config.prefix, group_length);
         memcpy(r->prefix + group_length, path, n + 1);
         if (group_length && n == 1)
             r->prefix[group_length] = 0;
@@ -444,16 +446,17 @@ static knurl_status add_route(knurl_router *router, knurl_route_group *group,
     route.handler = serve;
     route.userdata = r;
     route.hooks = config->hooks;
-    status = knurl_router_route(group != NULL ? group->router : router, &route,
-                                &registered, error);
+    route.acl = config->acl;
+    status = knurl_router_route(group != NULL ? group->impl->router : router,
+                                &route, &registered, error);
     free(pattern);
     if (status != KNURL_OK)
         release_route(r);
     else {
-        registered->group = group;
-        registered->release_userdata = release_route;
-        registered->preflight = preflight;
-        registered->directory_mount = kind != 0;
+        registered->impl->group = group;
+        registered->impl->release_userdata = release_route;
+        registered->impl->preflight = preflight;
+        registered->impl->directory_mount = kind != 0;
         if (out != NULL)
             *out = registered;
     }

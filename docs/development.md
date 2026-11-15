@@ -8,11 +8,24 @@ Actual Vectis cutover and release verification have separate gates.
 See [Testing](testing.md), [Editor setup](editors.md) and
 [Release preparation](releasing.md) for their dedicated workflows.
 
+## Extension contracts
+
+The [HTTP and input completeness specification](http-completeness-spec.md)
+defines delivered C behavior for validation helpers, static ranges
+and compression, managed chunked input and WebSocket protocol completeness.
+The [ACL contract](acl-spec.md) defines the delivered route admission behavior.
+HTTP/2 and HTTP/3 listeners are outside that goal.
+
+The [SOAP 1.2 server specification](soap12-spec.md) records a future
+endpoint contract, namespace-aware XML requirements, streaming and ownership
+rules, fault behavior and acceptance tests. It describes planned work rather
+than an implemented or released capability.
+
 ## Commands
 
 Prerequisites: CMake >= 3.24, Ninja, Git, Make, Bash >= 4.4, curl, tar, flock,
-SHA-256 tools and clang-format. Host lifecycle checks also use Python 3 solely to
-serve a small local archive fixture; Bash/CMake drive and assert those checks.
+SHA-256 tools and clang-format. Python 3 serves a small local archive fixture and
+generates binary MMDB fixtures; Bash/CMake/C executables drive and assert checks.
 Linux compilation uses the lifecycle's pinned
 Bootlin GCC/binutils/sysroot collection, with no host compiler fallback.
 
@@ -21,15 +34,12 @@ make help
 make toolchain             # Explicit provisioning; unnecessary when already prepared.
 make build                 # Compile the selected x86_64-linux-gnu target in build/debug.
 make build-all             # Compile the full seven-target matrix, serially.
-make lua                   # Build the separate Lua facade/binding against the installed shared core.
-make lua-all               # Compile both products for all seven targets, serially.
-make lua-package           # Stage Lua sources, rockspec, source rock and their checksums.
 make sdk-package           # Stage the selected Core SDK binary rehearsal under build/.
 make sdk-verify            # Inspect that archive and build its relocated consumers.
 make build-all CONFIG=release
 make test                  # Run checks for the selected toolchain target.
-make memcheck              # Native GNU Core/Lua Valgrind gate, reusing ordinary binaries.
-make qemu-smoke TARGET=armhf-linux-musl  # Core/Lua and stack checks; no fuzzing.
+make memcheck              # Native GNU C Valgrind gate, reusing ordinary binaries.
+make qemu-smoke TARGET=armhf-linux-musl  # C/HTTP and stack checks; no fuzzing.
 make fuzz-smoke            # Seed replay and a 10-second native AFL++ campaign.
 make fuzz FUZZ_SECONDS=300 # Longer native campaign; same instrumented producer.
 make verify-all CONFIG=release # One matrix build followed by all declared gates.
@@ -50,10 +60,19 @@ checkout is rejected during preparation and Core configuration.
 Toolchain discovery is read-only; only explicit provisioning prepares compilers.
 One operation owns the checkout; run operations serially.
 
+The native AFL++ harness instruments owned HTTP/WebSocket parsers and ACL/IP/
+forwarding parsers. Inputs are bounded to 16 KiB; the ACL resolver is deterministic
+and never performs network DNS. Forwarding assertions check hop limits,
+normalization and rejection of appended unusable identities. ACL assertions
+check invalid-address failures and deny precedence. The corpus includes IPv4,
+mapped IPv6, hostname and RFC 7239 inputs; a syntax dictionary guides mutations.
+Seed replay runs in CTest. Bounded campaigns complement the unit and wire tests;
+they do not establish exhaustive security or source coverage.
+
 Normal Make configuration enables the required Core tests, including when reusing
 a directory previously configured with `BUILD_TESTING=OFF`. Direct CMake builds
 may still select a library-only configuration. The `lifecycle.*` checks cover
-owned paths, tracked source inputs, version/release identity and archive-cache
+owned paths, the C product/archive boundary, version/release identity and archive-cache
 misses, zero-request hits, corruption and failure cleanup. Acquisition fixtures
 use a loopback origin and isolated caches under `build/`.
 
@@ -61,16 +80,10 @@ Every build selects a concrete architecture/OS and the lifecycle toolchain for
 that target. The default is `x86_64-linux-gnu`, using `build/debug` and
 `build/release`; other targets use `build/<target>/debug` or `release`.
 There is no host-based product selection. [Editor setup](editors.md) describes
-how these ordinary builds supply clangd's Core and Lua compilation databases.
+how ordinary builds supply clangd's C compilation database.
 
-Lua provider SDKs have one Release producer per target under
-`build/<target>/release/lua-deps/` (default GNU: `build/release/lua-deps/`). Both
-Core configurations reuse those dependency bytes. Switching Core configuration
-does not replace shared SDKs with differently configured Lua providers.
-
-Lua source-package commands and the complete artifact inventory are described in
-[Release preparation](releasing.md). The [Lua package README](../lua/README.md)
-contains the build prerequisites shipped with that product.
+The active product is the C library and SDK. Executable/Lua sources and their old
+build integration are archived pending Luthrum; see [runtime direction](runtime-direction.md).
 
 The [Core SDK archive](sdk.md) has its own selected-target binary rehearsal and
 final-byte/consumer verification. It ships public library payload and metadata;
@@ -91,6 +104,13 @@ compile/link/artifact evidence. The [contract](server-api-spec.md) defines runti
 acceptance and the implementation cadence.
 
 ## Source ownership
+
+The standalone [MMDB country API](mmdb.md) uses Knurl's C89 reader exclusively.
+Its lazy file cache uses bounded pread operations and enforces a configurable
+total requested heap limit, including cache bookkeeping. It does not use mmap.
+Python 3 generates synthetic MMDB fixtures during test builds; no test downloads
+data. Optional real DB-IP tests keep the downloaded database under ignored build
+storage and record its attribution/checksum; no database enters an SDK.
 
 - `vendor/kore/` is an unmodified upstream source export, including its license.
 - `vendor/kore.revision` and `vendor/kore.url` identify its exact upstream commit

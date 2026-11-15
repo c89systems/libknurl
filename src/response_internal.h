@@ -14,7 +14,8 @@ struct knurl_response_segment {
     int interim;
 };
 
-struct knurl_response {
+struct knurl_response_impl {
+    knurl_response receiver;
     knurl_request *request;
     knurl_reply *headers;
     knurl_response_phase phase;

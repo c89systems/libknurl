@@ -59,6 +59,8 @@ typedef struct knurl_upload_stream_config {
      * submission.
      */
     knurl_route_hooks hooks;
+    /** Optional retained route ACL. */
+    knurl_acl *acl;
     /** Resource/state opener; failed construction must clean its own partial
      * state.
      */
@@ -210,6 +212,8 @@ typedef struct knurl_upload_reader_config {
      * submission.
      */
     knurl_route_hooks hooks;
+    /** Optional retained route ACL. */
+    knurl_acl *acl;
     /** Bounded live-upload queue/chunk capacity; zero selects the operation's
      * documented default.
      */
@@ -257,6 +261,8 @@ typedef struct knurl_upload_file_config {
      * submission.
      */
     knurl_route_hooks hooks;
+    /** Optional retained route ACL. */
+    knurl_acl *acl;
     /** Explicit file destination/source path copied at registration; opening
      * follows the operation's admission/submission timing.
      */

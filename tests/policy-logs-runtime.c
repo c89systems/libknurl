@@ -46,6 +46,62 @@ static int worker_exit(knurl_server *server,
     (void)process;
     return f->failed;
 }
+static void block_notification(knurl_server *server,
+                               const knurl_autoblock_event *event, void *data)
+{
+    struct fixture *f = data;
+    (void)server;
+    if (event->process.role != KNURL_PROCESS_HTTP ||
+        event->process.process_id <= 0 ||
+        strcmp(event->peer_address, "127.0.0.1") || event->peer_port == 0 ||
+        event->local_port == 0 || event->count < event->threshold)
+        f->failed = 1;
+}
+static int check_notifications(knurl_server *server)
+{
+    knurl_autoblock_event event;
+    knurl_u64 dropped;
+    knurl_error error;
+    knurl_status status;
+    int seen = 0;
+    while ((status = server->autoblock_next(server, &event, &dropped,
+                                            &error)) == KNURL_OK) {
+        CHECK(dropped.high == 0 && dropped.low == 0);
+        CHECK(event.change == KNURL_AUTOBLOCK_BLOCKED);
+        CHECK(event.process.role == KNURL_PROCESS_HTTP &&
+              event.process.process_id > 0);
+        CHECK(event.expires_at_ms.high > event.occurred_at_ms.high ||
+              (event.expires_at_ms.high == event.occurred_at_ms.high &&
+               event.expires_at_ms.low > event.occurred_at_ms.low));
+        if (!strcmp(event.address, "198.51.100.10")) {
+            CHECK(event.reason == KNURL_AUTOBLOCK_HTTP_STATUS &&
+                  event.status == 404);
+            CHECK(event.address_source == KNURL_CLIENT_ADDRESS_FORWARDED_FOR);
+            CHECK(event.via_count == 2 && !event.via_truncated);
+            CHECK(!strcmp(event.via[0], "10.0.0.1") &&
+                  !strcmp(event.via[1], "127.0.0.1"));
+            seen |= 1;
+        } else if (!strcmp(event.address, "198.51.100.12")) {
+            CHECK(event.reason == KNURL_AUTOBLOCK_APPLICATION &&
+                  !strcmp(event.name, "auth.failed"));
+            seen |= 2;
+        } else if (!strcmp(event.address, "198.51.100.30")) {
+            CHECK(event.reason == KNURL_AUTOBLOCK_HTTP_STATUS &&
+                  event.status == 100);
+            seen |= 4;
+        } else if (!strcmp(event.address, "127.0.0.1")) {
+            CHECK(event.reason == KNURL_AUTOBLOCK_TCP_STALL ||
+                  (event.reason == KNURL_AUTOBLOCK_HTTP_STATUS &&
+                   event.status == 400));
+            CHECK(event.via_count == 0 &&
+                  event.address_source == KNURL_CLIENT_ADDRESS_PEER);
+            seen |= 8;
+        } else
+            CHECK(0);
+    }
+    CHECK(status == KNURL_EOF && seen == 15 && dropped.low == 0);
+    return 0;
+}
 static knurl_status identifier(knurl_request *request, char *buffer,
                                size_t capacity, size_t *length, void *data,
                                knurl_error *error)
@@ -214,8 +270,8 @@ static int client(unsigned short port, int mode)
     CHECK(request(port, "/warn", "198.51.100.1", 409) == 0);
     CHECK(request(port, "/error", "198.51.100.1", 503) == 0);
     CHECK(request(port, "/replace", "198.51.100.1", 418) == 0);
-    CHECK(request(port, "/missing", "198.51.100.10", 404) == 0);
-    CHECK(request(port, "/missing", "198.51.100.10", 404) == 0);
+    CHECK(request(port, "/missing", "198.51.100.10, 10.0.0.1", 404) == 0);
+    CHECK(request(port, "/missing", "198.51.100.10, 10.0.0.1", 404) == 0);
     CHECK(request(port, "/ok", "198.51.100.10", 403) == 0);
     CHECK(request(port, "/ok", "198.51.100.11", 201) == 0);
     CHECK(request(port, "/event", "198.51.100.12", 204) == 0);
@@ -363,9 +419,10 @@ static int run(int mode)
                                                    {418, PSLOG_LEVEL_INFO}};
     knurl_autoblock_status_rule statuses[3] = {{404, 2}, {400, 2}, {100, 2}};
     knurl_autoblock_event_rule event = {"auth.failed", 2};
-    const char *trusted[] = {"127.0.0.1"};
+    const char *trusted[] = {"127.0.0.1", "10.0.0.1"};
     knurl_server *server;
     knurl_run_result result;
+    knurl_autoblock_notifications_config notifications;
     knurl_error error;
     knurl_status status;
     pslog_logger *root, *override = NULL;
@@ -389,7 +446,7 @@ static int run(int mode)
     host.worker_count = 1;
     host.worker_set_affinity_disabled = host.kore_quiet = 1;
     host.client_ip.trusted_proxies = trusted;
-    host.client_ip.trusted_proxy_count = 1;
+    host.client_ip.trusted_proxy_count = 2;
     host.access_log_path = f.access;
     host.autoblock.enabled = 1;
     host.autoblock.tcp_stall_threshold = 2;
@@ -430,6 +487,12 @@ static int run(int mode)
         config.http.access_log_path = f.access;
     }
     CHECK(knurl_server_new(&config, &server, &error) == KNURL_OK);
+    knurl_autoblock_notifications_config_init(&notifications);
+    notifications.queue_capacity = 32;
+    notifications.callback = block_notification;
+    notifications.userdata = &f;
+    CHECK(server->set_autoblock_notifications(server, &notifications, &error) ==
+          KNURL_OK);
     knurl_access_log_config_init(&access_config);
     access_config.logger_disabled = host.access_log.logger_disabled;
     access_config.logger = host.access_log.logger;
@@ -461,11 +524,13 @@ static int run(int mode)
     CHECK(waitpid(f.child, &child, 0) == f.child && WIFEXITED(child) &&
           WEXITSTATUS(child) == 0);
     CHECK(status == KNURL_OK && !result.escalated);
+    CHECK(check_notifications(server) == 0);
     if (mode == 0) {
         pslog(root, PSLOG_LEVEL_INFO, "between runs", NULL);
         CHECK(knurl_server_run(server, &result, &error) == KNURL_OK);
         CHECK(waitpid(f.child, &child, 0) == f.child && WIFEXITED(child) &&
               WEXITSTATUS(child) == 0 && !result.escalated);
+        CHECK(check_notifications(server) == 0);
     }
     CHECK(knurl_server_destroy(server, &error) == KNURL_OK);
     pslog(root, PSLOG_LEVEL_INFO, "after destroy", NULL);

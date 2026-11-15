@@ -27,7 +27,12 @@ struct input {
 static const lonejson_field input_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(struct input, message, "message")};
 LONEJSON_MAP_DEFINE(input_map, struct input, input_fields);
+static const lonejson_map cycle_map;
+static const lonejson_field cycle_fields[] = {
+    LONEJSON_FIELD_OBJECT_REQ(struct input, message, "child", &cycle_map)};
+LONEJSON_MAP_DEFINE(cycle_map, struct input, cycle_fields);
 static int called, replaced, stopped, live_called, empty_called;
+static int chunked_input;
 static struct {
     pthread_t owner;
     int ready, notified, pipe[2];
@@ -51,7 +56,9 @@ static knurl_status acquire_record(knurl_request *request, int output,
     storage->owner = storage->view.record;
     if (storage->owner == NULL)
         return KNURL_NOMEM;
-    lonejson_init(schema->runtime, schema->map, storage->owner);
+    if (lonejson_init(schema->runtime, schema->map, storage->owner, NULL) !=
+        LONEJSON_STATUS_OK)
+        abort();
     return path.length == sizeof("/provider-fail") - 1 &&
                    memcmp(path.data, "/provider-fail", path.length) == 0
                ? KNURL_IO
@@ -64,7 +71,9 @@ static void release_record(knurl_record_storage *storage, void *data)
     if (!pthread_equal(parsing.owner, pthread_self()))
         ++record_wrong_thread;
     if (storage->owner != NULL) {
-        lonejson_cleanup(storage->view.schema.map, storage->owner);
+        if (lonejson_cleanup(storage->view.schema.map, storage->owner, NULL) !=
+            LONEJSON_STATUS_OK)
+            abort();
         free(storage->owner);
     }
 }
@@ -253,13 +262,24 @@ static int line(int fd, char *out, size_t bound)
     } while (used < 2 || memcmp(out + used - 2, "\r\n", 2) != 0);
     return 0;
 }
+static int chunk_write(int fd, const char *body, size_t size)
+{
+    char line[32];
+    if (!chunked_input)
+        return write_all(fd, body, size);
+    snprintf(line, sizeof(line), "%lx\r\n", (unsigned long)size);
+    CHECK(write_all(fd, line, strlen(line)) == 0);
+    CHECK(write_all(fd, body, size) == 0);
+    CHECK(write_all(fd, "\r\n", 2) == 0);
+    return 0;
+}
 static int exchange(unsigned short port, const char *path, const char *body,
                     int code, const char *expected, int before_header,
                     int withheld, int late_body)
 {
     struct sockaddr_in address;
     struct timeval timeout;
-    char metadata[4096], request[512], ending[2];
+    char metadata[4096], request[512], ending[2], framing[80];
     char *result, *length;
     size_t used, total, count;
     ssize_t n;
@@ -277,17 +297,21 @@ static int exchange(unsigned short port, const char *path, const char *body,
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = htons(port);
     CHECK(connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0);
+    if (chunked_input)
+        strcpy(framing, "Transfer-Encoding: chunked\r\n");
+    else
+        snprintf(framing, sizeof(framing), "Content-Length: %lu\r\n",
+                 (unsigned long)strlen(body));
     (void)snprintf(request, sizeof(request),
                    "%s %s HTTP/1.1\r\nHost: localhost\r\nConnection: "
-                   "close\r\nContent-Length: %lu\r\n\r\n",
-                   strcmp(path, "/stop") == 0 ? "GET" : "POST", path,
-                   (unsigned long)strlen(body));
+                   "close\r\n%s\r\n",
+                   strcmp(path, "/stop") == 0 ? "GET" : "POST", path, framing);
     CHECK(write_all(fd, request, strlen(request)) == 0);
     if (strcmp(path, "/live") == 0) {
         struct pollfd observed;
         char acknowledged;
         size_t prefix = strlen(body) - strlen("</ignored></doc>");
-        CHECK(write_all(fd, body, prefix) == 0);
+        CHECK(chunk_write(fd, body, prefix) == 0);
         observed.fd = parsing.pipe[0];
         observed.events = POLLIN;
         observed.revents = 0;
@@ -298,9 +322,11 @@ static int exchange(unsigned short port, const char *path, const char *body,
             close(fd);
             return 0;
         }
-        CHECK(write_all(fd, body + prefix, strlen(body) - prefix) == 0);
+        CHECK(chunk_write(fd, body + prefix, strlen(body) - prefix) == 0);
     } else if (!late_body)
-        CHECK(write_all(fd, body, strlen(body) - (withheld ? 1 : 0)) == 0);
+        CHECK(chunk_write(fd, body, strlen(body) - (withheld ? 1 : 0)) == 0);
+    if (chunked_input)
+        CHECK(write_all(fd, "0\r\nX-Trace: done\r\n\r\n", 20) == 0);
     used = 0;
     metadata[0] = 0;
     do {
@@ -364,13 +390,16 @@ static int client(unsigned short port)
 {
     char *live = calloc(50000, 1);
     CHECK(live != NULL);
+    CHECK(exchange(port, "/init-fail", "<doc/>", 500, "", 0, 0, 0) == 0);
     strcpy(live, "<doc><message>");
     memset(live + strlen(live), 'x', 32768);
     strcat(live, "</message><ignored>");
     memset(live + strlen(live), ' ', 8192);
     strcat(live, "</ignored></doc>");
     CHECK(exchange(port, "/live", live, 0, "", 0, -1, 0) == 0);
+    chunked_input = 1;
     CHECK(exchange(port, "/live", live, 200, "parsed live", 0, 0, 0) == 0);
+    chunked_input = 0;
     CHECK(exchange(port, "/provider-fail",
                    "<doc><message>unused</message></doc>", 500, "", 0, 0,
                    0) == 0);
@@ -463,7 +492,8 @@ int main(void)
     knurl_error error;
     knurl_run_result result;
     knurl_status status;
-    lonejson_schema_view input;
+    lonejson_schema_view input, invalid;
+    knurl_xml_route_config failed;
     int child_status;
     char path[16] = "/echo", root[16] = "doc";
     memset(&fixture, 0, sizeof(fixture));
@@ -539,6 +569,13 @@ int main(void)
     xml.path = "/small-queue";
     xml.buffer_bytes = 8;
     CHECK(knurl_router_xml_route(knurl_server_router(server), &xml, NULL,
+                                 &error) == KNURL_OK);
+    failed = xml;
+    failed.path = "/init-fail";
+    CHECK(knurl_json_schema_from_map(NULL, &cycle_map, &invalid, &error) ==
+          KNURL_OK);
+    failed.input = &invalid;
+    CHECK(knurl_router_xml_route(knurl_server_router(server), &failed, NULL,
                                  &error) == KNURL_OK);
     xml.path = "/unsupported";
     xml.body.max_bytes.low = 0;

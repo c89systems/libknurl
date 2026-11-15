@@ -60,7 +60,7 @@ static void filesystem_free(void *data)
 static void executor_retired(void *data)
 {
     knurl_loop *loop = data;
-    loop->storage_executor = NULL;
+    loop->impl->storage_executor = NULL;
 }
 static void resource_close(void *data)
 {
@@ -830,8 +830,8 @@ static knurl_status submit(struct disk_operation *op, knurl_error *error)
     config.retired = native_retired;
     config.userdata = op;
     config.timeout_disabled = 1;
-    return knurl_executor_submit(loop->storage_executor, &config, &op->job,
-                                 error);
+    return knurl_executor_submit(loop->impl->storage_executor, &config,
+                                 &op->job, error);
 }
 static void admission_ready(knurl_timer *timer, void *data)
 {
@@ -866,12 +866,12 @@ static knurl_status invoke(knurl_storage_operation *operation,
     if (knurl_server_loop(f->server) != loop)
         return knurl_fail(error, KNURL_STATE, "storage_filesystem",
                           "provider server and operation loop differ");
-    if (loop->storage_executor == NULL) {
+    if (loop->impl->storage_executor == NULL) {
         knurl_executor_config_init(&pool);
         pool.retired = executor_retired;
         pool.userdata = loop;
-        status = knurl_executor_new(f->server, &pool, &loop->storage_executor,
-                                    error);
+        status = knurl_executor_new(f->server, &pool,
+                                    &loop->impl->storage_executor, error);
         if (status != KNURL_OK)
             return status;
     }

@@ -5,7 +5,8 @@
 #include <knurl/request.h>
 #include <knurl/dispatch.h>
 
-struct knurl_request {
+struct knurl_request_impl {
+    knurl_request receiver;
     void *codec_data;
     void (*codec_cleanup)(void *);
     knurl_server *server;
@@ -21,6 +22,8 @@ struct knurl_request {
     knurl_bytes path;
     knurl_header *headers;
     size_t header_count;
+    knurl_header *trailers;
+    size_t trailer_count;
     knurl_header *queries;
     size_t query_count;
     knurl_header *params;
@@ -32,6 +35,8 @@ struct knurl_request {
     char local_address[46];
     char effective_storage[46], correlation_storage[129];
     knurl_bytes effective_address, correlation_id;
+    int address_source;
+    int forwarding_invalid;
     int lifecycle_started, observing;
     int disconnect_side;
     knurl_u64 content_length;
@@ -55,6 +60,8 @@ struct knurl_request {
     int close_notified;
     int rejection_status;
     int in_headers;
+    unsigned int route_phase;
+    int route_pending;
 };
 
 knurl_bytes knurl_view(const char *text);

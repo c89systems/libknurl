@@ -134,6 +134,42 @@ KNURL_API knurl_status knurl_request_body_spill(
 KNURL_API knurl_status knurl_body_result_open_reader(
     const knurl_body_result *result, knurl_source **out, knurl_error *error);
 
+struct knurl_bytes;
+struct knurl_error;
+struct knurl_u64;
+/** Library-owned body receiver. Pass this handle as the first
+ * argument to its methods. Obtain it through the documented constructor or
+ * borrowed accessor. Do not copy, initialize or modify the shell or impl.
+ */
+struct knurl_body {
+    /** Return the completed body's storage kind; the handle remains
+     * request-owned.
+     */
+    knurl_body_storage (*kind)(const struct knurl_body *body);
+    /** Read the exact completed transport-body length without consuming it. */
+    knurl_status (*length)(const struct knurl_body *body, struct knurl_u64 *out,
+                           struct knurl_error *error);
+    /** Borrow in-memory body bytes until request close; file-backed bodies are
+     * not read into memory.
+     */
+    knurl_status (*bytes)(const struct knurl_body *body,
+                          struct knurl_bytes *out, struct knurl_error *error);
+    /** Borrowed FD/path; no transfer, close, unlink or position mutation by
+     * caller.
+     */
+    knurl_status (*file)(const struct knurl_body *body, int *fd,
+                         const char **path, struct knurl_error *error);
+    /** Read a bounded chunk from the completed body's cursor; EOF ends the
+     * reader.
+     */
+    knurl_status (*read)(struct knurl_body *body, void *buffer, size_t capacity,
+                         size_t *produced, struct knurl_error *error);
+    /** Reset the completed transport-body cursor to its beginning. */
+    knurl_status (*rewind)(struct knurl_body *body, struct knurl_error *error);
+    /** Private library state; applications must not access it. */
+    struct knurl_body_impl *impl;
+};
+
 #ifdef __cplusplus
 }
 #endif

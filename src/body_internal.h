@@ -6,7 +6,8 @@
 #include <knurl/body.h>
 #include <sys/types.h>
 
-struct knurl_body {
+struct knurl_body_impl {
+    knurl_body receiver;
     knurl_body_policy policy;
     knurl_u64 length;
     knurl_u64 position;
