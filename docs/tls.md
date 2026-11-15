@@ -2,7 +2,8 @@
 
 `timeouts.tls_handshake` is an absolute accept-to-handshake deadline, default
 10000 milliseconds. Partial handshake progress does not renew it. Set the
-deadline's `disabled` field to 1 to turn it off; zero milliseconds inherits the default.
+deadline's `disabled` field to 1 to turn it off; zero milliseconds inherits the
+default.
 Kore checks connection deadlines on its regular timeout sweep (up to 500 ms).
 
 Declare a `KNURL_LISTENER_HTTPS` listener and set `identity_index` to an entry in
@@ -17,9 +18,9 @@ Each material accepts a regular file, copied bytes or an opener returning an
 unowned public `knurl_source`. Construction only copies declarations. Explicit
 validation and each run open their own inputs and consume them synchronously to
 EOF, under `max_material_bytes` per input (zero adds no caller ceiling). The
-PEM reader enforces OpenSSL's signed-int input range on consumed bytes. AGAIN fails with
-STATE; no background material reader is implied. Successful opener transfer
-receives one close notification on consumption or failure. The source must be
+PEM reader enforces OpenSSL's signed-int input range on consumed bytes. AGAIN
+fails with STATE; no background material reader is implied. Successful opener
+transfer receives one close notification on consumption or failure. The source must be
 ready for bounded synchronous consumption; a host adapter owns any blocking
 client lifetime or cooperative deadline. Validation performs no bind, fork,
 RESTORE/PERSIST callback or ACME traffic.
@@ -100,3 +101,26 @@ The separate [protocol fixture](acme.md#account-order-and-recovery-flow) drives 
 account recovery, signed orders, CSR, TLS-ALPN-01, issuance and renewal selection
 after ACME-process restart. It also covers captured trust and transport bounds.
 Complete allocation/fatal unwinding and in-flight protocol fault coverage remain.
+
+## Outbound system trust
+
+`knurl_tls_system_ca_file()` borrows a CA bundle path for outbound HTTPS. It
+selects nonempty `CURL_CA_BUNDLE`, then `SSL_CERT_FILE`. Those explicit overrides
+are returned even when invalid, so their consumers fail rather than silently
+switching trust. With neither bundle override, nonempty `SSL_CERT_DIR` suppresses
+fallback bundle discovery in favor of directory trust.
+
+Otherwise it selects the first readable, nonempty regular file from
+`/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`,
+`/etc/ssl/ca-bundle.pem` and `/etc/ssl/cert.pem`. NULL means no bundle was selected;
+the helper does not itself configure a TLS connection or load a trust store.
+Retain environment strings unchanged while their borrowed paths are in use.
+
+Proxy connections use this selection and `SSL_CERT_DIR` when no explicit CA PEM
+is configured. ACME's `ca_file` overrides bundle discovery and `ca_directory`
+overrides `SSL_CERT_DIR`. An explicit directory without an explicit file also
+suppresses bundle discovery. ACME captures that policy before starting children;
+later child environment changes do not replace it. Without a selected file or
+directory, the curl/OpenSSL SDK defaults apply. Peer and hostname verification
+stay enabled. This outbound
+policy is independent of an HTTPS listener's client-certificate trust.

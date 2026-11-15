@@ -73,7 +73,6 @@ Dependency SDKs come from `github.com/c89systems/`.
 Platforms comprise GNU and musl Linux on x86_64, aarch64 and armhf, and
 Darwin on arm64.
 
-
 ## Backend
 
 Kore is a pinned, pristine source snapshot. Ordered patches apply to disposable

@@ -142,7 +142,6 @@ append operations, and emits output before input EOF. Neither the document nor
 selected array is collected. The C reference adapter preserves the original
 source/path/memory declaration precedence and legacy error translation.
 
-
 The [API fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/json.c) checks small generator reads over a 128 KiB
 record, explicit output limits, release ownership, caller-owned selected items
 before EOF, source failures, callback stopping, cleanup and truncation. The
@@ -153,7 +152,6 @@ schemas, a 64 KiB reply borrowing its input record, file-backed array iteration
 through the reference adapter, rewind after callback failure and startup spool
 policy.
 Both also run against relocated static/shared SDKs.
-
 
 [Buffered REST](rest.md) adds generic decode/validate/error policy over ordinary
 staged routes and explicit materialized replies. [OpenAPI](openapi.md) projects

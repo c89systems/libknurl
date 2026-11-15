@@ -1,6 +1,6 @@
 # libknurl documentation
 
-Start with the [quick starts](../README.md) or find a guide below. The
+Start with the [quick start](../README.md) or find a guide below. The
 [product contract](server-api-spec.md) defines the public behavior.
 
 | Use | Reference |

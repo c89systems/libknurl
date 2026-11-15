@@ -16,7 +16,6 @@ ASCII letters, including XK. `unknown` matches a valid missing country/record;
 database and DNS errors never become unknown. The subject is the effective
 client unless `use_peer` selects the actual TCP peer.
 
-
 Construction and server validation copy/validate declarations without DNS, files
 or threads. Startup prepares attached ACLs before serving. Country paths open
 owned [MMDB readers](mmdb.md); `max_heap_bytes` bounds that reader's requested

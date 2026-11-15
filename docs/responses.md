@@ -15,6 +15,10 @@ pristine vendor tree stays unchanged; the codec extraction is an external patch.
 Handler/hook failure discards staged application headers/payload and emits its
 diagnostic bytes with 400 for INVALID, 501 for NOT_SUPPORTED, otherwise 500.
 Unselected success is 204.
+`http.hide_server_errors` suppresses diagnostic bytes in automatic 5xx responses.
+The production initializer enables it; the ordinary initializer leaves it off.
+Explicit application response bodies are preserved. Configured generic error
+pages can still apply when the automatic diagnostic body is empty.
 The public error message/detail capacities are 256 bytes each, including NUL.
 Configured pretty error pages use Kore's template for empty staged error replies,
 missing/empty files and empty internal errors. Explicit diagnostic/body bytes

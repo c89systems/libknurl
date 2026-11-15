@@ -8,14 +8,15 @@ Actual Vectis cutover and release verification have separate gates.
 See [Testing](testing.md), [Editor setup](editors.md) and
 [Release preparation](releasing.md) for their dedicated workflows.
 
-## Planned extensions
+## Extension contracts
 
 The [HTTP and input completeness specification](http-completeness-spec.md)
-defines the current implementation goal for validation helpers, static ranges
+defines delivered C behavior for validation helpers, static ranges
 and compression, managed chunked input and WebSocket protocol completeness.
+The [ACL contract](acl-spec.md) defines the delivered route admission behavior.
 HTTP/2 and HTTP/3 listeners are outside that goal.
 
-The [SOAP 1.2 server specification](soap12-spec.md) records the future C/Lua
+The [SOAP 1.2 server specification](soap12-spec.md) records a future
 endpoint contract, namespace-aware XML requirements, streaming and ownership
 rules, fault behavior and acceptance tests. It describes planned work rather
 than an implemented or released capability.

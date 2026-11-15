@@ -1,7 +1,8 @@
 # HTTP and application-input completeness specification
 
-Historical scope: Lua clauses below refer to the archived pre-Luthrum product.
-Only the C library/SDK is active; see [runtime direction](runtime-direction.md).
+This is the active C contract. The
+[historical version](https://github.com/c89systems/libknurl/blob/trunk/archive/pre-luthrum/docs/http-completeness-spec.md)
+preserves deferred Lua requirements; see [runtime direction](runtime-direction.md).
 
 Status: implemented and verified on 2026-11-13. The
 [verification record](verification.md#http-completeness-2026-11-13) identifies the
@@ -12,7 +13,7 @@ below. Existing [SOAP work](soap12-spec.md) remains deferred.
 
 ## Scope and boundaries
 
-Deliver the C/Lua input-validation conveniences, static HTTP refinements,
+Deliver the C input-validation conveniences, static HTTP refinements,
 managed chunked request bodies and application WebSocket completeness identified
 in the feature inventory. Use the existing Kore backend, route registry,
 request/reply/source lifetime machinery and released dependency SDKs.
@@ -22,14 +23,14 @@ Vectis consumer-repository edits, release signing/tagging and publication are
 excluded. Preserve and test HTTP/2 proxy upstream support. MIME inference already
 has 125 extension mappings; preserve that catalogue and its override precedence.
 
-Implement in strict C89, with public C receiver methods for handle operations
-and a thin Lua binding over the same Core implementation. No feature flags or
-legacy implementations for these corrections. New user-selectable compression
-policy is ordinary product configuration, not a refactoring switch.
+Implement in strict C89, with public C receiver methods for handle operations.
+No feature flags or legacy implementations for these corrections. New
+user-selectable compression policy is ordinary product configuration, not a
+refactoring switch.
 
 ## Input validation and context-specific escaping
 
-Add `<knurl/input.h>` and `knurl.input` for stateless span-based operations.
+Use `<knurl/input.h>` for stateless span-based operations.
 Use `knurl_bytes` and explicit lengths. Embedded NUL, truncation and trailing
 garbage must never turn invalid input into a successful shorter value. Expected
 failures return status and bounded diagnostics; validation leaves input intact.
@@ -40,7 +41,7 @@ The initial public operations are:
 | Operation | Required behavior |
 | --- | --- |
 | `long` | Exact optional leading minus and decimal digits, checked native C long range and caller-supplied min/max. No plus, whitespace, fractions or exponents. |
-| `u64` | Exact unsigned decimal using the existing portable `knurl_u64` representation and caller-supplied bounds. Lua uses its existing exact count representation when needed. |
+| `u64` | Exact unsigned decimal using the existing portable `knurl_u64` representation and caller-supplied bounds. |
 | `boolean` | Only `true`, `false`, `1`, `0`; exact case, no coercion. |
 | `text` | Validate UTF-8, explicit byte-length bounds and optional rejection of control characters. No grapheme-count promise. |
 | `allowlist` / `choice` | Exact allowed-byte membership or exact match against declared span values, with explicit length bounds. |
@@ -49,17 +50,14 @@ The initial public operations are:
 | `filename` | One ASCII component of at most 255 bytes using letters, digits, dot, underscore and hyphen; reject empty, dot/dot-dot, separators and control/NUL bytes. This does not establish filesystem confinement. |
 | `html_escape` | Escape ampersand, angle brackets, double and single quotes for HTML text or quoted attributes; validate UTF-8, return an owned byte value and enforce an explicit output bound. This is not a JavaScript/CSS/URL encoder. |
 
-Provide matching `knurl_input_*` C functions; use `parse_long`/`parse_u64` as
-Lua spellings where primitive names would be unclear. Owned outputs use the
+Provide matching `knurl_input_*` C functions. Owned outputs use the
 existing owned-byte cleanup contract. Zero output bounds select a documented
 finite default, 1 MiB for HTML escaping. Size checks use checked arithmetic.
 
-Add `request->query_long`, `query_u64` and `query_boolean` receivers and Lua
-`request.query_long(name, ...)`, `query_u64`, `query_boolean` conveniences.
+Provide `request->query_long`, `query_u64` and `query_boolean` receivers.
 Absent input returns EOF; duplicate names and invalid input return INVALID;
 representational overflow returns OVERFLOW. Do not silently use the first of
-multiple values. Lua returns nil/error on absent or invalid input, with the
-status available in the error. Bound/default conversion must not lose precision.
+multiple values. Bound/default conversion must not lose precision.
 Callers apply defaults explicitly after checking absence. Typed path-parameter
 variants use the same validators and absence/error conventions.
 
@@ -121,9 +119,9 @@ invalid controls and empty Host values rejected.
 ### Negotiated compression
 
 Static configuration gains `compression_disabled`, default false, and
-`precompressed_disabled`, default false. Inherited configuration must have the
-same meaning in C and Lua. Apply only to eligible successful representations;
-never compress ranges or multipart responses, and honor Cache-Control no-transform.
+`precompressed_disabled`, default false. Apply only to eligible successful
+representations; never compress ranges or multipart responses, and honor
+Cache-Control no-transform.
 An actual Range request selects identity before conditional/range evaluation.
 If identity is explicitly unacceptable for that request, return 406.
 
@@ -197,8 +195,8 @@ Zero chunk plus the complete trailer block establishes EOF. Bytes beyond that
 boundary belong to the next pipelined request and must be preserved exactly once.
 
 Retain legal trailers separately from initial headers, with bounded count/bytes.
-Expose request trailer count/at/first receivers and Lua `trailer`/`trailers`
-lookups after body completion; early lookup returns STATE (count is zero).
+Expose request trailer count/at/first receivers after body completion; early
+lookup returns STATE (count is zero).
 Trailers cannot alter framing, routing, authentication or initial headers.
 Disconnection, limit errors and cancellation retain existing terminal ownership
 and unread-input close behavior. Parse metadata on heap-owned bounded state.
@@ -210,10 +208,9 @@ in the existing application WebSocket engine. Keep proxy tunnels opaque.
 Do not add WebSocket compression/extensions or collect entire messages behind
 an incremental callback.
 
-Extend the C on_frame callback to include a boolean final flag; Lua on_frame
-receives the equivalent final argument. Deliver TEXT/BINARY as the initial frame
-and CONTINUATION for subsequent fragments. Preserve complete bounded frame
-delivery and AGAIN/resume retention. Message state spans fragments; control
+The C on_frame callback includes a boolean final flag. Deliver TEXT/BINARY as
+the initial frame and CONTINUATION for subsequent fragments. Preserve complete
+bounded frame delivery and AGAIN/resume retention. Message state spans fragments; control
 frames may interleave. Reject a continuation without an active message or a new
 data opcode before a fragmented message ends. Add max_message_bytes, with zero
 inheriting max_frame_bytes; count all fragments with checked arithmetic and
@@ -233,7 +230,7 @@ possible, then use the existing close deadline; they do not call application
 data handlers for rejected input. Ping/pong handling and clean/abrupt outcomes
 retain explicit accounting.
 
-Add send_frame(opcode, final, bytes) as a receiver and Lua method. Validate
+Provide send_frame(opcode, final, bytes) as a C receiver method. Validate
 outgoing fragment sequencing, text and controls, updating message state only
 after atomic queue acceptance; AGAIN changes no state. Existing send/text/binary
 are complete-frame conveniences. Sending CLOSE initiates the same validated
@@ -242,7 +239,7 @@ The zero output-queue budget resolves to a finite max_frame_bytes + 14 bytes
 (checked), large enough for one permitted frame and control minimum. Explicit
 budgets remain finite and authoritative.
 
-This is a clean pre-1.0 callback/API correction. Migrate all C/Lua call sites,
+This is a clean pre-1.0 callback/API correction. Migrate all C call sites,
 fixtures, examples and editor declarations together; do not retain a second
 legacy frame engine or alternate callback shape.
 
@@ -256,13 +253,13 @@ a release tag for this work.
 
 Implement and verify in this order: input helpers/ABI boundary, static ranges and
 dates, negotiated static compression, shared framing/managed chunked bodies,
-WebSocket corrections, then integrated C/Lua/docs/package checks. The implementation
+WebSocket corrections, then integrated C/docs/package checks. The implementation
 must update the product contract and public guides as behavior is delivered.
 
 Unit and integration tests must prove valid, invalid, boundary and allocation-
 failure behavior, not just the presence of functions. In particular:
 
-- C/Lua validation parity, exact counts, duplicate/absent parameter handling,
+- C free-function/receiver parity, exact counts, duplicate/absent parameter handling,
   malicious/control/NUL bytes, context-specific escaping and output limits.
 - Filesystem and provider multipart wire bytes, length, wide offsets, resets,
   conditional precedence and date strength. Compression tests decode delivered
@@ -270,17 +267,17 @@ failure behavior, not just the presence of functions. In particular:
   cancellation and bounded first output before full source consumption.
 - Chunked bodies split at every framing boundary, with extensions/trailers,
   pause/resume, pipelined successor, decoded limits, malformed input, disconnect,
-  native/Lua delivery and no full-body buffering for STREAM/XML uploads.
+  owner-loop/native delivery and no full-body buffering for STREAM/XML uploads.
 - WebSocket fragmented text/binary with interleaved controls, UTF-8 code points
   split across frames, malformed sequencing/length/close cases, bounded budgets,
-  output retry invariance and exact terminal close codes in C and Lua.
+  output retry invariance and exact terminal close codes.
 - Existing proxy HTTP/1, live TLS/ALPN HTTP/2, SSE and opaque WebSocket relay
   regressions continue to pass.
 
-Run GNU/musl C/Lua suites, constrained Debug worker-stack/guard checks, Valgrind,
+Run GNU/musl C suites, constrained Debug worker-stack/guard checks, Valgrind,
 all seven target builds/packages and four ARM QEMU gates. Verify installed
 static/shared CMake/pkg-config consumers, public symbols/receivers, C89/C++
-headers, clangd/LuaLS and formatting. Keep Darwin cross-build/package evidence
+headers, clangd and formatting. Keep Darwin cross-build/package evidence
 distinct from native execution. Checks/builds run serially with the configured
 job limit. Commit verified coherent changes and leave the worktree classified;
 do not push or perform the separately governed consumer cutover/release.

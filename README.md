@@ -22,8 +22,9 @@ from current builds and releases. [Product direction](docs/runtime-direction.md)
 - **Operate the server.** Configure TLS, mutual TLS and ACME, control worker
   readiness and graceful shutdown, and collect structured access logs.
 
-The C SDK supports C89 and C++98 consumers. SDKs are available for GNU and musl
-Linux on x86_64, aarch64 and armhf, and for arm64 macOS. [Downloads](https://github.com/c89systems/libknurl/releases)
+The C SDK supports C89 and C++98 consumers. SDKs can be built for GNU and musl
+Linux on x86_64, aarch64 and armhf, and for arm64 macOS. libknurl is not yet
+released. [SDK delivery](docs/sdk.md)
 
 ## Hello in C
 

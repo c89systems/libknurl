@@ -1,6 +1,8 @@
+# make build prepares this database plus generated and dependency headers.
 CompileFlags:
   CompilationDatabase: build/debug
 ---
+# Optional harness database, prepared by make fuzz-build.
 If:
   PathMatch: tests/fuzz/.*
 CompileFlags:

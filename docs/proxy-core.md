@@ -51,7 +51,7 @@ admission. Configuration and opaque hook views are installed in
 admission, the lifted handshake/wire validators and the public raw channel.
 Non-101 replies share the HTTP response writer. Vectis cutover still requires the
 complete
-[proxy specification](server-api-spec.md#executable-surface).
+[proxy specification](server-api-spec.md#public-c-surface).
 
 ## Terminal exchange diagnostics
 

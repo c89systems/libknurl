@@ -1,10 +1,11 @@
 # Route ACL implementation contract
 
-Historical scope: Lua clauses below refer to the archived pre-Luthrum product.
-Only the C library/SDK is active; see [runtime direction](runtime-direction.md).
+This is the active C contract. The
+[historical version](https://github.com/c89systems/libknurl/blob/trunk/archive/pre-luthrum/docs/acl-spec.md)
+preserves deferred Lua requirements; see [runtime direction](runtime-direction.md).
 
 ACLs are reusable, reference-counted declarations with public C free functions
-and receiver methods, plus a Lua facade. Construction copies and validates
+and receiver methods. Construction copies and validates
 configuration without DNS, files, threads or server initialization. Explicit
 refresh prepares standalone ACLs; server startup prepares every attached ACL
 before serving. Routes and groups retain attached ACLs. ABI remains 0 while
@@ -91,10 +92,8 @@ Global application admission remains available and precedes route dispatch.
 
 C route declarations and built-in facades accept ACL attachment, with common
 route/group setters for reusable declarations. Mutation is rejected while the
-router is active. Lua accepts a reusable ACL object or an inline declaration,
-preserves ownership through route/server retirement and exposes standalone
-check/refresh/close. All matching and DNS lifecycle behavior belongs to Core;
-the binding must not implement a second policy engine.
+router is active. Standalone check/refresh/close uses the same ACL implementation
+as route enforcement. All matching and DNS lifecycle behavior belongs to Core.
 
 ## Verification
 
@@ -104,8 +103,8 @@ refresh failure/recovery, bounded resolver results, country/unknown/error
 behavior, ownership and concurrent checks. Wire tests prove every route family
 rejects before opening resources, reading bodies, sending 100 Continue or
 connecting upstream; verify custom forwarding headers, IPv4/IPv6 trust, wildcard
-immediate-peer behavior, malformed/duplicate chains and hop limits. Lua tests
-exercise standalone and inline/reused route declarations with the installed SDK.
+immediate-peer behavior, malformed/duplicate chains and hop limits. Installed C
+consumers exercise standalone and reusable route declarations.
 
 Run strict C89/C++ header and seven-target builds, GNU/musl native suites,
 constrained Debug stacks, ARM execution, Valgrind, SDK/package boundaries,

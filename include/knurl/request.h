@@ -30,7 +30,8 @@ KNURL_API knurl_loop *knurl_request_loop(const knurl_request *request);
  * close. status is the callback's terminal result; finish short-circuits a
  * pending auth/before hook. Further callbacks may suspend again. Cancel owned
  * asynchronous work from the request-close notification; never resume
- * afterward.
+ * afterward. AGAIN and EOF are not terminal results and return INVALID;
+ * resuming a live request without a pending router callback returns STATE.
  */
 KNURL_API knurl_status knurl_request_resume(knurl_request *request,
                                             knurl_status status, int finish,

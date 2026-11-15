@@ -7,7 +7,7 @@ TLS/ACME, logging and lifecycle. Native tasks and request resumption are public
 C primitives; see [tasks](tasks.md). Shared-library ABI remains 0 while unreleased.
 
 The standalone `knurl` executable and Lua binding are deferred until **Luthrum**,
-C89 Systems' planned Lua runtime with coroutine multiplexing onto OS threads,
+C89 Systems' Lua runtime in development with coroutine multiplexing onto OS threads,
 is ready. Its public runtime and binding contracts are not assumed here. Neither
 product is built, installed, tested by active CI, acquired as a dependency or
 included in release checksums. Only the seven C SDK archives are collected.

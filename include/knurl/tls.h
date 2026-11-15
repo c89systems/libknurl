@@ -15,30 +15,31 @@ extern "C" {
 /** Borrow the selected system CA bundle path. CURL_CA_BUNDLE then SSL_CERT_FILE
  * override conventional system locations, including when the override is
  * invalid (TLS must fail rather than silently broaden trust). A nonempty
- * SSL_CERT_DIR selects directory trust instead of the fallback bundle. NULL
- * means no file was discovered. Environment must remain stable during use.
+ * SSL_CERT_DIR selects directory trust instead of the fallback bundle when
+ * neither bundle override is set. NULL means no file was discovered.
+ * Environment must remain stable during use.
  */
 KNURL_API const char *knurl_tls_system_ca_file(void);
 
-/** Values for tls mode. */
+/** TLS identity source; configured identities require MANUAL or ACME. */
 typedef enum knurl_tls_mode {
-    /** TLS mode/availability: disabled. */
+    /** Unconfigured identity; rejected in a configured identity array. */
     KNURL_TLS_DISABLED = 0,
-    /** TLS mode/availability: manual. */
+    /** Host-supplied certificate and private-key material. */
     KNURL_TLS_MANUAL,
-    /** TLS mode/availability: acme. */
+    /** Kore-managed ACME issuance and certificate renewal. */
     KNURL_TLS_ACME
 } knurl_tls_mode;
 
-/** Values for tls version. */
+/** Accepted downstream TLS protocol versions. */
 typedef enum knurl_tls_version {
-    /** TLS protocol selector: default. */
+    /** Default policy: enable TLS 1.2 and TLS 1.3. */
     KNURL_TLS_VERSION_DEFAULT = 0,
-    /** TLS protocol selector: both. */
+    /** Explicitly enable both TLS 1.2 and TLS 1.3. */
     KNURL_TLS_VERSION_BOTH,
-    /** TLS protocol selector: 1 2. */
+    /** Accept TLS 1.2 only. */
     KNURL_TLS_VERSION_1_2,
-    /** TLS protocol selector: 1 3. */
+    /** Accept TLS 1.3 only. */
     KNURL_TLS_VERSION_1_3
 } knurl_tls_version;
 
@@ -69,17 +70,11 @@ typedef struct knurl_tls_material {
      * fields.
      */
     knurl_material_kind kind;
-    /** Resource or route path, interpreted according to the enclosing
-     * operation.
-     */
+    /** Copied PEM file path, used only for KNURL_MATERIAL_FILE. */
     const char *path;
-    /** Copied bounded operation payload, or TLS bytes copied by the server
-     * declaration.
-     */
+    /** PEM bytes copied with the declaration, for KNURL_MATERIAL_MEMORY. */
     knurl_bytes bytes;
-    /** Resource/state opener; failed construction must clean its own partial
-     * state.
-     */
+    /** KNURL_MATERIAL_CALLBACK opener; transfers one source only on success. */
     knurl_material_open_fn open;
     /** Caller-owned callback context; retain it for the enclosing
      * handle/callback lifetime.
@@ -135,9 +130,7 @@ typedef enum knurl_tls_identity_state {
 typedef struct knurl_tls_identity_event {
     /** Zero-based TLS identity index for an HTTPS listener. */
     size_t identity_index;
-    /** State callback or identity availability, according to the containing
-     * type.
-     */
+    /** Current installation availability: PENDING or USABLE. */
     knurl_tls_identity_state state;
     /** Borrowed identity domain during the TLS/ACME callback. */
     knurl_bytes domain;
@@ -187,8 +180,7 @@ typedef struct knurl_acme_config {
     const char *ca_directory;
     /** Deadline for host ACME persistence acknowledgement, in milliseconds. */
     long persist_timeout_ms;
-    /** State callback or identity availability, according to the containing
-     * type.
+    /** Host restore/persist/error callback; invoked during run, not validation.
      */
     knurl_acme_state_fn state;
     /** Caller-owned callback context; retain it for the enclosing
@@ -201,8 +193,7 @@ typedef struct knurl_acme_config {
  * applying overrides.
  */
 typedef struct knurl_tls_config {
-    /** Accepted downstream TLS protocol versions; DEFAULT resolves to the
-     * backend policy.
+    /** Accepted downstream TLS versions; DEFAULT enables TLS 1.2 and TLS 1.3.
      */
     knurl_tls_version version;
     /** Copied TLS cipher-list declaration. */

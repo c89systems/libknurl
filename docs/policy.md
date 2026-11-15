@@ -97,7 +97,6 @@ accounting. The public policy fixture also runs against relocated static/shared
 SDKs. [Structured and file access logging](logging.md) use the same resolved
 identity without retaining application-owned request state.
 
-
 ## Process-shared autoblock
 
 `config.autoblock` lifts Vectis's fixed-window table. Zero durations/capacity

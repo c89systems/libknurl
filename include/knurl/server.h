@@ -209,8 +209,9 @@ typedef struct knurl_timeout_config {
     knurl_deadline keepalive;
     /** Application WebSocket idle deadline. */
     knurl_deadline websocket_idle;
-    /** Deferred application response deadline; Vectis adapters and the Lua
-     * facade explicitly disable the extra deadline by default.
+    /** Application response deadline after body completion. Zero selects
+     * 30000 ms; set disabled to suppress it. Downstream write-idle limits apply
+     * independently. Baseline Vectis adapters explicitly disable this deadline.
      */
     knurl_deadline deferred_response;
 } knurl_timeout_config;

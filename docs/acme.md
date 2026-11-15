@@ -78,7 +78,9 @@ can be reused and reuses empty routing slots. Worker broadcasts target HTTP
 workers. Replacing a child must not duplicate signed requests, certificate
 messages or application messages through a stale connection pointer.
 
-ACME trust uses the captured file bytes and resolved directory paths. Generic
+ACME trust uses explicit `ca_file`/`ca_directory` or the
+[system CA selection](tls.md#outbound-system-trust), captured before child startup.
+It uses the captured file bytes and resolved directory paths. Generic
 Kore curl initialization imports environment settings, so the adapter first
 resets both components to the SDK's compiled defaults, then applies its captured
 policy. Libcurl exposes those defaults through

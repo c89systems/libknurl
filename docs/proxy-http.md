@@ -40,9 +40,11 @@ The worker rebuilds forwarding headers from connection metadata and the inbound
 Host, removing spoofed forwarding fields and connection-nominated fields. The
 forwarding source is the real TCP socket peer. Server trusted-client resolution
 is available separately as request effective-address metadata; it does not
-replace the proxy transport's socket-peer forwarding source. Configured default trust uses the selected curl
-SDK; optional copied CA/client identity bundles are passed in memory. Peer and
-hostname verification stay enabled. HTTPS auto mode prefers HTTP/2 with HTTP/1.1
+replace the proxy transport's socket-peer forwarding source. Default trust uses
+the [system CA selection](tls.md#outbound-system-trust), with SDK defaults when no
+file or directory is selected; optional copied CA/client identity bundles are
+passed in memory. Peer and hostname verification stay enabled. HTTPS auto mode
+prefers HTTP/2 with HTTP/1.1
 fallback; cleartext uses HTTP/1.1. This adapter accepts HTTP/1.1 downstream
 requests. Request trailers force HTTP/1.1 upstream.
 
