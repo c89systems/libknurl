@@ -357,6 +357,10 @@ struct knurl_router {
                            struct knurl_route **, struct knurl_error *);
     /** Private library state; applications must not access it. */
     struct knurl_router_impl *impl;
+    /** Register an application route on the dedicated native handler pool. */
+    knurl_status (*blocking_route)(struct knurl_router *,
+                                   const struct knurl_upload_reader_config *,
+                                   struct knurl_route **, struct knurl_error *);
 };
 
 struct knurl_error;
@@ -465,6 +469,10 @@ struct knurl_route_group {
                            struct knurl_route **, struct knurl_error *);
     /** Private library state; applications must not access it. */
     struct knurl_route_group_impl *impl;
+    /** Register an application route on the dedicated native handler pool. */
+    knurl_status (*blocking_route)(struct knurl_route_group *,
+                                   const struct knurl_upload_reader_config *,
+                                   struct knurl_route **, struct knurl_error *);
 };
 
 struct knurl_route_config;

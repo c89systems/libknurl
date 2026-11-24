@@ -4,6 +4,7 @@
 #include "internal.h"
 #include <knurl/server.h>
 #include <knurl/router.h>
+#include <knurl/upload.h>
 #include <signal.h>
 
 /* Reserve chunk framing storage and leave at least one payload byte. */
@@ -17,6 +18,7 @@ struct knurl_logging;
 struct knurl_server_impl {
     knurl_server receiver;
     knurl_server_config config;
+    knurl_blocking_pool_config blocking_pool;
     knurl_timeout_config requested_timeouts;
     size_t requested_worker_count;
     knurl_router *router;

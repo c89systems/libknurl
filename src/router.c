@@ -480,28 +480,31 @@ knurl_status knurl_router_facade_route(knurl_router *router,
 
 void knurl_router_receiver_init(knurl_router *receiver)
 {
-    static const knurl_router methods = {knurl_router_proxy,
-                                         knurl_router_websocket,
-                                         knurl_router_xml_route,
-                                         knurl_router_upload_stream,
-                                         knurl_router_upload_reader,
-                                         knurl_router_upload_file,
-                                         knurl_router_json_route,
-                                         knurl_router_json_typed_route,
-                                         knurl_router_rest_route,
-                                         knurl_router_destroy,
-                                         knurl_router_route,
-                                         knurl_router_group,
-                                         knurl_router_route_count,
-                                         knurl_router_route_at,
-                                         knurl_router_dispatch_headers,
-                                         knurl_router_openapi_doc,
-                                         knurl_router_openapi,
-                                         knurl_router_static_file,
-                                         knurl_router_static_directory,
-                                         knurl_router_static_assets,
-                                         knurl_router_webdav,
-                                         NULL};
+    static const knurl_router methods = {
+        knurl_router_proxy,
+        knurl_router_websocket,
+        knurl_router_xml_route,
+        knurl_router_upload_stream,
+        knurl_router_upload_reader,
+        knurl_router_upload_file,
+        knurl_router_json_route,
+        knurl_router_json_typed_route,
+        knurl_router_rest_route,
+        knurl_router_destroy,
+        knurl_router_route,
+        knurl_router_group,
+        knurl_router_route_count,
+        knurl_router_route_at,
+        knurl_router_dispatch_headers,
+        knurl_router_openapi_doc,
+        knurl_router_openapi,
+        knurl_router_static_file,
+        knurl_router_static_directory,
+        knurl_router_static_assets,
+        knurl_router_webdav,
+        NULL,
+        knurl_router_blocking_route,
+    };
     *receiver = methods;
     receiver->impl = (struct knurl_router_impl *)receiver;
 }
@@ -522,7 +525,9 @@ void knurl_route_group_receiver_init(knurl_route_group *receiver)
         knurl_route_group_static_directory,
         knurl_route_group_static_assets,
         knurl_route_group_webdav,
-        NULL};
+        NULL,
+        knurl_route_group_blocking_route,
+    };
     *receiver = methods;
     receiver->impl = (struct knurl_route_group_impl *)receiver;
 }

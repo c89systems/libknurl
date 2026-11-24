@@ -54,3 +54,31 @@ callback lifetime and pool retirement. The
 [continuation fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/route-resume.c)
 checks staged before/handler/after continuation while other requests progress.
 These tests remain part of the active C suite.
+
+## Blocking C route handlers
+
+Register with `knurl_router_blocking_route` or `router->blocking_route`, using
+`knurl_blocking_route_config_init` and the usual method, path and ACL fields.
+The group variant applies the group's prefix and ACL. The handler takes a
+borrowed `knurl_request_snapshot`, a live input reader and an independent staged
+reply. Capture lookup uses `knurl_request_snapshot_path_param` with the names
+from the route declaration. Input uses the [native reader contract](uploads.md)
+with bounded streaming and no implicit spooling. Successful handlers consume
+all admitted input. Kore publishes their staged replies on the event loop after
+the native thread returns. Owner-loop hooks still need to return promptly.
+
+The first blocking route request in each HTTP worker creates its dedicated pool.
+Configure it before running the server with `knurl_server_set_blocking_pool` or
+`server->set_blocking_pool`. Zero selects two threads, 16 admitted tasks including
+queued work, and a cooperative 30-second deadline including queue time. The
+maximums are eight threads and 256 tasks per worker. Pool bounds are copied.
+Ordinary file and upload I/O use their own executor. The application pool uses
+one of the worker's four executor slots.
+
+When the pool cannot admit a task, the route returns HTTP 503. If the pool
+deadline expires first, Kore sends 504 while native cancellation proceeds.
+The server's regular HTTP deadlines also apply. A
+disconnected or timed-out request retains its task slot and copied data until
+the native thread returns. Long-running handlers can check
+`knurl_source_cancelled` on the borrowed input. An uncooperative thread remains
+subject to the existing worker shutdown deadline.

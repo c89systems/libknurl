@@ -1,6 +1,30 @@
 #include "upload_internal.h"
 #include <stdlib.h>
 #include <string.h>
+
+knurl_status knurl_request_snapshot_path_param(const knurl_request_snapshot *m,
+                                               const char *name,
+                                               knurl_bytes *out,
+                                               knurl_error *error)
+{
+    size_t i, length;
+    if (out != NULL)
+        *out = knurl_view(NULL);
+    if (m == NULL || name == NULL || out == NULL)
+        return knurl_fail(error, KNURL_INVALID, "upload_metadata_path_param",
+                          "metadata, name and output are required");
+    length = strlen(name);
+    for (i = 0; i < m->param_count; ++i) {
+        if (m->params[i].name.length == length &&
+            memcmp(m->params[i].name.data, name, length) == 0) {
+            *out = m->params[i].value;
+            knurl_error_clear(error);
+            return KNURL_OK;
+        }
+    }
+    knurl_error_clear(error);
+    return KNURL_EOF;
+}
 /* One string slab and one ordered pair slab, both retained through native ACK.
  */
 knurl_status knurl_upload_metadata_copy(knurl_request *r,

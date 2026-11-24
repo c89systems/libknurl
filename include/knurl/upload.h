@@ -236,6 +236,43 @@ typedef struct knurl_upload_reader_config {
      */
     knurl_upload_reader_release_fn release;
 } knurl_upload_reader_config;
+/** Off-loop application route. Uses the native reader handler, copied request
+ * metadata and staged replies. Register with knurl_router_blocking_route. */
+typedef knurl_upload_reader_config knurl_blocking_route_config;
+/** Immutable request snapshot shared by native application and upload routes.
+ */
+typedef knurl_upload_metadata knurl_request_snapshot;
+
+/** Application handler executor bounds per HTTP worker. */
+typedef struct knurl_blocking_pool_config {
+    /** Zero selects two native threads. Maximum eight. */
+    size_t threads;
+    /** Zero selects 16 admitted tasks, including queued work. Maximum 256. */
+    size_t max_tasks;
+    /** Cooperative deadline including queue time. Zero selects 30000 ms. */
+    long timeout_ms;
+} knurl_blocking_pool_config;
+
+/** Clear overrides so the documented defaults apply. */
+KNURL_API void knurl_blocking_pool_config_init(knurl_blocking_pool_config *);
+/** Copy bounds into an inactive server. NULL restores the defaults. */
+KNURL_API knurl_status knurl_server_set_blocking_pool(
+    knurl_server *, const knurl_blocking_pool_config *, knurl_error *);
+/** Initialize a blocking route. GET is the default method. */
+KNURL_API void knurl_blocking_route_config_init(knurl_blocking_route_config *);
+/** Register an application handler on the dedicated post-fork executor.
+ * Native handler execution never occupies the owner loop. Auth/before/after
+ * and acquire/release callbacks run on the owner loop and must return promptly.
+ * Saturation returns 503. Input and result ownership follow upload_reader. */
+KNURL_API knurl_status
+knurl_router_blocking_route(knurl_router *, const knurl_blocking_route_config *,
+                            knurl_route **, knurl_error *);
+KNURL_API knurl_status knurl_route_group_blocking_route(
+    knurl_route_group *, const knurl_blocking_route_config *, knurl_route **,
+    knurl_error *);
+/** Look up a named decoded route capture from a native metadata snapshot. */
+KNURL_API knurl_status knurl_request_snapshot_path_param(
+    const knurl_request_snapshot *, const char *, knurl_bytes *, knurl_error *);
 /** Configuration for upload file. Use the owning operation's initializer before
  * applying overrides.
  */

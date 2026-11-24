@@ -76,6 +76,7 @@ struct knurl_loop_impl {
     struct knurl_executor *executors;
     struct knurl_executor *storage_executor;
     struct knurl_executor *io_executor;
+    struct knurl_executor *blocking_executor;
     struct knurl_storage_operation *storage_operations;
     size_t executor_count, storage_count;
     int executor_stopping, http_worker;

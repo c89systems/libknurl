@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "upload_internal.h"
 #include "native_io.h"
+#include "server_internal.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -11,6 +12,7 @@ struct reader_route {
     knurl_upload_reader_config config;
     struct knurl_upload_reader_codec codec;
     void (*release_userdata)(void *);
+    int blocking;
 };
 struct reader_upload {
     knurl_upload_reader_config config;
@@ -30,7 +32,7 @@ struct reader_upload {
     knurl_waker *waker;
     knurl_timer *admission;
     size_t references, queued, capacity;
-    int pipe[2], started, body_end, done, failed, published, unframed;
+    int pipe[2], started, body_end, done, failed, published, unframed, blocking;
 };
 static void unref(void *data)
 {
@@ -58,6 +60,57 @@ static void close_writer(struct reader_upload *s)
         close(s->pipe[1]);
         s->pipe[1] = -1;
     }
+}
+static void blocking_failure(struct reader_upload *s, knurl_status cause,
+                             int code)
+{
+    if (s->request == NULL || s->failed ||
+        s->request->impl->outcome.cause != KNURL_OK)
+        return;
+    s->failed = 1;
+    s->request->impl->outcome.cause = cause;
+    if (!s->body_end)
+        s->request->impl->response->impl->close_connection = 1;
+    close_writer(s);
+    knurl_response_error(s->request->impl->response, cause, code);
+}
+
+static void blocking_interrupted(knurl_job *job, knurl_status cause, void *data)
+{
+    (void)job;
+    if (cause == KNURL_TIMEOUT)
+        blocking_failure(data, cause, 504);
+}
+
+static void blocking_pool_retired(void *data)
+{
+    ((knurl_loop *)data)->impl->blocking_executor = NULL;
+}
+
+static knurl_status blocking_pool(knurl_server *server, knurl_executor **out,
+                                  knurl_error *error)
+{
+    knurl_loop *loop = knurl_server_loop(server);
+    knurl_executor_config config;
+    knurl_status status;
+    if (loop == NULL)
+        return knurl_fail(error, KNURL_STATE, "blocking_pool",
+                          "blocking routes require an active HTTP worker");
+    if (loop->impl->blocking_executor == NULL) {
+        knurl_executor_config_init(&config);
+        config.threads = server->impl->blocking_pool.threads;
+        config.max_jobs = server->impl->blocking_pool.max_tasks;
+        if (config.max_jobs == 0)
+            config.max_jobs = 16;
+        config.retired = blocking_pool_retired;
+        config.userdata = loop;
+        status = knurl_executor_new(server, &config,
+                                    &loop->impl->blocking_executor, error);
+        if (status != KNURL_OK)
+            return status;
+    }
+    *out = loop->impl->blocking_executor;
+    return KNURL_OK;
 }
 static knurl_status io_error(knurl_error *error, const char *message)
 {
@@ -236,7 +289,13 @@ static knurl_status submit(struct reader_upload *s, knurl_error *error)
     job.work = work;
     job.retired = retired;
     job.userdata = s;
-    job.timeout_disabled = 1;
+    if (s->blocking) {
+        job.timeout_ms =
+            knurl_request_server(s->request)->impl->blocking_pool.timeout_ms;
+        job.interrupted = blocking_interrupted;
+    } else {
+        job.timeout_disabled = 1;
+    }
     status = knurl_executor_submit(s->pool, &job, &s->job, error);
     if (status == KNURL_OK)
         ++s->references;
@@ -281,7 +340,14 @@ static knurl_status start(struct reader_upload *s, knurl_error *error)
             return status;
     }
     status =
-        knurl_native_io_pool(knurl_request_server(s->request), &s->pool, error);
+        s->blocking
+            ? blocking_pool(knurl_request_server(s->request), &s->pool, error)
+            : knurl_native_io_pool(knurl_request_server(s->request), &s->pool,
+                                   error);
+    if (s->blocking && status == KNURL_LIMIT) {
+        blocking_failure(s, KNURL_LIMIT, 503);
+        return KNURL_OK;
+    }
     if (status != KNURL_OK)
         return status;
     if (pipe(s->pipe) != 0) {
@@ -333,6 +399,11 @@ static knurl_status start(struct reader_upload *s, knurl_error *error)
         return status;
     ++s->references;
     status = submit(s, error);
+    if (s->blocking && status == KNURL_AGAIN) {
+        blocking_failure(s, KNURL_LIMIT, 503);
+        stop_waker(s);
+        return KNURL_OK;
+    }
     if (status != KNURL_AGAIN)
         return status;
     status = knurl_loop_timer(knurl_request_loop(s->request), 1, 1, admission,
@@ -433,6 +504,7 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
     s->request = request;
     s->unframed = !request->impl->has_length && !request->impl->has_coding;
     s->config = route->config;
+    s->blocking = route->blocking;
     s->codec = route->codec;
     s->references = 1;
     s->capacity = s->config.buffer_bytes != 0 ? s->config.buffer_bytes : 262144;
@@ -461,12 +533,11 @@ static void release_route(void *data)
         r->release_userdata(r->config.userdata);
     free(r);
 }
-knurl_status
-knurl_upload_reader_add(knurl_router *router, knurl_route_group *group,
-                        const knurl_upload_reader_config *config,
-                        const struct knurl_upload_reader_codec *codec,
-                        void (*release_userdata)(void *), knurl_route **out,
-                        knurl_error *error)
+static knurl_status reader_add(knurl_router *router, knurl_route_group *group,
+                               const knurl_upload_reader_config *config,
+                               const struct knurl_upload_reader_codec *codec,
+                               void (*release_userdata)(void *), int blocking,
+                               knurl_route **out, knurl_error *error)
 {
     struct reader_route *copy;
     knurl_route_config route;
@@ -492,6 +563,7 @@ knurl_upload_reader_add(knurl_router *router, knurl_route_group *group,
     if (codec != NULL)
         copy->codec = *codec;
     copy->release_userdata = release_userdata;
+    copy->blocking = blocking;
     knurl_route_config_init(&route);
     route.method = config->method;
     route.methods = config->methods;
@@ -512,6 +584,46 @@ knurl_upload_reader_add(knurl_router *router, knurl_route_group *group,
             *out = registered;
     }
     return status;
+}
+
+knurl_status
+knurl_upload_reader_add(knurl_router *router, knurl_route_group *group,
+                        const knurl_upload_reader_config *config,
+                        const struct knurl_upload_reader_codec *codec,
+                        void (*release_userdata)(void *), knurl_route **out,
+                        knurl_error *error)
+{
+    return reader_add(router, group, config, codec, release_userdata, 0, out,
+                      error);
+}
+
+void knurl_blocking_route_config_init(knurl_blocking_route_config *config)
+{
+    knurl_upload_reader_config_init(config);
+    if (config != NULL)
+        config->method = KNURL_HTTP_GET;
+}
+
+knurl_status
+knurl_router_blocking_route(knurl_router *router,
+                            const knurl_blocking_route_config *config,
+                            knurl_route **out, knurl_error *error)
+{
+    return reader_add(router, NULL, config, NULL, NULL, 1, out, error);
+}
+
+knurl_status
+knurl_route_group_blocking_route(knurl_route_group *group,
+                                 const knurl_blocking_route_config *config,
+                                 knurl_route **out, knurl_error *error)
+{
+    if (group == NULL) {
+        if (out != NULL)
+            *out = NULL;
+        return knurl_fail(error, KNURL_INVALID, "blocking_route",
+                          "group is required");
+    }
+    return reader_add(NULL, group, config, NULL, NULL, 1, out, error);
 }
 knurl_status
 knurl_router_upload_reader(knurl_router *router,

@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "server_internal.h"
 #include "autoblock_internal.h"
+#include "executor.h"
 #include <knurl/kore.h>
 #include <knurl/tls.h>
 #include <knurl/pslog.h>
@@ -66,6 +67,7 @@ knurl_status knurl_server_new(const knurl_server_config *input,
         return knurl_fail(error, KNURL_NOMEM, "server_new",
                           "cannot allocate server");
     knurl_server_receiver_init(server);
+    knurl_blocking_pool_config_init(&server->impl->blocking_pool);
     status = knurl_config_copy(&config, &server->impl->config, error);
     if (status != KNURL_OK) {
         free(server);
@@ -127,6 +129,38 @@ knurl_server_state knurl_server_get_state(const knurl_server *server)
 knurl_router *knurl_server_router(knurl_server *server)
 {
     return server != NULL ? server->impl->router : NULL;
+}
+
+void knurl_blocking_pool_config_init(knurl_blocking_pool_config *config)
+{
+    if (config != NULL) {
+        config->threads = 0;
+        config->max_tasks = 0;
+        config->timeout_ms = 0;
+    }
+}
+
+knurl_status
+knurl_server_set_blocking_pool(knurl_server *server,
+                               const knurl_blocking_pool_config *config,
+                               knurl_error *error)
+{
+    if (server == NULL ||
+        (config != NULL && (config->threads > KNURL_EXECUTOR_MAX_THREADS ||
+                            config->max_tasks > KNURL_EXECUTOR_MAX_JOBS ||
+                            config->timeout_ms < 0)))
+        return knurl_fail(error, KNURL_INVALID, "server_set_blocking_pool",
+                          "provide a server, at most 8 threads and 256 tasks, "
+                          "and a nonnegative deadline");
+    if (knurl_server_running(server))
+        return knurl_fail(error, KNURL_STATE, "server_set_blocking_pool",
+                          "configure the pool while the server is inactive");
+    if (config != NULL)
+        server->impl->blocking_pool = *config;
+    else
+        knurl_blocking_pool_config_init(&server->impl->blocking_pool);
+    knurl_error_clear(error);
+    return KNURL_OK;
 }
 
 knurl_status knurl_server_router_take(knurl_server *server,
@@ -222,7 +256,9 @@ void knurl_server_receiver_init(knurl_server *receiver)
         knurl_server_set_autoblock_notifications,
         knurl_server_autoblock_next,
         knurl_task_pool_new,
-        NULL};
+        NULL,
+        knurl_server_set_blocking_pool,
+    };
     *receiver = methods;
     receiver->impl = (struct knurl_server_impl *)receiver;
 }

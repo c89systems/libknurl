@@ -1003,6 +1003,7 @@ struct pslog_logger;
  */
 struct knurl_task_pool;
 struct knurl_task_pool_config;
+struct knurl_blocking_pool_config;
 struct knurl_server {
     /** Return the packaged Kore commit string in static storage. */
     const char *(*kore_revision)(const struct knurl_server *server);
@@ -1136,6 +1137,10 @@ struct knurl_server {
                               struct knurl_task_pool **, knurl_error *);
     /** Private library state; applications must not access it. */
     struct knurl_server_impl *impl;
+    /** Configure the native application handler pool while inactive. */
+    knurl_status (*set_blocking_pool)(knurl_server *,
+                                      const struct knurl_blocking_pool_config *,
+                                      knurl_error *);
 };
 
 #ifdef __cplusplus
