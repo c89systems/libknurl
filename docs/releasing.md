@@ -1,7 +1,8 @@
 # Release preparation and artifacts
 
-The active product is the C library and C SDK. The Knurl executable and Lua
-binding are deferred until Luthrum; see [runtime direction](runtime-direction.md).
+The release product is the C library and C SDK. The
+[Lua configuration module](lua-config.md) has an opt-in source build and
+separate installation. See [runtime direction](runtime-direction.md).
 Archived source, test fixtures and earlier generated products never enter the
 release inventory.
 

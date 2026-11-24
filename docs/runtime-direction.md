@@ -7,11 +7,15 @@ TLS/ACME, logging and lifecycle. Native tasks and request resumption are public
 C primitives; see [tasks](tasks.md). Shared-library ABI remains 0 for 0.2.0;
 see [SDK delivery](sdk.md) for consumer build requirements.
 
-The standalone `knurl` executable and Lua binding are deferred until **Luthrum**,
-C89 Systems' Lua runtime in development with coroutine multiplexing onto OS threads,
-is ready. Its public runtime and binding contracts are not assumed here. Neither
-product is built, installed, tested by active CI, acquired as a dependency or
-included in release checksums. Only the seven C SDK archives are collected.
+The optional [Lua configuration module](lua-config.md) registers C routes and
+ACLs using Lua 5.5.1 from the existing cpkt SDK. Request handling stays in C.
+Mixed deployments can proxy application paths to a separately run Lua process.
+The module has a separate opt-in build, test and install component. Release
+checksums cover the seven C SDK archives.
+
+The standalone `knurl` executable and Lua request callback binding are deferred
+until **Luthrum**, C89 Systems' Lua runtime in development with coroutine
+multiplexing onto OS threads, is ready.
 
 The repository's [pre-Luthrum archive](https://github.com/c89systems/libknurl/tree/trunk/archive/pre-luthrum)
 preserves the executable, bindings, examples, tests, package machinery and a

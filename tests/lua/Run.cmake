@@ -1,0 +1,15 @@
+file(MAKE_DIRECTORY "${WORK}")
+file(REMOVE "${WORK}/uploaded.txt")
+file(WRITE "${WORK}/asset.txt" "native static\n")
+foreach(component Unspecified lua)
+  execute_process(COMMAND "${CMAKE_COMMAND}" --install "${BUILD}" --prefix "${WORK}/installed"
+    --component "${component}" RESULT_VARIABLE status)
+  if(NOT status EQUAL 0)
+    message(FATAL_ERROR "Installing Lua test dependencies failed")
+  endif()
+endforeach()
+execute_process(COMMAND "${HOST}" "${WORK}/installed/${LIBDIR}/lua/5.5" "${SCRIPT}"
+  "${WORK}/asset.txt" "${WORK}/uploaded.txt" RESULT_VARIABLE status)
+if(NOT status EQUAL 0)
+  message(FATAL_ERROR "Lua configuration and isolation test failed (${status})")
+endif()

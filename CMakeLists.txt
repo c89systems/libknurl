@@ -162,8 +162,25 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_PROCE
   set(knurl_can_run TRUE)
 endif()
 include(cmake/SDK.cmake)
+option(KNURL_BUILD_LUA "Build the configuration-only Lua module" OFF)
+if(KNURL_BUILD_LUA)
+  find_package(Lua 5.5.1 EXACT CONFIG REQUIRED)
+  add_subdirectory(lua)
+endif()
 
 if(BUILD_TESTING)
+  if(KNURL_BUILD_LUA)
+    add_executable(knurl_lua_config_test tests/lua/config.c tests/acl-wire.c)
+    target_link_libraries(knurl_lua_config_test PRIVATE cpkt::lua_shared)
+    knurl_c89(knurl_lua_config_test)
+    knurl_local_runtime(knurl_lua_config_test)
+    add_test(NAME knurl.lua-config COMMAND "${CMAKE_COMMAND}"
+      "-DHOST=$<TARGET_FILE:knurl_lua_config_test>" "-DBUILD=${CMAKE_BINARY_DIR}"
+      "-DWORK=${CMAKE_BINARY_DIR}/tests/lua" "-DLIBDIR=${CMAKE_INSTALL_LIBDIR}"
+      "-DSCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/lua/config.lua"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/lua/Run.cmake")
+    set_tests_properties(knurl.lua-config PROPERTIES TIMEOUT 25)
+  endif()
   foreach(name ca acme-file)
     add_executable(knurl_${name} tests/${name}.c)
     target_link_libraries(knurl_${name} PRIVATE knurl::shared)

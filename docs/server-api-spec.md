@@ -3,12 +3,12 @@
 This is the complete product contract. Feature guides describe the implementation;
 they cannot enlarge this contract or establish compatibility.
 
-Product decision, 2026-11-15: only the C library and C SDK ship. The standalone
-executable and Lua binding are archived until Luthrum is ready. This document
-defines the active C product. The
+The C library and C SDK are the release products. This document defines their
+contract. The [Lua configuration module](lua-config.md) is available in opt-in
+source builds. The
 [historical contract](https://github.com/c89systems/libknurl/blob/trunk/archive/pre-luthrum/docs/server-api-spec.md)
-preserves the former Lua requirements; [runtime direction](runtime-direction.md)
-governs their deferral.
+preserves the former Lua runtime requirements. [Runtime direction](runtime-direction.md)
+governs the deferred executable and in-process callbacks.
 
 ## Purpose and boundary
 

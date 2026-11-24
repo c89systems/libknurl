@@ -43,8 +43,9 @@ The standalone [MMDB country reader](mmdb.md) provides free functions and receiv
 methods without starting a server. Its C89 implementation reads bounded file
 blocks through a lazy cache with a configurable total reader heap limit.
 
-The executable and Lua binding are archived pending Luthrum. They are not current
-products or dependencies; see [runtime direction](runtime-direction.md).
+The optional [Lua configuration module](lua-config.md) declares native routes.
+The executable and in-process Lua request callbacks are deferred pending
+Luthrum. See [runtime direction](runtime-direction.md).
 
 ## Application integration
 
