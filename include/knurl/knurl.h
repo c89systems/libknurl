@@ -13,6 +13,7 @@
 #include <knurl/io.h>
 #include <knurl/reply.h>
 #include <knurl/server.h>
+#include <knurl/log.h>
 #include <knurl/router.h>
 #include <knurl/openapi.h>
 #include <knurl/request.h>

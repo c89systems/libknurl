@@ -136,7 +136,7 @@ target_link_libraries(knurl_static PUBLIC lonejson::lonejson_static)
 target_link_libraries(knurl_static PRIVATE ZLIB::ZLIB)
 set(knurl_core_headers include/knurl/mmdb.h include/knurl/common.h include/knurl/input.h include/knurl/http.h include/knurl/knurl.h
   include/knurl/io.h include/knurl/reply.h include/knurl/tls.h
-  include/knurl/server.h include/knurl/pslog.h include/knurl/openapi.h include/knurl/router.h include/knurl/request.h include/knurl/kore.h
+  include/knurl/server.h include/knurl/log.h include/knurl/pslog.h include/knurl/openapi.h include/knurl/router.h include/knurl/request.h include/knurl/kore.h
   include/knurl/loop.h include/knurl/task.h include/knurl/response.h include/knurl/dispatch.h
   include/knurl/body.h include/knurl/upload.h include/knurl/channel.h include/knurl/websocket.h
   include/knurl/proxy.h include/knurl/xml.h include/knurl/lonejson.h
@@ -173,8 +173,14 @@ if(KNURL_BUILD_LUA OR KNURL_BUILD_BINARY)
   add_subdirectory(lua)
 endif()
 if(KNURL_BUILD_BINARY)
-  add_executable(knurl binary/main.c)
-  target_link_libraries(knurl PRIVATE knurl_lua_objects)
+  set(pslog_embed "${CMAKE_CURRENT_BINARY_DIR}/pslog_facade.inc")
+  add_custom_command(OUTPUT "${pslog_embed}" COMMAND "${CMAKE_COMMAND}"
+    "-DINPUT=${knurl_pslog_facade}" "-DOUTPUT=${pslog_embed}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedLua.cmake"
+    DEPENDS "${knurl_pslog_facade}" cmake/EmbedLua.cmake VERBATIM)
+  add_executable(knurl binary/main.c "${pslog_embed}")
+  target_include_directories(knurl PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+  target_link_libraries(knurl PRIVATE knurl_lua_objects knurl_pslog_lua)
   target_compile_definitions(knurl PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   knurl_c89(knurl)
   if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -185,6 +191,8 @@ if(KNURL_BUILD_BINARY)
   file(RELATIVE_PATH binary_libdir "${CMAKE_INSTALL_FULL_BINDIR}" "${CMAKE_INSTALL_FULL_LIBDIR}")
   set_target_properties(knurl PROPERTIES INSTALL_RPATH "${binary_origin}/${binary_libdir}")
   install(TARGETS knurl RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    COMPONENT binary EXCLUDE_FROM_ALL)
+  install(FILES "${knurl_pslog_license}" DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/knurl/pslog-lua"
     COMPONENT binary EXCLUDE_FROM_ALL)
 endif()
 
@@ -303,7 +311,7 @@ if(BUILD_TESTING)
   knurl_local_runtime(knurl_autoblock)
   add_test(NAME knurl.autoblock COMMAND knurl_autoblock)
   set_tests_properties(knurl.autoblock PROPERTIES TIMEOUT 5)
-  add_executable(knurl_log_backend tests/log-backend.c)
+  add_executable(knurl_log_backend tests/log-backend.c tests/acl-wire.c)
   target_include_directories(knurl_log_backend PRIVATE "${kore_source_dir}/include/kore")
   target_compile_definitions(knurl_log_backend PRIVATE $<TARGET_PROPERTY:knurl_kore,COMPILE_DEFINITIONS>)
   target_link_libraries(knurl_log_backend PRIVATE knurl::static pslog::pslog_static OpenSSL::SSL CURL::libcurl)

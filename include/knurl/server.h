@@ -10,6 +10,7 @@
 #include <knurl/request.h>
 #include <knurl/tls.h>
 #include <knurl/dispatch.h>
+#include <knurl/log.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -1015,7 +1016,7 @@ struct knurl_server {
                                        knurl_tls_identity_state *out,
                                        struct knurl_error *error);
     /** Inert outside-run registration. Both logger pointers are borrowed for
-     * every run; their sinks must support native process callbacks. Rules are
+     * every run and called on the parent owner thread. Rules are
      * copied. NULL configuration uses trace/warn/error; NULL root uses a
      * library-owned default logger during run. Without an override, access
      * derives sub=http. logger_disabled affects structured access only,
@@ -1142,6 +1143,9 @@ struct knurl_server {
     knurl_status (*set_blocking_pool)(knurl_server *,
                                       const struct knurl_blocking_pool_config *,
                                       knurl_error *);
+    /** Set the parent-thread callback for native log records while inactive. */
+    knurl_status (*set_log_callback)(knurl_server *, knurl_log_fn, void *,
+                                     knurl_error *);
 };
 
 #ifdef __cplusplus

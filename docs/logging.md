@@ -1,5 +1,19 @@
 # Structured and file access logging
 
+`<knurl/log.h>` exposes `knurl_server_set_log_callback()` for a native callback
+registered outside `run()`. Kore runtime diagnostics and structured HTTP access
+records reach the callback on the parent owner thread. The callback borrows each
+record for the duration of the call. Access records carry typed request metadata,
+and handler and worker failures can carry a `knurl_error`. Keep the callback
+prompt so the parent can continue supervising workers.
+
+Workers submit bounded log records without waiting for sink I/O. If the
+transport is occupied, a record can drop. Register a NULL callback to select
+the libpslog adapter. A native callback also honors configured access levels,
+per-status rules, and the structured access enablement policy.
+
+## libpslog adapter
+
 Include the optional `<knurl/pslog.h>`. It uses the installed public libpslog
 types; the core umbrella does not import them. Consumers of this header link
 the matching pslog target explicitly, for example `knurl::shared` with
@@ -12,13 +26,13 @@ Initialize `knurl_access_log_config` and call
 Registration copies the access rules and borrows both logger pointers. It
 creates no logger, opens no file and invokes no sink. Invalid registration
 preserves the previous configuration. Logger instances must remain alive
-through every run and use sinks capable of native process callbacks.
+through every run. Knurl emits through them from the parent owner thread.
 
 A host can create one root pslog instance and pass it to this registration and
 its other native components. Derived context loggers share its sink. Retain the
 host-owned root until the server and all borrowing native work have retired;
-component shutdown does not destroy it. Runtime bindings and their script-level
-logger construction are deferred until Luthrum.
+component shutdown does not destroy it. Lua programs can register a native-sink
+pslog logger with their server. See [Lua configuration](lua-config.md).
 
 The root receives backend runtime logs. A NULL root selects a library-owned JSON
 logger during the run, preserving the ordinary INFO filter. Structured access
@@ -33,7 +47,7 @@ levels preserve Vectis's TRACE..PANIC and DISABLED declarations. The selected
 logger's normal filter still applies, so ordinary successful requests are
 filtered by an INFO root unless the caller selects a lower threshold.
 
-The existing Kore/libpslog formatter supplies actual TCP `client_ip`, resolved
+Structured records supply actual TCP `client_ip`, resolved
 `real_ip`, method, path, HTTP version, final status, transmitted body `bytes`,
 referer, user agent and nonempty `cid`. It does not log Cookie, Authorization,
 other sensitive headers or bodies. Resolver values are retained request copies;
@@ -49,8 +63,8 @@ logs. One parent-owned writer handles all listeners and workers. Workers queue
 bounded records; the parent drains them through Kore's timer and once more before
 worker mappings disappear. File records continue when structured access or an
 individual structured status is disabled. The parent skips contended worker
-buffers instead of waiting on an unfinished record; a worker killed while holding
-that buffer can lose its unfinished records.
+buffers held by a worker. Workers drop the file record when their buffer is full
+or contended.
 
 File rotation is enabled by default, with these `config.http` settings:
 
@@ -87,9 +101,9 @@ sink is useful when the access-log filesystem is full.
 
 Worker-to-parent runtime messages retain initialized padding and explicit
 lengths. Messages are capped at an 8192-byte prefix and malformed/oversized
-incoming records are rejected before sink emission. The parent never needs an
-arbitrary Lua state to emit them. A fresh run clears backend logger/resolver
-pointers and recreates owned logger state.
+incoming records are rejected before sink emission. Structured access packets
+are capped at 128 KiB. Logging runs in native code. A fresh run clears backend
+callbacks and recreates owned logger state.
 
 The [public live fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/policy-logs-runtime.c) covers copied rules,
 override/disabled sinks, independent file output, client identity and long IDs,
@@ -97,8 +111,8 @@ status replacement, startup open failure, logger survival and server reuse.
 It also verifies final address/count records after a client resets a paused
 response connection, and runs against relocated static/shared SDKs. The
 [backend fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/log-backend.c) covers sender bounds, short/mismatched/
-oversized IPC records and a locked unfinished access buffer without delaying
-shutdown. The [policy API](policy.md) supplies admission and observations;
+oversized IPC records, a locked unfinished access buffer, parent-thread callback
+delivery and request progress while the sink is blocked. The [policy API](policy.md) supplies admission and observations;
 application loggers and metrics aggregation remain application-owned.
 The [file fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/access-log-file.c) checks retention, exact thresholds,
 oversized records, restart append, permissions, truncate/disable options, failed

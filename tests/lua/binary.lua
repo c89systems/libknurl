@@ -1,5 +1,6 @@
 local work, port, mode = ...
 local knurl = require('knurl')
+local pslog = require('pslog')
 
 local function check(value, err)
   if not value then
@@ -16,10 +17,12 @@ end
 local calls = 40
 local database
 local saved_request
+local log = pslog.new_json(work .. '/server.log', {min_level = 'trace'})
+log:info('Lua before Kore')
 record('parent start')
 local server <close> = check(knurl.server{
   port = assert(tonumber(port)), workers = 1, backend_quiet = true,
-  application_max_tasks = 1,
+  application_max_tasks = 1, logger = log,
 })
 check(server:on_worker_start(function()
   assert(database == nil and calls == 40)
@@ -62,6 +65,7 @@ check(routes:route{
       record('rejected upload')
       return {status = 403, body = 'rejected'}
     elseif action == 'json' then
+      log:info('Lua application call', 'user', user)
       return {json = {user, {count = calls}, true}}
     elseif action == 'cycle' then
       local cycle = {}
@@ -104,3 +108,4 @@ else
 end
 assert(database == nil and calls == 40 and saved_request == nil)
 record('parent end')
+log:info('Lua after Kore')

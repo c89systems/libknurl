@@ -93,6 +93,8 @@ knurl_status knurl_server_new(const knurl_server_config *input,
         &server->impl->autoblock_notifications);
     server->impl->autoblock_notifying = 0;
     server->impl->logging = NULL;
+    server->impl->log_callback = NULL;
+    server->impl->log_userdata = NULL;
     server->impl->notify_fd = -1;
     server->impl->stop_requested = server->impl->terminating_signal = 0;
     server->impl->process.role = KNURL_PROCESS_PARENT;
@@ -256,6 +258,7 @@ void knurl_server_receiver_init(knurl_server *receiver)
         knurl_task_pool_new,
         NULL,
         knurl_server_set_blocking_pool,
+        knurl_server_set_log_callback,
     };
     *receiver = methods;
     receiver->impl = (struct knurl_server_impl *)receiver;

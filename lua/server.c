@@ -7,6 +7,8 @@ static int server_new(lua_State *L)
                                          "workers",
                                          "max_connections",
                                          "backend_quiet",
+                                         "logger",
+                                         "access_log",
                                          "callbacks",
                                          "application_max_tasks",
                                          "application_timeout_ms"};
@@ -45,6 +47,7 @@ static int server_new(lua_State *L)
 
     server = lua_newuserdatauv(L, sizeof(*server), 1);
     memset(server, 0, sizeof(*server));
+    rl_logging_init(server);
     luaL_setmetatable(L, RL_SERVER);
     lua_newtable(L);
     lua_setiuservalue(L, -2, 1);
@@ -54,7 +57,9 @@ static int server_new(lua_State *L)
     server->pool.timeout_ms = (long)timeout;
     server->hard_body_bytes = config.limits.hard_body_bytes;
     status = knurl_server_new(&config, &server->native, &error);
-    return status == KNURL_OK ? 1 : rl_error(L, &error);
+    if (status != KNURL_OK || !rl_logging_config(L, 1, server, &error))
+        return rl_error(L, &error);
+    return 1;
 }
 
 static int server_group(lua_State *L)
@@ -133,6 +138,7 @@ static int server_close(lua_State *L)
         if (status != KNURL_OK)
             return rl_error(L, &error);
         server->native = NULL;
+        rl_logging_cleanup(server);
         rl_fixed_free(server->replies);
         server->replies = NULL;
         lua_pushnil(L);
@@ -143,14 +149,14 @@ static int server_close(lua_State *L)
 
 void rl_server_open(lua_State *L)
 {
-    static const luaL_Reg methods[] = {{"group", server_group},
-                                       {"close", server_close},
-                                       {"__gc", server_close},
-                                       {"__close", server_close},
-                                       {NULL, NULL}};
+    static const luaL_Reg methods[] = {
+        {"group", server_group},   {"set_pslog", rl_set_pslog},
+        {"close", server_close},   {"__gc", server_close},
+        {"__close", server_close}, {NULL, NULL}};
     static const char *const operations[] = {"validate", "preflight", "run"};
     size_t i;
 
+    rl_logging_open(L);
     luaL_newmetatable(L, RL_SERVER);
     luaL_setfuncs(L, methods, 0);
     for (i = 0; i < RL_COUNT(operations); ++i) {

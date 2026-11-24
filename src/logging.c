@@ -2,6 +2,23 @@
 #include "server_internal.h"
 #include <stdlib.h>
 #include <string.h>
+
+knurl_status knurl_server_set_log_callback(knurl_server *server,
+                                           knurl_log_fn callback,
+                                           void *userdata, knurl_error *error)
+{
+    if (server == NULL)
+        return knurl_fail(error, KNURL_INVALID, "server_set_log_callback",
+                          "server is required");
+    if (knurl_server_running(server))
+        return knurl_fail(error, KNURL_STATE, "server_set_log_callback",
+                          "configure logging outside a run");
+    server->impl->log_callback = callback;
+    server->impl->log_userdata = userdata;
+    knurl_error_clear(error);
+    return KNURL_OK;
+}
+
 void knurl_access_log_config_init(knurl_access_log_config *config)
 {
     if (config == NULL)

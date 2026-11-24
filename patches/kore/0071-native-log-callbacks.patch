@@ -1,0 +1,623 @@
+diff --git a/include/kore/kore.h b/include/kore/kore.h
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -53,10 +53,6 @@
+ #include <unistd.h>
+ #include <stdarg.h>
+ 
+-#if defined(KORE_USE_PSLOG)
+-#include <pslog.h>
+-#endif
+-
+ #if defined(__cplusplus)
+ extern "C" {
+ #endif
+@@ -729,6 +725,9 @@
+ #define KORE_MSG_WORKER_LOG		12
+ #define KORE_MSG_FATALX			13
+ #define KORE_MSG_LIBRARY_DEADLINE	14
++#define KORE_MSG_ACCESS_LOG		15
++#define KORE_MSG_HANDLER_ERROR		16
++#define KORE_ACCESS_LOG_MAX		(128U * 1024U)
+ #define KORE_MSG_ACME_BASE		100
+ 
+ /* messages for applications should start at 201. */
+@@ -915,20 +914,18 @@
+ void		kore_accesslog_run(void *, u_int64_t);
+ void		kore_accesslog_gather(void *, u_int64_t, int);
+ int		kore_accesslog_enabled(void);
+-#define KORE_ACCESSLOG_MAX_STATUS_LEVEL_RULES	32
+-#if defined(KORE_USE_PSLOG)
+-struct kore_accesslog_status_level_rule {
++struct kore_accesslog_record {
++	const char	*client_ip, *real_ip, *method, *path, *http_version;
++	const char	*referer, *user_agent, *correlation_id;
++	u_int64_t	bytes;
+ 	u_int16_t	status;
+-	pslog_level	level;
+ };
+-void		kore_accesslog_set_levels(pslog_level, pslog_level,
+-		    pslog_level, const struct kore_accesslog_status_level_rule *, size_t);
+-void		kore_accesslog_set_logger(pslog_logger *);
++void		kore_accesslog_set_callback(void (*)(const struct
++		    kore_accesslog_record *, void *), void *);
+ void		kore_accesslog_set_real_ip_resolver(const char *(*)(
+ 		    struct http_request *, const char *, char *, size_t));
+ void		kore_accesslog_set_correlation_id_resolver(const char *(*)(
+ 		    struct http_request *, char *, size_t));
+-#endif
+ 
+ #if !defined(KORE_NO_HTTP)
+ /* auth.c */
+@@ -974,9 +971,9 @@
+ 
+ void		kore_log_init(void);
+ void		kore_log_file(const char *);
+-#if defined(KORE_USE_PSLOG)
+-void		kore_log_set_logger(pslog_logger *);
+-#endif
++void		kore_log_set_callback(void (*)(int, const char *,
++		    const char *, void *), void *);
++int		kore_log_forward(u_int8_t, const void *, size_t);
+ 
+ /* config.c */
+ void		kore_parse_config(void);
+diff --git a/src/accesslog.c b/src/accesslog.c
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -41,14 +41,11 @@
+ #define DOMAIN_LOGBUF_LEN		(1024 * 1024)
+ #define LOG_ENTRY_MINSIZE_GUESS		90
+ 
+-static void	accesslog_lock(struct kore_worker *);
+ static void	accesslog_unlock(struct kore_worker *);
+ static void	accesslog_flush_cb(struct kore_domain *);
+ static void	accesslog_flush(struct kore_domain *, u_int64_t, int);
+-#if defined(KORE_USE_PSLOG)
+-static void	accesslog_pslog(struct http_request *, const char *,
++static void	accesslog_structured(struct http_request *, const char *,
+ 		    const char *, const char *);
+-#endif
+ 
+ static u_int64_t	time_cache = 0;
+ static char		tbuf[128] = { '\0' };
+@@ -63,60 +60,19 @@
+ 	file_sink = sink;
+ 	file_sink_arg = arg;
+ }
+-#if defined(KORE_USE_PSLOG)
+-static pslog_logger	*accesslog_logger = NULL;
+-static pslog_level	accesslog_success_level = PSLOG_LEVEL_TRACE;
+-static pslog_level	accesslog_client_error_level = PSLOG_LEVEL_WARN;
+-static pslog_level	accesslog_server_error_level = PSLOG_LEVEL_ERROR;
+-static struct kore_accesslog_status_level_rule
+-	accesslog_status_levels[KORE_ACCESSLOG_MAX_STATUS_LEVEL_RULES];
+-static size_t	accesslog_status_level_count = 0;
++static void	(*accesslog_callback)(const struct kore_accesslog_record *,
++		    void *) = NULL;
++static void	*accesslog_callback_arg = NULL;
+ static const char	*(*accesslog_real_ip_resolver)(struct http_request *,
+ 			    const char *, char *, size_t) = NULL;
+ static const char	*(*accesslog_correlation_id_resolver)(struct http_request *,
+ 			    char *, size_t) = NULL;
+-#endif
+-
+-#if defined(KORE_USE_PSLOG)
+ void
+-kore_accesslog_set_logger(pslog_logger *logger)
++kore_accesslog_set_callback(void (*callback)(const struct
++    kore_accesslog_record *, void *), void *arg)
+ {
+-	accesslog_logger = logger;
+-}
+-
+-void
+-kore_accesslog_set_levels(pslog_level success_level,
+-    pslog_level client_error_level, pslog_level server_error_level,
+-    const struct kore_accesslog_status_level_rule *status_levels,
+-    size_t status_level_count)
+-{
+-	if (status_level_count > KORE_ACCESSLOG_MAX_STATUS_LEVEL_RULES)
+-		status_level_count = KORE_ACCESSLOG_MAX_STATUS_LEVEL_RULES;
+-
+-	accesslog_success_level = success_level;
+-	accesslog_client_error_level = client_error_level;
+-	accesslog_server_error_level = server_error_level;
+-	accesslog_status_level_count = status_level_count;
+-	if (status_level_count > 0 && status_levels != NULL) {
+-		memcpy(accesslog_status_levels, status_levels,
+-		    sizeof(*status_levels) * status_level_count);
+-	}
+-}
+-
+-static pslog_level
+-accesslog_pslog_level(u_int16_t status)
+-{
+-	size_t	idx;
+-
+-	for (idx = 0; idx < accesslog_status_level_count; idx++) {
+-		if (accesslog_status_levels[idx].status == status)
+-			return (accesslog_status_levels[idx].level);
+-	}
+-	if (status >= 500)
+-		return (accesslog_server_error_level);
+-	if (status >= 400)
+-		return (accesslog_client_error_level);
+-	return (accesslog_success_level);
++	accesslog_callback = callback;
++	accesslog_callback_arg = arg;
+ }
+ 
+ void
+@@ -132,16 +88,11 @@
+ {
+ 	accesslog_correlation_id_resolver = resolver;
+ }
+-#endif
+ 
+ int
+ kore_accesslog_enabled(void)
+ {
+-#if defined(KORE_USE_PSLOG)
+-	return (accesslog_logger != NULL);
+-#else
+-	return (0);
+-#endif
++	return (accesslog_callback != NULL);
+ }
+ 
+ void
+@@ -174,7 +125,6 @@
+ kore_accesslog_snapshot(struct http_request *req, const char *peer)
+ {
+ 	char content_length[21];
+-	struct timespec		ts;
+ 	struct tm		*tm;
+ 	u_int64_t		now;
+ 	struct kore_alog_header	*hdr;
+@@ -182,7 +132,7 @@
+ 	time_t			curtime;
+ 	long			zone;
+ 	size_t			stamp_length;
+-	int			len, attempts;
++	int			len;
+ 	char			addr[INET6_ADDRSTRLEN], *cn_value;
+ 	const char		*ptr, *method, *http_version, *cn, *referer;
+ 
+@@ -275,9 +225,8 @@
+ 		addr[1] = '\0';
+ 	}
+ 
+-#if defined(KORE_USE_PSLOG)
+-	accesslog_pslog(req, method, http_version, addr);
+-#endif
++	if (accesslog_callback != NULL)
++		accesslog_structured(req, method, http_version, addr);
+ 	if (req->rt->dom->accesslog == 0) {
+ 		kore_free(cn_value);
+ 		return;
+@@ -296,117 +245,65 @@
+ 		time_cache = now;
+ 	}
+ 
+-	attempts = 0;
+-	ts.tv_sec = 0;
+-	ts.tv_nsec = 1000000;
+-
+-	for (;;) {
+-		if (attempts++ > 1000) {
+-			if (getppid() == 1) {
+-				if (kill(worker->pid, SIGQUIT) == -1)
+-					fatal("failed to shutdown");
+-				return;
+-			}
+-
+-			attempts = 0;
+-		}
+-
+-		accesslog_lock(worker);
+-
+-		avail = KORE_ACCESSLOG_BUFLEN - worker->lb.offset;
+-		if (avail < sizeof(*hdr) + LOG_ENTRY_MINSIZE_GUESS) {
+-			accesslog_unlock(worker);
+-			nanosleep(&ts, NULL);
+-			continue;
+-		}
++	/* Sink I/O belongs to the parent. A full or contended buffer drops the
++	 * record instead of making the worker wait for the parent. */
++	if (!__sync_bool_compare_and_swap(&worker->lb.lock, 0, 1)) {
++		kore_free(cn_value);
++		return;
++	}
++	avail = KORE_ACCESSLOG_BUFLEN - worker->lb.offset;
++	if (avail >= sizeof(*hdr) + LOG_ENTRY_MINSIZE_GUESS) {
+ 
+ 		hdr = (struct kore_alog_header *)
+ 		    (worker->lb.buf + worker->lb.offset);
+-		worker->lb.offset += sizeof(*hdr);
+ 		avail -= sizeof(*hdr);
+ 
+-		len = snprintf(worker->lb.buf + worker->lb.offset, avail,
++		len = snprintf(worker->lb.buf + worker->lb.offset + sizeof(*hdr), avail,
+ 		    "%s - %s [%s] \"%s %s %s\" %d %s \"%s\" \"%s\"\n",
+ 		    addr, cn, tbuf, method, req->path, http_version,
+ 		    req->status, kore_u64_text(req->content_length, content_length), referer, req->agent != NULL ? req->agent : "-");
+ 		if (len == -1)
+ 			fatal("failed to create log entry");
+ 
+-		if ((size_t)len >= avail) {
+-			worker->lb.offset -= sizeof(*hdr);
+-			accesslog_unlock(worker);
+-			nanosleep(&ts, NULL);
+-			continue;
++		if ((size_t)len < avail && (size_t)len <= USHRT_MAX) {
++			hdr->loglen = len;
++			hdr->domain = req->rt->dom->id;
++			worker->lb.offset += sizeof(*hdr) + (size_t)len;
+ 		}
+-
+-		if ((size_t)len > USHRT_MAX) {
+-			kore_log(LOG_WARNING,
+-			    "log entry length exceeds limit (%d)", len);
+-			worker->lb.offset -= sizeof(*hdr);
+-			break;
+-		}
+-
+-		hdr->loglen = len;
+-		hdr->domain = req->rt->dom->id;
+-
+-		worker->lb.offset += (size_t)len;
+-		break;
+ 	}
+ 
+ 	kore_free(cn_value);
+ 	accesslog_unlock(worker);
+ }
+ 
+-#if defined(KORE_USE_PSLOG)
+ static void
+-accesslog_pslog(struct http_request *req, const char *method,
++accesslog_structured(struct http_request *req, const char *method,
+     const char *http_version, const char *client_ip)
+ {
+-	pslog_field	fields[10];
++	struct kore_accesslog_record record;
+ 	char		real_ip_buf[INET6_ADDRSTRLEN];
+ 	char		cid_buf[64];
+-	const char	*real_ip;
+-	const char	*cid;
+-	size_t		count;
+-	pslog_level	level;
+-
+-	if (accesslog_logger == NULL)
+-		return;
+ 
+-	real_ip = NULL;
++	memset(&record, 0, sizeof(record));
++	record.client_ip = client_ip;
+ 	if (accesslog_real_ip_resolver != NULL) {
+-		real_ip = accesslog_real_ip_resolver(req, client_ip,
++		record.real_ip = accesslog_real_ip_resolver(req, client_ip,
+ 		    real_ip_buf, sizeof(real_ip_buf));
+ 	}
+-	if (real_ip == NULL)
+-		real_ip = client_ip;
+-	cid = NULL;
++	if (record.real_ip == NULL)
++		record.real_ip = client_ip;
+ 	if (accesslog_correlation_id_resolver != NULL)
+-		cid = accesslog_correlation_id_resolver(req, cid_buf,
++		record.correlation_id = accesslog_correlation_id_resolver(req, cid_buf,
+ 		    sizeof(cid_buf));
+-
+-	count = 0;
+-	fields[count++] = pslog_str("client_ip", client_ip);
+-	fields[count++] = pslog_str("real_ip", real_ip);
+-	fields[count++] = pslog_str("method", method);
+-	fields[count++] = pslog_str("path", req->path);
+-	fields[count++] = pslog_str("http_version", http_version);
+-	fields[count++] = pslog_u64("status", (pslog_uint64)req->status);
+-	fields[count++] = pslog_u64("bytes", (pslog_uint64)req->content_length);
+-	fields[count++] = pslog_str("referer", req->referer != NULL ?
+-	    req->referer : "-");
+-	fields[count++] = pslog_str("user_agent", req->agent != NULL ?
+-	    req->agent : "-");
+-	if (cid != NULL && *cid != '\0')
+-		fields[count++] = pslog_str("cid", cid);
+-
+-	level = accesslog_pslog_level((u_int16_t)req->status);
+-	if (level != PSLOG_LEVEL_DISABLED) {
+-		pslog_fields(accesslog_logger, level, "http request", fields,
+-		    count);
+-	}
++	record.method = method;
++	record.path = req->path;
++	record.http_version = http_version;
++	record.status = req->status;
++	record.bytes = req->content_length;
++	record.referer = req->referer != NULL ? req->referer : "-";
++	record.user_agent = req->agent != NULL ? req->agent : "-";
++	accesslog_callback(&record, accesslog_callback_arg);
+ }
+-#endif
+ 
+ void
+ kore_accesslog_gather(void *arg, u_int64_t now, int force)
+@@ -542,15 +439,6 @@
+ 	}
+ }
+ 
+-static void
+-accesslog_lock(struct kore_worker *kw)
+-{
+-	for (;;) {
+-		if (__sync_bool_compare_and_swap(&kw->lb.lock, 0, 1))
+-			break;
+-	}
+-}
+-
+ static void
+ accesslog_unlock(struct kore_worker *kw)
+ {
+diff --git a/src/acme.c b/src/acme.c
+--- a/src/acme.c
++++ b/src/acme.c
+@@ -544,7 +544,6 @@
+ 	kore_tls_cleanup();
+ 	kore_curl_syscleanup();
+ 	kore_timer_cleanup();
+-	kore_log_set_logger(NULL);
+ 	kore_mem_cleanup();
+ 	if (kore_library_hooks.worker_exit != NULL)
+ 		_exit(kore_library_hooks.worker_exit(kore_library_hooks.arg));
+diff --git a/src/keymgr_openssl.c b/src/keymgr_openssl.c
+--- a/src/keymgr_openssl.c
++++ b/src/keymgr_openssl.c
+@@ -423,7 +423,6 @@
+ 	kore_tls_cleanup();
+ 	kore_curl_syscleanup();
+ 	kore_timer_cleanup();
+-	kore_log_set_logger(NULL);
+ 	kore_mem_cleanup();
+ 	if (kore_library_hooks.worker_exit != NULL)
+ 		_exit(kore_library_hooks.worker_exit(kore_library_hooks.arg));
+diff --git a/src/kore.c b/src/kore.c
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -218,7 +218,6 @@
+         kore_msg_cleanup();
+     kore_free(kore_progname);
+     kore_progname = NULL;
+-    kore_log_set_logger(NULL);
+     if (library_initialized & LIB_MEMORY)
+         kore_mem_cleanup();
+     library_initialized = 0;
+diff --git a/src/log.c b/src/log.c
+--- a/src/log.c
++++ b/src/log.c
+@@ -21,10 +21,6 @@
+ 
+ #include "kore.h"
+ 
+-#if defined(KORE_USE_PSLOG)
+-#include <string.h>
+-#endif
+-
+ struct kore_wlog {
+ 	int		prio;
+ 	u_int16_t	wid;
+@@ -37,48 +33,8 @@
+ static void	log_from_worker(struct kore_msg *, const void *);
+ 
+ static FILE	*fp = NULL;
+-#if defined(KORE_USE_PSLOG)
+-static pslog_logger	*kore_pslog_logger = NULL;
+-static int		kore_pslog_logger_owned = 0;
+-#endif
+-
+-#if defined(KORE_USE_PSLOG)
+-static pslog_level
+-kore_pslog_level(int prio)
+-{
+-	switch (prio) {
+-	case KORE_LOG_TRACE:
+-		return (PSLOG_LEVEL_TRACE);
+-	case LOG_DEBUG:
+-		return (PSLOG_LEVEL_DEBUG);
+-	case LOG_INFO:
+-		return (PSLOG_LEVEL_INFO);
+-	case LOG_NOTICE:
+-		return (PSLOG_LEVEL_INFO);
+-	case LOG_WARNING:
+-		return (PSLOG_LEVEL_WARN);
+-	case LOG_ERR:
+-	case LOG_CRIT:
+-	case LOG_ALERT:
+-	case LOG_EMERG:
+-		return (PSLOG_LEVEL_ERROR);
+-	default:
+-		return (PSLOG_LEVEL_INFO);
+-	}
+-}
+-
+-static void
+-kore_pslog_emit(int prio, const char *proc, const char *msg)
+-{
+-	pslog_level	level;
+-
+-	if (kore_pslog_logger == NULL)
+-		return;
+-
+-	level = kore_pslog_level(prio);
+-	pslog(kore_pslog_logger, level, msg, "proc=%s prio=%d", proc, prio);
+-}
+-#endif
++static void	(*log_callback)(int, const char *, const char *, void *) = NULL;
++static void	*log_callback_arg = NULL;
+ 
+ void
+ kore_log_init(void)
+@@ -87,27 +43,7 @@
+ 
+ 	fp = stdout;
+ 
+-#if defined(KORE_USE_PSLOG)
+-	if (kore_pslog_logger == NULL) {
+-		pslog_config	psconf;
+-		pslog_logger	*root;
+-
+-		pslog_default_config(&psconf);
+-		psconf.mode = PSLOG_MODE_JSON;
+-		psconf.min_level = PSLOG_LEVEL_INFO;
+-		psconf.output = pslog_output_from_fp(stdout, 0);
+-		root = pslog_new(&psconf);
+-		if (root != NULL) {
+-			kore_pslog_logger = pslog_withf(root,
+-			    "service=%s component=%s", "kore", "http");
+-			root->destroy(root);
+-			if (kore_pslog_logger != NULL)
+-				kore_pslog_logger_owned = 1;
+-		}
+-	}
+-#endif
+-
+-	if (!kore_foreground)
++	if (log_callback == NULL && !kore_foreground)
+ 		openlog(name, LOG_NDELAY | LOG_PID, LOG_DAEMON);
+ 
+ 	kore_msg_register(KORE_MSG_WORKER_LOG, log_from_worker);
+@@ -120,49 +56,28 @@
+ 		fp = stdout;
+ 		fatal("fopen(%s): %s", path, errno_s);
+ 	}
+-
+-#if defined(KORE_USE_PSLOG)
+-	if (kore_pslog_logger != NULL) {
+-		if (kore_pslog_logger_owned)
+-			kore_pslog_logger->destroy(kore_pslog_logger);
+-		kore_pslog_logger = NULL;
+-		kore_pslog_logger_owned = 0;
+-	}
+-
+-	{
+-		pslog_config	psconf;
+-		pslog_output	output;
+-		pslog_logger	*root;
+-
+-		pslog_default_config(&psconf);
+-		psconf.mode = PSLOG_MODE_JSON;
+-		psconf.min_level = PSLOG_LEVEL_INFO;
+-		if (pslog_output_init_file(&output, path, "a") != 0)
+-			fatal("pslog_output_init_file(%s): failed", path);
+-		psconf.output = output;
+-		root = pslog_new(&psconf);
+-		if (root != NULL) {
+-			kore_pslog_logger = pslog_withf(root,
+-			    "service=%s component=%s", "kore", "http");
+-			root->destroy(root);
+-			if (kore_pslog_logger != NULL)
+-				kore_pslog_logger_owned = 1;
+-		}
+-	}
+-#endif
+ }
+ 
+-#if defined(KORE_USE_PSLOG)
+ void
+-kore_log_set_logger(pslog_logger *logger)
++kore_log_set_callback(void (*callback)(int, const char *, const char *, void *),
++    void *arg)
+ {
+-	if (kore_pslog_logger != NULL && kore_pslog_logger_owned &&
+-	    kore_pslog_logger != logger)
+-		kore_pslog_logger->destroy(kore_pslog_logger);
+-	kore_pslog_logger = logger;
+-	kore_pslog_logger_owned = 0;
++	log_callback = callback;
++	log_callback_arg = arg;
++}
++
++int
++kore_log_forward(u_int8_t id, const void *data, size_t length)
++{
++	struct connection *c;
++
++	if (worker == NULL || (c = worker->msg[1]) == NULL ||
++	    c->state != CONN_STATE_ESTABLISHED || !TAILQ_EMPTY(&c->send_queue))
++		return (0);
++	/* Only one pending diagnostic frame may occupy the send queue. */
++	kore_msg_send(KORE_MSG_PARENT, id, data, length);
++	return (1);
+ }
+-#endif
+ 
+ void
+ kore_log(int prio, const char *fmt, ...)
+@@ -192,15 +107,14 @@
+ 		kore_buf_append(&pkt, &wlog, offsetof(struct kore_wlog, logmsg));
+ 		kore_buf_append(&pkt, buf.data, buf.offset);
+ 
+-		kore_msg_send(KORE_MSG_PARENT, KORE_MSG_WORKER_LOG,
+-		    pkt.data, pkt.offset);
++		(void)kore_log_forward(KORE_MSG_WORKER_LOG, pkt.data, pkt.offset);
+ 
+ 		kore_buf_cleanup(&pkt);
+ 	} else {
+ 		str = kore_buf_stringify(&buf, NULL);
+ 
+-		if (kore_pslog_logger != NULL) {
+-			kore_pslog_emit(prio, "parent", str);
++		if (log_callback != NULL) {
++			log_callback(prio, "parent", str, log_callback_arg);
+ 		} else if (kore_foreground || fp != stdout)
+ 			log_print(prio, "proc=[parent] log=[%s]\n", str);
+ 		else
+@@ -235,12 +149,12 @@
+ 		return;
+ 	}
+ 
+-	if (kore_pslog_logger != NULL) {
++	if (log_callback != NULL) {
+ 		/* Worker messages carry a length, not a terminating NUL. */
+ 		kore_buf_init(&buf, wlog->loglen + 1);
+ 		kore_buf_append(&buf, wlog->logmsg, wlog->loglen);
+ 		text = kore_buf_stringify(&buf, NULL);
+-		kore_pslog_emit(wlog->prio, name, text);
++		log_callback(wlog->prio, name, text, log_callback_arg);
+ 		kore_buf_cleanup(&buf);
+ 	} else if (kore_foreground || fp != stdout) {
+ 		log_print(wlog->prio, "proc=%s log=[%.*s]\n",
+diff --git a/src/msg.c b/src/msg.c
+--- a/src/msg.c
++++ b/src/msg.c
+@@ -216,6 +216,11 @@
+ {
+ 	struct kore_msg		*msg = (struct kore_msg *)nb->buf;
+ 
++	if ((msg->id == KORE_MSG_ACCESS_LOG && msg->length > KORE_ACCESS_LOG_MAX) ||
++	    (msg->id == KORE_MSG_HANDLER_ERROR && msg->length > 1024U) ||
++	    (msg->id == KORE_MSG_WORKER_LOG && msg->length > 8192U + 64U))
++		return (KORE_RESULT_ERROR);
++
+ 	if (msg->length > 0) {
+ 		net_recv_expand(nb->owner, msg->length, msg_recv_data);
+ 		return (KORE_RESULT_OK);
+diff --git a/src/worker.c b/src/worker.c
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -596,7 +596,6 @@
+ 		kore_timer_cleanup();
+ 		kore_msg_cleanup();
+ 		http_parent_cleanup();
+-		kore_log_set_logger(NULL);
+ 		kore_mem_cleanup();
+ 		if (kore_library_hooks.worker_exit != NULL)
+ 			_exit(kore_library_hooks.worker_exit(kore_library_hooks.arg));
+@@ -853,7 +852,6 @@
+ 	kore_pgsql_sys_cleanup();
+ #endif
+ 
+-	kore_log_set_logger(NULL);
+ 	kore_mem_cleanup();
+ 	if (kore_library_hooks.worker_exit != NULL)
+ 		_exit(kore_library_hooks.worker_exit(kore_library_hooks.arg));

@@ -25,9 +25,9 @@ knurl_kore_object_dependencies("${kore_source_dir}/.patched" ${kore_objects})
 add_library(knurl_kore OBJECT ${kore_objects})
 add_dependencies(knurl_kore kore-source)
 target_include_directories(knurl_kore PRIVATE "${kore_source_dir}/include/kore" "${kore_generated}")
-target_link_libraries(knurl_kore PRIVATE OpenSSL::SSL CURL::libcurl lonejson::lonejson pslog::pslog_shared)
+target_link_libraries(knurl_kore PRIVATE OpenSSL::SSL CURL::libcurl lonejson::lonejson)
 target_compile_definitions(knurl_kore PRIVATE _GNU_SOURCE=1 _FILE_OFFSET_BITS=64 KORE_SINGLE_BINARY
-  KORE_USE_ACME KORE_USE_CURL KORE_USE_LONEJSON KORE_USE_PSLOG
+  KORE_USE_ACME KORE_USE_CURL KORE_USE_LONEJSON
   KORE_KNURL_STATIC_RUNTIME KORE_KNURL_DIRECT_TLS
   KORE_KNURL_NO_SECCOMP TLS_BACKEND_OPENSSL KORE_TMPDIR="/tmp" PREFIX="/usr/local")
 knurl_c89(knurl_kore)

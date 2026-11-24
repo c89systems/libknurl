@@ -67,7 +67,7 @@ help:
 	  'Default selected target builds in build/debug or build/release; other targets use build/<target>/<config>.'
 
 deps:
-	bash scripts/deps.sh '$(TARGET)'
+	bash scripts/deps.sh '$(TARGET)' $(if $(filter-out OFF off FALSE false NO no 0,$(LUA_CONFIG) $(KNURL_BINARY)),lua)
 
 toolchain:
 	bash scripts/lifecycle/cpkt-toolchains.sh ensure '$(TARGET)'

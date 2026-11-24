@@ -13,4 +13,7 @@ struct knurl_log_runtime;
 knurl_status knurl_kore_logging_start(struct knurl_runtime *, knurl_error *);
 void knurl_kore_logging_finish(struct knurl_runtime *);
 void knurl_kore_logging_child(struct knurl_runtime *);
+void knurl_kore_logging_messages(void);
+void knurl_kore_log_failure(struct knurl_runtime *, const char *,
+                            const knurl_error *);
 #endif

@@ -4,6 +4,7 @@
 #include <knurl/knurl.h>
 #include <lua.h>
 #include <lauxlib.h>
+#include <pslog_lua.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,7 @@ struct rl_server {
     lua_State *worker;
     knurl_blocking_pool_config pool;
     knurl_u64 hard_body_bytes;
+    pslog_lua_logger_ref logger, access_logger;
     int running, has_lua;
 };
 
@@ -49,6 +51,11 @@ int rl_body_limit(lua_State *, int, const struct rl_server *, knurl_u64 *,
 int rl_acl_option(lua_State *, int, knurl_acl **, knurl_error *);
 void rl_acl_open(lua_State *);
 void rl_server_open(lua_State *);
+void rl_logging_open(lua_State *);
+void rl_logging_init(struct rl_server *);
+void rl_logging_cleanup(struct rl_server *);
+int rl_logging_config(lua_State *, int, struct rl_server *, knurl_error *);
+int rl_set_pslog(lua_State *);
 void rl_routes_open(lua_State *, int);
 void rl_fixed_free(struct rl_fixed *);
 void rl_application_open(lua_State *, int);

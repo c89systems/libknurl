@@ -14,11 +14,37 @@ build/knurl/knurl app.lua
 Use `LUA_CONFIG=ON` to also build the loadable module. Install the C library
 with a normal `cmake --install`, then use `--component binary` for the
 executable and `--component lua` for the module. With an external Lua 5.5.1
-host, add `<prefix>/lib/lua/5.5/?.so` to `LUA_CPATH`. The runner uses the target's
+host, add `<prefix>/lib/lua/5.5/?.so` to `LUA_CPATH` and
+`<prefix>/lib/lua/5.5/?/init.lua` to `LUA_PATH`. The runner uses the target's
 standard interpreter and finds libknurl relative to the installed executable.
 The platform loader also needs access to the selected cpkt, lonejson and pslog
 runtime libraries, typically via `LD_LIBRARY_PATH` on Linux.
 See [runtime direction](runtime-direction.md).
+
+## Logging
+
+The runner and optional Lua install provide `require('pslog')` using the pinned
+libpslog Lua source. Use `logger` to configure Kore's diagnostic and structured
+HTTP access records. You can also set or replace the logger before `run()` with
+`server:set_pslog(log, access_log)`. `access_log` accepts a boolean or a table
+with `enabled`, `logger`, `success_level`, `client_error_level`,
+`server_error_level`, and `status_levels` keyed by HTTP status.
+
+```lua
+local knurl = require('knurl')
+local pslog = require('pslog')
+local log = pslog.new_json{min_level = 'info'}
+local server = assert(knurl.server{logger = log, access_log = {success_level = 'info'}})
+log:info('configured the application')
+```
+
+Kore records reach the registered native sink from the parent. Ordinary
+`log:info()` calls can run wherever `log` is in scope, including in application
+handlers. Those calls use libpslog directly. When a handler uses an inherited
+logger, its writes run in the worker and record integrity across processes
+depends on the configured sink. The server retains registered loggers until
+replacement or close. Use a native sink for a registered logger and keep its
+output available through the server run.
 
 ## Configure and serve
 

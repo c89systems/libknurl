@@ -1,6 +1,7 @@
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/OwnedPaths.cmake")
 knurl_require_owned_path("${WORK}" "Runner fixture")
 file(MAKE_DIRECTORY "${WORK}")
+file(REMOVE "${WORK}/server.log")
 if(MODE STREQUAL "installed")
   foreach(component Unspecified binary)
     execute_process(COMMAND "${CMAKE_COMMAND}" --install "${BUILD}" --prefix "${WORK}/installed"
@@ -37,7 +38,18 @@ execute_process(COMMAND ${environment} "${HOST}" "${BINARY}" "${SCRIPT}" "${WORK
 if(NOT status EQUAL 0)
   message(FATAL_ERROR "knurl application lifecycle failed (${MODE}, ${status})\n${log}${errors}")
 endif()
-if(MODE STREQUAL "normal" AND
-   (NOT log MATCHES "intentional handler error" OR NOT log MATCHES "stack traceback:.*binary[.]lua"))
-  message(FATAL_ERROR "Missing handler diagnostics\n${log}${errors}")
+file(READ "${WORK}/server.log" records)
+if(NOT log STREQUAL "" OR NOT records MATCHES "Lua before Kore" OR
+   NOT records MATCHES "Lua after Kore")
+  message(FATAL_ERROR "Unexpected destination or missing direct Lua log records\n${log}${errors}\n${records}")
+endif()
+if(MODE STREQUAL "normal" AND (NOT records MATCHES "intentional handler error" OR
+   NOT records MATCHES "stack traceback:[^\n]*binary[.]lua" OR
+   NOT records MATCHES "http request[^\n]*\"path\":\"/health\"" OR
+   NOT records MATCHES "Lua application call[^\n]*\"user\":\"bob\""))
+  message(FATAL_ERROR "Missing handler, access, or application records\n${records}")
+endif()
+if((MODE STREQUAL "init-failure" AND NOT records MATCHES "intentional initializer failure") OR
+   (MODE STREQUAL "stop-failure" AND NOT records MATCHES "intentional cleanup failure"))
+  message(FATAL_ERROR "Missing worker failure diagnostics\n${records}")
 endif()

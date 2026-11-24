@@ -19,7 +19,9 @@ mkdir -p "$archive"
 cp "$work/fixture.tar.gz" "$archive/fixture.tar.gz"
 printf 'sdk\tfixture\t1.2.3\tx86_64-linux-gnu\t%s\thttps://github.com/c89systems/fixture/fixture.tar.gz\n' \
   "$digest" >"$owner/scripts/dependency-pins.tsv"
-deps() { CPKT_DEPENDENCY_CACHE="$owner/.cache/deps" bash "$owner/scripts/deps.sh" x86_64-linux-gnu >"$work/deps.log" 2>&1; }
+printf 'lua\tfixture\t1.2.3\tall\t%s\thttps://github.com/c89systems/fixture/fixture.tar.gz\n' \
+  "$digest" >>"$owner/scripts/dependency-pins.tsv"
+deps() { CPKT_DEPENDENCY_CACHE="$owner/.cache/deps" bash "$owner/scripts/deps.sh" x86_64-linux-gnu "$@" >"$work/deps.log" 2>&1; }
 (umask 077; deps)
 sdk="$owner/.cache/sdk/x86_64-linux-gnu"
 cmp "$work/fixture/include/fixture.h" "$sdk/fixture/include/fixture.h"
@@ -38,6 +40,10 @@ printf 'preserve warm output\n' >"$sdk/fixture/warm"
 deps
 [[ -f "$sdk/fixture/warm" ]]
 cp "$sdk/manifest.txt" "$work/manifest"
+[[ ! -e "$sdk/fixture-lua" ]]
+deps lua
+cmp "$work/fixture/include/fixture.h" "$sdk/fixture-lua/include/fixture.h"
+cmp "$sdk/manifest.txt" "$work/manifest"
 rm -rf -- "$sdk/fixture"
 printf 'borrowed SDK\n' >"$work/borrowed/sentinel"
 ln -s "$work/borrowed" "$sdk/fixture"

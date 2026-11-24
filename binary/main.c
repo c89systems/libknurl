@@ -6,17 +6,36 @@
 #include <string.h>
 
 int luaopen_knurl(lua_State *L);
+int luaopen_pslog_core(lua_State *L);
+
+#include "pslog_facade.inc"
 
 struct command {
     int argc;
     char **argv;
 };
 
+static int load_pslog(lua_State *L)
+{
+    if (luaL_loadbufferx(L, (const char *)pslog_facade, sizeof(pslog_facade),
+                         "@embedded/pslog.lua", "t") != LUA_OK)
+        return lua_error(L);
+    lua_call(L, 0, 1);
+    return 1;
+}
+
 static int execute(lua_State *L)
 {
     const struct command *command = lua_touserdata(L, 1);
     int i;
     luaL_openlibs(L);
+    lua_getglobal(L, "package");
+    lua_getfield(L, -1, "preload");
+    lua_pushcfunction(L, luaopen_pslog_core);
+    lua_setfield(L, -2, "pslog.core");
+    lua_pushcfunction(L, load_pslog);
+    lua_setfield(L, -2, "pslog");
+    lua_pop(L, 2);
     luaL_requiref(L, "knurl", luaopen_knurl, 0);
     lua_pop(L, 1);
 

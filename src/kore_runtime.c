@@ -68,6 +68,7 @@ static void fatal_error(void *userdata, const char *message)
     runtime->status =
         knurl_fail(&runtime->error, KNURL_BACKEND, "kore_runtime", message);
     runtime->error.source = KNURL_ERROR_BACKEND;
+    knurl_kore_log_failure(runtime, "parent", &runtime->error);
     longjmp(runtime->unwind, 1);
 }
 
@@ -935,6 +936,7 @@ knurl_status knurl_server_run(knurl_server *server, knurl_run_result *out,
             runtime->curl_timeout = kore_curl_timeout;
             runtime->curl_recv_max = kore_curl_recv_max;
             kore_library_init(&hooks);
+            knurl_kore_logging_messages();
             configure(runtime);
             knurl_kore_acme_configure(runtime);
             runtime->callbacks.http_request = knurl_kore_dispatch;

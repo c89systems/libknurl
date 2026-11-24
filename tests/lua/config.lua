@@ -1,6 +1,8 @@
 local module_dir, port, upstream, fixture, uploaded = ...
 package.cpath = module_dir .. '/?.so'
+package.path = module_dir .. '/?/init.lua'
 local knurl = require('knurl')
+local pslog = require('pslog')
 
 local function ok(value, err)
   if not value then error(err.message .. ' (' .. err.detail .. ')', 2) end
@@ -18,6 +20,19 @@ rejects('callbacks.on_request_start', knurl.server{
 local server <close> = ok(knurl.server{
   port = port, workers = 1, backend_quiet = true, callbacks = {},
 })
+local weak = setmetatable({}, {__mode = 'v'})
+do
+  local root = pslog.new_json{min_level = 'disabled'}
+  weak[1] = root
+  ok(server:set_pslog(root, {success_level = 'info', status_levels = {[404] = 'disabled'}}))
+end
+collectgarbage('collect')
+assert(weak[1] ~= nil)
+local unsafe = pslog.new_json(function() error('unexpected Lua sink invocation') end)
+local changed, log_error = server:set_pslog(unsafe)
+assert(changed == nil and log_error.message:find('native sink', 1, true))
+collectgarbage('collect')
+assert(weak[1] ~= nil)
 rejects('hooks.before', server:group{prefix = '/bad', hooks = {before = function() end}})
 rejects('auth', server:static_file{path = '/bad', file_path = fixture, auth = {}})
 rejects('hooks.after', server:upload_file{path = '/bad', file_path = uploaded,
@@ -55,3 +70,6 @@ ok(server:static_directory{path = '/directory', root_dir = fixture:match('^(.*)/
 collectgarbage('collect')
 ok(server:validate())
 ok(server:run())
+ok(server:close())
+collectgarbage('collect')
+assert(weak[1] == nil)

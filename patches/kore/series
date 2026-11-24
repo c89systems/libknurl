@@ -68,3 +68,4 @@
 0068-allow-empty-request-field-values.patch
 0069-absolute-tls-handshake-deadline.patch
 0070-atomic-acme-certificate-install.patch
+0071-native-log-callbacks.patch

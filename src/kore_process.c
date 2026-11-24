@@ -1,4 +1,5 @@
 #include "kore_internal.h"
+#include "logging_internal.h"
 
 #include <sys/wait.h>
 #include <string.h>
@@ -90,6 +91,8 @@ void knurl_kore_worker_event(void *userdata, const struct kore_worker *child,
         event.error.source = KNURL_ERROR_BACKEND;
     }
     if (event.error.status != KNURL_OK) {
+        knurl_kore_log_failure(runtime, kore_worker_name(child->id),
+                               &event.error);
         runtime->last_failure = event;
         runtime->has_failure = 1;
         if (event.kind == KNURL_WORKER_EXITED &&

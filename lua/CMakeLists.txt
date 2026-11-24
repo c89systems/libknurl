@@ -1,5 +1,27 @@
-add_library(knurl_lua_objects OBJECT module.c server.c routes.c acl.c value.c application.c json.c)
-target_link_libraries(knurl_lua_objects PUBLIC knurl::shared cpkt::lua_shared)
+set(pslog_lua_source "${KNURL_SDK_ROOT}/pslog-lua")
+knurl_require_owned_path("${pslog_lua_source}" "pslog Lua source")
+if(NOT EXISTS "${pslog_lua_source}/lua/src/pslog_lua.c")
+  message(FATAL_ERROR "Prepare the pinned pslog Lua source with scripts/deps.sh ${KNURL_TARGET} lua")
+endif()
+file(SHA256 "${pslog_lua_source}/include/pslog.h" pslog_lua_header)
+file(SHA256 "${KNURL_SDK_ROOT}/pslog/include/pslog.h" pslog_sdk_header)
+if(NOT pslog_lua_header STREQUAL pslog_sdk_header)
+  message(FATAL_ERROR "The pslog Lua source and C SDK have different public headers")
+endif()
+
+add_library(knurl_pslog_lua OBJECT "${pslog_lua_source}/lua/src/pslog_lua.c")
+set_target_properties(knurl_pslog_lua PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED YES
+  POSITION_INDEPENDENT_CODE YES)
+target_link_libraries(knurl_pslog_lua PUBLIC pslog::pslog_shared cpkt::lua_shared)
+target_compile_definitions(knurl_pslog_lua PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+target_compile_options(knurl_pslog_lua PRIVATE "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
+target_include_directories(knurl_pslog_lua PRIVATE "${pslog_lua_source}/include")
+set(knurl_pslog_facade "${pslog_lua_source}/lua/pslog/init.lua" PARENT_SCOPE)
+set(knurl_pslog_license "${pslog_lua_source}/LICENSE" PARENT_SCOPE)
+
+add_library(knurl_lua_objects OBJECT module.c server.c routes.c acl.c value.c application.c json.c logging.c)
+target_include_directories(knurl_lua_objects PRIVATE "${pslog_lua_source}/include")
+target_link_libraries(knurl_lua_objects PUBLIC knurl::shared cpkt::lua_shared pslog::pslog_shared)
 target_compile_definitions(knurl_lua_objects PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
 knurl_c89(knurl_lua_objects)
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -10,12 +32,21 @@ endif()
 
 if(KNURL_BUILD_LUA)
   add_library(knurl_lua MODULE)
-  target_link_libraries(knurl_lua PRIVATE knurl_lua_objects)
+  target_link_libraries(knurl_lua PRIVATE knurl_lua_objects knurl_pslog_lua)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(knurl_lua PRIVATE "-Wl,--no-undefined")
   endif()
   set_target_properties(knurl_lua PROPERTIES PREFIX "" OUTPUT_NAME knurl SUFFIX ".so"
     INSTALL_RPATH "${lua_origin}/../..")
   install(TARGETS knurl_lua LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/lua/5.5"
+    COMPONENT lua EXCLUDE_FROM_ALL)
+  add_library(knurl_pslog_module MODULE)
+  target_link_libraries(knurl_pslog_module PRIVATE knurl_pslog_lua)
+  set_target_properties(knurl_pslog_module PROPERTIES PREFIX "" OUTPUT_NAME core SUFFIX ".so")
+  install(TARGETS knurl_pslog_module LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/lua/5.5/pslog"
+    COMPONENT lua EXCLUDE_FROM_ALL)
+  install(FILES "${pslog_lua_source}/lua/pslog/init.lua" DESTINATION "${CMAKE_INSTALL_LIBDIR}/lua/5.5/pslog"
+    COMPONENT lua EXCLUDE_FROM_ALL)
+  install(FILES "${pslog_lua_source}/LICENSE" DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/knurl/pslog-lua"
     COMPONENT lua EXCLUDE_FROM_ALL)
 endif()

@@ -32,6 +32,8 @@ struct knurl_server_impl {
     knurl_autoblock_notifications_config autoblock_notifications;
     int autoblock_notifying;
     struct knurl_logging *logging;
+    knurl_log_fn log_callback;
+    void *log_userdata;
     volatile sig_atomic_t notify_fd;
     volatile sig_atomic_t stop_requested;
     volatile sig_atomic_t terminating_signal;

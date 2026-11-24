@@ -5,7 +5,10 @@ repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 source "$script_dir/lifecycle/require-host-bash.sh"
 source "$script_dir/acquire-archive.sh"
 target=${1:-x86_64-linux-gnu}
-if (( $# > 1 )); then printf 'Usage: deps.sh [TARGET]\n' >&2; exit 2; fi
+lua_sources=${2:-}
+if (( $# > 2 )) || [[ -n "$lua_sources" && "$lua_sources" != lua ]]; then
+  printf 'Usage: deps.sh [TARGET [lua]]\n' >&2; exit 2
+fi
 case "$target" in
   x86_64-linux-gnu|x86_64-linux-musl|aarch64-linux-gnu|aarch64-linux-musl|armhf-linux-gnu|armhf-linux-musl|arm64-apple-darwin) ;;
   *) printf 'Unknown SDK target: %s\n' "$target" >&2; exit 2 ;;
@@ -26,6 +29,9 @@ while IFS=$'\t' read -r kind name version pin_target digest url; do
   if [[ "$kind" == sdk && "$pin_target" == "$target" ]]; then
     prefix="$sdk_root/$name"
     marker="$sdk_root/.prepared-$name"
+  elif [[ "$kind" == lua && "$pin_target" == all && "$lua_sources" == lua ]]; then
+    prefix="$sdk_root/$name-lua"
+    marker="$sdk_root/.prepared-$name-lua"
   else
     continue
   fi
