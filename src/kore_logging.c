@@ -12,6 +12,21 @@ struct knurl_log_runtime {
     int file_failed;
     long file_error;
 };
+
+void knurl_request_log_handler_error(knurl_request *request,
+                                     const knurl_error *error)
+{
+    struct knurl_log_runtime *log =
+        request->impl->server->impl->runtime->logging;
+    pslog_field fields[4];
+    if (log == NULL || log->root == NULL)
+        return;
+    fields[0] = pslog_str("status", knurl_status_string(error->status));
+    fields[1] = pslog_str("operation", error->operation);
+    fields[2] = pslog_str("error", error->message);
+    fields[3] = pslog_str("detail", error->detail);
+    pslog_error(log->root, "application handler failed", fields, 4);
+}
 static void file_failure(struct knurl_log_runtime *log,
                          const knurl_error *error, const char *action)
 {

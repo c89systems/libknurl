@@ -9,6 +9,7 @@ struct knurl_request_impl {
     knurl_request receiver;
     void *codec_data;
     void (*codec_cleanup)(void *);
+    knurl_status (*on_body_admitted)(knurl_request *, knurl_error *);
     knurl_server *server;
     void *native;
     void *userdata;
@@ -62,6 +63,7 @@ struct knurl_request_impl {
     int in_headers;
     unsigned int route_phase;
     int route_pending;
+    int blocking_job_pending;
 };
 
 knurl_bytes knurl_view(const char *text);
@@ -69,6 +71,8 @@ knurl_status knurl_request_path_decode(const char *, knurl_bytes *,
                                        knurl_error *);
 knurl_status knurl_request_decode(knurl_request *request, knurl_error *error);
 void knurl_request_cleanup(knurl_request *request);
+void knurl_request_stop_input(knurl_request *, knurl_status);
+void knurl_request_log_handler_error(knurl_request *, const knurl_error *);
 knurl_status knurl_router_select(knurl_router *router, knurl_request *request,
                                  knurl_error *error);
 knurl_status knurl_router_select_raw(knurl_router *, knurl_request *,

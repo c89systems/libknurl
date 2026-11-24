@@ -162,6 +162,14 @@ void knurl_kore_body_cancel(knurl_request *request, knurl_status cause)
     stop_read(request);
 }
 
+void knurl_request_stop_input(knurl_request *request, knurl_status cause)
+{
+    if (request->impl->outcome.body_complete)
+        return;
+    knurl_kore_body_cancel(request, cause);
+    request->impl->response->impl->close_connection = 1;
+}
+
 void knurl_kore_request_fail(knurl_request *request, knurl_status cause,
                              int code)
 {

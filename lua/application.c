@@ -274,6 +274,17 @@ static int invoke_handler(lua_State *L)
     return 0;
 }
 
+static int handler_traceback(lua_State *L)
+{
+    luaL_traceback(L, L, NULL, 1);
+    lua_createtable(L, 2, 0);
+    lua_pushvalue(L, 1);
+    lua_rawseti(L, -2, 1);
+    lua_pushvalue(L, 2);
+    lua_rawseti(L, -2, 2);
+    return 1;
+}
+
 static knurl_status application_handler(const knurl_request_snapshot *request,
                                         knurl_source *source,
                                         knurl_reply *reply, void *data,
@@ -285,7 +296,7 @@ static knurl_status application_handler(const knurl_request_snapshot *request,
     struct reader *reader;
     int result;
 
-    if (!lua_checkstack(L, 5))
+    if (!lua_checkstack(L, 6))
         return rl_fail(error, KNURL_NOMEM,
                        "reserving application callback stack");
     lua_pushcfunction(L, new_reader);
@@ -305,14 +316,24 @@ static knurl_status application_handler(const knurl_request_snapshot *request,
      */
     reader = lua_touserdata(L, 2);
     reader->source = source;
+    lua_pushcfunction(L, handler_traceback);
     lua_pushcfunction(L, invoke_handler);
     lua_pushlightuserdata(L, &call);
     lua_pushvalue(L, 2);
     lua_pushvalue(L, 1);
-    result = lua_pcall(L, 3, 0, 0);
+    result = lua_pcall(L, 3, 0, 3);
     reader->source = NULL;
     rl_json_free(call.json);
-    if (result != LUA_OK)
+    if (result == LUA_ERRRUN && lua_istable(L, -1)) {
+        lua_rawgeti(L, -1, 1);
+        call.status = lua_failure(L, result, "lua_handler", error);
+        if (error != NULL) {
+            lua_pop(L, 1);
+            lua_rawgeti(L, -1, 2);
+            snprintf(error->detail, sizeof(error->detail), "%s",
+                     lua_tostring(L, -1));
+        }
+    } else if (result != LUA_OK)
         call.status = lua_failure(L, result, "lua_handler", error);
     lua_settop(L, 1);
     return call.status;

@@ -346,6 +346,8 @@ int knurl_kore_prebody(struct http_request *native, const void *data,
     request->impl->in_headers = 0;
     if (status == KNURL_OK)
         status = admit(request, &error);
+    if (status == KNURL_OK && request->impl->on_body_admitted != NULL)
+        status = request->impl->on_body_admitted(request, &error);
     if (status != KNURL_OK) {
         knurl_channel_finish(request->impl->channel,
                              status > KNURL_EOF && status <= KNURL_BACKEND

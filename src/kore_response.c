@@ -125,6 +125,23 @@ static int pending_output(const struct knurl_delivery *delivery)
     return head != NULL && (!delivery->completed || head->next != NULL);
 }
 
+static const knurl_deadline *
+response_timeout(const struct knurl_delivery *delivery)
+{
+    const struct knurl_response_impl *response = delivery->response->impl;
+    const struct knurl_request_impl *request = response->request->impl;
+    const knurl_timeout_config *timeouts =
+        &delivery->runtime->server->impl->config.timeouts;
+    if (response->phase >= KNURL_RESPONSE_COMPLETE)
+        return NULL;
+    if (pending_output(delivery))
+        return &timeouts->response_write_idle;
+    if (response->phase == KNURL_RESPONSE_BUILDING &&
+        request->outcome.body_complete && !request->blocking_job_pending)
+        return &timeouts->deferred_response;
+    return NULL;
+}
+
 static void schedule(knurl_response *response)
 {
     struct knurl_delivery *delivery;
@@ -442,7 +459,7 @@ void knurl_kore_responses_turn(struct knurl_runtime *runtime)
     struct knurl_delivery *delivery;
     size_t budget;
     u_int64_t now;
-    knurl_deadline timeout;
+    const knurl_deadline *timeout;
     for (delivery = runtime->responses; delivery != NULL;
          delivery = delivery->next) {
         knurl_kore_body_timeout(delivery->response->impl->request);
@@ -450,16 +467,9 @@ void knurl_kore_responses_turn(struct knurl_runtime *runtime)
             delivery->response->impl->request->impl->channel);
         /* Timeout callbacks can queue output and refresh last_progress. */
         now = kore_time_ms();
-        timeout =
-            pending_output(delivery)
-                ? runtime->server->impl->config.timeouts.response_write_idle
-                : runtime->server->impl->config.timeouts.deferred_response;
-        if (!timeout.disabled &&
-            ((delivery->response->impl->phase == KNURL_RESPONSE_BUILDING &&
-              delivery->response->impl->request->impl->outcome.body_complete) ||
-             pending_output(delivery)) &&
-            delivery->response->impl->phase < KNURL_RESPONSE_COMPLETE &&
-            now - delivery->last_progress >= (u_int64_t)timeout.milliseconds) {
+        timeout = response_timeout(delivery);
+        if (timeout != NULL && !timeout->disabled &&
+            now - delivery->last_progress >= (u_int64_t)timeout->milliseconds) {
             delivery->last_progress = now;
             knurl_kore_request_fail(delivery->response->impl->request,
                                     KNURL_TIMEOUT, 500);
@@ -483,7 +493,7 @@ u_int64_t knurl_kore_responses_wait(struct knurl_runtime *runtime,
                                     u_int64_t maximum)
 {
     struct knurl_delivery *delivery;
-    knurl_deadline timeout;
+    const knurl_deadline *timeout;
     u_int64_t now;
     u_int64_t elapsed;
     u_int64_t wait;
@@ -497,21 +507,13 @@ u_int64_t knurl_kore_responses_wait(struct knurl_runtime *runtime,
                 delivery->response->impl->request->impl->channel) < maximum)
             maximum = (u_int64_t)knurl_channel_wait(
                 delivery->response->impl->request->impl->channel);
-        timeout =
-            pending_output(delivery)
-                ? runtime->server->impl->config.timeouts.response_write_idle
-                : runtime->server->impl->config.timeouts.deferred_response;
-        if (timeout.disabled ||
-            (!pending_output(delivery) &&
-             (delivery->response->impl->phase != KNURL_RESPONSE_BUILDING ||
-              !delivery->response->impl->request->impl->outcome
-                   .body_complete)) ||
-            delivery->response->impl->phase >= KNURL_RESPONSE_COMPLETE)
+        timeout = response_timeout(delivery);
+        if (timeout == NULL || timeout->disabled)
             continue;
         elapsed = now - delivery->last_progress;
-        wait = elapsed >= (u_int64_t)timeout.milliseconds
+        wait = elapsed >= (u_int64_t)timeout->milliseconds
                    ? 0
-                   : (u_int64_t)timeout.milliseconds - elapsed;
+                   : (u_int64_t)timeout->milliseconds - elapsed;
         if (wait < maximum)
             maximum = wait;
     }

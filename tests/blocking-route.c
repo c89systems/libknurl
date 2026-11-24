@@ -124,6 +124,7 @@ static void wait_success(pid_t child)
 static void client(struct fixture *f, unsigned short port)
 {
     struct timespec delay = {0, 10000000};
+    struct timespec past_deferred_timeout = {0, 150000000};
     pid_t child = held_request(port, 200);
     int status = 0, i;
 
@@ -136,6 +137,8 @@ static void client(struct fixture *f, unsigned short port)
           503);
     CHECK(knurl_test_acl_exchange(port, "POST", "/app/bob/echo",
                                   "Content-Length: 3\r\n\r\nabc", NULL) == 503);
+    CHECK(nanosleep(&past_deferred_timeout, NULL) == 0);
+    CHECK(waitpid(child, &status, WNOHANG) == 0);
     CHECK(write(f->release[1], "r", 1) == 1);
     wait_success(child);
     CHECK(knurl_test_acl_exchange(port, "POST", "/app/alice/echo",
@@ -232,6 +235,7 @@ int main(void)
     config.workers.count = 1;
     config.workers.affinity_disabled = 1;
     config.http.backend_quiet = 1;
+    config.timeouts.deferred_response.milliseconds = 50;
     config.callbacks.on_parent_ready = ready;
     config.callbacks.on_worker_start = worker;
     config.callbacks.userdata = &f;

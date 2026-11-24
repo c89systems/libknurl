@@ -44,6 +44,7 @@ assert(invalid == nil)
 check(routes:route{
   path = '/:user/:action',
   methods = {'GET', 'POST'},
+  max_body_bytes = 16,
   buffer_bytes = 2,
   handler = function(req)
     assert(database:write(req.params.user))
@@ -57,6 +58,9 @@ check(routes:route{
       os.exit(1, false)
     elseif action == 'error' then
       error('intentional handler error')
+    elseif action == 'reject' then
+      record('rejected upload')
+      return {status = 403, body = 'rejected'}
     elseif action == 'json' then
       return {json = {user, {count = calls}, true}}
     elseif action == 'cycle' then

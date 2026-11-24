@@ -34,6 +34,7 @@ struct reader_upload {
     knurl_timer *admission;
     size_t references, queued, capacity;
     int pipe[2], started, body_end, done, failed, published, unframed, blocking;
+    int early_reply;
 };
 static void unref(void *data)
 {
@@ -70,7 +71,8 @@ static void blocking_failure(struct reader_upload *s, knurl_status cause,
         return;
     s->failed = 1;
     s->request->impl->outcome.cause = cause;
-    if (!s->body_end)
+    s->request->impl->blocking_job_pending = 0;
+    if (!s->request->impl->outcome.body_complete)
         s->request->impl->response->impl->close_connection = 1;
     close_writer(s);
     knurl_response_error(s->request->impl->response, cause, code);
@@ -172,10 +174,14 @@ static void publish(struct reader_upload *s)
     knurl_reply *old;
     knurl_status status;
     knurl_error error;
-    if (!s->done || !s->body_end || s->failed || s->published ||
-        s->request == NULL)
+    if (!s->done || (!s->body_end && !s->early_reply) || s->failed ||
+        s->published || s->request == NULL)
         return;
     s->published = 1;
+    if (s->early_reply) {
+        knurl_request_stop_input(s->request, KNURL_CANCELLED);
+        close_writer(s);
+    }
     old = s->request->impl->reply;
     s->request->impl->reply = s->result;
     s->result = NULL;
@@ -272,9 +278,13 @@ static knurl_status work(knurl_job *job, knurl_bytes arguments, void *data,
          s->reader->impl->position.low == 0);
     if (status == KNURL_OK && s->reader->impl->failure != KNURL_OK)
         status = s->reader->impl->failure;
-    if (status == KNURL_OK && !complete)
-        status = knurl_fail(error, KNURL_STATE, "upload_reader",
-                            "handler must consume admitted input");
+    if (status == KNURL_OK && !complete) {
+        if (s->blocking && s->result->impl->selected)
+            s->early_reply = 1;
+        else
+            status = knurl_fail(error, KNURL_STATE, "upload_reader",
+                                "handler must consume admitted input");
+    }
     s->reader->impl->native_job = NULL;
     return status;
 }
@@ -287,10 +297,19 @@ static void retired(const knurl_job_outcome *outcome, void *data)
     s->done = 1;
     stop_waker(s);
     if (s->request != NULL) {
-        if (status != KNURL_OK)
-            fail(s, status);
-        else
-            publish(s);
+        if (s->blocking) {
+            s->request->impl->blocking_job_pending = 0;
+            if (status != KNURL_OK && !outcome->cancelled)
+                knurl_request_log_handler_error(s->request, &outcome->error);
+        }
+        if (s->request->impl->outcome.cause == KNURL_OK) {
+            if (status == KNURL_OK)
+                publish(s);
+            else if (s->blocking)
+                blocking_failure(s, status, 500);
+            else
+                fail(s, status);
+        }
     }
     unref(s);
 }
@@ -310,8 +329,10 @@ static knurl_status submit(struct reader_upload *s, knurl_error *error)
         job.timeout_disabled = 1;
     }
     status = knurl_executor_submit(s->pool, &job, &s->job, error);
-    if (status == KNURL_OK)
+    if (status == KNURL_OK) {
+        s->request->impl->blocking_job_pending = s->blocking;
         ++s->references;
+    }
     return status;
 }
 static void admission_retired(void *data)
@@ -337,8 +358,9 @@ static void admission(knurl_timer *timer, void *data)
         stop_waker(s);
     }
 }
-static knurl_status start(struct reader_upload *s, knurl_error *error)
+static knurl_status start(knurl_request *request, knurl_error *error)
 {
+    struct reader_upload *s = request->impl->codec_data;
     knurl_source_config config;
     knurl_status status;
     size_t i;
@@ -435,7 +457,7 @@ static knurl_status body(knurl_request *request, const void *bytes,
     knurl_status status;
     (void)data;
     *consumed = 0;
-    status = start(s, error);
+    status = start(request, error);
     if (status != KNURL_OK)
         return status;
     if (s->failed || s->done)
@@ -470,7 +492,7 @@ static knurl_status body_end(knurl_request *request, void *data,
     knurl_status status;
     (void)data;
     s->body_end = 1;
-    status = start(s, error);
+    status = start(request, error);
     close_writer(s);
     if (status == KNURL_OK)
         publish(s);
@@ -524,6 +546,8 @@ static knurl_status headers(knurl_request *request, knurl_request_plan *plan,
     s->pipe[0] = s->pipe[1] = -1;
     request->impl->codec_data = s;
     request->impl->codec_cleanup = unref;
+    if (s->blocking)
+        request->impl->on_body_admitted = start;
     plan->body = s->config.body;
     plan->body.mode = KNURL_BODY_STREAM;
     plan->on_body = body;

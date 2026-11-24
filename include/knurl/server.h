@@ -209,9 +209,10 @@ typedef struct knurl_timeout_config {
     knurl_deadline keepalive;
     /** Application WebSocket idle deadline. */
     knurl_deadline websocket_idle;
-    /** Application response deadline after body completion. Zero selects
-     * 30000 ms; set disabled to suppress it. Downstream write-idle limits apply
-     * independently. Baseline Vectis adapters explicitly disable this deadline.
+    /** Deferred response deadline after body completion. Zero selects 30000
+     * ms. Set disabled to suppress it. Admitted blocking application jobs use
+     * the blocking pool deadline. Downstream write-idle limits apply
+     * independently. Baseline Vectis adapters disable this deadline.
      */
     knurl_deadline deferred_response;
 } knurl_timeout_config;

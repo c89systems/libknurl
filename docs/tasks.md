@@ -63,9 +63,11 @@ The group variant applies the group's prefix and ACL. The handler takes a
 borrowed `knurl_request_snapshot`, a live input reader and an independent staged
 reply. Capture lookup uses `knurl_request_snapshot_path_param` with the names
 from the route declaration. Input uses the [native reader contract](uploads.md)
-with bounded streaming and no implicit spooling. Successful handlers consume
-all admitted input. Kore publishes their staged replies on the event loop after
-the native thread returns. Owner-loop hooks still need to return promptly.
+with bounded streaming. A handler can select a staged reply and return before
+reading the full body. Kore stops receiving unfinished HTTP input and closes
+the connection after sending that reply. Kore publishes staged replies on the
+event loop after the native thread returns. Owner-loop hooks still need to
+return promptly.
 
 In the absence of lifecycle hooks, the first blocking route request in each
 HTTP worker creates its dedicated pool.
@@ -83,10 +85,10 @@ Stop hooks run for successfully initialized threads and report errors through
 worker teardown. This supports thread-affine resources and runtimes owned by
 the handler thread. C process hooks retain their owner-loop contract.
 
-When the pool cannot admit a task, the route returns HTTP 503. If the pool
-deadline expires first, Kore sends 504 while native cancellation proceeds.
-The server's regular HTTP deadlines also apply. A
-disconnected or timed-out request retains its task slot and copied data until
-the native thread returns. Long-running handlers can check
+When the pool cannot admit a task, the route returns HTTP 503. The pool deadline
+governs the admitted job and Kore sends 504 on expiry while cancellation
+proceeds. The HTTP body and write deadlines apply independently. A disconnected
+or timed-out request retains its task slot and copied data until the native
+thread returns. Long-running handlers can check
 `knurl_source_cancelled` on the borrowed input. An uncooperative thread remains
 subject to the existing worker shutdown deadline.

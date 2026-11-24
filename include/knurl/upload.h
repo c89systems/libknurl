@@ -161,15 +161,17 @@ typedef struct knurl_upload_metadata {
     /** Nonzero when this downstream connection uses TLS. */
     int tls;
 } knurl_upload_metadata;
-/** Runs once on a default-stack native thread. Consume the admitted input
- * through the borrowed reader; reset, destroy and ownership transfer are
+/** Runs once on a default-stack native thread. Read the admitted input
+ * through the borrowed reader. Reset, destroy and ownership transfer are
  * rejected. Manual reads block only this native thread. Cancellation is
  * cooperative via source_read/source_cancelled. Result is an independent staged
  * reply, seeded with before-hook headers and exclusively borrowed until
  * callback return. Select a result; after hooks and publication run on the
  * owner loop after ACK. Metadata/reader/result expire at callback return.
- * A blocking route may enter a runtime owned exclusively by its pool thread.
- * Native I/O upload routes must not enter a foreign runtime. */
+ * A blocking route can select a reply and return early. Kore closes the
+ * connection after that reply if HTTP input is still in progress. A blocking
+ * route may enter a runtime owned exclusively by its pool thread. Native I/O
+ * upload routes must consume all admitted input and run only native work. */
 typedef knurl_status (*knurl_upload_reader_fn)(const knurl_upload_metadata *,
                                                knurl_source *reader,
                                                knurl_reply *result,

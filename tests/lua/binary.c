@@ -105,18 +105,12 @@ static void available(unsigned short port)
     CHECK(0);
 }
 
-static void upload(unsigned short port, const char *log)
+static int open_request(unsigned short port, const char *request)
 {
-    static const char request[] =
-        "POST /app/alice/upload HTTP/1.1\r\nHost: localhost\r\n"
-        "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\na\r\n";
-    static const char remaining[] = "2\r\nbc\r\n0\r\n\r\n";
     struct sockaddr_in address;
     struct timeval timeout = {3, 0};
-    char response[1024], *body;
-    size_t used = 0;
+    size_t length = strlen(request);
     int fd;
-    ssize_t n;
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -126,23 +120,58 @@ static void upload(unsigned short port, const char *log)
     CHECK(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
           0);
     CHECK(connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0);
-    CHECK(write(fd, request, sizeof(request) - 1) ==
-          (ssize_t)sizeof(request) - 1);
+    CHECK(write(fd, request, length) == (ssize_t)length);
+    return fd;
+}
+
+static void receive(int fd, char *response, size_t capacity)
+{
+    size_t used = 0;
+    ssize_t n;
+    do {
+        CHECK(used < capacity - 1);
+        n = read(fd, response + used, capacity - 1 - used);
+        CHECK(n >= 0);
+        used += (size_t)n;
+    } while (n != 0);
+    close(fd);
+    response[used] = '\0';
+}
+
+static void upload(unsigned short port, const char *log)
+{
+    static const char request[] =
+        "POST /app/alice/upload HTTP/1.1\r\nHost: localhost\r\n"
+        "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\na\r\n";
+    static const char remaining[] = "2\r\nbc\r\n0\r\n\r\n";
+    char response[1024], *body;
+    int fd = open_request(port, request);
     milestone(log, "upload prefix\n", 1);
     CHECK(write(fd, remaining, sizeof(remaining) - 1) ==
           (ssize_t)sizeof(remaining) - 1);
-    while (used < sizeof(response) - 1 &&
-           (n = read(fd, response + used, sizeof(response) - 1 - used)) > 0)
-        used += (size_t)n;
-    close(fd);
-    response[used] = '\0';
+    receive(fd, response, sizeof(response));
     body = strstr(response, "\r\n\r\n");
     CHECK(strncmp(response, "HTTP/1.1 200", 12) == 0);
     CHECK(body != NULL && strcmp(body + 4, "abc") == 0);
 }
 
+static void reject_upload(unsigned short port, const char *framing)
+{
+    char request[256], response[1024], *body;
+    int length = snprintf(
+        request, sizeof(request),
+        "POST /app/alice/reject HTTP/1.1\r\nHost: localhost\r\n%s", framing);
+    CHECK(length > 0 && (size_t)length < sizeof(request));
+    receive(open_request(port, request), response, sizeof(response));
+    body = strstr(response, "\r\n\r\n");
+    CHECK(strncmp(response, "HTTP/1.1 403", 12) == 0);
+    CHECK(strstr(response, "\r\nconnection: close\r\n") != NULL);
+    CHECK(body != NULL && strcmp(body + 4, "rejected") == 0);
+}
+
 static void exercise(unsigned short port, const char *log, const char *gate)
 {
+    char response[1024];
     int fd, i, status;
     pid_t pending;
     pending = fork();
@@ -176,8 +205,18 @@ static void exercise(unsigned short port, const char *log, const char *gate)
                                   "[\"bob\",{\"count\":42},true]") == 200);
     CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/cycle", NULL, NULL) ==
           500);
-    CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/error", NULL, NULL) ==
-          500);
+    receive(open_request(port,
+                         "GET /app/bob/error HTTP/1.1\r\nHost: localhost\r\n"
+                         "Connection: close\r\n\r\n"),
+            response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 500", 12) == 0);
+    CHECK(strstr(response, "intentional handler error") == NULL &&
+          strstr(response, "stack traceback") == NULL);
+    reject_upload(port, "Content-Length: 10\r\n\r\n");
+    reject_upload(port, "Transfer-Encoding: chunked\r\n\r\n4\r\nabc");
+    CHECK(knurl_test_acl_exchange(port, "POST", "/app/alice/reject",
+                                  "Content-Length: 17\r\n", NULL) == 413);
+    CHECK(events(log, "rejected upload\n") == 2);
     upload(port, log);
 
     /* Abandon a worker. Its replacement starts from the same parent snapshot.
@@ -196,7 +235,7 @@ int main(int argc, char **argv)
     pid_t child;
     FILE *file;
     int normal, init_failure;
-    CHECK(argc == 5);
+    CHECK(argc == 5 || argc == 7);
     normal = strcmp(argv[4], "normal") == 0;
     init_failure = strcmp(argv[4], "init-failure") == 0;
     path(log, sizeof(log), argv[3], "events");
@@ -212,7 +251,13 @@ int main(int argc, char **argv)
     child = fork();
     CHECK(child >= 0);
     if (child == 0) {
-        execl(argv[1], argv[1], argv[2], argv[3], port, argv[4], (char *)NULL);
+        if (argc == 7)
+            execl(argv[5], argv[5], "--library-path", argv[6], argv[1], argv[2],
+                  argv[3], port, argv[4], (char *)NULL);
+        else
+            execl(argv[1], argv[1], argv[2], argv[3], port, argv[4],
+                  (char *)NULL);
+        perror("starting knurl runner");
         _exit(126);
     }
     runner = child;

@@ -14,9 +14,11 @@ build/knurl/knurl app.lua
 Use `LUA_CONFIG=ON` to also build the loadable module. Install the C library
 with a normal `cmake --install`, then use `--component binary` for the
 executable and `--component lua` for the module. With an external Lua 5.5.1
-host, add `<prefix>/lib/lua/5.5/?.so` to `LUA_CPATH`. The platform loader
-needs the selected cpkt, lonejson and pslog SDK runtime directories, typically
-via `LD_LIBRARY_PATH` on Linux. See [runtime direction](runtime-direction.md).
+host, add `<prefix>/lib/lua/5.5/?.so` to `LUA_CPATH`. The runner uses the target's
+standard interpreter and finds libknurl relative to the installed executable.
+The platform loader also needs access to the selected cpkt, lonejson and pslog
+runtime libraries, typically via `LD_LIBRARY_PATH` on Linux.
+See [runtime direction](runtime-direction.md).
 
 ## Configure and serve
 
@@ -72,9 +74,9 @@ listener (default `127.0.0.1:8080`) and one HTTP worker. Set `workers`,
 `max_connections` or `backend_quiet` as needed. `application_max_tasks`
 limits admitted Lua requests per worker, including queued work. Its default
 is 16 and a full pool returns 503. `application_timeout_ms` defaults to
-30000 including queue time. Cancellation is cooperative and a running
-handler retains its slot until it returns. Kore continues serving native
-services while the application thread runs.
+30000 including queue time. Expiry returns 504. Cancellation is cooperative,
+so a running handler retains its slot until it returns. Kore continues
+serving native services while the application thread runs.
 
 `validate()` checks declarations and `preflight()` also probes startup
 resources. Run from a host that can safely fork. `close()` releases the
@@ -87,8 +89,10 @@ The handler's request contains `method`, `path`, `raw_path`, `query`,
 named `params`, and ordered `headers` entries with `name` and `value`.
 Read live input with `req:read(bytes)`. Each call requests up to 64 KiB
 and defaults to 16 KiB. It returns a chunk, nil at EOF, or `nil, error`.
-Read until EOF on requests with a body. `req:cancelled()` reports
-cancellation. The reader expires when the handler returns.
+Read until EOF to consume the whole body. A handler can return a response
+early. Kore closes the connection after sending it if HTTP input is unfinished.
+`req:cancelled()` reports cancellation. The reader expires when the handler
+returns.
 `max_body_bytes` may narrow the server's body limit, and `buffer_bytes`
 sets the route's bounded input queue capacity.
 
@@ -97,6 +101,8 @@ Return a string for a 200 text response, nil for 204, or a table with optional
 bytes or `json` for a Lua string, number, boolean, object, or dense array.
 JSON objects use string keys and an empty table makes an empty object. JSON
 responses are buffered with an 8 MiB maximum and a nesting limit of 32.
+An uncaught handler error returns 500 and logs a bounded message and Lua
+traceback on the server.
 
 ## Route declarations
 
