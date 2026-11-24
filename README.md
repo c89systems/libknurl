@@ -5,10 +5,10 @@ Use it to serve a site, expose a typed API or embed a reverse proxy in your own
 application. Your application supplies the handlers, schemas, storage and
 authentication policy.
 
-The optional [Lua configuration module](docs/lua-config.md) declares native
-routes and can forward application traffic to a separate Lua process.
-The standalone `knurl` executable and in-process Lua request callbacks remain
-deferred until Luthrum. [Product direction](docs/runtime-direction.md)
+The optional [`knurl` executable and Lua module](docs/lua-config.md) can run an
+application from a single Lua file. Native routes stay in C and each Kore
+worker runs its Lua handlers on a dedicated thread.
+[Product direction](docs/runtime-direction.md)
 
 - **Compose routes.** Use literal, parameter and regex routes with groups and
   middleware, and let handlers revise a staged reply before it goes out.

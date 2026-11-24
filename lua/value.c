@@ -187,6 +187,22 @@ int rl_field_size(lua_State *L, int index, const char *name, size_t *out)
     lua_pop(L, 1);
     return ok;
 }
+int rl_body_limit(lua_State *L, int index, const struct rl_server *server,
+                  knurl_u64 *out, knurl_error *error)
+{
+    size_t limit = 0;
+    int order;
+    if (!rl_field_size(L, index, "max_body_bytes", &limit) ||
+        knurl_u64_from_size(limit, out, error) != KNURL_OK ||
+        knurl_u64_compare(*out, server->hard_body_bytes, &order, error) !=
+            KNURL_OK ||
+        order > 0) {
+        rl_fail(error, KNURL_INVALID,
+                "max_body_bytes must be within the server body limit");
+        return 0;
+    }
+    return 1;
+}
 int rl_field_string(lua_State *L, int index, const char *name, const char **out)
 {
     int ok = 1;

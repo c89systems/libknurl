@@ -9,6 +9,7 @@
 #include "logging_internal.h"
 #include "access_log_file.h"
 #include "file_internal.h"
+#include "upload_internal.h"
 
 #include <sys/mman.h>
 #include <sys/resource.h>
@@ -278,10 +279,15 @@ static int worker_start(void *userdata)
     }
     knurl_kore_tls_worker(runtime, runtime->server->impl->process.worker_index,
                           1);
-    return knurl_runtime_hook(
-               runtime,
-               runtime->server->impl->config.callbacks.on_worker_start) ==
-           KNURL_OK;
+    if (knurl_runtime_hook(
+            runtime, runtime->server->impl->config.callbacks.on_worker_start) !=
+        KNURL_OK)
+        return 0;
+    runtime->status =
+        knurl_blocking_pool_start(runtime->server, &runtime->error);
+    if (runtime->status != KNURL_OK)
+        knurl_kore_child_failure(runtime, &runtime->error);
+    return runtime->status == KNURL_OK;
 }
 
 static void worker_stopping(void *userdata)

@@ -26,11 +26,14 @@ struct knurl_executor {
     knurl_executor *next;
     knurl_executor_config config;
     pthread_mutex_t queue_lock;
+    pthread_cond_t ready;
     knurl_job *queue_head, *queue_tail, *jobs, *jobs_tail;
     knurl_watch *watch;
     knurl_timer *timer;
     int work[2], notify[2];
     size_t count, registrations;
+    size_t initialized;
+    knurl_error start_error, stop_error;
     unsigned int live, closing;
     int exposed, finishing, linked;
 };
@@ -38,6 +41,20 @@ static knurl_status fail(knurl_error *error, knurl_status status,
                          const char *message)
 {
     return knurl_fail(error, status, "executor", message);
+}
+static knurl_status lifecycle(knurl_executor *e,
+                              knurl_status (*callback)(void *, knurl_error *),
+                              knurl_error *error)
+{
+    knurl_status status;
+    knurl_error_clear(error);
+    status = callback(e->config.thread_userdata, error);
+    if (status < KNURL_OK || status == KNURL_AGAIN || status == KNURL_EOF ||
+        status > KNURL_BACKEND)
+        status = KNURL_INVALID;
+    if (status != KNURL_OK && error->status != status)
+        fail(error, status, "native thread lifecycle callback failed");
+    return status;
 }
 static knurl_status owner(knurl_executor *e, knurl_error *error)
 {
@@ -118,12 +135,23 @@ static void *worker_main(void *data)
     knurl_executor *e = data;
     knurl_job *job;
     struct pollfd descriptor;
+    knurl_error error;
+    knurl_status status = KNURL_OK;
     unsigned char byte;
     int n;
     descriptor.fd = e->work[0];
     descriptor.events = POLLIN;
     descriptor.revents = 0;
-    for (;;) {
+    if (e->config.on_thread_start != NULL) {
+        status = lifecycle(e, e->config.on_thread_start, &error);
+        (void)pthread_mutex_lock(&e->queue_lock);
+        if (status != KNURL_OK && e->start_error.status == KNURL_OK)
+            e->start_error = error;
+        ++e->initialized;
+        (void)pthread_cond_signal(&e->ready);
+        (void)pthread_mutex_unlock(&e->queue_lock);
+    }
+    while (status == KNURL_OK) {
         if (__atomic_load_n(&e->closing, __ATOMIC_ACQUIRE))
             break;
         do {
@@ -164,6 +192,13 @@ static void *worker_main(void *data)
         (void)knurl_loop_monotonic(&job->finished, NULL);
         __atomic_store_n(&job->done, 1, __ATOMIC_RELEASE);
         (void)signal_pipe(e->notify[1], 1);
+    }
+    if (status == KNURL_OK && e->config.on_thread_stop != NULL &&
+        lifecycle(e, e->config.on_thread_stop, &error) != KNURL_OK) {
+        (void)pthread_mutex_lock(&e->queue_lock);
+        if (e->stop_error.status == KNURL_OK)
+            e->stop_error = error;
+        (void)pthread_mutex_unlock(&e->queue_lock);
     }
     /* After this final release store, the worker never accesses e, jobs or any
      * loop object. The closing timer covers a notification observed before the
@@ -211,6 +246,7 @@ static void release_executor(knurl_executor *e)
             close(e->notify[i]);
     }
     (void)pthread_mutex_destroy(&e->queue_lock);
+    (void)pthread_cond_destroy(&e->ready);
     if (e->exposed && e->config.retired != NULL)
         e->config.retired(e->config.userdata);
     free(e);
@@ -335,6 +371,9 @@ static void drain(knurl_executor *e)
     }
     if (__atomic_load_n(&e->closing, __ATOMIC_ACQUIRE) && e->count == 0 &&
         __atomic_load_n(&e->live, __ATOMIC_ACQUIRE) == 0) {
+        if (e->stop_error.status != KNURL_OK &&
+            e->loop->impl->failure.status == KNURL_OK)
+            e->loop->impl->failure = e->stop_error;
         e->finishing = 1;
         unlink_executor(e);
         knurl_watch_cancel(e->watch);
@@ -433,6 +472,12 @@ knurl_status knurl_executor_new(knurl_server *server,
         free(e);
         return fail(error, KNURL_IO, "initializing native queue lock");
     }
+    code = pthread_cond_init(&e->ready, NULL);
+    if (code != 0) {
+        (void)pthread_mutex_destroy(&e->queue_lock);
+        free(e);
+        return fail(error, KNURL_IO, "initializing native startup condition");
+    }
     if (!pipe_new(e->work) || !pipe_new(e->notify)) {
         release_executor(e);
         return fail(error, KNURL_IO, "creating bounded native wake pipes");
@@ -475,6 +520,21 @@ knurl_status knurl_executor_new(knurl_server *server,
     if (code != 0) {
         knurl_executor_close(e, NULL);
         return fail(error, KNURL_IO, "starting post-fork native threads");
+    }
+    if (defaults.on_thread_start != NULL) {
+        /* Hook-enabled pools are constructed as part of worker startup. */
+        (void)pthread_mutex_lock(&e->queue_lock);
+        while (e->initialized < defaults.threads &&
+               e->start_error.status == KNURL_OK)
+            (void)pthread_cond_wait(&e->ready, &e->queue_lock);
+        status = e->start_error.status;
+        if (status != KNURL_OK && error != NULL)
+            *error = e->start_error;
+        (void)pthread_mutex_unlock(&e->queue_lock);
+        if (status != KNURL_OK) {
+            knurl_executor_close(e, NULL);
+            return status;
+        }
     }
     e->exposed = 1;
     *out = e;

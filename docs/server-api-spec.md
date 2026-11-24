@@ -4,11 +4,11 @@ This is the complete product contract. Feature guides describe the implementatio
 they cannot enlarge this contract or establish compatibility.
 
 The C library and C SDK are the release products. This document defines their
-contract. The [Lua configuration module](lua-config.md) is available in opt-in
-source builds. The
+contract. The [Lua module and executable](lua-config.md) are available in
+opt-in source builds. The
 [historical contract](https://github.com/c89systems/libknurl/blob/trunk/archive/pre-luthrum/docs/server-api-spec.md)
 preserves the former Lua runtime requirements. [Runtime direction](runtime-direction.md)
-governs the deferred executable and in-process callbacks.
+describes the current callback model and future runtime integration.
 
 ## Purpose and boundary
 
@@ -138,9 +138,9 @@ Preserve buffered external-record support and callback-writer input restrictions
 No encode/reparse workaround, private userdata cast, parallel route engine or
 speculative dependency extension. libxml2 owns XML parsing; pslog owns logging.
 
-The C library neither embeds a Lua VM nor supplies a runtime binding. Future
-Luthrum integration requires a separate execution/ownership contract before any
-archived sources are restored. Application supervision stays downstream.
+The optional Lua module owns VM access and uses the C API for execution
+handoff. Future Luthrum integration requires its own execution and ownership
+contract. Application supervision stays downstream.
 
 ## Authorized operational additions
 

@@ -209,7 +209,7 @@ static knurl_status register_static(lua_State *L, knurl_router *router,
                : knurl_router_static_file(router, &config, NULL, error);
 }
 
-static knurl_status register_upload(lua_State *L, knurl_router *router,
+static knurl_status register_upload(lua_State *L, struct rl_server *server,
                                     knurl_route_group *group,
                                     knurl_error *error)
 {
@@ -218,25 +218,24 @@ static knurl_status register_upload(lua_State *L, knurl_router *router,
         "methods", "max_body_bytes", "acl",       "hooks"};
     knurl_upload_file_config config;
     knurl_route_config path;
-    size_t max_body = 0;
     if (!rl_fields(L, 2, fields, RL_COUNT(fields), error))
         return error->status;
     knurl_upload_file_config_init(&config);
+    knurl_body_policy_init_stream(&config.body);
     knurl_route_config_init(&path);
     if (!rl_route_path(L, 2, &path) ||
         !rl_field_string(L, 2, "file_path", &config.file_path) ||
-        !rl_methods(L, 2, config.methods, &config.methods) ||
-        !rl_field_size(L, 2, "max_body_bytes", &max_body))
+        !rl_methods(L, 2, config.methods, &config.methods))
         return rl_fail(error, KNURL_INVALID, "invalid file upload fields");
-    if (!rl_acl_option(L, 2, &config.acl, error))
+    if (!rl_body_limit(L, 2, server, &config.body.max_bytes, error) ||
+        !rl_acl_option(L, 2, &config.acl, error))
         return error->status;
     config.path = path.path;
     config.path_kind = path.path_kind;
-    if (max_body != 0)
-        knurl_u64_from_size(max_body, &config.body.max_bytes, NULL);
     return group != NULL
                ? knurl_route_group_upload_file(group, &config, NULL, error)
-               : knurl_router_upload_file(router, &config, NULL, error);
+               : knurl_router_upload_file(knurl_server_router(server->native),
+                                          &config, NULL, error);
 }
 
 static knurl_status register_proxy(lua_State *L, knurl_router *router,
@@ -312,6 +311,9 @@ static int route(lua_State *L)
     if (server == NULL || server->native == NULL)
         return rl_result(L, rl_fail(&error, KNURL_STATE, "server is closed"),
                          &error);
+    if (server->running)
+        return rl_result(L, rl_fail(&error, KNURL_STATE, "server is running"),
+                         &error);
     router = knurl_server_router(server->native);
     switch (kind) {
     case ROUTE_TEXT:
@@ -325,7 +327,7 @@ static int route(lua_State *L)
                                  kind == ROUTE_STATIC_DIRECTORY, &error);
         break;
     case ROUTE_UPLOAD_FILE:
-        status = register_upload(L, router, native_group, &error);
+        status = register_upload(L, server, native_group, &error);
         break;
     default:
         if (group != NULL)

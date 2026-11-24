@@ -14,6 +14,7 @@
 
 #include <fcntl.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 int knurl_server_running(const knurl_server *server)
@@ -133,11 +134,8 @@ knurl_router *knurl_server_router(knurl_server *server)
 
 void knurl_blocking_pool_config_init(knurl_blocking_pool_config *config)
 {
-    if (config != NULL) {
-        config->threads = 0;
-        config->max_tasks = 0;
-        config->timeout_ms = 0;
-    }
+    if (config != NULL)
+        memset(config, 0, sizeof(*config));
 }
 
 knurl_status

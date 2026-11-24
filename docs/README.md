@@ -9,8 +9,8 @@ Start with the [quick start](../README.md) or find a guide below. The
 | clangd comments and completion | [Editor setup](editors.md) |
 | Public C API and ownership/units/error hovers | [Installed headers](https://github.com/c89systems/libknurl/tree/trunk/include/knurl/) |
 | Native tasks and request continuation | [Tasks](tasks.md) |
-| Lua configuration and separate application processes | [Lua configuration](lua-config.md) |
-| C product boundary and deferred Luthrum integration | [Runtime direction](runtime-direction.md) |
+| Lua application runner, native routes, and worker hooks | [Lua applications](lua-config.md) |
+| C SDK and Lua runtime boundaries | [Runtime direction](runtime-direction.md) |
 | Core SDK archives and relocated consumers | [SDK delivery](sdk.md) |
 | Lifecycle, signals, control and fork ownership | [Processes](processes.md) |
 | Routing, request metadata and body policies | [Requests](requests.md) |

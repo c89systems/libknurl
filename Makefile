@@ -2,6 +2,7 @@ CMAKE ?= cmake
 CTEST ?= ctest
 CONFIG ?= debug
 LUA_CONFIG ?= OFF
+KNURL_BINARY ?= OFF
 JOBS ?= 1
 DEFAULT_TARGET := x86_64-linux-gnu
 TARGET ?= $(DEFAULT_TARGET)
@@ -61,7 +62,8 @@ help:
 	  'make update-kore KORE_REVISION=<full-sha>  Import a pristine upstream revision.' \
 	  'make clean                 Remove build/, dist/ and local .cache/.' \
 	  'Options: TARGET=<SDK target> CONFIG=debug|release JOBS=1 PREFIX=<owned path>.' \
-	  '  LUA_CONFIG=ON adds the configuration-only Lua module and its tests.' \
+	  '  LUA_CONFIG=ON adds the Lua module and its tests.' \
+	  '  KNURL_BINARY=ON adds the knurl executable and its tests.' \
 	  'Default selected target builds in build/debug or build/release; other targets use build/<target>/<config>.'
 
 deps:
@@ -80,7 +82,7 @@ build-all:
 	@for target in $(SUPPORTED_TARGETS); do $(MAKE) --no-print-directory build TARGET="$$target" || exit $$?; done
 
 configure: deps
-	"$(CMAKE)" -S . -B '$(BUILD_DIR)' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DBUILD_TESTING=ON -DCMAKE_TOOLCHAIN_FILE='$(TOOLCHAIN)' -DKNURL_TARGET='$(TARGET)' -DKNURL_BUILD_LUA='$(LUA_CONFIG)' '$(VERSION_ARG)'
+	"$(CMAKE)" -S . -B '$(BUILD_DIR)' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DBUILD_TESTING=ON -DCMAKE_TOOLCHAIN_FILE='$(TOOLCHAIN)' -DKNURL_TARGET='$(TARGET)' -DKNURL_BUILD_LUA='$(LUA_CONFIG)' -DKNURL_BUILD_BINARY='$(KNURL_BINARY)' '$(VERSION_ARG)'
 
 build: configure
 	"$(CMAKE)" --build '$(BUILD_DIR)' --parallel '$(JOBS)'
@@ -141,10 +143,10 @@ install: build
 	"$(CMAKE)" --install '$(BUILD_DIR)' --prefix '$(PREFIX)'
 
 format:
-	clang-format -i include/knurl/*.h src/*.c src/*.h lua/*.c lua/*.h examples/*.c tests/*.c tests/*.h tests/*.cpp tests/fuzz/*.c tests/lua/*.c
+	clang-format -i include/knurl/*.h src/*.c src/*.h lua/*.c lua/*.h binary/*.c examples/*.c tests/*.c tests/*.h tests/*.cpp tests/fuzz/*.c tests/lua/*.c
 
 format-check:
-	clang-format --dry-run --Werror include/knurl/*.h src/*.c src/*.h lua/*.c lua/*.h examples/*.c tests/*.c tests/*.h tests/*.cpp tests/fuzz/*.c tests/lua/*.c
+	clang-format --dry-run --Werror include/knurl/*.h src/*.c src/*.h lua/*.c lua/*.h binary/*.c examples/*.c tests/*.c tests/*.h tests/*.cpp tests/fuzz/*.c tests/lua/*.c
 
 update-kore:
 	bash scripts/update-kore.sh '$(KORE_REVISION)'

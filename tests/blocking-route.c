@@ -19,7 +19,7 @@
     } while (0)
 
 struct fixture {
-    pthread_t owner;
+    pthread_t owner, handler_thread;
     int entered[2], release[2];
     pid_t client;
 };
@@ -35,6 +35,7 @@ static knurl_status application(const knurl_request_snapshot *request,
     knurl_status status;
 
     CHECK(!pthread_equal(f->owner, pthread_self()));
+    CHECK(pthread_equal(f->handler_thread, pthread_self()));
     CHECK(knurl_request_snapshot_path_param(request, "user", &user, error) ==
           KNURL_OK);
     CHECK(knurl_request_snapshot_path_param(request, "section", &section,
@@ -191,6 +192,23 @@ static knurl_status worker(knurl_server *server, const knurl_process_context *p,
     return KNURL_OK;
 }
 
+static knurl_status thread_start(void *data, knurl_error *error)
+{
+    struct fixture *f = data;
+    (void)error;
+    CHECK(!pthread_equal(f->owner, pthread_self()));
+    f->handler_thread = pthread_self();
+    return KNURL_OK;
+}
+
+static knurl_status thread_stop(void *data, knurl_error *error)
+{
+    struct fixture *f = data;
+    (void)error;
+    CHECK(pthread_equal(f->handler_thread, pthread_self()));
+    return KNURL_OK;
+}
+
 int main(void)
 {
     struct fixture f;
@@ -227,6 +245,9 @@ int main(void)
           KNURL_INVALID);
     pool.threads = pool.max_tasks = 1;
     pool.timeout_ms = 1500;
+    pool.on_thread_start = thread_start;
+    pool.on_thread_stop = thread_stop;
+    pool.userdata = &f;
     CHECK(server->set_blocking_pool(server, &pool, &error) == KNURL_OK);
 
     knurl_blocking_route_config_init(&app);

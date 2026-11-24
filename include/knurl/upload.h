@@ -167,8 +167,9 @@ typedef struct knurl_upload_metadata {
  * cooperative via source_read/source_cancelled. Result is an independent staged
  * reply, seeded with before-hook headers and exclusively borrowed until
  * callback return. Select a result; after hooks and publication run on the
- * owner loop after ACK. Do not access Lua or retain metadata/reader/result past
- * callback return. */
+ * owner loop after ACK. Metadata/reader/result expire at callback return.
+ * A blocking route may enter a runtime owned exclusively by its pool thread.
+ * Native I/O upload routes must not enter a foreign runtime. */
 typedef knurl_status (*knurl_upload_reader_fn)(const knurl_upload_metadata *,
                                                knurl_source *reader,
                                                knurl_reply *result,
@@ -243,6 +244,10 @@ typedef knurl_upload_reader_config knurl_blocking_route_config;
  */
 typedef knurl_upload_metadata knurl_request_snapshot;
 
+/** Callback on a blocking pool thread. May run concurrently with the
+ * lifecycle callbacks of other threads. Return a terminal status. */
+typedef knurl_status (*knurl_blocking_thread_fn)(void *, knurl_error *);
+
 /** Application handler executor bounds per HTTP worker. */
 typedef struct knurl_blocking_pool_config {
     /** Zero selects two native threads. Maximum eight. */
@@ -251,6 +256,13 @@ typedef struct knurl_blocking_pool_config {
     size_t max_tasks;
     /** Cooperative deadline including queue time. Zero selects 30000 ms. */
     long timeout_ms;
+    /** Optional per-thread initialization, after fork and before readiness. */
+    knurl_blocking_thread_fn on_thread_start;
+    /** Optional per-thread cleanup after its last job. Runs after successful
+     * initialization, including when no start callback was supplied. */
+    knurl_blocking_thread_fn on_thread_stop;
+    /** Caller-owned lifecycle context retained until the server run ends. */
+    void *userdata;
 } knurl_blocking_pool_config;
 
 /** Clear overrides so the documented defaults apply. */
@@ -258,7 +270,8 @@ KNURL_API void knurl_blocking_pool_config_init(knurl_blocking_pool_config *);
 /** Copy bounds into an inactive server. NULL restores the defaults. */
 KNURL_API knurl_status knurl_server_set_blocking_pool(
     knurl_server *, const knurl_blocking_pool_config *, knurl_error *);
-/** Initialize a blocking route. GET is the default method. */
+/** Initialize a blocking route. GET is the default method and the stream
+ * inherits the server's default request body limit. */
 KNURL_API void knurl_blocking_route_config_init(knurl_blocking_route_config *);
 /** Register an application handler on the dedicated post-fork executor.
  * Native handler execution never occupies the owner loop. Auth/before/after

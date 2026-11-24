@@ -14,10 +14,15 @@
 #define RL_GROUP "knurl.group"
 
 struct rl_fixed;
+struct rl_json;
 
 struct rl_server {
     knurl_server *native;
     struct rl_fixed *replies;
+    lua_State *worker;
+    knurl_blocking_pool_config pool;
+    knurl_u64 hard_body_bytes;
+    int running, has_lua;
 };
 
 struct rl_group {
@@ -38,12 +43,19 @@ int rl_methods(lua_State *, int, knurl_http_methods, knurl_http_methods *);
 int rl_route_path(lua_State *, int, knurl_route_config *);
 int rl_mime_types(lua_State *, int, const knurl_mime_type **, size_t *,
                   knurl_error *);
+int rl_body_limit(lua_State *, int, const struct rl_server *, knurl_u64 *,
+                  knurl_error *);
 
 int rl_acl_option(lua_State *, int, knurl_acl **, knurl_error *);
 void rl_acl_open(lua_State *);
 void rl_server_open(lua_State *);
 void rl_routes_open(lua_State *, int);
 void rl_fixed_free(struct rl_fixed *);
+void rl_application_open(lua_State *, int);
+knurl_status rl_server_run(lua_State *, struct rl_server *, knurl_error *);
+knurl_status rl_json_reply(lua_State *, int, knurl_reply *, int, const char *,
+                           struct rl_json **, knurl_error *);
+void rl_json_free(struct rl_json *);
 KNURL_API int luaopen_knurl(lua_State *);
 
 #endif

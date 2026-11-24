@@ -67,13 +67,21 @@ with bounded streaming and no implicit spooling. Successful handlers consume
 all admitted input. Kore publishes their staged replies on the event loop after
 the native thread returns. Owner-loop hooks still need to return promptly.
 
-The first blocking route request in each HTTP worker creates its dedicated pool.
+In the absence of lifecycle hooks, the first blocking route request in each
+HTTP worker creates its dedicated pool.
 Configure it before running the server with `knurl_server_set_blocking_pool` or
 `server->set_blocking_pool`. Zero selects two threads, 16 admitted tasks including
 queued work, and a cooperative 30-second deadline including queue time. The
 maximums are eight threads and 256 tasks per worker. Pool bounds are copied.
 Ordinary file and upload I/O use their own executor. The application pool uses
 one of the worker's four executor slots.
+
+Optional `on_thread_start` and `on_thread_stop` run on each pool thread,
+before readiness and after the thread's last job, respectively. Hooks on
+different pool threads can run concurrently. Start failure prevents readiness.
+Stop hooks run for successfully initialized threads and report errors through
+worker teardown. This supports thread-affine resources and runtimes owned by
+the handler thread. C process hooks retain their owner-loop contract.
 
 When the pool cannot admit a task, the route returns HTTP 503. If the pool
 deadline expires first, Kore sends 504 while native cancellation proceeds.

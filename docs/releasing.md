@@ -1,8 +1,8 @@
 # Release preparation and artifacts
 
 The release product is the C library and C SDK. The
-[Lua configuration module](lua-config.md) has an opt-in source build and
-separate installation. See [runtime direction](runtime-direction.md).
+[Lua module and `knurl` executable](lua-config.md) have opt-in source builds
+and separate installation components. See [runtime direction](runtime-direction.md).
 Archived source, test fixtures and earlier generated products never enter the
 release inventory.
 

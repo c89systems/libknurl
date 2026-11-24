@@ -276,7 +276,11 @@ static int smoke(unsigned short port)
            knurl_test_acl_exchange(port, "POST", "/upload",
                                    "Content-Length: 9\r\n\r\nabcdefghi",
                                    NULL) == 413 &&
-           exchange(port, "/uploaded", 200, "abc");
+           exchange(port, "/uploaded", 200, "abc") &&
+           knurl_test_acl_exchange(port, "POST", "/upload-default",
+                                   "Content-Length: 3\r\n\r\ndef",
+                                   NULL) == 200 &&
+           exchange(port, "/uploaded", 200, "def");
 }
 
 static int isolation(unsigned short port)

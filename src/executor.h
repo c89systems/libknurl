@@ -25,6 +25,9 @@ typedef struct knurl_executor_config {
     size_t threads, max_jobs, max_argument_bytes, max_result_bytes;
     knurl_retire_fn retired;
     void *userdata;
+    knurl_status (*on_thread_start)(void *, knurl_error *);
+    knurl_status (*on_thread_stop)(void *, knurl_error *);
+    void *thread_userdata;
 } knurl_executor_config;
 typedef struct knurl_job_config {
     knurl_job_fn work;
@@ -47,8 +50,9 @@ knurl_status knurl_executor_new(knurl_server *, const knurl_executor_config *,
                                 knurl_executor **, knurl_error *);
 /* Owner-loop only. Success copies arguments and retains userdata through its
  * one retirement callback. AGAIN/full capacity takes nothing. Work runs once
- * on a default-stack native thread and must not access Lua or live transport
- * handles. Completed/interrupted/retired run on the owner loop, never inline.
+ * on a default-stack native thread. A foreign runtime must belong to that
+ * thread. Live transport handles remain owner-loop only.
+ * Completed/interrupted/retired run on the owner loop, never inline.
  * Handles are borrowed until retirement. No implicit whole-value buffering.
  */
 knurl_status knurl_executor_submit(knurl_executor *, const knurl_job_config *,

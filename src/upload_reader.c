@@ -2,6 +2,7 @@
 #include "upload_internal.h"
 #include "native_io.h"
 #include "server_internal.h"
+#include <knurl/body.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -104,6 +105,9 @@ static knurl_status blocking_pool(knurl_server *server, knurl_executor **out,
             config.max_jobs = 16;
         config.retired = blocking_pool_retired;
         config.userdata = loop;
+        config.on_thread_start = server->impl->blocking_pool.on_thread_start;
+        config.on_thread_stop = server->impl->blocking_pool.on_thread_stop;
+        config.thread_userdata = server->impl->blocking_pool.userdata;
         status = knurl_executor_new(server, &config,
                                     &loop->impl->blocking_executor, error);
         if (status != KNURL_OK)
@@ -111,6 +115,15 @@ static knurl_status blocking_pool(knurl_server *server, knurl_executor **out,
     }
     *out = loop->impl->blocking_executor;
     return KNURL_OK;
+}
+
+knurl_status knurl_blocking_pool_start(knurl_server *server, knurl_error *error)
+{
+    knurl_executor *pool;
+    const knurl_blocking_pool_config *config = &server->impl->blocking_pool;
+    if (config->on_thread_start == NULL && config->on_thread_stop == NULL)
+        return KNURL_OK;
+    return blocking_pool(server, &pool, error);
 }
 static knurl_status io_error(knurl_error *error, const char *message)
 {
@@ -600,8 +613,10 @@ knurl_upload_reader_add(knurl_router *router, knurl_route_group *group,
 void knurl_blocking_route_config_init(knurl_blocking_route_config *config)
 {
     knurl_upload_reader_config_init(config);
-    if (config != NULL)
+    if (config != NULL) {
         config->method = KNURL_HTTP_GET;
+        knurl_body_policy_init_stream(&config->body);
+    }
 }
 
 knurl_status

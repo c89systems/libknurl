@@ -16,6 +16,7 @@ struct knurl_upload_reader_codec {
 knurl_status knurl_upload_metadata_copy(knurl_request *,
                                         knurl_upload_metadata *, void **text,
                                         knurl_header **pairs, knurl_error *);
+knurl_status knurl_blocking_pool_start(knurl_server *, knurl_error *);
 knurl_status knurl_upload_reader_add(knurl_router *, knurl_route_group *,
                                      const knurl_upload_reader_config *,
                                      const struct knurl_upload_reader_codec *,
