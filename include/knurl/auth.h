@@ -52,7 +52,8 @@ typedef enum knurl_auth_operation {
     KNURL_AUTH_WORKFLOW_BEGIN,
     KNURL_AUTH_WORKFLOW_FIND,
     KNURL_AUTH_WORKFLOW_STEP,
-    KNURL_AUTH_TOTP_CONFIRM
+    KNURL_AUTH_TOTP_CONFIRM,
+    KNURL_AUTH_EMAIL_FINISH
 } knurl_auth_operation;
 
 /** On PASSWORD, EMAIL, SESSION_FIND and MACHINE_VERIFY, return a canonical
@@ -60,7 +61,14 @@ typedef enum knurl_auth_operation {
  * ATTEMPT limits login attempts per peer and scope. TOTP_SESSION and
  * EMAIL_SESSION verify the factor, consume it and create the session in one
  * transaction. TOTP_SESSION returns CONFLICT when a verified account needs
- * enrollment. EMAIL_SAVE replaces the challenge subject to a resend limit.
+ * enrollment. EMAIL_SAVE reserves a pending delivery subject to a resend
+ * limit and preserves the previous issued challenge. For an active email
+ * workflow, WORKFLOW_BEGIN reserves its pending delivery and identifier.
+ * EMAIL_FINISH receives the same digests and subject, with active set to
+ * whether delivery succeeded. Atomically publish the pending challenge and
+ * start the resend cooldown on success, or release its reservation on failure.
+ * Apply completion only to the matching reservation. Pending deliveries
+ * cannot be redeemed and must expire if the sender is interrupted.
  * TOTP_ENROLL receives a subject from a verified session. An empty secret
  * requests first enrollment, a code authorizes rotation. Verify the supplied
  * session digest and revision when staging the pending seed. Return its
@@ -85,7 +93,8 @@ typedef struct knurl_auth_exchange {
      */
     const char *digest;
     /** New session digest for factor/session operations. Existing session
-     * digest for enrollment. */
+     * digest for enrollment. Opaque delivery reservation for EMAIL_SAVE and
+     * EMAIL_FINISH on a standalone email login. */
     const char *session_digest;
     knurl_auth_login login;
     /** Workflow callbacks receive the configured factors and current factor.

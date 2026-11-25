@@ -11,7 +11,7 @@
 struct knurl_job {
     knurl_executor *executor;
     knurl_job_config config;
-    knurl_job *next, *queue_next;
+    knurl_job *next, *queue_next, *running_next;
     unsigned char *arguments, *result;
     size_t result_size;
     pthread_t thread;
@@ -27,7 +27,7 @@ struct knurl_executor {
     knurl_executor_config config;
     pthread_mutex_t queue_lock;
     pthread_cond_t ready;
-    knurl_job *queue_head, *queue_tail, *jobs, *jobs_tail;
+    knurl_job *queue_head, *queue_tail, *jobs, *jobs_tail, *keyed_running;
     knurl_watch *watch;
     knurl_timer *timer;
     int work[2], notify[2];
@@ -130,6 +130,53 @@ knurl_status knurl_job_result_copy(knurl_job *job, knurl_bytes result,
     knurl_error_clear(error);
     return KNURL_OK;
 }
+/* The queue lock protects both pending jobs and reservations held by
+ * running jobs. Waiting for a provider must not occupy a native thread. */
+static knurl_job *take_job(knurl_executor *e)
+{
+    knurl_job *job, *previous = NULL, *running;
+    for (job = e->queue_head; job != NULL && job->config.serial_key != NULL;
+         job = job->queue_next) {
+        for (running = e->keyed_running; running != NULL;
+             running = running->running_next)
+            if (strcmp(job->config.serial_key, running->config.serial_key) == 0)
+                break;
+        if (running == NULL)
+            break;
+        previous = job;
+    }
+    if (job == NULL)
+        return NULL;
+    if (previous == NULL)
+        e->queue_head = job->queue_next;
+    else
+        previous->queue_next = job->queue_next;
+    if (e->queue_tail == job)
+        e->queue_tail = previous;
+    job->queue_next = NULL;
+    if (job->config.serial_key != NULL) {
+        job->running_next = e->keyed_running;
+        e->keyed_running = job;
+    }
+    return job;
+}
+
+static void release_key(knurl_executor *e, knurl_job *job)
+{
+    knurl_job **link;
+    if (job->config.serial_key == NULL)
+        return;
+    (void)pthread_mutex_lock(&e->queue_lock);
+    link = &e->keyed_running;
+    while (*link != job)
+        link = &(*link)->running_next;
+    *link = job->running_next;
+    /* Idle threads may have consumed the queued jobs' earlier wakeups. */
+    if (e->queue_head != NULL)
+        (void)signal_pipe(e->work[1], 1);
+    (void)pthread_mutex_unlock(&e->queue_lock);
+}
+
 static void *worker_main(void *data)
 {
     knurl_executor *e = data;
@@ -162,13 +209,7 @@ static void *worker_main(void *data)
         if (read(e->work[0], &byte, 1) != 1)
             continue;
         (void)pthread_mutex_lock(&e->queue_lock);
-        job = e->queue_head;
-        if (job != NULL) {
-            e->queue_head = job->queue_next;
-            if (e->queue_head == NULL)
-                e->queue_tail = NULL;
-            job->queue_next = NULL;
-        }
+        job = take_job(e);
         (void)pthread_mutex_unlock(&e->queue_lock);
         if (job == NULL)
             continue;
@@ -190,6 +231,7 @@ static void *worker_main(void *data)
                 fail(&job->error, job->work_status, "native callback failed");
         }
         (void)knurl_loop_monotonic(&job->finished, NULL);
+        release_key(e, job);
         __atomic_store_n(&job->done, 1, __ATOMIC_RELEASE);
         (void)signal_pipe(e->notify[1], 1);
     }
@@ -237,6 +279,12 @@ static void unlink_executor(knurl_executor *e)
         --e->loop->impl->executor_count;
     else if (e->loop->impl->auth_executor == e)
         e->loop->impl->auth_executor = NULL;
+    else if (e->loop->impl->mail_executor == e)
+        e->loop->impl->mail_executor = NULL;
+    else if (e->loop->impl->oidc_executor == e)
+        e->loop->impl->oidc_executor = NULL;
+    else if (e->loop->impl->oauth2_executor == e)
+        e->loop->impl->oauth2_executor = NULL;
 }
 static void release_executor(knurl_executor *e)
 {
@@ -304,7 +352,8 @@ static void acknowledge_queued(knurl_job *job)
         job->queue_next = NULL;
         /* Balance a queued notification when available. A worker that already
          * reserved the token simply observes an empty queue. */
-        (void)read(e->work[0], &byte, 1);
+        if (job->config.serial_key == NULL)
+            (void)read(e->work[0], &byte, 1);
         job->work_status = KNURL_CANCELLED;
         (void)knurl_loop_monotonic(&job->finished, NULL);
         __atomic_store_n(&job->done, 1, __ATOMIC_RELEASE);
@@ -574,6 +623,16 @@ knurl_status knurl_executor_submit(knurl_executor *e,
     if (e->count >= e->config.max_jobs) {
         knurl_error_clear(error);
         return KNURL_AGAIN;
+    }
+    if (config->serial_key != NULL) {
+        size_t count = 0, limit = (e->config.max_jobs + 1) / 2;
+        for (job = e->jobs; job != NULL; job = job->next)
+            if (job->config.serial_key != NULL &&
+                strcmp(job->config.serial_key, config->serial_key) == 0 &&
+                ++count >= limit) {
+                knurl_error_clear(error);
+                return KNURL_AGAIN;
+            }
     }
     effective = *config;
     if (effective.timeout_ms == 0)

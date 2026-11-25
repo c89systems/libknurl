@@ -48,8 +48,9 @@ static const char password_form[] =
     "username=alice&password=a+test+password+with+spaces";
 struct fixture {
     knurl_auth_json *store;
+    knurl_auth_json *mail_store;
     char cert[1024], key[1024], static_file[1024];
-    char directory_status[1024], store_path[1024];
+    char directory_status[1024], store_path[1024], mail_store_path[1024];
     char enrollment[KNURL_AUTH_TOTP_URI_CAPACITY], client_secret[66];
     char flow_enrollment[2][KNURL_AUTH_TOTP_URI_CAPACITY];
     char jwks[1024], next_jwks[1024], issuer[128], ca_pem[2048];
@@ -115,6 +116,17 @@ static int read_response(struct connection *c, char out[4096])
     out[size] = 0;
     (void)sscanf(out, "HTTP/1.1 %d", &code);
     return code;
+}
+
+static void check_response_ready(struct connection *c)
+{
+    struct timeval quick = {0, 800000}, normal = {5, 0};
+    char byte;
+    CHECK(setsockopt(c->fd, SOL_SOCKET, SO_RCVTIMEO, &quick, sizeof(quick)) ==
+          0);
+    CHECK(SSL_peek(c->tls, &byte, 1) == 1);
+    CHECK(setsockopt(c->fd, SOL_SOCKET, SO_RCVTIMEO, &normal, sizeof(normal)) ==
+          0);
 }
 
 static int exchange(struct fixture *f, int tls, const char *method,
@@ -186,6 +198,18 @@ static knurl_status send_code(const char *address, const char *code, void *data,
           strcmp(address, "remote@example.test") == 0);
     CHECK(write(f->mail[1], code, 6) == 6);
     return KNURL_OK;
+}
+
+static knurl_status gated_mail(const char *address, const char *code,
+                               void *data, knurl_error *error)
+{
+    struct fixture *f = data;
+    char action;
+    CHECK(write(f->entered[1], "m", 1) == 1);
+    action = note(f->resume[0], 3000);
+    CHECK(action == 'f' || action == 'r');
+    return action == 'f' ? KNURL_BACKEND
+                         : send_code(address, code, data, error);
 }
 
 static knurl_status text(knurl_request *request, knurl_reply *reply, void *data,
@@ -564,6 +588,10 @@ static pid_t oauth_fixture(struct fixture *f)
         if (strncmp(wire, "GET /.well-known/openid-configuration ", 38) == 0) {
             const char *endpoint;
             CHECK(++discovered <= 5);
+            if (discovered == 1) {
+                CHECK(write(f->token_request[1], "d", 1) == 1);
+                CHECK(note(f->token_resume[0], 3000) == 'r');
+            }
             endpoint = discovered <= 3   ? "token"
                        : discovered == 4 ? "retired-token"
                                          : "replacement-token";
@@ -659,7 +687,31 @@ static void oauth_lifecycle(struct fixture *f)
     long expiry = (long)time(NULL) + 60;
     sign_bearer(f->signing_key, "at+jwt", "fixture", f->issuer, "knurl",
                 "machine", "jwt-service", expiry, auth);
-    CHECK(exchange(f, 1, "GET", "/rotating-oidc", auth, NULL, out) == 200);
+    {
+        char wire[2600];
+        struct connection independent;
+        snprintf(wire, sizeof(wire),
+                 "GET /rotating-oidc HTTP/1.1\r\nHost: localhost\r\n"
+                 "Connection: close\r\n%s\r\n",
+                 auth);
+        pending = connect_to(f, 1);
+        send_request(&pending, wire);
+        CHECK(note(f->token_request[0], 3000) == 'd');
+        second = connect_to(f, 1);
+        send_request(&second, wire);
+        bearer(f, "at+jwt", "knurl", "machine", expiry, auth);
+        snprintf(wire, sizeof(wire),
+                 "GET /oidc HTTP/1.1\r\nHost: localhost\r\n"
+                 "Connection: close\r\n%s\r\n",
+                 auth);
+        independent = connect_to(f, 1);
+        send_request(&independent, wire);
+        check_response_ready(&independent);
+        CHECK(read_response(&independent, out) == 200);
+        CHECK(write(f->token_resume[1], "r", 1) == 1);
+        CHECK(read_response(&pending, out) == 200);
+        CHECK(read_response(&second, out) == 200);
+    }
     pending = connect_to(f, 1);
     send_request(&pending,
                  "GET /oauth-proxy HTTP/1.1\r\nHost: localhost\r\n"
@@ -1215,6 +1267,108 @@ static void directory_totp(struct fixture *f, char session[256])
     cookie(out, session);
 }
 
+static void start_mail(struct fixture *f, const char *path, const char *form,
+                       char out[4096])
+{
+    int attempt;
+    for (attempt = 0; attempt < 6; ++attempt) {
+        CHECK(exchange(f, 1, "POST", path, NULL, form, out) == 202);
+        if (note(f->entered[0], 200) == 'm')
+            return;
+    }
+    CHECK(0);
+}
+
+/* The isolated mail fixture has no competing requests here. Backdate the
+ * published challenge's resend timestamp while leaving the code unexpired. */
+static void age_resend_window(struct fixture *f)
+{
+    static const struct timespec wait = {0, 10000000L};
+    char path[1200], json[4096], *updated, *digits;
+    size_t used;
+    int attempt;
+    FILE *file;
+    snprintf(path, sizeof(path), "%s/email.json", f->mail_store_path);
+    for (attempt = 0; attempt < 100; ++attempt) {
+        file = fopen(path, "rb");
+        CHECK(file != NULL);
+        used = fread(json, 1, sizeof(json) - 1, file);
+        CHECK(feof(file) && fclose(file) == 0);
+        json[used] = 0;
+        if (strstr(json, "\"e-") != NULL && strstr(json, "\"l-") == NULL)
+            break;
+        (void)nanosleep(&wait, NULL);
+    }
+    CHECK(attempt < 100);
+    updated = strstr(json, "\"updated\":");
+    CHECK(updated != NULL);
+    digits = updated + strlen("\"updated\":");
+    digits += strspn(digits, " \t");
+    used = strspn(digits, "0123456789");
+    CHECK(used > 0);
+    *digits++ = '0';
+    memset(digits, ' ', used - 1);
+    file = fopen(path, "wb");
+    CHECK(file != NULL && fputs(json, file) >= 0 && fclose(file) == 0);
+}
+
+static void mail_delivery(struct fixture *f)
+{
+    char out[4096], code[7], form[160], flow[65], previous[65];
+    size_t i;
+    struct connection login;
+    start_mail(f, "/mail-start", "username=alice", out);
+    start_mail(f, "/mail-start", "username=dave", out);
+    login = connect_to(f, 1);
+    snprintf(form, sizeof(form), "%lu\r\n\r\n%s",
+             (unsigned long)strlen(password_form), password_form);
+    {
+        char wire[512];
+        snprintf(wire, sizeof(wire),
+                 "POST /mail-password HTTP/1.1\r\nHost: localhost\r\n"
+                 "Connection: close\r\nContent-Type: "
+                 "application/x-www-form-urlencoded\r\n"
+                 "Content-Length: %s",
+                 form);
+        send_request(&login, wire);
+    }
+    check_response_ready(&login);
+    CHECK(read_response(&login, out) == 204);
+    CHECK(write(f->resume[1], "ff", 2) == 2);
+
+    start_mail(f, "/mail-start", "username=alice", out);
+    CHECK(write(f->resume[1], "r", 1) == 1);
+    for (i = 0; i < 6; ++i)
+        CHECK((code[i] = note(f->mail[0], 3000)) != 0);
+    code[6] = 0;
+    age_resend_window(f);
+    start_mail(f, "/mail-start", "username=alice", out);
+    CHECK(write(f->resume[1], "f", 1) == 1);
+    snprintf(form, sizeof(form), "username=alice&code=%s", code);
+    CHECK(exchange(f, 1, "POST", "/mail-login", NULL, form, out) == 204);
+    CHECK(exchange(f, 1, "POST", "/mail-login", NULL, form, out) == 401);
+    start_mail(f, "/mail-start", "username=alice", out);
+    CHECK(write(f->resume[1], "f", 1) == 1);
+
+    start_mail(f, "/mail-workflow", "username=dave", out);
+    response_field(out, "workflow", previous, sizeof(previous));
+    CHECK(write(f->resume[1], "f", 1) == 1);
+    start_mail(f, "/mail-workflow", "username=dave", out);
+    response_field(out, "workflow", flow, sizeof(flow));
+    CHECK(strcmp(flow, previous) != 0);
+    CHECK(write(f->resume[1], "r", 1) == 1);
+    for (i = 0; i < 6; ++i)
+        CHECK((code[i] = note(f->mail[0], 3000)) != 0);
+    snprintf(form, sizeof(form), "workflow=%s&code=%s", previous, code);
+    CHECK(exchange(f, 1, "POST", "/mail-workflow", NULL, form, out) == 401);
+    snprintf(form, sizeof(form), "workflow=%s&code=%s", flow, code);
+    CHECK(exchange(f, 1, "POST", "/mail-workflow", NULL, form, out) == 202);
+    response_field(out, "workflow", flow, sizeof(flow));
+    snprintf(form, sizeof(form),
+             "workflow=%s&password=a+test+password+with+spaces", flow);
+    CHECK(exchange(f, 1, "POST", "/mail-workflow", NULL, form, out) == 204);
+}
+
 static void exercise(struct fixture *f)
 {
     char out[4096], session[256], form[160], code[7], encoded[256], auth[320];
@@ -1323,6 +1477,7 @@ static void exercise(struct fixture *f)
     CHECK(exchange(f, 1, "POST", "/login", NULL,
                    "username=limited&password=bad", out) == 429);
     CHECK(knurl_auth_json_prune(f->store, NULL) == KNURL_OK);
+    mail_delivery(f);
     oauth_saturation(f);
 }
 
@@ -1373,6 +1528,7 @@ static void routes(knurl_router *router, struct fixture *f)
     knurl_auth *browser, *otp, *email, *smtp, *external, *machine, *other,
         *slow, *issuer, *rotating, *ordered, *ordered_api, *external_machine,
         *external_email;
+    knurl_auth *mail_probe;
     knurl_route_group_config group_config;
     knurl_route_group *group;
     knurl_blocking_route_config app;
@@ -1383,6 +1539,30 @@ static void routes(knurl_router *router, struct fixture *f)
     knurl_oauth2_client *client;
     knurl_route *handle;
     char mail_url[128], proxy_url[128];
+    knurl_auth_config_init(&config);
+    config.json = f->mail_store;
+    config.name = "mail-password";
+    CHECK(knurl_auth_new(&config, &mail_probe, NULL) == KNURL_OK);
+    CHECK(knurl_auth_route(router, "/mail-password", mail_probe,
+                           KNURL_AUTH_LOGIN, &handle, NULL) == KNURL_OK);
+    knurl_auth_close(mail_probe);
+    config.name = "mail-delivery";
+    config.login = KNURL_AUTH_LOGIN_EMAIL;
+    config.send_email = gated_mail;
+    config.email_userdata = f;
+    CHECK(knurl_auth_new(&config, &mail_probe, NULL) == KNURL_OK);
+    CHECK(knurl_auth_route(router, "/mail-start", mail_probe,
+                           KNURL_AUTH_EMAIL_START, &handle, NULL) == KNURL_OK);
+    CHECK(knurl_auth_route(router, "/mail-login", mail_probe, KNURL_AUTH_LOGIN,
+                           &handle, NULL) == KNURL_OK);
+    knurl_auth_close(mail_probe);
+    config.name = "mail-workflow";
+    config.login = KNURL_AUTH_LOGIN_PASSWORD;
+    config.factors = KNURL_AUTH_FACTOR_EMAIL | KNURL_AUTH_FACTOR_PASSWORD;
+    CHECK(knurl_auth_new(&config, &mail_probe, NULL) == KNURL_OK);
+    CHECK(knurl_auth_route(router, "/mail-workflow", mail_probe,
+                           KNURL_AUTH_WORKFLOW, &handle, NULL) == KNURL_OK);
+    knurl_auth_close(mail_probe);
     knurl_auth_config_init(&config);
     config.name = "browser";
     config.json = f->store;
@@ -1756,6 +1936,18 @@ int main(int argc, char **argv)
     snprintf(f.key, sizeof(f.key), "%s/key.pem", argv[1]);
     if (argc == 4)
         return runner_test(&f, argv[1], store, argv[2], argv[3]);
+    snprintf(f.mail_store_path, sizeof(f.mail_store_path), "%s/mail", argv[1]);
+    CHECK(knurl_auth_json_init(f.mail_store_path, &error) == KNURL_OK);
+    CHECK(knurl_auth_json_open(f.mail_store_path, &f.mail_store, &error) ==
+          KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_PASSWORD, "alice",
+                                password, &error) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_EMAIL, "alice",
+                                "alice@example.test", &error) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_PASSWORD, "dave",
+                                password, &error) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_EMAIL, "dave",
+                                "dave@example.test", &error) == KNURL_OK);
     large_store(argv[1]);
     snprintf(f.static_file, sizeof(f.static_file), "%s/file.txt", argv[1]);
     snprintf(f.directory_status, sizeof(f.directory_status),
@@ -1856,5 +2048,6 @@ int main(int argc, char **argv)
     EVP_PKEY_free(f.signing_key);
     verify_state_files(store);
     knurl_auth_json_close(f.store);
+    knurl_auth_json_close(f.mail_store);
     return 0;
 }

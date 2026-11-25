@@ -97,15 +97,35 @@ int knurl_auth_email_code_make(char code[7])
     return 1;
 }
 
+knurl_status knurl_auth_email_deliver(knurl_job *task,
+                                      struct knurl_auth_job *job,
+                                      knurl_auth_exchange *state,
+                                      const char *address, const char *code,
+                                      knurl_error *error)
+{
+    const knurl_auth_config *config = &job->auth->config;
+    knurl_status status =
+        knurl_job_cancelled(task)
+            ? KNURL_CANCELLED
+            : config->send_email(address, code, config->email_userdata, error);
+    state->active = status == KNURL_OK;
+    if (state->active)
+        return knurl_auth_exchange_run(job, KNURL_AUTH_EMAIL_FINISH, state,
+                                       error);
+    (void)knurl_auth_exchange_run(job, KNURL_AUTH_EMAIL_FINISH, state, NULL);
+    return status;
+}
+
 static knurl_status email_start(knurl_job *task, struct knurl_auth_job *job,
                                 knurl_auth_exchange *x, knurl_error *error)
 {
-    char digest[65], code[7];
+    char digest[65], reservation[65], code[7];
     knurl_status status;
     knurl_auth_exchange state;
     if (x->email[0] == 0 || x->email[sizeof(x->email) - 1] != 0)
         return KNURL_EOF;
-    if (!knurl_auth_email_code_make(code))
+    if (!knurl_auth_random_hex(reservation, 32) ||
+        !knurl_auth_email_code_make(code))
         return knurl_fail(error, KNURL_BACKEND, "auth_email",
                           "generating email code");
     if (!knurl_auth_digest(job->auth->email_key, job->scope,
@@ -116,6 +136,7 @@ static knurl_status email_start(knurl_job *task, struct knurl_auth_job *job,
     memset(&state, 0, sizeof(state));
     state.subject = x->identity.subject;
     state.digest = digest;
+    state.session_digest = reservation;
     state.lifetime_seconds = 600;
     if (job->auth->config.users == NULL)
         memcpy(state.revision, x->revision, sizeof(state.revision));
@@ -123,9 +144,9 @@ static knurl_status email_start(knurl_job *task, struct knurl_auth_job *job,
                  ? KNURL_CANCELLED
                  : knurl_auth_exchange_run(job, KNURL_AUTH_EMAIL_SAVE, &state,
                                            error);
-    if (status == KNURL_OK && !knurl_job_cancelled(task))
-        status = job->auth->config.send_email(
-            x->email, code, job->auth->config.email_userdata, error);
+    if (status == KNURL_OK)
+        status =
+            knurl_auth_email_deliver(task, job, &state, x->email, code, error);
     OPENSSL_cleanse(code, sizeof(code));
     return status;
 }
@@ -381,7 +402,7 @@ static void completed(knurl_job *task, const knurl_job_outcome *outcome,
         (void)knurl_fail(&error, status,
                          job->admission ? "auth_admission" : "auth_endpoint",
                          knurl_status_string(status));
-        if (!job->admission && job->endpoint == KNURL_AUTH_EMAIL_START &&
+        if (!job->admission &&
             strcmp(outcome->error.operation, "auth_email") == 0 &&
             job->auth->config.send_email == knurl_auth_smtp_send)
             error = outcome->error;
@@ -447,6 +468,7 @@ knurl_status knurl_auth_executor(knurl_request *request,
     struct knurl_loop_impl *loop = knurl_request_loop(request)->impl;
     knurl_executor **slot = service == KNURL_AUTH_PROXY ? &loop->oauth2_executor
                             : service == KNURL_AUTH_OIDC ? &loop->oidc_executor
+                            : service == KNURL_AUTH_MAIL ? &loop->mail_executor
                                                          : &loop->auth_executor;
     knurl_executor_config pool;
     knurl_status status = KNURL_OK;
@@ -467,6 +489,9 @@ knurl_status knurl_auth_start(struct knurl_auth_job *job, knurl_error *error)
     knurl_executor *pool;
     knurl_job_config config;
     knurl_status status;
+    int mail = !job->admission && (job->endpoint == KNURL_AUTH_EMAIL_START ||
+                                   (job->endpoint == KNURL_AUTH_WORKFLOW &&
+                                    job->fields == KNURL_AUTH_FIELD_USER));
     if (request->impl->authority.length > 300) {
         knurl_auth_job_free(job);
         return knurl_fail(error, KNURL_INVALID, "auth_submit",
@@ -474,9 +499,11 @@ knurl_status knurl_auth_start(struct knurl_auth_job *job, knurl_error *error)
     }
     job->runtime = knurl_request_server(request)->impl->runtime;
     scope(job, request);
-    status = knurl_auth_executor(
-        request, job->auth->issuer != NULL ? KNURL_AUTH_OIDC : KNURL_AUTH_LOCAL,
-        &pool, error);
+    status = knurl_auth_executor(request,
+                                 job->auth->issuer != NULL ? KNURL_AUTH_OIDC
+                                 : mail                    ? KNURL_AUTH_MAIL
+                                                           : KNURL_AUTH_LOCAL,
+                                 &pool, error);
     if (status == KNURL_OK) {
         knurl_job_config_init(&config);
         config.work = work;
@@ -484,6 +511,7 @@ knurl_status knurl_auth_start(struct knurl_auth_job *job, knurl_error *error)
         config.interrupted = interrupted;
         config.retired = retired;
         config.userdata = job;
+        config.serial_key = knurl_auth_oidc_issuer_name(job->auth->issuer);
         config.timeout_ms = 12000;
         status = knurl_executor_submit(pool, &config, &job->job, error);
     }
@@ -492,9 +520,7 @@ knurl_status knurl_auth_start(struct knurl_auth_job *job, knurl_error *error)
         return status;
     }
     knurl_auth_retain(job->auth);
-    if (!job->admission && (job->endpoint == KNURL_AUTH_EMAIL_START ||
-                            (job->endpoint == KNURL_AUTH_WORKFLOW &&
-                             job->fields == KNURL_AUTH_FIELD_USER))) {
+    if (mail) {
         /* Acknowledge independently of account existence and delivery timing.
          */
         job->request = NULL;

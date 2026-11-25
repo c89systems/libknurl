@@ -260,6 +260,7 @@ void knurl_server_receiver_init(knurl_server *receiver)
         knurl_server_set_blocking_pool,
         knurl_server_set_log_callback,
         knurl_server_submit_application_task,
+        knurl_server_log_error,
     };
     *receiver = methods;
     receiver->impl = (struct knurl_server_impl *)receiver;

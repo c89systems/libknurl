@@ -19,6 +19,11 @@ struct knurl_auth_issuer {
     lonejson_int64 retry_at;
 };
 
+const char *knurl_auth_oidc_issuer_name(const struct knurl_auth_issuer *issuer)
+{
+    return issuer != NULL ? issuer->name : NULL;
+}
+
 void knurl_auth_oidc_close(struct knurl_auth_issuer *issuer)
 {
     if (issuer == NULL)

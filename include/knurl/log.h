@@ -47,6 +47,10 @@ typedef void (*knurl_log_fn)(const knurl_log_record *, void *);
 KNURL_API knurl_status knurl_server_set_log_callback(knurl_server *,
                                                      knurl_log_fn, void *,
                                                      knurl_error *);
+/** Emit a diagnostic through the active worker's configured logger. Call on
+ * the owner loop. The error is borrowed for the duration of the call. */
+KNURL_API void knurl_server_log_error(knurl_server *, const char *,
+                                      const knurl_error *);
 
 #ifdef __cplusplus
 }

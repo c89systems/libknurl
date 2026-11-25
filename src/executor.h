@@ -37,6 +37,9 @@ typedef struct knurl_job_config {
     knurl_job_retire_fn retired;
     knurl_bytes arguments;
     void *userdata;
+    /** Jobs with equal non-NULL keys execute one at a time. Borrowed
+     * through retirement. */
+    const char *serial_key;
     long timeout_ms;
     int timeout_disabled;
 } knurl_job_config;

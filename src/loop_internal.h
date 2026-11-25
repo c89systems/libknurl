@@ -78,6 +78,7 @@ struct knurl_loop_impl {
     struct knurl_executor *io_executor;
     struct knurl_executor *blocking_executor;
     struct knurl_executor *auth_executor;
+    struct knurl_executor *mail_executor;
     struct knurl_executor *oidc_executor;
     struct knurl_executor *oauth2_executor;
     struct knurl_storage_operation *storage_operations;

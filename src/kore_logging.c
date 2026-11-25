@@ -81,6 +81,15 @@ void knurl_kore_log_failure(struct knurl_runtime *runtime, const char *process,
     diagnostic(runtime->logging, LOG_ERR, process, error->message, error);
 }
 
+void knurl_server_log_error(knurl_server *server, const char *process,
+                            const knurl_error *error)
+{
+    if (error != NULL &&
+        knurl_loop_owner(knurl_server_loop(server), NULL) == KNURL_OK &&
+        server->impl->runtime != NULL)
+        knurl_kore_log_failure(server->impl->runtime, process, error);
+}
+
 void knurl_request_log_handler_error(knurl_request *request,
                                      const knurl_error *error)
 {

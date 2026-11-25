@@ -169,6 +169,7 @@ if mode == 'hook-timeout' then
     assert(outcome.opened and outcome.clean and outcome.peer_code == 1000)
     assert(outcome.peer_reason == 'bye')
     record('websocket close delivered')
+    error('intentional WebSocket close failure')
   end
   check(server:websocket{path = '/ws-close',
     on_open = function(ws) check(ws:send_text('ready')) end,

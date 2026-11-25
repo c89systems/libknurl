@@ -87,11 +87,17 @@ knurl_status knurl_auth_machine_verify(knurl_auth_exchange *, knurl_auth *,
 knurl_status knurl_auth_oidc_init(const knurl_auth_oidc *,
                                   struct knurl_auth_issuer **, knurl_error *);
 void knurl_auth_oidc_close(struct knurl_auth_issuer *);
+const char *knurl_auth_oidc_issuer_name(const struct knurl_auth_issuer *);
 int knurl_auth_https_url(const char *);
 void knurl_oauth2_client_retain(knurl_oauth2_client *);
 knurl_status knurl_oauth2_proxy_admit(knurl_request *, const knurl_reply *, int,
                                       void *, knurl_error *);
-enum knurl_auth_service { KNURL_AUTH_LOCAL, KNURL_AUTH_OIDC, KNURL_AUTH_PROXY };
+enum knurl_auth_service {
+    KNURL_AUTH_LOCAL,
+    KNURL_AUTH_MAIL,
+    KNURL_AUTH_OIDC,
+    KNURL_AUTH_PROXY
+};
 knurl_status knurl_auth_executor(knurl_request *, enum knurl_auth_service,
                                  knurl_executor **, knurl_error *);
 knurl_status knurl_oauth2_client_get(knurl_oauth2_client *, char *, size_t,
@@ -103,6 +109,9 @@ knurl_status knurl_auth_exchange_run(struct knurl_auth_job *,
 knurl_status knurl_auth_checked_identity(knurl_auth_exchange *, knurl_status,
                                          knurl_error *);
 int knurl_auth_email_code_make(char[7]);
+knurl_status knurl_auth_email_deliver(knurl_job *, struct knurl_auth_job *,
+                                      knurl_auth_exchange *, const char *,
+                                      const char *, knurl_error *);
 unsigned int knurl_auth_next_factor(unsigned int, unsigned int);
 knurl_auth_login knurl_auth_factor_storage(unsigned int);
 knurl_status knurl_auth_workflow_run(knurl_job *, struct knurl_auth_job *,

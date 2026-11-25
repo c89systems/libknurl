@@ -301,6 +301,7 @@ static enum auth_collection collection(const char *key)
     case 'm':
         return AUTH_SESSIONS;
     case 'e':
+    case 'l':
     case 'v':
     case 'g':
     case 'n':

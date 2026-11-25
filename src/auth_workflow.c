@@ -82,9 +82,9 @@ static knurl_status email_start(knurl_job *task, struct knurl_auth_job *job,
                  ? KNURL_CANCELLED
                  : knurl_auth_exchange_run(job, KNURL_AUTH_WORKFLOW_BEGIN,
                                            &state, error);
-    if (status == KNURL_OK && state.active && !knurl_job_cancelled(task))
-        status = config->send_email(account.email, code, config->email_userdata,
-                                    error);
+    if (status == KNURL_OK && state.active)
+        status = knurl_auth_email_deliver(task, job, &state, account.email,
+                                          code, error);
     OPENSSL_cleanse(code, sizeof(code));
     return status;
 }

@@ -277,8 +277,11 @@ static void completed(struct connection *ws, knurl_status status)
 static void retired(struct rl_work *job, knurl_status status,
                     const knurl_error *error)
 {
-    (void)error;
-    completed((struct connection *)job, status);
+    struct connection *ws = (struct connection *)job;
+    if (error != NULL && ws->event != EVENT_IDLE &&
+        strcmp(error->operation, callback_names[ws->event]) == 0)
+        knurl_server_log_error(job->server->native, "lua_websocket", error);
+    completed(ws, status);
 }
 
 static knurl_status schedule(struct connection *ws, knurl_error *error)

@@ -1153,6 +1153,8 @@ struct knurl_server {
                                             const struct knurl_task_config *,
                                             struct knurl_task **,
                                             knurl_error *);
+    /** Report a structured diagnostic on the active worker's owner loop. */
+    void (*log_error)(knurl_server *, const char *, const knurl_error *);
 };
 
 #ifdef __cplusplus

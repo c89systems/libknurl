@@ -120,7 +120,9 @@ A code expires after ten minutes and succeeds once. SMTP requires verified TLS.
 Use `smtp://` for mandatory STARTTLS or `smtps://` for implicit TLS. The
 optional `ca_file` overrides the system trust bundle and `timeout_ms` sets a
 timeout up to ten seconds. SMTP delivery errors go to the configured Knurl
-diagnostic logger.
+diagnostic logger. Delivery uses a separate native pool from password and
+session verification. A successful send starts the resend cooldown. A failed
+send releases its reservation and leaves any previously issued code usable.
 
 ## Ordered factors and machine credential issuance
 
@@ -217,7 +219,8 @@ upstream targets must use HTTPS. The token endpoint uses
 An upstream Bearer `invalid_token` response marks that token generation as
 unusable. Knurl returns the upstream response and obtains a fresh token for a
 later request. Proxy token acquisition and inbound JWT verification each use
-a native executor separate from the one for local sign-in.
+a native executor separate from the one for local sign-in. Work for the same
+OIDC issuer waits in the queue while a request for that issuer is running.
 Both the inbound OIDC and outbound OAuth2 configuration accept `ca_file`
 for a private trust root. A Lua application worker can also call
 `upstream:token()` for a separate outbound request. The call may wait for
