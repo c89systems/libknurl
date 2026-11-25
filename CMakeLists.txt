@@ -81,7 +81,8 @@ target_sources(knurl_objects PRIVATE src/static_gzip.c src/static_encoding.c)
 target_sources(knurl_objects PRIVATE src/ca.c)
 target_sources(knurl_objects PRIVATE src/task.c)
 target_sources(knurl_objects PRIVATE src/auth.c src/auth_work.c src/auth_route.c
-  src/auth_secret.c src/auth_json.c src/auth_store.c src/auth_smtp.c src/auth_oidc.c)
+  src/auth_secret.c src/auth_json.c src/auth_store.c src/auth_smtp.c src/auth_oidc.c
+  src/auth_http.c src/oauth2.c src/proxy_oauth2.c)
 target_sources(knurl_objects PRIVATE src/acme_file.c)
 target_sources(knurl_objects PRIVATE src/mmdb.c src/mmdb_decode.c src/mmdb_file.c src/mmdb_cache.c)
 target_sources(knurl_objects PRIVATE src/mmdb_prefix.c)

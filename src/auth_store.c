@@ -93,32 +93,48 @@ static knurl_status throttle(struct auth_transaction *tx, char kind,
     return knurl_auth_json_write(tx, path, &record, error);
 }
 
+static knurl_status totp_check(struct auth_transaction *tx, const char *subject,
+                               const char *code,
+                               const struct auth_record *account,
+                               lonejson_int64 now, char path[67],
+                               struct auth_record *record, knurl_error *error)
+{
+    knurl_status status;
+    if (!subject_path(path, 't', "", subject))
+        return failed(error);
+    status = knurl_auth_json_read(tx, path, record, error);
+    if (status != KNURL_OK && status != KNURL_EOF)
+        return status;
+    if (strcmp(record->enrollment, account->enrollment) != 0)
+        record->last_step = 0;
+    record->last_step = knurl_auth_totp_step(
+        tx->store->key, subject, account->seed, code, now, record->last_step);
+    if (record->last_step == 0)
+        return KNURL_EOF;
+    memcpy(record->enrollment, account->enrollment, sizeof(record->enrollment));
+    return KNURL_OK;
+}
+
 static knurl_status totp(struct auth_transaction *tx, knurl_auth_exchange *x,
                          lonejson_int64 now, knurl_error *error)
 {
     char path[67];
     struct auth_record account, record;
-    knurl_status status;
-    status = user(tx, x->subject, &account, error);
+    knurl_status status = user(tx, x->subject, &account, error);
+    if (status == KNURL_EOF && x->revision[0] == 0)
+        return KNURL_CONFLICT;
     if (status != KNURL_OK)
         return status;
-    if (account.disabled || account.seed[0] == 0 ||
-        account.enrollment[0] == 0 ||
+    if (account.disabled ||
         (x->revision[0] && strcmp(x->revision, account.revision) != 0))
         return KNURL_EOF;
-    if (!subject_path(path, 't', "", x->subject))
-        return failed(error);
-    status = knurl_auth_json_read(tx, path, &record, error);
-    if (status != KNURL_OK && status != KNURL_EOF)
+    if (account.seed[0] == 0 || account.enrollment[0] == 0)
+        return KNURL_CONFLICT;
+    status = totp_check(tx, x->subject, x->secret, &account, now, path, &record,
+                        error);
+    if (status != KNURL_OK)
         return status;
-    if (strcmp(record.enrollment, account.enrollment) != 0)
-        record.last_step = 0;
-    record.last_step =
-        knurl_auth_totp_step(tx->store->key, x->subject, account.seed,
-                             x->secret, now, record.last_step);
-    if (record.last_step == 0)
-        return KNURL_EOF;
-    memcpy(record.enrollment, account.enrollment, sizeof(record.enrollment));
+    memcpy(x->revision, account.revision, sizeof(x->revision));
     return knurl_auth_json_write(tx, path, &record, error);
 }
 
@@ -168,7 +184,10 @@ static knurl_status session(struct auth_transaction *tx,
     char path[67];
     struct auth_record record;
     knurl_status status;
-    record_path(path, 's', x->digest);
+    char kind = x->login == KNURL_AUTH_LOGIN_TOTP    ? 'w'
+                : x->login == KNURL_AUTH_LOGIN_EMAIL ? 'v'
+                                                     : 's';
+    record_path(path, kind, x->digest);
     if (op == KNURL_AUTH_SESSION_REVOKE)
         return knurl_auth_json_delete(tx, path, error);
     if (op == KNURL_AUTH_SESSION_SAVE) {
@@ -187,8 +206,10 @@ static knurl_status session(struct auth_transaction *tx,
     if (record.expires <= now)
         return KNURL_EOF;
     status = current(tx, record.subject, record.revision, error);
-    if (status == KNURL_OK)
+    if (status == KNURL_OK) {
         memcpy(x->identity.subject, record.subject, sizeof(record.subject));
+        memcpy(x->revision, record.revision, sizeof(x->revision));
+    }
     return status;
 }
 
@@ -214,6 +235,10 @@ static knurl_status machine(struct auth_transaction *tx, knurl_auth_exchange *x,
     knurl_auth_basic_clear(secret);
     return status;
 }
+
+static knurl_status enroll(struct auth_transaction *, const char *, int, int,
+                           const char *, const char *, lonejson_int64, char *,
+                           knurl_error *);
 
 knurl_status knurl_auth_json_exchange(knurl_auth_operation op,
                                       knurl_auth_exchange *x, void *arg,
@@ -243,11 +268,22 @@ knurl_status knurl_auth_json_exchange(knurl_auth_operation op,
         if (status == KNURL_OK)
             status = throttle(&tx, 'a', "", x->subject, now, 12, error);
         break;
-    case KNURL_AUTH_TOTP:
+    case KNURL_AUTH_TOTP_SESSION:
         status = totp(&tx, x, now, error);
         break;
+    case KNURL_AUTH_TOTP_ENROLL: {
+        knurl_auth_exchange proof = *x;
+        proof.digest = x->session_digest;
+        status = session(&tx, KNURL_AUTH_SESSION_FIND, &proof, now, error);
+        if (status == KNURL_OK && strcmp(proof.identity.subject, x->subject))
+            status = KNURL_EOF;
+        if (status == KNURL_OK)
+            status = enroll(&tx, x->subject, x->secret[0] != 0, 0, x->secret,
+                            x->revision, now, x->totp_uri, error);
+        break;
+    }
     case KNURL_AUTH_EMAIL_SAVE:
-    case KNURL_AUTH_EMAIL_CONSUME:
+    case KNURL_AUTH_EMAIL_SESSION:
         status = email(&tx, op, x, now, error);
         break;
     case KNURL_AUTH_SESSION_SAVE:
@@ -258,6 +294,17 @@ knurl_status knurl_auth_json_exchange(knurl_auth_operation op,
     default:
         status = KNURL_INVALID;
         break;
+    }
+    if (status == KNURL_OK &&
+        (op == KNURL_AUTH_TOTP_SESSION || op == KNURL_AUTH_EMAIL_SESSION)) {
+        knurl_auth_exchange save = *x;
+        save.digest = x->session_digest;
+        status = session(&tx, KNURL_AUTH_SESSION_SAVE, &save, now, error);
+        /* Discard staged factor changes even for session storage errors that
+         * ordinarily commit attempt counters. */
+        if (status == KNURL_LIMIT || status == KNURL_EOF)
+            status = knurl_fail(error, KNURL_BACKEND, "auth_session",
+                                "cannot persist completed login");
     }
     return knurl_auth_json_end(&tx, status, error);
 }
@@ -391,14 +438,56 @@ static void enrollment_uri(const char *subject, const char seed[33],
              "otpauth://totp/Knurl:%s?secret=%s&issuer=Knurl", label, seed);
 }
 
+static knurl_status enroll(struct auth_transaction *tx, const char *subject,
+                           int rotate, int operator, const char *code,
+                           const char *revision, lonejson_int64 now, char *out,
+                           knurl_error *error)
+{
+    struct auth_record record, last;
+    char path[67], seed[33], encrypted[123];
+    knurl_status status;
+    if (!subject_path(path, 'u', "", subject))
+        return failed(error);
+    status = knurl_auth_json_read(tx, path, &record, error);
+    if (status != KNURL_OK && status != KNURL_EOF)
+        return status;
+    if (!operator && (record.disabled ||
+                      (revision[0] && strcmp(revision, record.revision) != 0)))
+        return KNURL_EOF;
+    if (record.seed[0] != 0 && !rotate)
+        return knurl_fail(error, KNURL_CONFLICT, "auth_enroll_totp",
+                          "TOTP is already enrolled");
+    if (!operator && rotate) {
+        char replay[67];
+        if (record.seed[0] == 0)
+            return KNURL_EOF;
+        status =
+            totp_check(tx, subject, code, &record, now, replay, &last, error);
+        if (status != KNURL_OK)
+            return status;
+    }
+    if (!knurl_auth_seed_generate(seed) ||
+        !knurl_auth_seed_seal(tx->store->key, subject, seed, encrypted) ||
+        !knurl_auth_random_hex(record.revision, 16) ||
+        !knurl_auth_random_hex(record.enrollment, 16)) {
+        OPENSSL_cleanse(seed, sizeof(seed));
+        return failed(error);
+    }
+    snprintf(record.subject, sizeof(record.subject), "%s", subject);
+    snprintf(record.seed, sizeof(record.seed), "%s", encrypted);
+    status = knurl_auth_json_write(tx, path, &record, error);
+    if (status == KNURL_OK)
+        enrollment_uri(subject, seed, out);
+    OPENSSL_cleanse(seed, sizeof(seed));
+    return status;
+}
+
 knurl_status knurl_auth_json_enroll_totp(knurl_auth_json *json,
                                          const char *subject, int rotate,
                                          char out[KNURL_AUTH_TOTP_URI_CAPACITY],
                                          knurl_error *error)
 {
     struct auth_transaction tx;
-    struct auth_record record;
-    char path[67], seed[33], encrypted[123];
     knurl_status status;
     if (out != NULL)
         out[0] = 0;
@@ -406,34 +495,13 @@ knurl_status knurl_auth_json_enroll_totp(knurl_auth_json *json,
         return knurl_fail(
             error, KNURL_INVALID, "auth_enroll_totp",
             "store, account and enrollment URI output are required");
-    if (!subject_path(path, 'u', "", subject) ||
-        !knurl_auth_seed_generate(seed) ||
-        !knurl_auth_seed_seal(json->key, subject, seed, encrypted)) {
-        OPENSSL_cleanse(seed, sizeof(seed));
-        return failed(error);
-    }
     status = knurl_auth_json_begin(json, 1, &tx, error);
     if (status == KNURL_OK)
-        status = knurl_auth_json_read(&tx, path, &record, error);
-    if (status == KNURL_OK && record.seed[0] != 0 && !rotate)
-        status =
-            knurl_fail(error, KNURL_CONFLICT, "auth_enroll_totp",
-                       "TOTP is already enrolled; request rotation explicitly");
-    if (status == KNURL_OK || status == KNURL_EOF) {
-        if (!knurl_auth_random_hex(record.revision, 16) ||
-            !knurl_auth_random_hex(record.enrollment, 16)) {
-            status = failed(error);
-        } else {
-            snprintf(record.subject, sizeof(record.subject), "%s", subject);
-            snprintf(record.seed, sizeof(record.seed), "%s", encrypted);
-            status = knurl_auth_json_write(&tx, path, &record, error);
-        }
-    }
+        status = enroll(&tx, subject, rotate, 1, "", "", 0, out, error);
     status = knurl_auth_json_end(&tx, status, error);
-    if (status == KNURL_OK) {
-        enrollment_uri(subject, seed, out);
+    if (status == KNURL_OK)
         knurl_error_clear(error);
-    }
-    OPENSSL_cleanse(seed, sizeof(seed));
+    else
+        OPENSSL_cleanse(out, KNURL_AUTH_TOTP_URI_CAPACITY);
     return status;
 }

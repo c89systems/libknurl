@@ -36,6 +36,8 @@ struct knurl_auth_job {
     char credential[16385];
     char code[17];
     char cookie[65];
+    char revision[33];
+    char totp_uri[KNURL_AUTH_TOTP_URI_CAPACITY];
     knurl_auth_identity identity;
 };
 
@@ -74,11 +76,23 @@ knurl_status knurl_auth_machine_verify(knurl_auth_exchange *, knurl_auth *,
 knurl_status knurl_auth_oidc_init(const knurl_auth_oidc *,
                                   struct knurl_auth_issuer **, knurl_error *);
 void knurl_auth_oidc_close(struct knurl_auth_issuer *);
+int knurl_auth_https_url(const char *);
+lonejson_status knurl_auth_http(void *, const lonejson_http_request *,
+                                lonejson_http_response *, lonejson_error *);
+void knurl_auth_http_clear(lonejson_http_response *);
+knurl_status knurl_auth_http_runtime(const char *, lonejson **, knurl_error *);
+void knurl_oauth2_client_retain(knurl_oauth2_client *);
+knurl_status knurl_oauth2_proxy_admit(knurl_request *, const knurl_reply *, int,
+                                      void *, knurl_error *);
+knurl_status knurl_auth_executor(knurl_request *, knurl_executor **,
+                                 knurl_error *);
 knurl_status knurl_auth_oidc_verify(struct knurl_auth_issuer *,
                                     knurl_auth_exchange *, knurl_error *);
 knurl_status knurl_auth_start(struct knurl_auth_job *, knurl_error *);
 knurl_status knurl_auth_reply(knurl_request *, int, const char *, const char *,
                               knurl_error *);
+knurl_status knurl_auth_json_reply(knurl_request *, int, const char *,
+                                   knurl_error *);
 int knurl_auth_cookie(knurl_request *, const knurl_auth *, char[65]);
 void knurl_kore_headers_resume(knurl_request *, int);
 knurl_status knurl_router_headers_selected(knurl_request *,

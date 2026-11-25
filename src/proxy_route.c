@@ -1,4 +1,5 @@
 #include "proxy_route_internal.h"
+#include "auth_internal.h"
 
 #include "proxy_common.h"
 #include "router_internal.h"
@@ -53,6 +54,7 @@ static void knurl_proxy_route_data_free(void *userdata)
                         data->tls_client_key_pem_length);
         free(data->tls_client_key_pem);
     }
+    knurl_oauth2_client_close(data->oauth2);
     free(data);
 }
 
@@ -354,6 +356,31 @@ knurl_status knurl_route_set_proxy_async_hooks(
     route->impl->proxy_hooks.before = admission;
     route->impl->proxy_hooks.after = response;
     route->impl->proxy_hooks.userdata = data;
+    knurl_error_clear(error);
+    return KNURL_OK;
+}
+
+knurl_status knurl_route_set_proxy_oauth2(knurl_route *route,
+                                          knurl_oauth2_client *client,
+                                          knurl_error *error)
+{
+    knurl_proxy_route_data *data;
+    size_t i;
+    if (route == NULL || route->impl->config.on_headers != knurl_proxy_dispatch)
+        return knurl_fail(error, KNURL_INVALID, "proxy_oauth2",
+                          "proxy route required");
+    if (route->impl->router->impl->frozen)
+        return knurl_fail(error, KNURL_STATE, "proxy_oauth2",
+                          "configure OAuth2 while inactive");
+    data = route->impl->config.userdata;
+    if (client != NULL)
+        for (i = 0; i < data->target_count; ++i)
+            if (!knurl_auth_https_url(data->targets[i]))
+                return knurl_fail(error, KNURL_INVALID, "proxy_oauth2",
+                                  "OAuth2 requires HTTPS upstream targets");
+    knurl_oauth2_client_retain(client);
+    knurl_oauth2_client_close(data->oauth2);
+    data->oauth2 = client;
     knurl_error_clear(error);
     return KNURL_OK;
 }

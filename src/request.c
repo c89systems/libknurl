@@ -14,6 +14,7 @@
 #include "reply_internal.h"
 #include "body_internal.h"
 #include <knurl/loop.h>
+#include <openssl/crypto.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -271,6 +272,11 @@ void knurl_request_set_userdata(knurl_request *request, void *userdata)
 void knurl_request_cleanup(knurl_request *request)
 {
     size_t i;
+    if (request->impl->proxy_authorization != NULL) {
+        OPENSSL_cleanse(request->impl->proxy_authorization,
+                        strlen(request->impl->proxy_authorization));
+        free(request->impl->proxy_authorization);
+    }
     if (request->impl->proxy_rewrite_release != NULL)
         request->impl->proxy_rewrite_release(request->impl->proxy_rewrite_data);
     if (request->impl->reply != NULL) {

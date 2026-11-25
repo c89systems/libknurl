@@ -75,6 +75,7 @@ struct knurl_request_impl {
     int hook_admission_complete;
     int hook_invoking;
     int proxy_admission_invoked;
+    char *proxy_authorization;
     unsigned int hook_stage, hook_before, hook_after;
     void (*hook_cancel)(void *);
     void *hook_userdata;
@@ -100,6 +101,9 @@ knurl_status knurl_router_hooks_after(knurl_request *, knurl_error *);
 knurl_status knurl_router_invoke(knurl_request *request, knurl_error *error);
 knurl_status knurl_request_hooks_admit(knurl_request *, knurl_error *);
 knurl_status knurl_request_proxy_admit(knurl_request *, knurl_error *);
+knurl_status knurl_request_proxy_authenticate(knurl_request *,
+                                              struct knurl_oauth2_client *,
+                                              knurl_error *);
 int knurl_request_has_after_hooks(const knurl_request *);
 knurl_status knurl_request_hooks_after(knurl_request *, knurl_error *);
 void knurl_request_hook_cancel(knurl_request *);

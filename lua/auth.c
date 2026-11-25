@@ -1,6 +1,78 @@
 #include "binding.h"
+#include <openssl/crypto.h>
 
 #define RL_AUTH "knurl.auth"
+#define RL_OAUTH2 "knurl.oauth2"
+
+static int oauth2_close(lua_State *L)
+{
+    knurl_oauth2_client **owner = luaL_checkudata(L, 1, RL_OAUTH2);
+    knurl_oauth2_client_close(*owner);
+    *owner = NULL;
+    return 0;
+}
+
+static int oauth2_token(lua_State *L)
+{
+    knurl_oauth2_client **owner = luaL_checkudata(L, 1, RL_OAUTH2);
+    knurl_error error;
+    char token[16385];
+    if (knurl_oauth2_client_token(*owner, token, sizeof(token), &error) !=
+        KNURL_OK)
+        return rl_error(L, &error);
+    lua_pushstring(L, token);
+    OPENSSL_cleanse(token, sizeof(token));
+    return 1;
+}
+
+int rl_oauth2_option(lua_State *L, int index, knurl_oauth2_client **out,
+                     knurl_error *error)
+{
+    knurl_oauth2_client **owner;
+    *out = NULL;
+    rl_field(L, index, "oauth2");
+    owner = luaL_testudata(L, -1, RL_OAUTH2);
+    if (!lua_isnil(L, -1) && (owner == NULL || *owner == NULL)) {
+        lua_pop(L, 1);
+        rl_fail(error, KNURL_INVALID, "expected an open OAuth2 client");
+        return 0;
+    }
+    if (owner != NULL)
+        *out = *owner;
+    lua_pop(L, 1);
+    return 1;
+}
+
+static int new_oauth2(lua_State *L)
+{
+    static const char *const fields[] = {
+        "issuer",   "token_endpoint", "client_id", "client_secret",     "scope",
+        "audience", "resource",       "ca_file",   "client_secret_post"};
+    knurl_oauth2_config config;
+    knurl_oauth2_client **owner;
+    knurl_error error;
+    memset(&config, 0, sizeof(config));
+    if (!rl_fields(L, 1, fields, RL_COUNT(fields), &error))
+        return rl_error(L, &error);
+    if (!rl_field_string(L, 1, "issuer", &config.issuer) ||
+        !rl_field_string(L, 1, "token_endpoint", &config.token_endpoint) ||
+        !rl_field_string(L, 1, "client_id", &config.client_id) ||
+        !rl_field_string(L, 1, "client_secret", &config.client_secret) ||
+        !rl_field_string(L, 1, "scope", &config.scope) ||
+        !rl_field_string(L, 1, "audience", &config.audience) ||
+        !rl_field_string(L, 1, "resource", &config.resource) ||
+        !rl_field_string(L, 1, "ca_file", &config.ca_file) ||
+        !rl_field_bool(L, 1, "client_secret_post", &config.client_secret_post))
+        return rl_result(
+            L, rl_fail(&error, KNURL_INVALID, "invalid OAuth2 options"),
+            &error);
+    owner = lua_newuserdatauv(L, sizeof(*owner), 0);
+    *owner = NULL;
+    luaL_setmetatable(L, RL_OAUTH2);
+    return knurl_oauth2_client_new(&config, owner, &error) == KNURL_OK
+               ? 1
+               : rl_error(L, &error);
+}
 
 static int policy(lua_State *L, int index, knurl_auth **out, knurl_error *error)
 {
@@ -65,7 +137,8 @@ static int smtp(lua_State *L, knurl_auth_smtp *config, knurl_error *error)
 static int oidc(lua_State *L, knurl_auth_oidc *config, knurl_error *error)
 {
     static const char *const fields[] = {"issuer",    "audience", "jwks_uri",
-                                         "jwks_json", "scope",    "token_type"};
+                                         "jwks_json", "scope",    "token_type",
+                                         "ca_file",   "pin_jwks"};
     int ok;
     rl_field(L, 1, "oidc");
     if (lua_isnil(L, -1)) {
@@ -79,7 +152,9 @@ static int oidc(lua_State *L, knurl_auth_oidc *config, knurl_error *error)
          rl_field_string(L, -1, "jwks_uri", &config->jwks_uri) &&
          rl_field_string(L, -1, "jwks_json", &config->jwks_json) &&
          rl_field_string(L, -1, "scope", &config->scope) &&
-         rl_field_string(L, -1, "token_type", &config->token_type);
+         rl_field_string(L, -1, "token_type", &config->token_type) &&
+         rl_field_string(L, -1, "ca_file", &config->ca_file) &&
+         rl_field_bool(L, -1, "pin_jwks", &config->pin_jwks);
     lua_pop(L, 1);
     if (!ok)
         rl_fail(error, KNURL_INVALID, "invalid OIDC configuration");
@@ -192,7 +267,8 @@ static int endpoint(lua_State *L)
 
 void rl_auth_endpoints(lua_State *L)
 {
-    static const char *const names[] = {"login", "email_code", "logout"};
+    static const char *const names[] = {"login", "email_code", "logout",
+                                        "totp_enroll"};
     size_t i;
     for (i = 0; i < RL_COUNT(names); ++i) {
         lua_pushinteger(L, (lua_Integer)i);
@@ -207,6 +283,11 @@ void rl_auth_open(lua_State *L)
                                        {"__gc", close_policy},
                                        {"__close", close_policy},
                                        {NULL, NULL}};
+    static const luaL_Reg clients[] = {{"close", oauth2_close},
+                                       {"token", oauth2_token},
+                                       {"__gc", oauth2_close},
+                                       {"__close", oauth2_close},
+                                       {NULL, NULL}};
     luaL_newmetatable(L, RL_AUTH);
     luaL_setfuncs(L, methods, 0);
     lua_pushvalue(L, -1);
@@ -214,4 +295,11 @@ void rl_auth_open(lua_State *L)
     lua_pop(L, 1);
     lua_pushcfunction(L, new_policy);
     lua_setfield(L, -2, "auth");
+    luaL_newmetatable(L, RL_OAUTH2);
+    luaL_setfuncs(L, clients, 0);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -2, "__index");
+    lua_pop(L, 1);
+    lua_pushcfunction(L, new_oauth2);
+    lua_setfield(L, -2, "oauth2");
 }

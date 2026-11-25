@@ -298,8 +298,10 @@ static enum auth_collection collection(const char *key)
     case 's':
         return AUTH_SESSIONS;
     case 'e':
+    case 'v':
         return AUTH_EMAIL_CODES;
     case 't':
+    case 'w':
         return AUTH_TOTP_STEPS;
     default:
         return AUTH_ATTEMPTS;
@@ -447,7 +449,7 @@ static void expire(struct auth_document *doc, lonejson_int64 now)
     struct auth_record *rows = doc->records.items;
     size_t from, to = 0;
     for (from = 0; from < doc->records.count; ++from)
-        if (rows[from].expires > now)
+        if (rows[from].expires == 0 || rows[from].expires > now)
             rows[to++] = rows[from];
     if (to != doc->records.count) {
         doc->records.count = to;
@@ -471,7 +473,7 @@ knurl_status knurl_auth_json_write(struct auth_transaction *tx, const char *key,
     if (index == doc->records.count) {
         if (index == AUTH_MAX_RECORDS &&
             (kind == AUTH_SESSIONS || kind == AUTH_EMAIL_CODES ||
-             kind == AUTH_ATTEMPTS)) {
+             kind == AUTH_TOTP_STEPS || kind == AUTH_ATTEMPTS)) {
             expire(doc, (lonejson_int64)time(NULL));
             index = doc->records.count;
         }
@@ -515,7 +517,7 @@ knurl_status knurl_auth_json_delete(struct auth_transaction *tx,
 knurl_status knurl_auth_json_prune(knurl_auth_json *json, knurl_error *error)
 {
     static const enum auth_collection expiring[] = {
-        AUTH_SESSIONS, AUTH_EMAIL_CODES, AUTH_ATTEMPTS};
+        AUTH_SESSIONS, AUTH_EMAIL_CODES, AUTH_TOTP_STEPS, AUTH_ATTEMPTS};
     struct auth_transaction tx;
     lonejson_int64 now = (lonejson_int64)time(NULL);
     size_t i;

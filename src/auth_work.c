@@ -25,6 +25,7 @@ static knurl_status exchange(struct knurl_auth_job *job,
     parameters->policy = config->name;
     parameters->scope = job->scope;
     parameters->peer = job->peer;
+    parameters->login = config->login;
     return fn(operation, parameters, data, error);
 }
 
@@ -69,8 +70,10 @@ static knurl_status session(struct knurl_auth_job *job, knurl_auth_operation op,
                     return knurl_fail(error, KNURL_BACKEND, "session_check",
                                       "external account check failed");
             }
-            if (status == KNURL_OK)
+            if (status == KNURL_OK) {
                 job->identity = x.identity;
+                memcpy(job->revision, x.revision, sizeof(job->revision));
+            }
         }
     }
     return status;
@@ -120,49 +123,49 @@ static knurl_status login(knurl_job *task, struct knurl_auth_job *job,
 {
     knurl_auth_exchange x, factor;
     knurl_status status;
-    char digest[65];
+    knurl_auth_login kind = job->auth->config.login;
+    char digest[65], session_digest[65];
     memset(&x, 0, sizeof(x));
     x.subject = job->subject;
-    if (job->auth->config.login == KNURL_AUTH_LOGIN_EMAIL) {
+    if (kind == KNURL_AUTH_LOGIN_EMAIL) {
         status = checked_identity(
             &x, exchange(job, KNURL_AUTH_EMAIL, &x, error), error);
         if (status != KNURL_OK || knurl_job_cancelled(task))
             return status == KNURL_OK ? KNURL_CANCELLED : status;
         if (job->endpoint == KNURL_AUTH_EMAIL_START)
             return email_start(task, job, &x, error);
-        memset(&factor, 0, sizeof(factor));
-        factor.subject = x.identity.subject;
-        if (job->auth->config.users == NULL)
-            memcpy(factor.revision, x.revision, sizeof(factor.revision));
-        if (!knurl_auth_digest(job->auth->email_key, job->scope, factor.subject,
-                               job->code, digest))
-            return knurl_fail(error, KNURL_BACKEND, "auth_email",
-                              "hashing code");
-        factor.digest = digest;
-        status = exchange(job, KNURL_AUTH_EMAIL_CONSUME, &factor, error);
     } else {
         x.secret = job->credential;
         status = checked_identity(
             &x, exchange(job, KNURL_AUTH_PASSWORD, &x, error), error);
-        if (status == KNURL_OK &&
-            job->auth->config.login == KNURL_AUTH_LOGIN_TOTP) {
-            memset(&factor, 0, sizeof(factor));
-            factor.subject = x.identity.subject;
-            if (job->auth->config.users == NULL)
-                memcpy(factor.revision, x.revision, sizeof(factor.revision));
-            factor.secret = job->code;
-            status = knurl_job_cancelled(task)
-                         ? KNURL_CANCELLED
-                         : exchange(job, KNURL_AUTH_TOTP, &factor, error);
-        }
     }
     if (status != KNURL_OK || knurl_job_cancelled(task))
         return status == KNURL_OK ? KNURL_CANCELLED : status;
     if (!knurl_auth_random_hex(job->cookie, 32))
         return knurl_fail(error, KNURL_BACKEND, "auth_session",
                           "generating session");
-    return session(job, KNURL_AUTH_SESSION_SAVE, x.identity.subject, x.revision,
-                   error);
+    if (kind == KNURL_AUTH_LOGIN_PASSWORD)
+        return session(job, KNURL_AUTH_SESSION_SAVE, x.identity.subject,
+                       x.revision, error);
+    memset(&factor, 0, sizeof(factor));
+    factor.subject = x.identity.subject;
+    if (job->auth->config.users == NULL)
+        memcpy(factor.revision, x.revision, sizeof(factor.revision));
+    if (!knurl_auth_digest(NULL, job->scope, "session", job->cookie,
+                           session_digest))
+        return knurl_fail(error, KNURL_BACKEND, "auth_session",
+                          "hashing session");
+    factor.session_digest = session_digest;
+    factor.lifetime_seconds = job->auth->config.session_seconds;
+    if (kind == KNURL_AUTH_LOGIN_TOTP) {
+        factor.secret = job->code;
+        return exchange(job, KNURL_AUTH_TOTP_SESSION, &factor, error);
+    }
+    if (!knurl_auth_digest(job->auth->email_key, job->scope, factor.subject,
+                           job->code, digest))
+        return knurl_fail(error, KNURL_BACKEND, "auth_email", "hashing code");
+    factor.digest = digest;
+    return exchange(job, KNURL_AUTH_EMAIL_SESSION, &factor, error);
 }
 
 static knurl_status verify(knurl_job *task, struct knurl_auth_job *job,
@@ -170,6 +173,7 @@ static knurl_status verify(knurl_job *task, struct knurl_auth_job *job,
 {
     knurl_auth_exchange x;
     knurl_status status;
+    char digest[65];
     if (job->admission) {
         if (job->auth->config.method == KNURL_AUTH_SESSION)
             return session(job, KNURL_AUTH_SESSION_FIND, NULL, NULL, error);
@@ -190,6 +194,40 @@ static knurl_status verify(knurl_job *task, struct knurl_auth_job *job,
         return job->cookie[0] != 0
                    ? session(job, KNURL_AUTH_SESSION_REVOKE, NULL, NULL, error)
                    : KNURL_OK;
+    if (job->endpoint == KNURL_AUTH_TOTP_ENROLL_ENDPOINT) {
+        status = session(job, KNURL_AUTH_SESSION_FIND, NULL, NULL, error);
+        if (status != KNURL_OK)
+            return status;
+        memset(&x, 0, sizeof(x));
+        x.subject = job->identity.subject;
+        status = exchange(job, KNURL_AUTH_ATTEMPT, &x, error);
+        if (status != KNURL_OK || knurl_job_cancelled(task))
+            return status == KNURL_OK ? KNURL_CANCELLED : status;
+        memset(&x, 0, sizeof(x));
+        x.subject = job->identity.subject;
+        x.secret = job->code;
+        if (!knurl_auth_digest(NULL, job->scope, "session", job->cookie,
+                               digest))
+            return knurl_fail(error, KNURL_BACKEND, "auth_enroll_totp",
+                              "hashing enrollment session");
+        x.session_digest = digest;
+        memcpy(x.revision, job->revision, sizeof(x.revision));
+        status = exchange(job, KNURL_AUTH_TOTP_ENROLL, &x, error);
+        if (status == KNURL_OK) {
+            static const char safe[] =
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                "0123456789-._~+/:?&=%@";
+            if (x.totp_uri[sizeof(x.totp_uri) - 1] != 0 ||
+                strncmp(x.totp_uri, "otpauth://totp/", 15) != 0 ||
+                x.totp_uri[strspn(x.totp_uri, safe)] != 0)
+                status = knurl_fail(error, KNURL_BACKEND, "auth_enroll_totp",
+                                    "backend returned invalid TOTP URI");
+            else
+                memcpy(job->totp_uri, x.totp_uri, sizeof(job->totp_uri));
+        }
+        OPENSSL_cleanse(x.totp_uri, sizeof(x.totp_uri));
+        return status;
+    }
     memset(&x, 0, sizeof(x));
     x.subject = job->subject;
     status = exchange(job, KNURL_AUTH_ATTEMPT, &x, error);
@@ -204,7 +242,9 @@ static knurl_status work(knurl_job *task, knurl_bytes arguments, void *userdata,
     struct knurl_auth_job *job = userdata;
     (void)arguments;
     job->status = verify(task, job, error);
-    return job->status == KNURL_EOF ? KNURL_OK : job->status;
+    return job->status == KNURL_EOF || job->status == KNURL_CONFLICT
+               ? KNURL_OK
+               : job->status;
 }
 
 static void finish(struct knurl_auth_job *job, knurl_status status)
@@ -224,6 +264,16 @@ static void finish(struct knurl_auth_job *job, knurl_status status)
         knurl_kore_headers_resume(request, 1);
         return;
     }
+    if (!job->admission && job->endpoint == KNURL_AUTH_TOTP_ENROLL_ENDPOINT &&
+        status == KNURL_OK) {
+        char json[KNURL_AUTH_TOTP_URI_CAPACITY + 12];
+        snprintf(json, sizeof(json), "{\"uri\":\"%s\"}", job->totp_uri);
+        result = knurl_auth_json_reply(request, 201, json, NULL);
+        OPENSSL_cleanse(json, sizeof(json));
+        if (result != KNURL_OK)
+            knurl_kore_request_fail(request, result, 500);
+        return;
+    }
     if (status == KNURL_OK || (job->endpoint == KNURL_AUTH_LOGOUT &&
                                !job->admission && status == KNURL_EOF))
         code = 204;
@@ -231,6 +281,8 @@ static void finish(struct knurl_auth_job *job, knurl_status status)
         code = 401;
     else if (status == KNURL_LIMIT)
         code = 429;
+    else if (status == KNURL_CONFLICT && !job->admission)
+        code = job->endpoint == KNURL_AUTH_TOTP_ENROLL_ENDPOINT ? 409 : 428;
     else
         code = 503;
     if (job->admission && code == 401)
@@ -267,7 +319,7 @@ static void completed(knurl_job *task, const knurl_job_outcome *outcome,
     knurl_error error;
     (void)task;
     if (status > KNURL_EOF && status != KNURL_LIMIT &&
-        status != KNURL_CANCELLED) {
+        status != KNURL_CONFLICT && status != KNURL_CANCELLED) {
         (void)knurl_fail(&error, status,
                          job->admission ? "auth_admission" : "auth_endpoint",
                          knurl_status_string(status));
@@ -329,20 +381,12 @@ static void scope(struct knurl_auth_job *job, knurl_request *request)
                  : "");
 }
 
-knurl_status knurl_auth_start(struct knurl_auth_job *job, knurl_error *error)
+knurl_status knurl_auth_executor(knurl_request *request, knurl_executor **out,
+                                 knurl_error *error)
 {
-    knurl_request *request = job->request;
     struct knurl_loop_impl *loop = knurl_request_loop(request)->impl;
     knurl_executor_config pool;
-    knurl_job_config config;
     knurl_status status = KNURL_OK;
-    if (request->impl->authority.length > 300) {
-        knurl_auth_job_free(job);
-        return knurl_fail(error, KNURL_INVALID, "auth_submit",
-                          "authority too long");
-    }
-    job->runtime = knurl_request_server(request)->impl->runtime;
-    scope(job, request);
     if (loop->auth_executor == NULL) {
         knurl_executor_config_init(&pool);
         pool.max_jobs = 32;
@@ -350,6 +394,24 @@ knurl_status knurl_auth_start(struct knurl_auth_job *job, knurl_error *error)
         status = knurl_executor_new(knurl_request_server(request), &pool,
                                     &loop->auth_executor, error);
     }
+    *out = loop->auth_executor;
+    return status;
+}
+
+knurl_status knurl_auth_start(struct knurl_auth_job *job, knurl_error *error)
+{
+    knurl_request *request = job->request;
+    knurl_executor *pool;
+    knurl_job_config config;
+    knurl_status status;
+    if (request->impl->authority.length > 300) {
+        knurl_auth_job_free(job);
+        return knurl_fail(error, KNURL_INVALID, "auth_submit",
+                          "authority too long");
+    }
+    job->runtime = knurl_request_server(request)->impl->runtime;
+    scope(job, request);
+    status = knurl_auth_executor(request, &pool, error);
     if (status == KNURL_OK) {
         knurl_job_config_init(&config);
         config.work = work;
@@ -358,8 +420,7 @@ knurl_status knurl_auth_start(struct knurl_auth_job *job, knurl_error *error)
         config.retired = retired;
         config.userdata = job;
         config.timeout_ms = 12000;
-        status = knurl_executor_submit(loop->auth_executor, &config, &job->job,
-                                       error);
+        status = knurl_executor_submit(pool, &config, &job->job, error);
     }
     if (status != KNURL_OK) {
         knurl_auth_job_free(job);

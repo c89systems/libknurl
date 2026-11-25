@@ -249,6 +249,7 @@ static knurl_status register_proxy(lua_State *L, struct rl_server *server,
                                          "path_kind",
                                          "target",
                                          "alternate_targets",
+                                         "oauth2",
                                          "method",
                                          "methods",
                                          "acl",
@@ -268,11 +269,12 @@ static knurl_status register_proxy(lua_State *L, struct rl_server *server,
                                          "tls_client_cert_pem",
                                          "tls_client_key_pem"};
     knurl_proxy_config config;
+    knurl_oauth2_client *oauth2;
     knurl_async_route_hooks proxy_hooks;
     knurl_status status;
     knurl_route_config path;
     const char *version = "auto";
-    size_t connect = 0, idle = 0, total = application ? 30000U : 0;
+    size_t i, connect = 0, idle = 0, total = application ? 30000U : 0;
     if (!rl_fields(L, 2, fields, RL_COUNT(fields), error))
         return error->status;
     knurl_proxy_config_init(&config);
@@ -298,7 +300,8 @@ static knurl_status register_proxy(lua_State *L, struct rl_server *server,
     else if (strcmp(version, "auto"))
         return rl_fail(error, KNURL_INVALID,
                        "proxy upstream_http_version must be auto or http1");
-    if (!rl_acl_option(L, 2, &config.acl, error))
+    if (!rl_acl_option(L, 2, &config.acl, error) ||
+        !rl_oauth2_option(L, 2, &oauth2, error))
         return error->status;
     config.path = path.path;
     config.path_kind = path.path_kind;
@@ -306,8 +309,18 @@ static knurl_status register_proxy(lua_State *L, struct rl_server *server,
     config.idle_timeout_ms = (long)idle;
     config.total_timeout_ms = (long)total;
     if (!rl_string_array(L, 2, "alternate_targets", &config.alternate_targets,
-                         &config.alternate_target_count, error) ||
-        !rl_proxy_hooks_prepare(L, server, &config, &proxy_hooks, error))
+                         &config.alternate_target_count, error))
+        return error->status;
+    if (oauth2 != NULL) {
+        if (config.target == NULL || strncmp(config.target, "https://", 8))
+            return rl_fail(error, KNURL_INVALID,
+                           "OAuth2 requires HTTPS proxy targets");
+        for (i = 0; i < config.alternate_target_count; ++i)
+            if (strncmp(config.alternate_targets[i], "https://", 8))
+                return rl_fail(error, KNURL_INVALID,
+                               "OAuth2 requires HTTPS proxy targets");
+    }
+    if (!rl_proxy_hooks_prepare(L, server, &config, &proxy_hooks, error))
         return error->status;
     status = group != NULL
                  ? knurl_route_group_proxy(group, &config, out, error)
@@ -318,6 +331,8 @@ static knurl_status register_proxy(lua_State *L, struct rl_server *server,
         status = knurl_route_set_proxy_async_hooks(*out, proxy_hooks.before,
                                                    proxy_hooks.after,
                                                    proxy_hooks.userdata, error);
+    if (status == KNURL_OK && oauth2 != NULL)
+        status = knurl_route_set_proxy_oauth2(*out, oauth2, error);
     rl_hooks_finish(L, &proxy_hooks, status);
     return status;
 }

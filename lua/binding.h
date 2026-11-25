@@ -105,6 +105,7 @@ void rl_geoip_open(lua_State *);
 int rl_auth_option(lua_State *, int, knurl_auth **, knurl_error *);
 int rl_set_auth(lua_State *);
 void rl_auth_open(lua_State *);
+int rl_oauth2_option(lua_State *, int, knurl_oauth2_client **, knurl_error *);
 void rl_auth_endpoints(lua_State *);
 void rl_server_open(lua_State *);
 void rl_logging_open(lua_State *);

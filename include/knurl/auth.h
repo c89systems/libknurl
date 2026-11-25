@@ -10,10 +10,18 @@ extern "C" {
 typedef struct knurl_auth knurl_auth;
 typedef struct knurl_auth_json knurl_auth_json;
 
+#define KNURL_AUTH_TOTP_URI_CAPACITY 512
+
 typedef enum knurl_auth_method {
     KNURL_AUTH_SESSION = 1,
     KNURL_AUTH_MACHINE
 } knurl_auth_method;
+
+typedef enum knurl_auth_login {
+    KNURL_AUTH_LOGIN_PASSWORD = 0,
+    KNURL_AUTH_LOGIN_TOTP,
+    KNURL_AUTH_LOGIN_EMAIL
+} knurl_auth_login;
 
 /** Verified, stable subject. Borrowed from a request or a native snapshot. */
 typedef struct knurl_auth_identity {
@@ -24,22 +32,27 @@ typedef struct knurl_auth_identity {
 typedef enum knurl_auth_operation {
     KNURL_AUTH_ATTEMPT,
     KNURL_AUTH_PASSWORD,
-    KNURL_AUTH_TOTP,
+    KNURL_AUTH_TOTP_SESSION,
     KNURL_AUTH_EMAIL,
     KNURL_AUTH_EMAIL_SAVE,
-    KNURL_AUTH_EMAIL_CONSUME,
+    KNURL_AUTH_EMAIL_SESSION,
     KNURL_AUTH_SESSION_SAVE,
     KNURL_AUTH_SESSION_FIND,
     KNURL_AUTH_SESSION_REVOKE,
-    KNURL_AUTH_MACHINE_VERIFY
+    KNURL_AUTH_MACHINE_VERIFY,
+    KNURL_AUTH_TOTP_ENROLL
 } knurl_auth_operation;
 
 /** On PASSWORD, EMAIL, SESSION_FIND and MACHINE_VERIFY, return a canonical
  * subject in identity. EMAIL also returns the enrolled delivery address.
- * ATTEMPT limits login attempts per peer and scope. TOTP checks and consumes
- * a time step in one transaction.
- * EMAIL_SAVE replaces the challenge subject to a resend limit and EMAIL_CONSUME
- * atomically checks the digest, expiry and attempt limit and consumes a match.
+ * ATTEMPT limits login attempts per peer and scope. TOTP_SESSION and
+ * EMAIL_SESSION verify the factor, consume it and create the session in one
+ * transaction. TOTP_SESSION returns CONFLICT when a verified account needs
+ * enrollment. EMAIL_SAVE replaces the challenge subject to a resend limit.
+ * TOTP_ENROLL receives a subject from a verified session. An empty secret
+ * requests first enrollment, a code authorizes rotation. Verify the supplied
+ * session digest and revision atomically with the update. Return the
+ * provisioning URI on success.
  * Session operations use an opaque digest scoped to the policy and host.
  * Strings are borrowed for the call. Zero the unused output fields.
  */
@@ -57,6 +70,10 @@ typedef struct knurl_auth_exchange {
     /** Lowercase hex digest for session and email challenge state operations.
      */
     const char *digest;
+    /** New session digest for factor/session operations. Existing session
+     * digest for enrollment. */
+    const char *session_digest;
+    knurl_auth_login login;
     /** Effective client address after the server's trusted forwarding policy.
      */
     const char *peer;
@@ -67,6 +84,7 @@ typedef struct knurl_auth_exchange {
     /** Optional opaque credential revision, propagated to the state backend
      * when both operations use the same provider. */
     char revision[33];
+    char totp_uri[KNURL_AUTH_TOTP_URI_CAPACITY];
 } knurl_auth_exchange;
 
 /** Runs on a native worker. Return EOF for a denial or missing entry,
@@ -85,12 +103,6 @@ typedef knurl_status (*knurl_auth_email_fn)(const char *, const char *, void *,
 typedef knurl_status (*knurl_auth_session_check_fn)(const knurl_auth_identity *,
                                                     void *, knurl_error *);
 
-typedef enum knurl_auth_login {
-    KNURL_AUTH_LOGIN_PASSWORD = 0,
-    KNURL_AUTH_LOGIN_TOTP,
-    KNURL_AUTH_LOGIN_EMAIL
-} knurl_auth_login;
-
 typedef struct knurl_auth_smtp {
     const char *url;
     const char *from;
@@ -100,8 +112,9 @@ typedef struct knurl_auth_smtp {
     long timeout_ms;
 } knurl_auth_smtp;
 
-/** Pinned issuer configuration. Supply the issuer's public JWKS JSON and a
- * scope issued to machine clients. Keys are installed when configuring auth. */
+/** JWT bearer validation. By default, discover the issuer's JWKS URI and
+ * refresh signing keys as needed. jwks_json can seed the cache when jwks_uri
+ * is explicit. Set pin_jwks to use only those configured keys. */
 typedef struct knurl_auth_oidc {
     const char *issuer;
     const char *audience;
@@ -110,7 +123,39 @@ typedef struct knurl_auth_oidc {
     const char *scope;
     /** Default is at+jwt. Set to the issuer's access-token JOSE type. */
     const char *token_type;
+    const char *ca_file;
+    int pin_jwks;
 } knurl_auth_oidc;
+
+typedef struct knurl_oauth2_client knurl_oauth2_client;
+/** OAuth 2.0 client-credentials grant. Configure an HTTPS issuer for discovery
+ * or an explicit HTTPS token_endpoint. Defaults to client_secret_basic.
+ * The process-local cache acquires and renews the bearer token on demand. */
+typedef struct knurl_oauth2_config {
+    const char *issuer;
+    const char *token_endpoint;
+    const char *client_id;
+    const char *client_secret;
+    const char *scope;
+    const char *audience;
+    const char *resource;
+    const char *ca_file;
+    int client_secret_post;
+} knurl_oauth2_config;
+
+KNURL_API knurl_status knurl_oauth2_client_new(const knurl_oauth2_config *,
+                                               knurl_oauth2_client **,
+                                               knurl_error *);
+KNURL_API void knurl_oauth2_client_close(knurl_oauth2_client *);
+/** Return a copied access token, with automatic renewal. This can block on
+ * HTTPS I/O. Call from an application worker, never from the event loop. */
+KNURL_API knurl_status knurl_oauth2_client_token(knurl_oauth2_client *, char *,
+                                                 size_t, knurl_error *);
+/** Obtain and attach an outbound bearer token on a native worker. All route
+ * targets, including alternatives, must use HTTPS. The route retains client. */
+KNURL_API knurl_status knurl_route_set_proxy_oauth2(knurl_route *,
+                                                    knurl_oauth2_client *,
+                                                    knurl_error *);
 
 typedef struct knurl_auth_config {
     /** Required policy identifier. Distinct browser policies use distinct
@@ -160,7 +205,10 @@ KNURL_API const knurl_auth_identity *knurl_request_auth(const knurl_request *);
 typedef enum knurl_auth_endpoint {
     KNURL_AUTH_LOGIN,
     KNURL_AUTH_EMAIL_START,
-    KNURL_AUTH_LOGOUT
+    KNURL_AUTH_LOGOUT,
+    /** Authorize with this policy's session cookie. POST an empty form to
+     * enroll, or code=<current TOTP> to rotate. */
+    KNURL_AUTH_TOTP_ENROLL_ENDPOINT
 } knurl_auth_endpoint;
 KNURL_API knurl_status knurl_auth_route(knurl_router *, const char *,
                                         knurl_auth *, knurl_auth_endpoint,
@@ -194,7 +242,6 @@ KNURL_API knurl_status knurl_auth_json_revoke(knurl_auth_json *, const char *,
                                               const char *, knurl_error *);
 /** Generate and store an encrypted TOTP enrollment and return its URI once.
  * Nonzero rotate permits replacing an existing enrollment. */
-#define KNURL_AUTH_TOTP_URI_CAPACITY 512
 KNURL_API knurl_status
 knurl_auth_json_enroll_totp(knurl_auth_json *, const char *, int,
                             char[KNURL_AUTH_TOTP_URI_CAPACITY], knurl_error *);

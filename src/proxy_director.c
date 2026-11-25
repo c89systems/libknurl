@@ -419,6 +419,14 @@ knurl_status knurl_proxy_director_prepare(
         if (out->failure != KNURL_OK)
             return out->failure;
     }
+    if (matched_request != NULL &&
+        matched_request->impl->proxy_authorization != NULL) {
+        status = knurl_proxy_outbound_set_header(
+            out, "Authorization", matched_request->impl->proxy_authorization,
+            error);
+        if (status != KNURL_OK)
+            return status;
+    }
     status =
         knurl_proxy_target_build(route->targets[out->target_index], out->path,
                                  out->query, target, &default_authority, error);

@@ -1,0 +1,115 @@
+#include "auth_internal.h"
+#include <knurl/dispatch.h>
+#include <knurl/reply.h>
+#include <openssl/crypto.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct token_job {
+    knurl_request *request;
+    knurl_oauth2_client *client;
+    knurl_job *job;
+    char authorization[7 + 16385];
+};
+
+static knurl_status acquire(knurl_job *task, knurl_bytes input, void *userdata,
+                            knurl_error *error)
+{
+    struct token_job *job = userdata;
+    (void)input;
+    if (knurl_job_cancelled(task))
+        return KNURL_CANCELLED;
+    memcpy(job->authorization, "Bearer ", 7);
+    return knurl_oauth2_client_token(job->client, job->authorization + 7,
+                                     sizeof(job->authorization) - 7, error);
+}
+
+static void finish(struct token_job *job, knurl_status status,
+                   const knurl_error *error)
+{
+    knurl_request *request = job->request;
+    knurl_reply *reply = NULL;
+    if (request == NULL)
+        return;
+    job->request = NULL;
+    if (status == KNURL_OK) {
+        request->impl->proxy_authorization =
+            knurl_copy_text(job->authorization);
+        if (request->impl->proxy_authorization == NULL)
+            status = KNURL_NOMEM;
+    } else if (status != KNURL_TIMEOUT &&
+               knurl_reply_new(&reply, NULL) == KNURL_OK &&
+               knurl_reply_status(reply, 502, NULL) == KNURL_OK) {
+        status = KNURL_OK;
+    }
+    (void)knurl_request_hook_resume(request, status, reply, error, NULL);
+    if (reply != NULL)
+        (void)knurl_reply_destroy(reply, NULL);
+}
+
+static void completed(knurl_job *task, const knurl_job_outcome *result,
+                      void *userdata)
+{
+    (void)task;
+    finish(userdata, result->cause, &result->error);
+}
+
+static void interrupted(knurl_job *task, knurl_status status, void *userdata)
+{
+    (void)task;
+    finish(userdata, status, NULL);
+}
+
+static void retired(const knurl_job_outcome *result, void *userdata)
+{
+    struct token_job *job = userdata;
+    (void)result;
+    OPENSSL_cleanse(job->authorization, sizeof(job->authorization));
+    knurl_oauth2_client_close(job->client);
+    free(job);
+}
+
+static void cancel(void *userdata)
+{
+    struct token_job *job = userdata;
+    job->request = NULL;
+    (void)knurl_job_cancel(job->job, NULL);
+}
+
+knurl_status knurl_oauth2_proxy_admit(knurl_request *request,
+                                      const knurl_reply *headers, int code,
+                                      void *userdata, knurl_error *error)
+{
+    knurl_oauth2_client *client = userdata;
+    struct token_job *job;
+    knurl_executor *executor;
+    knurl_job_config config;
+    knurl_status status = knurl_auth_executor(request, &executor, error);
+    (void)headers;
+    (void)code;
+    if (status != KNURL_OK)
+        return status;
+    job = calloc(1, sizeof(*job));
+    if (job == NULL)
+        return knurl_fail(error, KNURL_NOMEM, "proxy_oauth2",
+                          "allocating token job");
+    job->request = request;
+    job->client = client;
+    knurl_job_config_init(&config);
+    config.work = acquire;
+    config.completed = completed;
+    config.interrupted = interrupted;
+    config.retired = retired;
+    config.userdata = job;
+    config.timeout_ms = 12000;
+    status = knurl_executor_submit(executor, &config, &job->job, error);
+    if (status != KNURL_OK) {
+        free(job);
+        return status;
+    }
+    knurl_oauth2_client_retain(client);
+    status = knurl_request_hook_wait(request, cancel, job, error);
+    if (status != KNURL_OK)
+        cancel(job);
+    return status == KNURL_OK ? KNURL_AGAIN : status;
+}

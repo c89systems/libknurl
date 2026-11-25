@@ -120,7 +120,8 @@ knurl_status knurl_auth_new(const knurl_auth_config *config, knurl_auth **out,
     builtin = config->client_id != NULL || config->client_secret != NULL;
     oidc = config->oidc.issuer != NULL || config->oidc.audience != NULL ||
            config->oidc.jwks_uri != NULL || config->oidc.jwks_json != NULL ||
-           config->oidc.scope != NULL || config->oidc.token_type != NULL;
+           config->oidc.scope != NULL || config->oidc.token_type != NULL ||
+           config->oidc.ca_file != NULL || config->oidc.pin_jwks;
     if (!knurl_auth_policy_name(config->name) ||
         (config->backend == NULL && config->json == NULL && !builtin &&
          !oidc) ||
@@ -341,6 +342,35 @@ knurl_status knurl_auth_reply(knurl_request *request, int status,
     if (result == KNURL_OK)
         result = knurl_response_end(response, NULL, 0, error);
     return result;
+}
+
+knurl_status knurl_auth_json_reply(knurl_request *request, int code,
+                                   const char *json, knurl_error *error)
+{
+    knurl_response *response = knurl_request_response(request);
+    size_t size = strlen(json), accepted;
+    knurl_u64 length = {0, 0};
+    knurl_status status = knurl_response_status(response, code, error);
+    length.low = (unsigned long)size;
+    if (status == KNURL_OK)
+        status = knurl_response_header_set(response, "cache-control",
+                                           "no-store", error);
+    if (status == KNURL_OK)
+        status = knurl_response_header_set(response, "content-type",
+                                           "application/json", error);
+    if (status == KNURL_OK)
+        status = knurl_response_known_length(response, length, error);
+    if (status == KNURL_OK)
+        status = knurl_response_begin(response, error);
+    if (status == KNURL_OK) {
+        status = knurl_response_write(response, json, size, &accepted, error);
+        if (status == KNURL_OK && accepted != size)
+            status = knurl_fail(error, KNURL_LIMIT, "auth_reply",
+                                "auth response exceeds output limit");
+    }
+    if (status == KNURL_OK)
+        status = knurl_response_end(response, NULL, 0, error);
+    return status;
 }
 
 static knurl_status authorization(knurl_request *request,

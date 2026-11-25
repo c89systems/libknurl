@@ -2,6 +2,7 @@
 #define KNURL_PROXY_ROUTE_INTERNAL_H
 
 #include <knurl/proxy.h>
+#include <knurl/auth.h>
 
 typedef struct knurl_proxy_route_data {
     char **targets;
@@ -27,6 +28,7 @@ typedef struct knurl_proxy_route_data {
     void *on_error_userdata;
     knurl_proxy_exchange_fn on_exchange;
     void *on_exchange_userdata;
+    knurl_oauth2_client *oauth2;
 } knurl_proxy_route_data;
 
 #endif

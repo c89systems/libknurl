@@ -43,7 +43,7 @@ static int fields(knurl_bytes input, struct knurl_auth_job *job)
 {
     const char *p = input.data, *limit, *end, *separator;
     char key[16];
-    int required = 1, seen = 0, bit;
+    int required = 1, optional = 0, seen = 0, bit;
     size_t capacity;
     char *target;
     if (input.length == 0)
@@ -51,8 +51,10 @@ static int fields(knurl_bytes input, struct knurl_auth_job *job)
     if (job->endpoint == KNURL_AUTH_LOGIN) {
         if (job->auth->config.login != KNURL_AUTH_LOGIN_EMAIL)
             required |= 2;
-        if (job->auth->config.login != KNURL_AUTH_LOGIN_PASSWORD)
+        if (job->auth->config.login == KNURL_AUTH_LOGIN_EMAIL)
             required |= 4;
+        if (job->auth->config.login == KNURL_AUTH_LOGIN_TOTP)
+            optional |= 4;
     }
     limit = p + input.length;
     while (p < limit) {
@@ -77,15 +79,25 @@ static int fields(knurl_bytes input, struct knurl_auth_job *job)
         } else {
             return 0;
         }
-        if (!(required & bit) || (seen & bit) ||
+        if (!((required | optional) & bit) || (seen & bit) ||
             !decode(separator + 1, end, target, capacity))
             return 0;
         seen |= bit;
         p = end < limit ? end + 1 : end;
     }
-    return seen == required && knurl_auth_name(job->subject) &&
+    return (seen & required) == required && knurl_auth_name(job->subject) &&
            (!(seen & 4) ||
             (strlen(job->code) == 6 && strspn(job->code, "0123456789") == 6));
+}
+
+static int enroll_fields(knurl_bytes body, struct knurl_auth_job *job)
+{
+    const char *data = body.data;
+    if (body.length == 0)
+        return 1;
+    return body.length == 11 && memcmp(data, "code=", 5) == 0 &&
+           decode(data + 5, data + 11, job->code, sizeof(job->code)) &&
+           strspn(job->code, "0123456789") == 6;
 }
 
 static int same_origin(knurl_request *request)
@@ -123,7 +135,9 @@ static knurl_status body_end(knurl_request *request, void *userdata,
         if (!knurl_auth_cookie(request, endpoint->auth, job->cookie))
             job->cookie[0] = 0;
     } else if (knurl_request_body_bytes(request, &body, error) == KNURL_OK) {
-        valid = fields(body, job);
+        valid = job->endpoint == KNURL_AUTH_TOTP_ENROLL_ENDPOINT
+                    ? enroll_fields(body, job)
+                    : fields(body, job);
         if (body.length != 0)
             OPENSSL_cleanse((void *)body.data, body.length);
     } else {
@@ -132,6 +146,11 @@ static knurl_status body_end(knurl_request *request, void *userdata,
     if (!valid) {
         knurl_auth_job_free(job);
         return knurl_auth_reply(request, 400, NULL, NULL, error);
+    }
+    if (job->endpoint == KNURL_AUTH_TOTP_ENROLL_ENDPOINT &&
+        !knurl_auth_cookie(request, endpoint->auth, job->cookie)) {
+        knurl_auth_job_free(job);
+        return knurl_auth_reply(request, 401, NULL, NULL, error);
     }
     status = knurl_auth_start(job, error);
     if (status != KNURL_OK)
@@ -190,7 +209,7 @@ knurl_status knurl_auth_route(knurl_router *router, const char *path,
         *out = NULL;
     if (router == NULL || path == NULL || auth == NULL || out == NULL ||
         auth->config.method != KNURL_AUTH_SESSION || kind < KNURL_AUTH_LOGIN ||
-        kind > KNURL_AUTH_LOGOUT ||
+        kind > KNURL_AUTH_TOTP_ENROLL_ENDPOINT ||
         (kind == KNURL_AUTH_EMAIL_START &&
          auth->config.login != KNURL_AUTH_LOGIN_EMAIL))
         return knurl_fail(

@@ -147,6 +147,19 @@ knurl_status knurl_request_proxy_admit(knurl_request *request,
     return invoke(request, hooks, hooks->before, KNURL_HOOK_ADMISSION, error);
 }
 
+knurl_status knurl_request_proxy_authenticate(knurl_request *request,
+                                              knurl_oauth2_client *client,
+                                              knurl_error *error)
+{
+    knurl_async_route_hooks native;
+    if (client == NULL || request->impl->proxy_authorization != NULL)
+        return KNURL_OK;
+    memset(&native, 0, sizeof(native));
+    native.userdata = client;
+    return invoke(request, &native, knurl_oauth2_proxy_admit,
+                  KNURL_HOOK_ADMISSION, error);
+}
+
 int knurl_request_has_after_hooks(const knurl_request *request)
 {
     const knurl_route *route = request->impl->route;

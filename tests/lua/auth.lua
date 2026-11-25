@@ -30,6 +30,7 @@ check(server:text{path = '/machine', auth = machine, body = 'allowed'})
 check(server:text{path = '/machine-other', auth = other, body = 'allowed'})
 check(server:login{path = '/login', auth = login})
 check(server:login{path = '/otp', auth = otp})
+check(server:totp_enroll{path = '/totp-enroll', auth = login})
 check(server:logout{path = '/logout', auth = login})
 
 local app = check(server:group{prefix = '/app', auth = login})

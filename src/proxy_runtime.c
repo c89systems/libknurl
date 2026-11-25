@@ -1003,6 +1003,12 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
     status = knurl_request_proxy_admit(request, error);
     if (status != KNURL_OK)
         goto finished;
+    status = knurl_request_proxy_authenticate(request, route->oauth2, error);
+    if (status == KNURL_LIMIT)
+        status = simple_reply(request, plan, NULL, 503,
+                              "proxy token worker unavailable\n", error);
+    if (status != KNURL_OK || plan->disposition == KNURL_REQUEST_REPLY)
+        goto finished;
     if (route->preflight != NULL) {
         input.method = request->impl->method;
         input.path = request->impl->raw_path.data;

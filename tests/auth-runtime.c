@@ -47,10 +47,10 @@ static const char password_form[] =
 struct fixture {
     knurl_auth_json *store;
     char cert[1024], key[1024], static_file[1024];
-    char directory_status[1024];
+    char directory_status[1024], store_path[1024];
     char enrollment[KNURL_AUTH_TOTP_URI_CAPACITY], client_secret[66];
-    char jwks[1024];
-    unsigned short tls, plain, smtp, proxy;
+    char jwks[1024], next_jwks[1024], issuer[128], ca_pem[2048];
+    unsigned short tls, plain, smtp, proxy, oauth;
     int entered[2], resume[2], headers[2], mail[2];
     pid_t client;
     SSL_CTX *tls_client;
@@ -433,13 +433,18 @@ static void jwks(struct fixture *f)
              "{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"fixture\",\"alg\":"
              "\"RS256\",\"n\":\"%s\",\"e\":\"%s\"}]}",
              n, e);
+    snprintf(f->next_jwks, sizeof(f->next_jwks),
+             "{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"rotated\",\"alg\":"
+             "\"RS256\",\"n\":\"%s\",\"e\":\"%s\"}]}",
+             n, e);
     BN_free(modulus);
     BN_free(exponent);
     EVP_PKEY_free(key);
 }
 
-static void bearer(struct fixture *f, const char *kind, const char *audience,
-                   const char *scope, long expires, char out[2048])
+static void sign_bearer(struct fixture *f, const char *kind, const char *kid,
+                        const char *issuer, const char *audience,
+                        const char *scope, long expires, char out[2048])
 {
     EVP_PKEY *key = fixture_key(f);
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
@@ -447,13 +452,12 @@ static void bearer(struct fixture *f, const char *kind, const char *audience,
     size_t size = sizeof(signature);
     char json[256], head[345], body[345], signed_bytes[696], proof[345];
     snprintf(json, sizeof(json),
-             "{\"typ\":\"%s\",\"alg\":\"RS256\",\"kid\":\"fixture\"}", kind);
+             "{\"typ\":\"%s\",\"alg\":\"RS256\",\"kid\":\"%s\"}", kind, kid);
     base64url((const unsigned char *)json, strlen(json), head);
     snprintf(json, sizeof(json),
-             "{\"iss\":\"https://"
-             "issuer.example\",\"aud\":\"%s\",\"sub\":\"jwt-service\","
+             "{\"iss\":\"%s\",\"aud\":\"%s\",\"sub\":\"jwt-service\","
              "\"scope\":\"%s\",\"exp\":%ld}",
-             audience, scope, expires);
+             issuer, audience, scope, expires);
     base64url((const unsigned char *)json, strlen(json), body);
     snprintf(signed_bytes, sizeof(signed_bytes), "%s.%s", head, body);
     CHECK(ctx != NULL &&
@@ -466,6 +470,165 @@ static void bearer(struct fixture *f, const char *kind, const char *audience,
     snprintf(out, 2048, "Authorization: Bearer %s.%s\r\n", signed_bytes, proof);
     EVP_MD_CTX_free(ctx);
     EVP_PKEY_free(key);
+}
+
+static void bearer(struct fixture *f, const char *kind, const char *audience,
+                   const char *scope, long expires, char out[2048])
+{
+    sign_bearer(f, kind, "fixture", "https://issuer.example", audience, scope,
+                expires, out);
+}
+
+static void read_oauth_wire(SSL *tls, char wire[4096])
+{
+    const char *body, *header;
+    size_t used = 0, length = 0;
+    do {
+        int n = SSL_read(tls, wire + used, (int)(4095 - used));
+        CHECK(n > 0);
+        used += (size_t)n;
+        wire[used] = 0;
+        body = strstr(wire, "\r\n\r\n");
+        if (body != NULL) {
+            for (header = wire; (header = strstr(header, "\r\n")) < body;) {
+                header += 2;
+                if (strncasecmp(header, "content-length: ", 16) == 0)
+                    length = strtoul(header + 16, NULL, 10);
+            }
+        }
+    } while (body == NULL || used < (size_t)(body + 4 - wire) + length);
+}
+
+static pid_t oauth_fixture(struct fixture *f)
+{
+    static const char *const requests[] = {
+        "grant_type=client_credentials&scope=machine",
+        "grant_type=refresh_token&refresh_token=first",
+        "grant_type=refresh_token&refresh_token=second",
+        "grant_type=client_credentials&scope=machine",
+        "grant_type=client_credentials&scope=machine"};
+    static const char *const results[] = {
+        "{\"access_token\":\"initial\",\"token_type\":\"Bearer\","
+        "\"expires_in\":2,\"refresh_token\":\"first\"}",
+        "{\"access_token\":\"refreshed\",\"token_type\":\"Bearer\","
+        "\"expires_in\":2,\"refresh_token\":\"second\"}",
+        "{\"error\":\"invalid_grant\"}",
+        "{\"access_token\":\"reacquired\",\"token_type\":\"Bearer\","
+        "\"expires_in\":2}",
+        "{\"access_token\":\"no-refresh\",\"token_type\":\"Bearer\","
+        "\"expires_in\":30}"};
+    static const char *const forwarded[] = {
+        "Bearer initial", "Bearer initial", "Bearer refreshed",
+        "Bearer reacquired", "Bearer no-refresh"};
+    struct timeval timeout = {4, 0};
+    SSL_CTX *context;
+    unsigned int calls = 0, grants = 0, keys = 0, discovered = 0;
+    int listener = bound_socket(&f->oauth);
+    pid_t pid;
+    snprintf(f->issuer, sizeof(f->issuer), "https://localhost:%u",
+             (unsigned int)f->oauth);
+    CHECK(listen(listener, 8) == 0);
+    pid = fork();
+    CHECK(pid >= 0);
+    if (pid != 0) {
+        close(listener);
+        return pid;
+    }
+    (void)signal(SIGPIPE, SIG_IGN);
+    alarm(25);
+    context = SSL_CTX_new(TLS_server_method());
+    CHECK(context != NULL &&
+          SSL_CTX_use_certificate_file(context, f->cert, SSL_FILETYPE_PEM) ==
+              1 &&
+          SSL_CTX_use_PrivateKey_file(context, f->key, SSL_FILETYPE_PEM) == 1);
+    while (calls < 5 || grants < 5 || keys < 2 || discovered < 3) {
+        char wire[4096], json[512], response[2048];
+        const char *body = NULL, *line;
+        int length, code = 200, fd = accept(listener, NULL, NULL);
+        SSL *tls = SSL_new(context);
+        CHECK(fd >= 0 && tls != NULL &&
+              setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                         sizeof(timeout)) == 0 &&
+              SSL_set_fd(tls, fd) == 1 && SSL_accept(tls) == 1);
+        read_oauth_wire(tls, wire);
+        if (strncmp(wire, "GET /.well-known/openid-configuration ", 38) == 0) {
+            CHECK(++discovered <= 3);
+            snprintf(json, sizeof(json),
+                     "{\"issuer\":\"%s\",\"jwks_uri\":\"%s/jwks\","
+                     "\"authorization_endpoint\":\"%s/authorize\","
+                     "\"token_endpoint\":\"%s/token\"}",
+                     f->issuer, f->issuer, f->issuer, f->issuer);
+            body = json;
+        } else if (strncmp(wire, "GET /jwks ", 10) == 0) {
+            CHECK(keys < 2);
+            body = keys++ == 0 ? f->jwks : f->next_jwks;
+        } else if (strncmp(wire, "POST /token ", 12) == 0) {
+            CHECK(grants < 5);
+            CHECK(strstr(wire, "\r\nAuthorization: Basic "
+                               "cHJveHklM0FjbGllbnQ6cyUyNmVjcmV0\r\n") != NULL);
+            CHECK(strcmp(strstr(wire, "\r\n\r\n") + 4, requests[grants]) == 0);
+            if (grants == 2)
+                code = 400;
+            body = results[grants++];
+        } else if (strncmp(wire, "GET /oauth-proxy ", 17) == 0) {
+            CHECK(calls < 5);
+            for (line = wire; (line = strstr(line, "\r\n")) != NULL;) {
+                line += 2;
+                if (strncasecmp(line, "authorization: ", 15) == 0)
+                    break;
+            }
+            CHECK(line != NULL &&
+                  strncmp(line + 15, forwarded[calls],
+                          strlen(forwarded[calls])) == 0 &&
+                  strncmp(line + 15 + strlen(forwarded[calls]), "\r\n", 2) ==
+                      0);
+            CHECK(strstr(wire, "forged") == NULL);
+            body = forwarded[calls++];
+        }
+        CHECK(body != NULL);
+        length = snprintf(response, sizeof(response),
+                          "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\n"
+                          "Content-Length: %lu\r\nConnection: close\r\n\r\n%s",
+                          code, code == 200 ? "OK" : "Bad Request",
+                          (unsigned long)strlen(body), body);
+        CHECK(length > 0 && (size_t)length < sizeof(response) &&
+              SSL_write(tls, response, length) == length);
+        (void)SSL_shutdown(tls);
+        SSL_free(tls);
+        close(fd);
+    }
+    SSL_CTX_free(context);
+    close(listener);
+    _exit(0);
+}
+
+static void oauth_lifecycle(struct fixture *f)
+{
+    char auth[2048], out[4096];
+    const char *spoof = "Authorization: Bearer forged\r\n";
+    long expiry = (long)time(NULL) + 60;
+    sign_bearer(f, "at+jwt", "fixture", f->issuer, "knurl", "machine", expiry,
+                auth);
+    CHECK(exchange(f, 1, "GET", "/rotating-oidc", auth, NULL, out) == 200);
+    CHECK(exchange(f, 1, "GET", "/oauth-proxy", spoof, NULL, out) == 200 &&
+          strstr(out, "Bearer initial") != NULL);
+    CHECK(exchange(f, 1, "GET", "/oauth-proxy", NULL, NULL, out) == 200 &&
+          strstr(out, "Bearer initial") != NULL);
+    sleep(2);
+    CHECK(exchange(f, 1, "GET", "/oauth-proxy", NULL, NULL, out) == 200 &&
+          strstr(out, "Bearer refreshed") != NULL);
+    sleep(2);
+    CHECK(exchange(f, 1, "GET", "/oauth-proxy", NULL, NULL, out) == 200 &&
+          strstr(out, "Bearer reacquired") != NULL);
+    sleep(2);
+    CHECK(exchange(f, 1, "GET", "/oauth-proxy", NULL, NULL, out) == 200 &&
+          strstr(out, "Bearer no-refresh") != NULL);
+    sign_bearer(f, "at+jwt", "rotated", f->issuer, "knurl", "machine", expiry,
+                auth);
+    CHECK(exchange(f, 1, "GET", "/rotating-oidc", auth, NULL, out) == 200);
+    sign_bearer(f, "at+jwt", "fixture", f->issuer, "knurl", "machine", expiry,
+                auth);
+    CHECK(exchange(f, 1, "GET", "/rotating-oidc", auth, NULL, out) == 401);
 }
 
 static void oidc(struct fixture *f)
@@ -498,8 +661,7 @@ static void totp_code(const char *uri, char form[160])
     unsigned int length, i, off, bits = 0, count = 0, used = 0;
     unsigned long value;
     time_t now = time(NULL) / 30;
-    CHECK(secret != NULL &&
-          strncmp(uri, "otpauth://totp/Knurl:alice?", 26) == 0);
+    CHECK(secret != NULL && strncmp(uri, "otpauth://totp/Knurl:", 21) == 0);
     secret += 8;
     CHECK(strcspn(secret, "&") == 32);
     for (i = 0; i < 32; ++i) {
@@ -524,6 +686,81 @@ static void totp_code(const char *uri, char form[160])
             ((unsigned long)digest[off + 1] << 16) |
             ((unsigned long)digest[off + 2] << 8) | digest[off + 3];
     snprintf(form, 160, "%s&code=%06lu", password_form, value % 1000000UL);
+}
+
+static void read_enrollment(const char *response, char uri[512])
+{
+    const char *start = strstr(response, "{\"uri\":\"");
+    const char *end;
+    CHECK(start != NULL);
+    start += 8;
+    end = strchr(start, '"');
+    CHECK(end != NULL && end > start && end - start < 512 &&
+          strstr(response, "no-store") != NULL);
+    memcpy(uri, start, (size_t)(end - start));
+    uri[end - start] = 0;
+}
+
+static void verify_totp_rollback(struct fixture *f, const char *form)
+{
+    char out[4096], path[1080], saved[1080];
+    unsigned int i;
+    int fd;
+    long before, after;
+    FILE *file;
+    snprintf(path, sizeof(path), "%s/totp.json", f->store_path);
+    snprintf(saved, sizeof(saved), "%s/totp.saved", f->store_path);
+    CHECK(rename(path, saved) == 0);
+    fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    CHECK(fd >= 0 && (file = fdopen(fd, "w")) != NULL);
+    CHECK(fputs("{\"records\":[", file) >= 0);
+    for (i = 0; i < 8191; ++i)
+        CHECK(fprintf(file,
+                      "%s{\"key\":\"t-%064u\",\"subject\":\"\",\"policy\":\"\","
+                      "\"email\":\"\",\"secret\":\"\",\"seed\":\"\","
+                      "\"revision\":\"\",\"enrollment\":\"\"}",
+                      i == 0 ? "" : ",", i) > 0);
+    CHECK(fputs("]}", file) >= 0 && (before = ftell(file)) > 0 &&
+          fclose(file) == 0);
+    CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 503);
+    /* Capacity must fail at the session write. A stranded replay record
+     * would fill the final row in the file. */
+    file = fopen(path, "rb");
+    CHECK(file != NULL && fseek(file, 0, SEEK_END) == 0);
+    after = ftell(file);
+    CHECK(before == after && fclose(file) == 0);
+    CHECK(rename(saved, path) == 0);
+}
+
+static void totp_enrollment(struct fixture *f)
+{
+    static const char bob[] =
+        "username=bob&password=a+test+password+with+spaces";
+    char out[4096], browser[256], first[512], rotated[512];
+    char code[160], form[160];
+    CHECK(exchange(f, 1, "POST", "/otp", NULL, bob, out) == 428 &&
+          strstr(out, "Set-Cookie:") == NULL);
+    CHECK(exchange(f, 1, "POST", "/totp-enroll", NULL, "", out) == 401);
+    CHECK(exchange(f, 1, "POST", "/login", NULL, bob, out) == 204);
+    cookie(out, browser);
+    CHECK(exchange(f, 1, "POST", "/totp-enroll", browser, "", out) == 201);
+    read_enrollment(out, first);
+    CHECK(exchange(f, 1, "POST", "/totp-enroll", browser, "", out) == 401);
+    CHECK(exchange(f, 1, "POST", "/login", NULL, bob, out) == 204);
+    cookie(out, browser);
+    CHECK(exchange(f, 1, "POST", "/totp-enroll", browser, "", out) == 409);
+    totp_code(first, code);
+    CHECK(exchange(f, 1, "POST", "/totp-enroll", browser,
+                   strrchr(code, '&') + 1, out) == 201);
+    read_enrollment(out, rotated);
+    CHECK(strcmp(first, rotated) != 0);
+    CHECK(exchange(f, 1, "GET", "/app/me", browser, NULL, out) == 401);
+    totp_code(rotated, code);
+    snprintf(form, sizeof(form), "%s%s", bob, strrchr(code, '&'));
+    verify_totp_rollback(f, form);
+    CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 204);
+    CHECK(knurl_auth_json_prune(f->store, NULL) == KNURL_OK);
+    CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 401);
 }
 
 static void totp_race(struct fixture *f, unsigned short other_port)
@@ -690,6 +927,7 @@ static void exercise(struct fixture *f)
     CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 503);
     totp_code(f->enrollment, form);
     CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 204);
+    totp_enrollment(f);
     CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 401);
     CHECK(knurl_auth_json_enroll_totp(f->store, "alice", 1, f->enrollment,
                                       NULL) == KNURL_OK);
@@ -710,6 +948,8 @@ static void exercise(struct fixture *f)
     CHECK(exchange(f, 1, "POST", "/email", NULL, form, out) == 401);
     CHECK(exchange(f, 1, "GET", "/different-policy", session, NULL, out) ==
           200);
+    CHECK(exchange(f, 1, "POST", "/totp-enroll-email", session, "", out) ==
+          409);
     CHECK(knurl_auth_json_admin(f->store, KNURL_AUTH_USER_DISABLE, "alice",
                                 NULL, NULL) == KNURL_OK);
     CHECK(exchange(f, 1, "GET", "/different-policy", session, NULL, out) ==
@@ -730,6 +970,7 @@ static void exercise(struct fixture *f)
           KNURL_OK);
     CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 401);
     oidc(f);
+    oauth_lifecycle(f);
     concurrency(f);
     for (i = 0; i < 12; ++i)
         CHECK(exchange(f, 1, "POST", "/login", NULL,
@@ -784,13 +1025,15 @@ static void routes(knurl_router *router, struct fixture *f)
 {
     knurl_auth_config config;
     knurl_auth *browser, *otp, *email, *smtp, *external, *machine, *other,
-        *slow, *issuer;
+        *slow, *issuer, *rotating;
     knurl_route_group_config group_config;
     knurl_route_group *group;
     knurl_blocking_route_config app;
     knurl_static_config files;
     knurl_upload_stream_config upload;
     knurl_proxy_config proxy;
+    knurl_oauth2_config oauth;
+    knurl_oauth2_client *client;
     knurl_route *handle;
     char mail_url[128], proxy_url[128];
     knurl_auth_config_init(&config);
@@ -831,8 +1074,16 @@ static void routes(knurl_router *router, struct fixture *f)
     config.oidc.audience = "knurl";
     config.oidc.jwks_uri = "https://issuer.example/jwks";
     config.oidc.jwks_json = f->jwks;
+    config.oidc.pin_jwks = 1;
     config.oidc.scope = "machine";
     CHECK(knurl_auth_new(&config, &issuer, NULL) == KNURL_OK);
+    config.name = "rotating";
+    config.oidc.issuer = f->issuer;
+    config.oidc.jwks_uri = NULL;
+    config.oidc.jwks_json = NULL;
+    config.oidc.pin_jwks = 0;
+    config.oidc.ca_file = f->cert;
+    CHECK(knurl_auth_new(&config, &rotating, NULL) == KNURL_OK);
     knurl_auth_config_init(&config);
     config.name = "external";
     config.json = f->store;
@@ -846,6 +1097,12 @@ static void routes(knurl_router *router, struct fixture *f)
     CHECK(knurl_auth_route(router, "/logout", browser, KNURL_AUTH_LOGOUT,
                            &handle, NULL) == KNURL_OK);
     CHECK(knurl_auth_route(router, "/otp", otp, KNURL_AUTH_LOGIN, &handle,
+                           NULL) == KNURL_OK);
+    CHECK(knurl_auth_route(router, "/totp-enroll", browser,
+                           KNURL_AUTH_TOTP_ENROLL_ENDPOINT, &handle,
+                           NULL) == KNURL_OK);
+    CHECK(knurl_auth_route(router, "/totp-enroll-email", email,
+                           KNURL_AUTH_TOTP_ENROLL_ENDPOINT, &handle,
                            NULL) == KNURL_OK);
     CHECK(knurl_auth_route(router, "/email", email, KNURL_AUTH_LOGIN, &handle,
                            NULL) == KNURL_OK);
@@ -879,6 +1136,20 @@ static void routes(knurl_router *router, struct fixture *f)
     proxy.path = "/machine-proxy";
     CHECK(knurl_router_proxy(router, &proxy, &handle, NULL) == KNURL_OK);
     CHECK(knurl_route_set_auth(handle, machine, NULL) == KNURL_OK);
+    memset(&oauth, 0, sizeof(oauth));
+    oauth.issuer = f->issuer;
+    oauth.ca_file = f->cert;
+    oauth.client_id = "proxy:client";
+    oauth.client_secret = "s&ecret";
+    oauth.scope = "machine";
+    CHECK(knurl_oauth2_client_new(&oauth, &client, NULL) == KNURL_OK);
+    CHECK(knurl_route_set_proxy_oauth2(handle, client, NULL) == KNURL_INVALID);
+    proxy.path = "/oauth-proxy";
+    proxy.target = f->issuer;
+    proxy.tls_ca_pem = f->ca_pem;
+    CHECK(knurl_router_proxy(router, &proxy, &handle, NULL) == KNURL_OK);
+    CHECK(knurl_route_set_proxy_oauth2(handle, client, NULL) == KNURL_OK);
+    knurl_oauth2_client_close(client);
     knurl_upload_stream_config_init(&upload);
     upload.path = "/slow";
     upload.open = upload_open;
@@ -893,6 +1164,7 @@ static void routes(knurl_router *router, struct fixture *f)
     plain_route(router, "/machine", machine);
     plain_route(router, "/machine-other", other);
     plain_route(router, "/oidc", issuer);
+    plain_route(router, "/rotating-oidc", rotating);
     plain_route(router, "/external", external);
     knurl_auth_close(browser);
     knurl_auth_close(otp);
@@ -903,6 +1175,7 @@ static void routes(knurl_router *router, struct fixture *f)
     knurl_auth_close(other);
     knurl_auth_close(slow);
     knurl_auth_close(issuer);
+    knurl_auth_close(rotating);
 }
 
 static void cli(const char *runner, const char *store, const char *operation,
@@ -1069,11 +1342,12 @@ int main(int argc, char **argv)
     char store[1024], uri[KNURL_AUTH_TOTP_URI_CAPACITY];
     FILE *file;
     int child;
-    pid_t smtp_pid, proxy_pid;
+    pid_t smtp_pid, proxy_pid, oauth_pid;
     CHECK(argc == 2 || argc == 4);
     server_pid = getpid();
     memset(&f, 0, sizeof(f));
     snprintf(store, sizeof(store), "%s/state", argv[1]);
+    snprintf(f.store_path, sizeof(f.store_path), "%s", store);
     snprintf(f.cert, sizeof(f.cert), "%s/cert.pem", argv[1]);
     snprintf(f.key, sizeof(f.key), "%s/key.pem", argv[1]);
     if (argc == 4)
@@ -1090,6 +1364,8 @@ int main(int argc, char **argv)
     CHECK(knurl_auth_json_init(store, &error) == KNURL_OK);
     CHECK(knurl_auth_json_open(store, &f.store, &error) == KNURL_OK);
     CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, "alice",
+                                password, &error) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, "bob",
                                 password, &error) == KNURL_OK);
     enroll_concurrently(&f);
     CHECK(knurl_auth_json_enroll_totp(f.store, "alice", 0, uri, &error) ==
@@ -1128,9 +1404,13 @@ int main(int argc, char **argv)
     config.tls.identities = &identity;
     config.tls.identity_count = 1;
     CHECK(knurl_server_new(&config, &server, &error) == KNURL_OK);
+    file = fopen(f.cert, "rb");
+    CHECK(file != NULL && fread(f.ca_pem, 1, sizeof(f.ca_pem) - 1, file) > 0 &&
+          feof(file) && fclose(file) == 0);
     jwks(&f);
     smtp_pid = smtp_fixture(&f);
     proxy_pid = proxy_fixture(&f);
+    oauth_pid = oauth_fixture(&f);
     routes(knurl_server_router(server), &f);
     status = knurl_server_run(server, NULL, &error);
     if (status != KNURL_OK)
@@ -1140,13 +1420,17 @@ int main(int argc, char **argv)
         WEXITSTATUS(child) != 0) {
         (void)kill(smtp_pid, SIGTERM);
         (void)kill(proxy_pid, SIGTERM);
+        (void)kill(oauth_pid, SIGTERM);
         (void)waitpid(smtp_pid, NULL, 0);
         (void)waitpid(proxy_pid, NULL, 0);
+        (void)waitpid(oauth_pid, NULL, 0);
         return 1;
     }
     CHECK(waitpid(smtp_pid, &child, 0) == smtp_pid && WIFEXITED(child) &&
           WEXITSTATUS(child) == 0);
     CHECK(waitpid(proxy_pid, &child, 0) == proxy_pid && WIFEXITED(child) &&
+          WEXITSTATUS(child) == 0);
+    CHECK(waitpid(oauth_pid, &child, 0) == oauth_pid && WIFEXITED(child) &&
           WEXITSTATUS(child) == 0);
     CHECK(knurl_server_destroy(server, NULL) == KNURL_OK);
     verify_state_files(store);
