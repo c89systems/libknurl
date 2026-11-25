@@ -292,7 +292,7 @@ void knurl_kore_logging_child(struct knurl_runtime *runtime)
         (void)knurl_access_file_close(runtime->logging->file);
         runtime->logging->file = NULL;
         runtime->logging->file_config = NULL;
-        runtime->logging->owned_root = runtime->logging->owned_access = 0;
+        /* The worker owns its copies of the run-local loggers. */
     }
 }
 void knurl_kore_logging_finish(struct knurl_runtime *runtime)
