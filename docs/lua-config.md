@@ -98,15 +98,14 @@ process- or thread-affine resources in `on_worker_start` before readiness.
 worker initializes from the parent's snapshot. The server reports errors from
 worker initialization or cleanup through its lifecycle.
 
-`knurl.server` uses the C production webserver profile with one listener
-(default `127.0.0.1:8080`) and one HTTP worker. Supply `tls = {host, certificate,
-private_key}` with named fields to serve HTTPS using PEM files. Set `workers`,
-`max_connections` or `backend_quiet` as needed. `application_max_tasks`
-limits admitted Lua requests per worker, including queued work. Its default
-is 16 and a full pool returns 503. `application_timeout_ms` defaults to
-30000 including queue time. Expiry returns 504. Cancellation is cooperative,
-so a running handler retains its slot until it returns. Kore continues
-serving native services while the application thread runs.
+`knurl.server` defaults to one HTTP worker and one listener on
+`127.0.0.1:8080`. Set `workers`, `max_connections` or `backend_quiet` as
+needed. `application_max_tasks` limits admitted Lua work per worker, including
+queued work, and defaults to 16. A full pool returns 503 for a new inline HTTP
+handler. `application_timeout_ms` defaults to 30000 including queue time.
+Knurl returns 504 when an HTTP handler or route hook times out. Cancellation is
+cooperative and a running callback retains its slot until it returns. Kore
+continues serving native services while the application thread runs.
 
 Set `autoblock_disabled = true` to turn off the production profile's
 automatic abuse blocking.
@@ -115,6 +114,40 @@ automatic abuse blocking.
 resources. Run from a host that can safely fork. `close()` releases the
 inactive server and its routes. An API error returns `nil, error` with a
 numeric status, message and optional detail.
+
+## Listeners and TLS
+
+For a single HTTPS listener use `tls = {host = 'example.com', certificate =
+'cert.pem', private_key = 'key.pem'}`. Use `listeners` for multiple sockets.
+Each entry accepts `name`, `bind`, `port`, and a `kind` of `http`, `https` or
+`redirect`. On HTTPS and redirect listeners `identity` selects a one-based
+index in `tls.identities` and defaults to 1. A redirect listener also needs
+`redirect_https_port`. Set `presented_port` when clients use a different port
+from the bind port.
+
+```lua
+local server = check(knurl.server{
+  listeners = {
+    {kind = 'redirect', port = 80, redirect_https_port = 443},
+    {kind = 'https', port = 443},
+  },
+  tls = {
+    identities = {{domains = {'example.com'}, mode = 'acme'}},
+    acme = {
+      email = 'ops@example.com',
+      directory_url = 'https://acme-v02.api.letsencrypt.org/directory',
+      runtime_directory = '/var/lib/knurl/acme',
+    },
+  },
+})
+```
+
+ACME uses a private directory for account and certificate state. An ACME
+directory can also specify `ca_file`, `ca_directory`, and `persist_timeout_ms`.
+Manual identities use `bundle` or `certificate` and `private_key` PEM paths,
+with optional `extra_chain`, `client_ca` and `require_client_certificate`.
+`tls.version` accepts `default`, `both`, `1.2` or `1.3`. Configure TLS and
+listeners at startup. [TLS and ACME](tls.md)
 
 ## Request and reply
 
@@ -136,6 +169,89 @@ JSON objects use string keys and an empty table makes an empty object. JSON
 responses are buffered with an 8 MiB maximum and a nesting limit of 32.
 An uncaught handler error returns 500 and logs a bounded message and Lua
 traceback on the server.
+
+### Streaming and server-sent events
+
+Return `{stream = function(max_bytes) ... end}` for a live response. Return up
+to `max_bytes` of nonempty data per call and nil at EOF. The producer runs on
+the worker's Lua thread. Kore requests one bounded chunk as output capacity
+becomes available. A HEAD response leaves the producer uncalled.
+
+```lua
+check(server:route{
+  path = '/updates',
+  handler = function()
+    local sent = false
+    return {sse = function()
+      if sent then return end
+      sent = true
+      return {id = '1', event = 'update', data = 'ready'}
+    end}
+  end,
+})
+```
+
+`sse` defaults to `text/event-stream`. A producer can return a data string or
+a table with `id`, `event`, `data`, `comment` and `retry_ms`. Each encoded
+event must fit the `max_bytes` argument. Returning nil ends the stream.
+
+### Typed REST and OpenAPI
+
+Set `request_json` to a LoneJSON schema or `request_xml` to a table with
+`schema` and optional `root_element`, `text_key`, `attribute_prefix`,
+`trim_text`, `skip_unknown_disabled`, `max_depth` and `max_text_bytes`.
+Knurl decodes the request from the live body reader before invoking the
+handler. The handler receives the mapped record as `req.input`. Malformed
+or invalid input gets a 400 JSON error. Return a record as `{json = record}`
+or `{xml = {record = record, root_element = 'message'}}`. Mapped replies
+are materialized with an 8 MiB limit.
+
+```lua
+local json = require('lonejson').new()
+local message = json.schema('Message', {json.field('text', json.string{required = true})})
+check(server:route{
+  method = 'POST', path = '/messages/:id', request_json = message,
+  handler = function(req) return {json = req.input} end,
+})
+check(server:openapi_doc{
+  method = 'POST', path = '/messages/:id', request_schema = message,
+  responses = {[200] = {description = 'Echoed message', schema = message}},
+})
+local document = check(server:openapi{title = 'Messages', version = '1.0', format = 'json'})
+```
+
+`openapi_doc` also accepts `summary`, `operation_id` and `tags`.
+`openapi` accepts `format = 'yaml'` and an optional `max_bytes`.
+
+### WebSockets
+
+```lua
+check(server:websocket{
+  path = '/chat/:room',
+  on_open = function(ws, req)
+    check(ws:send_text('Joined ' .. req.params.room))
+  end,
+  on_message = function(ws, bytes, kind)
+    if kind == 'text' then
+      check(ws:send_text(bytes))
+    else
+      check(ws:send_binary(bytes))
+    end
+  end,
+})
+```
+
+ACL and native auth apply before the handshake. `on_message` receives a
+complete text or binary message, including reassembled fragments.
+Callbacks for a connection run in order on the same Lua thread as HTTP
+handlers. Each idle connection leaves that thread available. Use
+`ws:request()` to read the handshake metadata. Send messages and call
+`ws:close(code, reason)` from a WebSocket callback. `on_close(ws, outcome)`
+receives the peer and local close codes, peer reason, `opened`, `clean` and
+terminal `cause`.
+`protocol`, `max_frame_bytes`, `max_message_bytes`, `output_queue_bytes`,
+and `close_timeout_ms` configure the connection. Use `on_writable(ws)` to
+retry a send when the bounded output queue has room.
 
 ## Outbound requests with curl
 
@@ -220,8 +336,9 @@ with a structured `error` and the SMTP reply code in `status` when available.
 | `redirect` | Required `location`, optional 3xx `status` (default 302), `body`, `content_type` and `cache_control`. |
 | `static_file`, `static_directory` | A `file_path` or `root_dir`, respectively. The [static service](assets.md) handles ranges, compression, indexes and MIME policy. |
 | `upload_file` | A `file_path` destination and optional `max_body_bytes`. Core [file upload](uploads.md) performs native I/O. |
+| `webdav` | A filesystem `root_dir` or managed storage using `cache_dir` and `site_id`. Set `auth` for a verified principal or `auth_disabled = true` for a public mount. Optional quotas include `max_file_bytes`, `max_total_bytes` and `max_resources`. |
 | `route` | An inline `handler` function and optional body and buffer limits. Defaults to GET. |
-| `proxy`, `application` | A fixed HTTP(S) `target` and optional [proxy limits and upstream TLS fields](proxy-http.md). `application` uses the same native proxy with a 30 s default total deadline. Both preserve the original path and query. |
+| `proxy`, `application` | An HTTP(S) `target`, optional `alternate_targets` and [proxy limits and upstream TLS fields](proxy-http.md). `application` uses the same native proxy with a 30 s default total deadline. The default forwards the original path and query. |
 
 Each declaration takes a `path`, optional ACL and optional `method` or array
 `methods` of HTTP method names. Fixed responses default to GET, static routes
@@ -230,17 +347,51 @@ Fixed responses, uploads, inline handlers and proxies accept `path_kind`
 with `literal`, `params` or `regex`. Omit it for path inference. Register
 in the same order you would use in the C router.
 
-`server:group{prefix = ..., acl = ...}` scopes fixed responses, static files,
-file uploads and inline handlers to a shared prefix and ACL. Declare upstream
-proxies directly on the server. Supply an ACL table or an object returned by
-`knurl.acl{...}`. Successful route registrations return a route handle.
+`server:group{prefix = ..., acl = ...}` applies a shared prefix and ACL to
+route declarations, including proxy, WebDAV and WebSocket routes. Supply an
+ACL table or an object returned by `knurl.acl{...}`. Successful registrations
+return a route handle.
 Use `route:set_acl(value)` or `group:set_acl(value)` before serving to replace
 an attachment. Pass nil to clear it. Core retains each attachment.
 
-Native routes serve entirely in C. Empty `hooks = {}` and server
-`callbacks = {}` tables are accepted. The inline handler and worker hook
-methods are the Lua callback entry points. Use `acl` for network policy and
-`auth` for identity policy.
+Native routes declared without Lua callbacks stay in C at request time.
+Omitting `hooks` and supplying `hooks = {}` have the same effect. Use `acl`
+for network policy and `auth` for native identity policy.
+
+### Request hooks
+
+Register callbacks in `hooks` on a route or group. Native ACL and auth run
+first. Then the group and route `auth(req)` hooks run, followed by group and
+route `before(req)`. These hooks see request metadata before body admission,
+including `req.auth` when native auth verified the request. An auth hook
+returns true to continue, false or nil for 403, or a reply table. A before
+hook returns nil to continue or a reply table to stop dispatch. A hook reply
+table accepts `status`, `headers`, `content_type` and a `body` of up to 64 KiB.
+
+The route and group `after(req, res)` hooks run in that order before final
+response bytes are sent. `res` contains `status` and ordered `headers`.
+Return nil to leave it as it is, or return `status` and/or a header edit
+table. A string sets a header and false removes one. Header edits preserve
+transport framing and auth cache policy.
+
+### Proxy callbacks
+
+- `preflight(req)` returns a bounded reply or nil to continue.
+- `rewrite(req)` returns optional `path`, `query`, `host`, `method`, a
+  one-based `target` index, and a `headers` edit table. Index 1 is the main
+  target and subsequent indexes select from `alternate_targets`. Set
+  `query = false` to strip the query or `host = false` to use the selected
+  target's authority.
+- `modify_response(req, res)` edits the status and headers of an upstream
+  response before forwarding it. Its return table matches `hooks.after`.
+- `on_error(req, err, status)` can return a bounded replacement reply
+  for a gateway failure before commitment. Nil keeps the native error reply.
+- `on_exchange(req, event)` receives terminal status, byte counts, duration,
+  upstream and disconnect information for an admitted exchange. Delivery is
+  best effort through the bounded Lua worker queue.
+
+These callbacks run on the worker's Lua thread. The proxy transports HTTP,
+SSE and WebSocket traffic in C with bounded buffers.
 
 ## ACLs and country data
 
@@ -289,7 +440,4 @@ link to application pages that use or display the data.
 ## C host extension points
 
 The C host API provides custom ACL resolvers, auth backends, and borrowed
-country and asset providers. It also exposes request hooks, proxy target
-selection hooks, ACME, multiple listeners, WebDAV, WebSocket handlers, and
-mapped REST, JSON and XML routes. Lua covers the route declarations above,
-native auth, file-backed ACLs, worker hooks, logging, and inline request handlers.
+country, asset and storage providers.

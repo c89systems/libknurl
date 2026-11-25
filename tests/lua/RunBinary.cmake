@@ -4,6 +4,7 @@ file(MAKE_DIRECTORY "${WORK}")
 file(REMOVE "${WORK}/server.log")
 if(MODE STREQUAL "normal")
   file(REMOVE_RECURSE "${WORK}/geo-cache")
+  file(REMOVE_RECURSE "${WORK}/webdav")
   find_program(gzip gzip REQUIRED)
   foreach(fixture valid-24-4 bad-metadata)
     execute_process(COMMAND "${gzip}" -n -c "${MMDB_FIXTURES}/${fixture}.mmdb"

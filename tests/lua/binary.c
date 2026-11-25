@@ -139,6 +139,265 @@ static void receive(int fd, char *response, size_t capacity)
     response[used] = '\0';
 }
 
+static void read_exact(int fd, void *buffer, size_t length)
+{
+    char *cursor = buffer;
+    ssize_t n;
+    while (length != 0) {
+        n = read(fd, cursor, length);
+        CHECK(n > 0);
+        cursor += n;
+        length -= (size_t)n;
+    }
+}
+
+static void read_headers(int fd, char *buffer, size_t capacity)
+{
+    size_t length = 0;
+    do {
+        CHECK(length + 1 < capacity);
+        read_exact(fd, buffer + length++, 1);
+    } while (length < 4 || memcmp(buffer + length - 4, "\r\n\r\n", 4));
+    buffer[length] = 0;
+}
+
+static void release_gate(const char *gate)
+{
+    int fd, i;
+    for (i = 0; i < 400; ++i) {
+        fd = open(gate, O_WRONLY | O_NONBLOCK);
+        if (fd >= 0)
+            break;
+        CHECK(errno == ENXIO);
+        pause_briefly();
+    }
+    CHECK(i < 400 && write(fd, "x", 1) == 1);
+    close(fd);
+}
+
+static void send_frame(int fd, unsigned char opcode, const char *payload,
+                       size_t length)
+{
+    unsigned char bytes[126];
+    size_t i;
+    CHECK(length <= sizeof(bytes) - 6);
+    bytes[0] = opcode;
+    bytes[1] = (unsigned char)(128 | length);
+    memset(bytes + 2, 0x67, 4);
+    for (i = 0; i < length; ++i)
+        bytes[6 + i] = (unsigned char)payload[i] ^ 0x67;
+    CHECK(write(fd, bytes, length + 6) == (ssize_t)(length + 6));
+}
+
+static void expect_frame(int fd, unsigned char opcode, const char *payload,
+                         size_t length)
+{
+    unsigned char bytes[126];
+    CHECK(length <= sizeof(bytes) - 2);
+    read_exact(fd, bytes, length + 2);
+    CHECK(bytes[0] == opcode && bytes[1] == length &&
+          memcmp(bytes + 2, payload, length) == 0);
+}
+
+static void websocket(unsigned short port, const char *log, const char *gate)
+{
+    static const char upgrade[] =
+        "Host: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+    static const char farewell[] = "\003\350bye";
+    char request[512], response[1024];
+    int fd;
+    CHECK(knurl_test_acl_exchange(port, "GET", "/ws/alice", NULL, NULL) == 400);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/ws/alice?fail=1", NULL,
+                                  NULL) == 500);
+    snprintf(request, sizeof(request), "GET /ws-denied HTTP/1.1\r\n%s",
+             upgrade);
+    receive(open_request(port, request), response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 403", 12) == 0);
+    snprintf(request, sizeof(request), "GET /ws/ali%%63e HTTP/1.1\r\n%s",
+             upgrade);
+    fd = open_request(port, request);
+    read_headers(fd, response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 101", 12) == 0);
+    CHECK(strstr(response, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") != NULL);
+    CHECK(strstr(response, "x-socket: ready\r\n") != NULL);
+    expect_frame(fd, 0x81, "hello alice", 11);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/count", NULL, NULL) ==
+          200);
+    send_frame(fd, 0x02, "one\0", 4);
+    send_frame(fd, 0x80, "two", 3);
+    expect_frame(fd, 0x82, "one\0two", 7);
+    send_frame(fd, 0x81, "hold", 4);
+    milestone(log, "websocket waiting\n", 1);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
+          200);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/count", NULL, NULL) ==
+          503);
+    release_gate(gate);
+    expect_frame(fd, 0x81, "done", 4);
+    send_frame(fd, 0x88, farewell, sizeof(farewell) - 1);
+    expect_frame(fd, 0x88, farewell, sizeof(farewell) - 1);
+    close(fd);
+    milestone(log, "websocket closed\n", 1);
+}
+
+static void streams(unsigned short port, const char *log, const char *gate)
+{
+    char response[1024], prefix[10];
+    int fd = open_request(
+        port,
+        "GET /stream HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    read_headers(fd, response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 200", 12) == 0);
+    CHECK(strstr(response, "transfer-encoding: chunked") != NULL);
+    CHECK(strstr(response, "x-stream: ready\r\n") != NULL);
+    read_exact(fd, prefix, sizeof(prefix));
+    CHECK(memcmp(prefix, "5\r\nfirst\r\n", sizeof(prefix)) == 0);
+    milestone(log, "stream waiting\n", 1);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
+          200);
+    release_gate(gate);
+    receive(fd, response, sizeof(response));
+    CHECK(strcmp(response, "4\r\nlast\r\n0\r\n\r\n") == 0);
+
+    receive(open_request(port, "HEAD /sse HTTP/1.1\r\nHost: localhost\r\n"
+                               "Connection: close\r\n\r\n"),
+            response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 200", 12) == 0);
+    CHECK(strstr(response, "text/event-stream") != NULL);
+    CHECK(events(log, "SSE pulled\n") == 0);
+    receive(open_request(port, "GET /sse HTTP/1.1\r\nHost: localhost\r\n"
+                               "Connection: close\r\n\r\n"),
+            response, sizeof(response));
+    CHECK(
+        strstr(
+            response,
+            "id: 1\nevent: update\nretry: 500\ndata: hello\ndata: world\n\n") !=
+        NULL);
+    CHECK(events(log, "SSE pulled\n") == 2);
+}
+
+static void typed_and_webdav(unsigned short port)
+{
+    static const char *const bodies[] = {
+        "{\"text\":\"hi\"}", "{}", "<message><text>hi</text></message>", "abc"};
+    static const char *const paths[] = {"/typed/alice", "/typed/alice",
+                                        "/typed-xml", "/dav/put.txt"};
+    static const char *const methods[] = {"POST", "POST", "POST", "PUT"};
+    static const char *const status[] = {"HTTP/1.1 200", "HTTP/1.1 400",
+                                         "HTTP/1.1 200", "HTTP/1.1 201"};
+    char request[512], response[1024];
+    size_t i;
+    for (i = 0; i < sizeof(bodies) / sizeof(bodies[0]); ++i) {
+        snprintf(request, sizeof(request),
+                 "%s %s HTTP/1.1\r\nHost: localhost\r\n"
+                 "Content-Length: %lu\r\nConnection: close\r\n\r\n%s",
+                 methods[i], paths[i], (unsigned long)strlen(bodies[i]),
+                 bodies[i]);
+        receive(open_request(port, request), response, sizeof(response));
+        CHECK(strncmp(response, status[i], 12) == 0);
+        if (i == 0)
+            CHECK(strstr(response, "{\"text\":\"alice:hi\"}") != NULL);
+        if (i == 1)
+            CHECK(strstr(response, "request_decode") != NULL);
+        if (i == 2)
+            CHECK(strstr(response, "<message><text>hi!</text></message>") !=
+                  NULL);
+    }
+    CHECK(knurl_test_acl_exchange(port, "GET", "/dav/put.txt", NULL, "abc") ==
+          200);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/protected-dav/", NULL, NULL) ==
+          403);
+}
+
+static void hooks_and_proxy(unsigned short port, const char *log,
+                            const char *gate)
+{
+    static const char body_headers[] =
+        "Host: localhost\r\nConnection: close\r\n"
+        "Content-Length: 3\r\nExpect: 100-continue\r\n\r\n";
+    char request[512], response[2048];
+    struct pollfd future;
+    int fd;
+    snprintf(request, sizeof(request), "POST /hooks/deny HTTP/1.1\r\n%s",
+             body_headers);
+    receive(open_request(port, request), response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 403", 12) == 0);
+    CHECK(strstr(response, "100 Continue") == NULL);
+
+    snprintf(request, sizeof(request), "POST /hooks/block HTTP/1.1\r\n%s",
+             body_headers);
+    fd = open_request(port, request);
+    milestone(log, "hook waiting\n", 1);
+    future.fd = fd;
+    future.events = POLLIN;
+    CHECK(poll(&future, 1, 0) == 0);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
+          200);
+    release_gate(gate);
+    read_headers(fd, response, sizeof(response));
+    CHECK(strcmp(response, "HTTP/1.1 100 Continue\r\n\r\n") == 0);
+    CHECK(write(fd, "abc", 3) == 3);
+    receive(fd, response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 201", 12) == 0);
+    CHECK(strstr(response, "x-route: after\r\n") != NULL);
+    CHECK(strstr(response,
+                 "x-group: group auth, route auth, group before, route before, "
+                 "handler, route after, group after\r\n") != NULL);
+    CHECK(strstr(response, "\r\n\r\nabc") != NULL);
+
+    CHECK(knurl_test_acl_exchange(port, "GET", "/gateway/deny", NULL,
+                                  "preflight refused") == 429);
+    fd = open_request(
+        port, "GET /gateway/hold?before=1 HTTP/1.1\r\nHost: localhost\r\n"
+              "Connection: close\r\nX-Remove: inbound\r\n\r\n");
+    milestone(log, "proxy response waiting\n", 1);
+    future.fd = fd;
+    CHECK(poll(&future, 1, 0) == 0);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
+          200);
+    release_gate(gate);
+    receive(fd, response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 203", 12) == 0);
+    CHECK(strstr(response, "x-proxy: lua\r\n") &&
+          strstr(response, "upstream data"));
+    CHECK(strstr(response, "x-origin:") == NULL);
+    milestone(log, "proxy exchange callback\n", 1);
+
+    receive(open_request(port,
+                         "GET /gateway-failure HTTP/1.1\r\nHost: localhost\r\n"
+                         "Connection: close\r\n\r\n"),
+            response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 503", 12) == 0);
+    CHECK(strstr(response, "x-fallback: lua\r\n") &&
+          strstr(response, "custom gateway response"));
+}
+
+static void hook_timeouts(unsigned short port, const char *log,
+                          const char *gate)
+{
+    static const char *const paths[] = {"before", "after"};
+    char request[256], response[1024], waiting[80];
+    size_t i;
+    int fd;
+    for (i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+        snprintf(request, sizeof(request),
+                 "GET /%s-timeout HTTP/1.1\r\n"
+                 "Host: localhost\r\nConnection: close\r\n\r\n",
+                 paths[i]);
+        snprintf(waiting, sizeof(waiting), "%s timeout waiting\n", paths[i]);
+        fd = open_request(port, request);
+        milestone(log, waiting, 1);
+        receive(fd, response, sizeof(response));
+        CHECK(strncmp(response, "HTTP/1.1 504", 12) == 0);
+        CHECK(strstr(response, "too late") == NULL);
+        CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
+              200);
+        release_gate(gate);
+    }
+}
+
 static void upload(unsigned short port, const char *log)
 {
     static const char request[] =
@@ -244,7 +503,39 @@ static void geoip_requests(int listener, const char *work)
             CHECK(write(client, bytes, size) == (ssize_t)size);
         close(client);
     }
-    close(listener);
+}
+
+static void websocket_proxy(unsigned short port, int listener, const char *log,
+                            const char *gate)
+{
+    static const char request[] =
+        "GET /socket-proxy HTTP/1.1\r\nHost: localhost\r\n"
+        "Connection: Upgrade\r\nUpgrade: websocket\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+    static const char reply[] =
+        "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\n"
+        "Upgrade: websocket\r\n"
+        "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n"
+        "\201\004echo";
+    int down = open_request(port, request), up = accept_origin(listener);
+    struct pollfd held;
+    char headers[1024];
+    origin_request(up, "GET /socket-proxy ");
+    CHECK(write(up, reply, sizeof(reply) - 1) == (ssize_t)(sizeof(reply) - 1));
+    milestone(log, "proxy handshake waiting\n", 1);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
+          200);
+    held.fd = down;
+    held.events = POLLIN;
+    CHECK(poll(&held, 1, 50) == 0);
+    release_gate(gate);
+    read_headers(down, headers, sizeof(headers));
+    CHECK(strncmp(headers, "HTTP/1.1 101", 12) == 0);
+    CHECK(strstr(headers, "x-handshake: lua\r\n") != NULL);
+    expect_frame(down, 0x81, "echo", 4);
+    close(up);
+    close(down);
 }
 
 static void curl_request(unsigned short port, const char *log, int timed_out)
@@ -344,10 +635,11 @@ static void smtp_request(unsigned short port, const char *mode)
     CHECK(strstr(response, "\r\n\r\nsmtp checked") != NULL);
 }
 
-static void exercise(unsigned short port, const char *log, const char *gate)
+static void exercise(unsigned short port, const char *log, const char *gate,
+                     int listener)
 {
     char response[1024];
-    int fd, i, status;
+    int status;
     pid_t pending;
     CHECK(knurl_test_acl_exchange(port, "GET", "/country", NULL, NULL) == 403);
     CHECK(knurl_test_acl_exchange(port, "GET", "/country",
@@ -370,15 +662,7 @@ static void exercise(unsigned short port, const char *log, const char *gate)
     CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/count", NULL, NULL) ==
           503);
     CHECK(waitpid(pending, &status, WNOHANG) == 0);
-    for (i = 0; i < 400; ++i) {
-        fd = open(gate, O_WRONLY | O_NONBLOCK);
-        if (fd >= 0)
-            break;
-        CHECK(errno == ENXIO);
-        pause_briefly();
-    }
-    CHECK(i < 400 && write(fd, "x", 1) == 1);
-    close(fd);
+    release_gate(gate);
     wait_ok(pending);
     CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/count", NULL,
                                   "bob:42") == 200);
@@ -408,6 +692,11 @@ static void exercise(unsigned short port, const char *log, const char *gate)
     smtp_request(port, "smtp-read");
     smtp_request(port, "smtp-rejected");
     smtp_request(port, "smtp-timeout");
+    typed_and_webdav(port);
+    streams(port, log, gate);
+    websocket(port, log, gate);
+    hooks_and_proxy(port, log, gate);
+    websocket_proxy(port, listener, log, gate);
 
     /* Abandon a worker. Its replacement starts from the same parent snapshot.
      */
@@ -425,10 +714,11 @@ int main(int argc, char **argv)
     unsigned short selected, upstream = 0;
     pid_t child;
     FILE *file;
-    int normal, init_failure, fd, geo_listener = -1;
+    int normal, init_failure, stop_failure, fd, geo_listener = -1;
     CHECK(argc == 5 || argc == 6);
     normal = strcmp(argv[4], "normal") == 0;
     init_failure = strcmp(argv[4], "init-failure") == 0;
+    stop_failure = strcmp(argv[4], "stop-failure") == 0;
     path(log, sizeof(log), argv[3], "events");
     path(gate, sizeof(gate), argv[3], "gate");
     path(asset, sizeof(asset), argv[3], "asset");
@@ -468,8 +758,11 @@ int main(int argc, char **argv)
     if (!init_failure) {
         milestone(log, "worker start\n", 1);
         available(selected);
-        if (normal)
-            exercise(selected, log, gate);
+        if (normal) {
+            exercise(selected, log, gate, geo_listener);
+            close(geo_listener);
+        } else if (!stop_failure)
+            hook_timeouts(selected, log, gate);
         CHECK(kill(child, SIGTERM) == 0);
     }
     wait_ok(child);
@@ -480,7 +773,7 @@ int main(int argc, char **argv)
     CHECK(events(log, "worker stop\n") == !init_failure);
     if (init_failure)
         CHECK(events(log, "init failure reported\n") == 1);
-    else if (!normal)
+    else if (stop_failure)
         CHECK(events(log, "stop failure reported\n") == 1);
     CHECK(unlink(gate) == 0);
     return 0;

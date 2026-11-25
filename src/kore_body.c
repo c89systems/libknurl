@@ -405,6 +405,7 @@ void knurl_kore_body_step(knurl_request *request)
     knurl_http_frame_result framed;
     input = request->impl->input;
     if (input == NULL || input->dead || request->impl->auth_pending_headers ||
+        request->impl->hook_stage == KNURL_HOOK_ADMISSION ||
         request->impl->outcome.body_complete)
         return;
     if (request->impl->response->impl->phase >= KNURL_RESPONSE_FINISHING) {
@@ -552,6 +553,7 @@ void knurl_kore_request_closed(knurl_request *request)
     if (request->impl->close_notified)
         return;
     request->impl->close_notified = 1;
+    knurl_request_hook_cancel(request);
     knurl_auth_disconnect(request);
     if (!request->impl->outcome.body_complete &&
         request->impl->outcome.body_cause == KNURL_OK)

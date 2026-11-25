@@ -15,6 +15,8 @@ struct knurl_route_impl {
     int directory_mount;
     knurl_headers_fn preflight;
     knurl_auth *auth;
+    knurl_async_route_hooks async_hooks;
+    knurl_async_route_hooks proxy_hooks;
     knurl_route_group *group;
     knurl_router *router;
     void (*release_userdata)(void *);
@@ -25,6 +27,7 @@ struct knurl_route_group_impl {
     knurl_router *router;
     knurl_route_group_config config;
     knurl_auth *auth;
+    knurl_async_route_hooks async_hooks;
     knurl_route_group *next;
 };
 

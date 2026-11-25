@@ -109,7 +109,7 @@ knurl_status rl_fail(knurl_error *error, knurl_status status,
     }
     return status;
 }
-static void rl_push_error(lua_State *L, const knurl_error *error)
+void rl_push_error(lua_State *L, const knurl_error *error)
 {
     lua_createtable(L, 0, 6);
     lua_pushinteger(L, error->status);
@@ -178,7 +178,7 @@ int rl_fields(lua_State *L, int index, const char *const *fields, size_t count,
             lua_pop(L, 2);
             return 0;
         }
-        if (!strcmp(name, "hooks") || !strcmp(name, "callbacks")) {
+        if (!strcmp(name, "callbacks")) {
             callback = NULL;
             if (lua_istable(L, -1)) {
                 lua_pushnil(L);

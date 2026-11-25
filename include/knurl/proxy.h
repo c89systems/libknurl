@@ -316,11 +316,42 @@ typedef struct knurl_proxy_config {
 /** Set the documented zero-value defaults. NULL is ignored. */
 KNURL_API void knurl_proxy_config_init(knurl_proxy_config *config);
 
+/** Proxy-specific detached phases, using knurl_request_hook_wait/resume.
+ * Admission follows ordinary auth/before hooks. Response precedes ordinary
+ * after hooks. Callback context stays borrowed through the run. */
+KNURL_API knurl_status knurl_route_set_proxy_async_hooks(
+    knurl_route *, knurl_async_route_hook_fn admission,
+    knurl_async_route_hook_fn response, void *, knurl_error *);
+
+/** Install an owner-loop director for this request during admission. Success
+ * owns the supplied context until request cleanup. The director runs after
+ * the registered director and uses the same outbound validation and targets. */
+KNURL_API knurl_status knurl_request_proxy_rewrite_take(knurl_request *,
+                                                        knurl_proxy_rewrite_fn,
+                                                        void *,
+                                                        void (*release)(void *),
+                                                        knurl_error *);
+/** Current final response was received from upstream, including non-101
+ * rejections of WebSocket handshakes. */
+KNURL_API int knurl_request_proxy_upstream_response(const knurl_request *);
+/** Borrow failure while the proxy's uncommitted 502/504 response is waiting. */
+KNURL_API const knurl_error *
+knurl_request_proxy_gateway_error(const knurl_request *);
+/** Replace the bounded gateway error reply from its installed hook wait. The
+ * reply remains caller-owned. Native validation applies to headers and body. */
+KNURL_API knurl_status knurl_request_proxy_gateway_reply(knurl_request *,
+                                                         const knurl_reply *,
+                                                         knurl_error *);
+
 /** Registration copies strings, targets, TLS material and callbacks. */
 KNURL_API knurl_status knurl_router_proxy(knurl_router *router,
                                           const knurl_proxy_config *config,
                                           knurl_route **route,
                                           knurl_error *error);
+/** Register a proxy under the group's path prefix and policy. */
+KNURL_API knurl_status knurl_route_group_proxy(knurl_route_group *,
+                                               const knurl_proxy_config *,
+                                               knurl_route **, knurl_error *);
 
 #ifdef __cplusplus
 }

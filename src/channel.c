@@ -479,9 +479,7 @@ knurl_status knurl_channel_close(knurl_channel *c, knurl_status cause,
     if (cause == KNURL_OK &&
         (c->impl->queued != 0 ||
          (c->impl->phase == KNURL_CHANNEL_TUNNEL &&
-          ((c->impl->response != NULL &&
-            (c->impl->response->impl->head != NULL ||
-             c->impl->response->impl->pending_head != NULL)) ||
+          (knurl_response_head_pending(c->impl->response) ||
            (c->impl->shutdown_requested &&
             !c->impl->outcome.write_shutdown))) ||
          (c->impl->phase == KNURL_CHANNEL_HTTP_INPUT &&

@@ -419,6 +419,7 @@ static void advance(struct knurl_delivery *delivery)
         return;
     }
     if (request->impl->websocket != NULL &&
+        !response->impl->final_headers_waiting &&
         response->impl->phase == KNURL_RESPONSE_FINISHING &&
         response->impl->outcome.status == 101 && response->impl->head == NULL &&
         response->impl->pending_head == NULL && !response->impl->inflight &&
@@ -430,7 +431,8 @@ static void advance(struct knurl_delivery *delivery)
            request->impl->channel->impl->phase != KNURL_CHANNEL_TUNNEL)) ||
          (response->impl->phase == KNURL_RESPONSE_COMPLETE &&
           request->impl->channel != NULL)) &&
-        response->impl->head == NULL && response->impl->pending_head == NULL) {
+        response->impl->head == NULL && response->impl->pending_head == NULL &&
+        !response->impl->final_headers_waiting) {
         terminal(delivery);
         return;
     }

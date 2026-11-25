@@ -299,7 +299,10 @@ void knurl_kore_headers_resume(knurl_request *request, int allowed)
     } else {
         request->impl->plan.disposition = KNURL_REQUEST_REPLY;
     }
-    headers_finish(request, status, &error);
+    if (status == KNURL_AGAIN && request->impl->hook_cancel != NULL)
+        knurl_kore_body_pause_headers(request);
+    else
+        headers_finish(request, status, &error);
 }
 
 int knurl_kore_prebody(struct http_request *native, const void *data,
@@ -402,7 +405,8 @@ int knurl_kore_prebody(struct http_request *native, const void *data,
     request->impl->plan = plan;
     request->impl->in_headers = 0;
     request->impl->expect_continue = expect != 0;
-    if (status == KNURL_AGAIN && request->impl->auth_pending_headers) {
+    if (status == KNURL_AGAIN && (request->impl->auth_pending_headers ||
+                                  request->impl->hook_cancel != NULL)) {
         knurl_kore_body_pause_headers(request);
     } else {
         if (request->impl->auth_pending_headers)

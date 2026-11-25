@@ -1,4 +1,5 @@
 #include "request_internal.h"
+#include <knurl/upload.h>
 #include <knurl/kore.h>
 #include <knurl/websocket.h>
 #include <knurl/xml.h>
@@ -270,6 +271,8 @@ void knurl_request_set_userdata(knurl_request *request, void *userdata)
 void knurl_request_cleanup(knurl_request *request)
 {
     size_t i;
+    if (request->impl->proxy_rewrite_release != NULL)
+        request->impl->proxy_rewrite_release(request->impl->proxy_rewrite_data);
     if (request->impl->reply != NULL) {
         request->impl->reply->impl->owner = NULL;
         (void)knurl_reply_destroy(request->impl->reply, NULL);
@@ -353,6 +356,14 @@ void knurl_request_receiver_init(knurl_request *receiver)
         knurl_request_resume,
         NULL,
         knurl_request_auth,
+        knurl_request_snapshot_copy,
+        knurl_request_hook_wait,
+        knurl_request_hook_resume,
+        knurl_request_hook_remove_header,
+        knurl_request_proxy_rewrite_take,
+        knurl_request_proxy_upstream_response,
+        knurl_request_proxy_gateway_error,
+        knurl_request_proxy_gateway_reply,
     };
     *receiver = methods;
     receiver->impl = (struct knurl_request_impl *)receiver;

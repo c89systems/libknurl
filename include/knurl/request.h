@@ -171,6 +171,26 @@ KNURL_API void *knurl_request_userdata(const knurl_request *request);
 KNURL_API void knurl_request_set_userdata(knurl_request *request,
                                           void *userdata);
 
+/** Within an async route hook, install the owner-loop cancellation callback
+ * before returning AGAIN. Cancellation revokes the request and cancels the
+ * wait. Detached operations must retain their own state until native ACK. */
+KNURL_API knurl_status knurl_request_hook_wait(knurl_request *,
+                                               void (*cancel)(void *), void *,
+                                               knurl_error *);
+/** On the owner loop, complete an installed wait. Before admission, a staged
+ * reply stops dispatch. After, a reply may set status within the same body
+ * framing class and replace end-to-end response headers. After edits cannot
+ * replace the body. The caller always destroys the reply after this call. */
+KNURL_API knurl_status knurl_request_hook_resume(knurl_request *, knurl_status,
+                                                 knurl_reply *,
+                                                 const knurl_error *,
+                                                 knurl_error *);
+
+/** Remove an end-to-end response header during an installed after-hook wait. */
+KNURL_API knurl_status knurl_request_hook_remove_header(knurl_request *,
+                                                        const char *,
+                                                        knurl_error *);
+
 struct http_request;
 struct knurl_body;
 struct knurl_body_materialize_config;
@@ -182,9 +202,12 @@ struct knurl_endpoint;
 struct knurl_error;
 struct knurl_header;
 struct knurl_loop;
+struct knurl_proxy_inbound;
+struct knurl_proxy_outbound;
 struct knurl_response;
 struct knurl_server;
 struct knurl_u64;
+struct knurl_upload_metadata;
 struct knurl_websocket;
 struct knurl_websocket_config;
 struct knurl_xml_config;
@@ -410,6 +433,26 @@ struct knurl_request {
     struct knurl_request_impl *impl;
     /** Borrow the identity verified by the route's native auth policy. */
     const knurl_auth_identity *(*auth)(const struct knurl_request *);
+    /** Copy immutable request metadata for use beyond request dispatch. */
+    knurl_status (*snapshot_copy)(struct knurl_request *,
+                                  struct knurl_upload_metadata **,
+                                  knurl_error *);
+    knurl_status (*hook_wait)(struct knurl_request *, void (*)(void *), void *,
+                              knurl_error *);
+    knurl_status (*hook_resume)(struct knurl_request *, knurl_status,
+                                knurl_reply *, const knurl_error *,
+                                knurl_error *);
+    knurl_status (*hook_remove_header)(struct knurl_request *, const char *,
+                                       knurl_error *);
+    knurl_status (*proxy_rewrite_take)(
+        struct knurl_request *,
+        knurl_status (*)(const struct knurl_proxy_inbound *,
+                         struct knurl_proxy_outbound *, void *, knurl_error *),
+        void *, void (*)(void *), knurl_error *);
+    int (*proxy_upstream_response)(const struct knurl_request *);
+    const knurl_error *(*proxy_gateway_error)(const struct knurl_request *);
+    knurl_status (*proxy_gateway_reply)(struct knurl_request *,
+                                        const knurl_reply *, knurl_error *);
 };
 
 #ifdef __cplusplus

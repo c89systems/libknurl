@@ -7,6 +7,7 @@ enum route_kind {
     ROUTE_STATIC_FILE,
     ROUTE_STATIC_DIRECTORY,
     ROUTE_UPLOAD_FILE,
+    ROUTE_WEBDAV,
     ROUTE_PROXY,
     ROUTE_APPLICATION
 };
@@ -240,18 +241,24 @@ static knurl_status register_upload(lua_State *L, struct rl_server *server,
                                           &config, out, error);
 }
 
-static knurl_status register_proxy(lua_State *L, knurl_router *router,
-                                   int application, knurl_route **out,
-                                   knurl_error *error)
+static knurl_status register_proxy(lua_State *L, struct rl_server *server,
+                                   knurl_route_group *group, int application,
+                                   knurl_route **out, knurl_error *error)
 {
     static const char *const fields[] = {"path",
                                          "path_kind",
                                          "target",
+                                         "alternate_targets",
                                          "method",
                                          "methods",
                                          "acl",
                                          "auth",
                                          "hooks",
+                                         "preflight",
+                                         "rewrite",
+                                         "modify_response",
+                                         "on_error",
+                                         "on_exchange",
                                          "connect_timeout_ms",
                                          "idle_timeout_ms",
                                          "total_timeout_ms",
@@ -261,6 +268,8 @@ static knurl_status register_proxy(lua_State *L, knurl_router *router,
                                          "tls_client_cert_pem",
                                          "tls_client_key_pem"};
     knurl_proxy_config config;
+    knurl_async_route_hooks proxy_hooks;
+    knurl_status status;
     knurl_route_config path;
     const char *version = "auto";
     size_t connect = 0, idle = 0, total = application ? 30000U : 0;
@@ -296,7 +305,93 @@ static knurl_status register_proxy(lua_State *L, knurl_router *router,
     config.connect_timeout_ms = (long)connect;
     config.idle_timeout_ms = (long)idle;
     config.total_timeout_ms = (long)total;
-    return knurl_router_proxy(router, &config, out, error);
+    if (!rl_string_array(L, 2, "alternate_targets", &config.alternate_targets,
+                         &config.alternate_target_count, error) ||
+        !rl_proxy_hooks_prepare(L, server, &config, &proxy_hooks, error))
+        return error->status;
+    status = group != NULL
+                 ? knurl_route_group_proxy(group, &config, out, error)
+                 : knurl_router_proxy(knurl_server_router(server->native),
+                                      &config, out, error);
+    if (status == KNURL_OK &&
+        (proxy_hooks.before != NULL || proxy_hooks.after != NULL))
+        status = knurl_route_set_proxy_async_hooks(*out, proxy_hooks.before,
+                                                   proxy_hooks.after,
+                                                   proxy_hooks.userdata, error);
+    rl_hooks_finish(L, &proxy_hooks, status);
+    return status;
+}
+
+static knurl_status webdav_identity(const knurl_webdav_auth_request *request,
+                                    knurl_webdav_auth_response *response,
+                                    void *data, knurl_error *error)
+{
+    const knurl_auth_identity *identity = knurl_request_auth(request->request);
+    (void)data;
+    knurl_error_clear(error);
+    if (identity != NULL) {
+        response->action = KNURL_WEBDAV_ALLOW;
+        response->principal = identity->subject;
+    }
+    return KNURL_OK;
+}
+
+static knurl_status register_webdav(lua_State *L, struct rl_server *server,
+                                    knurl_route_group *group, knurl_route **out,
+                                    knurl_error *error)
+{
+    static const char *const fields[] = {
+        "path",
+        "root_dir",
+        "cache_dir",
+        "site_id",
+        "max_file_bytes",
+        "max_total_bytes",
+        "max_resources",
+        "max_body_bytes",
+        "auth",
+        "acl",
+        "hooks",
+        "content_type",
+        "cache_control",
+        "auth_disabled",
+        "conceal_disabled",
+        "operation_timeout_ms",
+        "operation_timeout_disabled",
+    };
+    knurl_webdav_config config;
+    size_t timeout = 0;
+    knurl_webdav_config_init(&config);
+    if (!rl_fields(L, 2, fields, RL_COUNT(fields), error) ||
+        !rl_acl_option(L, 2, &config.acl, error) ||
+        !rl_body_limit(L, 2, server, &config.max_body_bytes, error))
+        return error->status;
+    if (!rl_field_string(L, 2, "path", &config.path_prefix) ||
+        !rl_field_string(L, 2, "root_dir", &config.storage.root_dir) ||
+        !rl_field_string(L, 2, "cache_dir", &config.storage.cache_dir) ||
+        !rl_field_string(L, 2, "site_id", &config.storage.site_id) ||
+        !rl_field_string(L, 2, "content_type", &config.content_type) ||
+        !rl_field_string(L, 2, "cache_control", &config.cache_control) ||
+        !rl_field_size(L, 2, "max_file_bytes",
+                       &config.storage.max_file_bytes) ||
+        !rl_field_size(L, 2, "max_total_bytes",
+                       &config.storage.max_total_bytes) ||
+        !rl_field_size(L, 2, "max_resources", &config.storage.max_resources) ||
+        !rl_field_size(L, 2, "operation_timeout_ms", &timeout) ||
+        timeout > LONG_MAX ||
+        !rl_field_bool(L, 2, "operation_timeout_disabled",
+                       &config.operation_timeout_disabled) ||
+        !rl_field_bool(L, 2, "auth_disabled", &config.auth_disabled) ||
+        !rl_field_bool(L, 2, "conceal_disabled", &config.conceal_disabled))
+        return rl_fail(error, KNURL_INVALID,
+                       "invalid WebDAV mount declaration");
+    config.operation_timeout_ms = (long)timeout;
+    if (!config.auth_disabled)
+        config.auth = webdav_identity;
+    return group != NULL
+               ? knurl_route_group_webdav(group, &config, out, error)
+               : knurl_router_webdav(knurl_server_router(server->native),
+                                     &config, out, error);
 }
 
 struct rl_route *rl_route_new(lua_State *L, struct rl_server *server)
@@ -320,6 +415,7 @@ static int route(lua_State *L)
     knurl_router *router;
     struct rl_route *handle;
     knurl_auth *auth;
+    knurl_async_route_hooks hooks;
     knurl_error error;
     knurl_status status;
     int result;
@@ -341,6 +437,8 @@ static int route(lua_State *L)
     router = knurl_server_router(server->native);
     handle = rl_route_new(L, server);
     result = lua_gettop(L);
+    if (!rl_hooks_prepare(L, server, &hooks, &error))
+        return rl_error(L, &error);
     switch (kind) {
     case ROUTE_TEXT:
     case ROUTE_JSON:
@@ -358,17 +456,21 @@ static int route(lua_State *L)
         status =
             register_upload(L, server, native_group, &handle->native, &error);
         break;
+    case ROUTE_WEBDAV:
+        status =
+            register_webdav(L, server, native_group, &handle->native, &error);
+        break;
     default:
-        if (group != NULL)
-            status = rl_fail(&error, KNURL_INVALID,
-                             "proxy and application routes require a server");
-        else
-            status = register_proxy(L, router, kind == ROUTE_APPLICATION,
-                                    &handle->native, &error);
+        status =
+            register_proxy(L, server, native_group, kind == ROUTE_APPLICATION,
+                           &handle->native, &error);
         break;
     }
     if (status == KNURL_OK && auth != NULL)
         status = knurl_route_set_auth(handle->native, auth, &error);
+    if (status == KNURL_OK && hooks.userdata != NULL)
+        status = knurl_route_set_async_hooks(handle->native, &hooks, &error);
+    rl_hooks_finish(L, &hooks, status);
     if (status != KNURL_OK)
         return rl_error(L, &error);
     lua_pushvalue(L, result);
@@ -378,8 +480,8 @@ static int route(lua_State *L)
 void rl_routes_open(lua_State *L, int group)
 {
     static const char *const methods[] = {
-        "text",        "json",  "redirect",   "static_file", "static_directory",
-        "upload_file", "proxy", "application"};
+        "text",        "json",   "redirect", "static_file", "static_directory",
+        "upload_file", "webdav", "proxy",    "application"};
     size_t i;
     if (group) {
         lua_pushcfunction(L, rl_set_acl);
@@ -398,7 +500,7 @@ void rl_routes_open(lua_State *L, int group)
         lua_setfield(L, -2, "__metatable");
         lua_pop(L, 1);
     }
-    for (i = 0; i < (group ? (size_t)ROUTE_PROXY : RL_COUNT(methods)); ++i) {
+    for (i = 0; i < RL_COUNT(methods); ++i) {
         lua_pushinteger(L, (lua_Integer)i);
         lua_pushcclosure(L, route, 1);
         lua_setfield(L, -2, methods[i]);

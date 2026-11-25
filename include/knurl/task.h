@@ -15,8 +15,9 @@ typedef struct knurl_task knurl_task;
 /** Owned native pool, valid until its optional pool retirement notification. */
 typedef struct knurl_task_pool knurl_task_pool;
 /** Native work callback. Return a terminal status; AGAIN/EOF are INVALID.
- * Use independently retained native state, never live request/transport handles
- * or a foreign runtime. Poll task->cancelled() for cooperative cancellation.
+ * Use independently retained state. Access to a host runtime requires a thread
+ * lifecycle and confinement controlled by the embedder. Never use live
+ * request/transport handles here. Poll task->cancelled() for cancellation.
  */
 typedef knurl_status (*knurl_task_fn)(knurl_task *task, void *userdata,
                                       knurl_error *error);
@@ -84,6 +85,11 @@ KNURL_API knurl_status knurl_task_pool_submit(knurl_task_pool *pool,
                                               const knurl_task_config *config,
                                               knurl_task **out,
                                               knurl_error *error);
+/** Submit to the same worker pool as blocking routes. Owner loop only, with
+ * the ownership and backpressure contract of knurl_task_pool_submit. A zero
+ * timeout inherits the blocking pool's configured deadline. */
+KNURL_API knurl_status knurl_server_submit_application_task(
+    knurl_server *, const knurl_task_config *, knurl_task **, knurl_error *);
 /** Owner loop only. Stop intake and cooperatively cancel queued/running work.
  * Pool expires at config.retired, after all task retirement callbacks return.
  * Does not wait for threads. Shutdown closes pools automatically; NULL is OK.

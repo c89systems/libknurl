@@ -12,8 +12,9 @@ from the existing cpkt SDK. Both use the same Lua binding, which calls the
 public C API. The runner ships in its own tarballs with bundled dependencies.
 The C SDK packages declare their dependencies through CMake and pkg-config.
 
-Native routes serve entirely in C. Inline Lua routes and worker hooks use one
-dedicated thread per Kore worker, with closures inherited from the paused
+Native routes declared without Lua callbacks serve entirely in C. Inline
+handlers, route and proxy hooks, stream producers and WebSocket callbacks use
+one dedicated thread per Kore worker, with closures inherited from the paused
 parent at fork. Parallel execution within one application VM is a future
 Luthrum integration. Luthrum is C89 Systems' Lua runtime in development with
 coroutine multiplexing onto OS threads.

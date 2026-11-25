@@ -68,6 +68,30 @@ typedef struct knurl_route_hooks {
     void *userdata;
 } knurl_route_hooks;
 
+/** Owner-loop hook that may schedule a detached operation. During auth/before,
+ * response_headers is NULL and status is zero. During after, it is a borrowed
+ * headers-only view of the final response before transport commitment. Return
+ * AGAIN only after installing a waiter with knurl_request_hook_wait. */
+typedef knurl_status (*knurl_async_route_hook_fn)(
+    knurl_request *, const knurl_reply *response_headers, int status, void *,
+    knurl_error *);
+
+/** Separate from synchronous staged hooks. Auth and before run after native
+ * ACL/auth and before body admission. After runs before the first final byte.
+ */
+typedef struct knurl_async_route_hooks {
+    knurl_async_route_hook_fn auth;
+    knurl_async_route_hook_fn before;
+    knurl_async_route_hook_fn after;
+    void *userdata;
+} knurl_async_route_hooks;
+
+/** Copy hooks while inactive. NULL clears them. Userdata is borrowed. */
+KNURL_API knurl_status knurl_route_set_async_hooks(
+    knurl_route *, const knurl_async_route_hooks *, knurl_error *);
+KNURL_API knurl_status knurl_route_group_set_async_hooks(
+    knurl_route_group *, const knurl_async_route_hooks *, knurl_error *);
+
 /** Configuration for route. Use the owning operation's initializer before
  * applying overrides.
  */
@@ -481,6 +505,12 @@ struct knurl_route_group {
     /** Replace the group's default auth policy on an inactive router. */
     knurl_status (*set_auth)(struct knurl_route_group *, knurl_auth *,
                              struct knurl_error *);
+    knurl_status (*set_async_hooks)(struct knurl_route_group *,
+                                    const knurl_async_route_hooks *,
+                                    knurl_error *);
+    knurl_status (*proxy)(struct knurl_route_group *,
+                          const struct knurl_proxy_config *,
+                          struct knurl_route **, knurl_error *);
 };
 
 struct knurl_route_config;
@@ -501,6 +531,13 @@ struct knurl_route {
     /** Replace the route's retained auth policy on an inactive router. */
     knurl_status (*set_auth)(struct knurl_route *, knurl_auth *,
                              struct knurl_error *);
+    knurl_status (*set_async_hooks)(struct knurl_route *,
+                                    const knurl_async_route_hooks *,
+                                    knurl_error *);
+    knurl_status (*set_proxy_async_hooks)(struct knurl_route *,
+                                          knurl_async_route_hook_fn,
+                                          knurl_async_route_hook_fn, void *,
+                                          knurl_error *);
 };
 
 #ifdef __cplusplus

@@ -62,7 +62,7 @@ add_library(knurl_objects OBJECT src/common.c src/u64.c src/input.c src/input_re
   src/webdav.c src/webdav_http.c src/webdav_propfind.c src/upload.c src/upload_metadata.c src/upload_reader.c src/upload_file.c
   src/autoblock.c src/logging.c src/access_log_file.c src/kore_logging.c src/address.c src/policy.c src/kore_policy.c src/headers.c src/source.c src/reply.c src/config_init.c src/config_copy.c
   src/config_normalize.c src/server.c src/router.c src/route_path.c
-  src/request.c src/request_decode.c src/router_dispatch.c
+  src/request.c src/request_decode.c src/router_dispatch.c src/route_hooks.c
   src/kore_runtime.c src/kore_http.c src/kore_loop.c src/kore_control.c
   src/loop.c src/loop_timer.c src/loop_waker.c
   src/response.c src/kore_response.c src/body.c src/body_materialize.c
@@ -221,7 +221,7 @@ if(BUILD_TESTING)
     if(NOT knurl_can_run)
       find_program(binary_emulator qemu-aarch64 REQUIRED)
     endif()
-    foreach(mode normal init-failure stop-failure)
+    foreach(mode normal init-failure stop-failure hook-timeout)
       add_test(NAME knurl.binary-${mode} COMMAND "${CMAKE_COMMAND}"
         "-DHOST=$<TARGET_FILE:knurl_binary_test>" "-DBINARY=$<TARGET_FILE:knurl>"
         "-DEMULATOR=${binary_emulator}"
@@ -418,6 +418,8 @@ if(BUILD_TESTING)
     add_test(NAME knurl.${codec} COMMAND knurl_${codec})
     set_tests_properties(knurl.${codec} PROPERTIES TIMEOUT 8)
   endforeach()
+  # This fixture commits 129 concurrent uploads durably before probing them.
+  set_tests_properties(knurl.webdav-runtime PROPERTIES TIMEOUT 20)
   add_test(NAME knurl.vectis-response-head-bounded COMMAND knurl_vectis-response-head bounded)
   add_test(NAME knurl.vectis-response-head-plain COMMAND knurl_vectis-response-head plain)
   set_tests_properties(knurl.vectis-response-head-bounded knurl.vectis-response-head-plain

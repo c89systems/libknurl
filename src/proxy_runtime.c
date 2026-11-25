@@ -13,6 +13,7 @@
 #include "server_internal.h"
 #include "response_internal.h"
 #include "channel_internal.h"
+#include "loop_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -102,7 +103,7 @@ static void accounting_start(struct proxy_exchange *x)
         ++next_id;
     x->accounting.request_id.high = (unsigned long)getpid() & 0xffffffffUL;
     x->accounting.request_id.low = next_id;
-    x->accounting.route = x->route->path;
+    x->accounting.route = x->request->impl->route->impl->config.path;
     x->accounting_started = x->started;
     (void)knurl_loop_now(x->loop, &x->accounting_started, NULL);
     x->accounting_active = 1;
@@ -185,6 +186,7 @@ static void request_closed(knurl_request *request,
     }
     request->impl->response->impl->progress = NULL;
     request->impl->response->impl->progress_data = NULL;
+    request->impl->proxy_exchange = NULL;
     x->request = NULL;
     x->channel = NULL;
     stop_timer(x);
@@ -398,6 +400,134 @@ static knurl_u64 wide(uint64_t value)
     return result;
 }
 
+knurl_status knurl_request_proxy_rewrite_take(knurl_request *request,
+                                              knurl_proxy_rewrite_fn rewrite,
+                                              void *data,
+                                              void (*release)(void *),
+                                              knurl_error *error)
+{
+    knurl_status status;
+    if (request == NULL || rewrite == NULL || release == NULL)
+        return knurl_fail(error, KNURL_INVALID, "proxy_rewrite",
+                          "request, director and release required");
+    status = knurl_loop_owner(knurl_request_loop(request), error);
+    if (status != KNURL_OK)
+        return status;
+    if (request->impl->route == NULL ||
+        request->impl->route->impl->config.on_headers != knurl_proxy_dispatch ||
+        request->impl->hook_stage != KNURL_HOOK_ADMISSION ||
+        request->impl->hook_cancel == NULL ||
+        request->impl->proxy_rewrite != NULL)
+        return knurl_fail(error, KNURL_STATE, "proxy_rewrite",
+                          "requires a pending proxy admission hook");
+    request->impl->proxy_rewrite = rewrite;
+    request->impl->proxy_rewrite_release = release;
+    request->impl->proxy_rewrite_data = data;
+    knurl_error_clear(error);
+    return KNURL_OK;
+}
+
+int knurl_request_proxy_upstream_response(const knurl_request *request)
+{
+    const struct proxy_exchange *x =
+        request != NULL ? request->impl->proxy_exchange : NULL;
+    return x != NULL && x->final_prepared && !x->failed;
+}
+
+const knurl_error *
+knurl_request_proxy_gateway_error(const knurl_request *request)
+{
+    const struct proxy_exchange *x =
+        request != NULL ? request->impl->proxy_exchange : NULL;
+    return x != NULL && x->local_begun &&
+                   (x->local_status == 502 || x->local_status == 504)
+               ? &x->failure
+               : NULL;
+}
+
+knurl_status knurl_request_proxy_gateway_reply(knurl_request *request,
+                                               const knurl_reply *reply,
+                                               knurl_error *error)
+{
+    struct proxy_exchange *x;
+    knurl_proxy_local_response local;
+    knurl_reply *headers, *original;
+    knurl_response *response;
+    knurl_response_phase phase;
+    knurl_status status;
+    knurl_bytes body, type;
+    knurl_header field;
+    size_t i;
+    int code;
+    if (request == NULL || !knurl_reply_is_selected(reply) ||
+        (knurl_reply_payload_kind(reply) != KNURL_REPLY_BYTES &&
+         knurl_reply_payload_kind(reply) != KNURL_REPLY_EMPTY))
+        return knurl_fail(error, KNURL_INVALID, "proxy_gateway_reply",
+                          "staged byte or status reply required");
+    status = knurl_loop_owner(knurl_request_loop(request), error);
+    if (status != KNURL_OK)
+        return status;
+    response = request->impl->response;
+    x = request->impl->proxy_exchange;
+    if (knurl_request_proxy_gateway_error(request) == NULL ||
+        request->impl->hook_stage != KNURL_HOOK_AFTER ||
+        request->impl->hook_cancel == NULL ||
+        !response->impl->final_headers_waiting || x->local_offset != 0)
+        return knurl_fail(error, KNURL_STATE, "proxy_gateway_reply",
+                          "requires a pending gateway error hook");
+    phase = response->impl->phase;
+    code = knurl_reply_status_code(reply);
+    body = knurl_reply_body(reply);
+    type = knurl_reply_content_type(reply);
+    knurl_proxy_local_init(&local);
+    status =
+        knurl_proxy_local_respond(&local, code, body.data, body.length, error);
+    if (status == KNURL_OK)
+        status = knurl_reply_new(&headers, error);
+    if (status == KNURL_OK) {
+        original = response->impl->headers;
+        response->impl->phase = KNURL_RESPONSE_BUILDING;
+        response->impl->headers = headers;
+        for (i = 0; status == KNURL_OK && i < knurl_reply_header_count(reply);
+             ++i) {
+            (void)knurl_reply_header_at(reply, i, &field, NULL);
+            if (!knurl_proxy_response_header_editable(field.name.data))
+                status = knurl_fail(error, KNURL_INVALID, "proxy_gateway_reply",
+                                    "cannot edit transport headers");
+            else
+                status = knurl_response_header_add(response, field.name.data,
+                                                   field.value.data, error);
+        }
+        if (status == KNURL_OK && type.data != NULL)
+            status = knurl_response_header_set(response, "content-type",
+                                               type.data, error);
+        if (status == KNURL_OK && knurl_request_auth(request) != NULL)
+            status = knurl_response_header_set(response, "cache-control",
+                                               "private, no-store", error);
+        response->impl->phase = phase;
+        if (status == KNURL_OK)
+            (void)knurl_reply_destroy(original, NULL);
+        else {
+            response->impl->headers = original;
+            (void)knurl_reply_destroy(headers, NULL);
+        }
+    }
+    if (status != KNURL_OK) {
+        knurl_proxy_local_cleanup(&local);
+        return status;
+    }
+    knurl_proxy_local_cleanup(&x->local);
+    x->local = local;
+    response->impl->outcome.status = code;
+    response->impl->suppressed = request->impl->method == KNURL_HTTP_HEAD ||
+                                 code == 204 || code == 205 || code == 304;
+    response->impl->has_length = code != 204 && code != 205 && code != 304;
+    response->impl->length = wide((uint64_t)body.length);
+    x->local_status = code;
+    knurl_error_clear(error);
+    return KNURL_OK;
+}
+
 static knurl_status prepare_local(struct proxy_exchange *x)
 {
     knurl_response *r;
@@ -423,6 +553,7 @@ static knurl_status prepare_local(struct proxy_exchange *x)
             (void)knurl_response_abort(r, x->failure.status, NULL);
             return KNURL_STATE;
         }
+        x->request->impl->hook_after = 0;
         if (x->local_status == 502 || x->local_status == 504)
             knurl_proxy_local_error(x->route, &x->failure, x->local_status,
                                     &x->local);
@@ -869,6 +1000,9 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
                               "invalid proxy WebSocket handshake\n", error);
         goto finished;
     }
+    status = knurl_request_proxy_admit(request, error);
+    if (status != KNURL_OK)
+        goto finished;
     if (route->preflight != NULL) {
         input.method = request->impl->method;
         input.path = request->impl->raw_path.data;
@@ -919,6 +1053,7 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
     x->accounting.kind = head.websocket_upgrade ? "websocket" : "http";
     plan->on_close = request_closed;
     plan->userdata = x;
+    request->impl->proxy_exchange = x;
     knurl_channel_config_init(&channel);
     channel.on_event = channel_ready;
     channel.on_close = channel_closed;

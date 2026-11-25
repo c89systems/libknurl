@@ -5,6 +5,10 @@
 #include <knurl/request.h>
 #include <knurl/dispatch.h>
 #include <knurl/auth.h>
+#include <knurl/proxy.h>
+
+enum { KNURL_HOOK_NONE, KNURL_HOOK_ADMISSION, KNURL_HOOK_AFTER };
+#define KNURL_AFTER_HOOK_COUNT 3
 
 struct knurl_request_impl {
     knurl_request receiver;
@@ -68,6 +72,16 @@ struct knurl_request_impl {
     struct knurl_auth_job *auth_job;
     knurl_auth_identity auth_identity;
     int auth_pending_headers, expect_continue;
+    int hook_admission_complete;
+    int hook_invoking;
+    int proxy_admission_invoked;
+    unsigned int hook_stage, hook_before, hook_after;
+    void (*hook_cancel)(void *);
+    void *hook_userdata;
+    knurl_proxy_rewrite_fn proxy_rewrite;
+    void (*proxy_rewrite_release)(void *);
+    void *proxy_rewrite_data;
+    struct proxy_exchange *proxy_exchange;
 };
 
 knurl_bytes knurl_view(const char *text);
@@ -84,5 +98,10 @@ knurl_status knurl_router_select_raw(knurl_router *, knurl_request *,
 knurl_status knurl_router_hooks_before(knurl_request *, int *, knurl_error *);
 knurl_status knurl_router_hooks_after(knurl_request *, knurl_error *);
 knurl_status knurl_router_invoke(knurl_request *request, knurl_error *error);
+knurl_status knurl_request_hooks_admit(knurl_request *, knurl_error *);
+knurl_status knurl_request_proxy_admit(knurl_request *, knurl_error *);
+int knurl_request_has_after_hooks(const knurl_request *);
+knurl_status knurl_request_hooks_after(knurl_request *, knurl_error *);
+void knurl_request_hook_cancel(knurl_request *);
 
 #endif

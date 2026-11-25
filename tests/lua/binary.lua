@@ -48,6 +48,7 @@ record('parent start')
 local server <close> = check(knurl.server{
   port = assert(tonumber(port)), workers = 1, backend_quiet = true,
   application_max_tasks = 1, logger = log,
+  application_timeout_ms = mode == 'hook-timeout' and 500 or nil,
   autoblock_disabled = runtime == 'emulated',
   client_ip = {
     trusted_proxies = {'127.0.0.1/32'}, forwarded_header = 'forwarded',
@@ -68,6 +69,185 @@ end))
 
 check(server:text{path = '/health', body = 'ready'})
 check(server:static_file{path = '/asset', file_path = work .. '/asset'})
+check(server:webdav{path = '/dav', cache_dir = work, site_id = 'lua-dav', auth_disabled = true})
+check(server:webdav{path = '/protected-dav', cache_dir = work, site_id = 'lua-protected-dav', conceal_disabled = true})
+
+local function wait_for_gate(message)
+  record(message)
+  local gate <close> = assert(io.open(work .. '/gate', 'r'))
+  assert(gate:read(1) == 'x')
+end
+
+check(server:route{path = '/stream', hooks = {after = function(_, res)
+  assert(res.status == 200)
+  return {headers = {['x-stream'] = 'ready'}}
+end}, handler = function()
+  local step = 0
+  return {stream = function(capacity)
+    assert(capacity >= 5 and capacity <= 65536)
+    step = step + 1
+    if step == 1 then return 'first' end
+    if step == 2 then
+      wait_for_gate('stream waiting')
+      return 'last'
+    end
+  end}
+end})
+check(server:route{path = '/sse', methods = {'GET', 'HEAD'}, handler = function()
+  local sent = false
+  return {sse = function()
+    record('SSE pulled')
+    if sent then return end
+    sent = true
+    return {event = 'update', id = '1', data = 'hello\nworld', retry_ms = 500}
+  end}
+end})
+
+local json = lonejson.new()
+local schema = json.schema('Message', {json.field('text', json.string{required = true})})
+check(server:route{path = '/typed/:name', method = 'POST', request_json = schema, handler = function(req)
+  return {json = schema:assign(req.input, {text = req.params.name .. ':' .. req.input:get('text')})}
+end})
+check(server:route{path = '/typed-xml', method = 'POST',
+  request_xml = {schema = schema, root_element = 'message', text_key = ''}, handler = function(req)
+    local record = schema:assign(req.input, {text = req.input:get('text') .. '!'})
+    return {xml = {record = record, root_element = 'message', text_key = ''}}
+  end})
+check(server:openapi_doc{path = '/typed/:name', method = 'POST', operation_id = 'message',
+  request_schema = schema, responses = {[200] = {description = 'Echo', schema = schema}}})
+local json_api = check(server:openapi{title = 'Runner API'})
+assert(json_api:find('/typed/{name}', 1, true) and json_api:find('#/components/schemas/Message', 1, true))
+assert(check(server:openapi{format = 'yaml'}):find('openapi:'))
+assert(not server:openapi{max_bytes = 1})
+
+local sockets = check(server:group{prefix = '/ws'})
+local current
+check(sockets:websocket{path = '/:name', max_message_bytes = 1024,
+  hooks = {after = function(req, res)
+    if req.query == 'fail=1' then error('intentional handshake error') end
+    if res.status ~= 101 then return end
+    return {headers = {['x-socket'] = 'ready'}}
+  end},
+  on_open = function(ws, req)
+    assert(database and ws:request() == req and req.params.name == 'alice')
+    current = ws
+    check(ws:send_text('hello ' .. req.params.name))
+  end,
+  on_message = function(ws, bytes, kind)
+    assert(ws == current)
+    if kind == 'text' then
+      assert(bytes == 'hold')
+      wait_for_gate('websocket waiting')
+      check(ws:send_text('done'))
+    else
+      check(ws:send_binary(bytes))
+    end
+  end,
+  on_close = function(ws, outcome)
+    assert(ws == current and not ws:send_text('after close'))
+    assert(outcome.peer_code == 1000 and outcome.peer_reason == 'bye' and outcome.clean)
+    record('websocket closed')
+    current = nil
+  end,
+})
+check(server:websocket{path = '/ws-denied', acl = {policy = 'deny'}})
+
+local hook_order = {}
+check(server:text{path = '/before-timeout', body = 'too late', hooks = {
+  before = function() wait_for_gate('before timeout waiting') end,
+}})
+check(server:text{path = '/after-timeout', body = 'too late', hooks = {
+  after = function()
+    wait_for_gate('after timeout waiting')
+    return {headers = {['x-late'] = 'too late'}}
+  end,
+}})
+local function step(name)
+  hook_order[#hook_order + 1] = name
+end
+local hooks = check(server:group{prefix = '/hooks', hooks = {
+  auth = function(req)
+    hook_order = {}
+    if req.params.action == 'deny' then return false end
+    step('group auth')
+    return true
+  end,
+  before = function(req)
+    assert(req.read == nil)
+    step('group before')
+    if req.params.action == 'block' then wait_for_gate('hook waiting') end
+  end,
+  after = function(req, res)
+    assert(res.status == 201 and req.params.action == 'block')
+    step('group after')
+    return {headers = {['x-group'] = table.concat(hook_order, ', ')}}
+  end,
+}})
+check(hooks:route{path = '/:action', method = 'POST', hooks = {
+  auth = function() step('route auth'); return true end,
+  before = function() step('route before') end,
+  after = function(_, res)
+    assert(res.status == 200)
+    step('route after')
+    return {status = 201, headers = {['x-route'] = 'after'}}
+  end,
+}, handler = function(req)
+  step('handler')
+  local body = assert(req:read())
+  assert(not req:read())
+  return body
+end})
+
+local origin = 'http://127.0.0.1:' .. port
+check(server:route{path = '/proxy-origin', handler = function(req)
+  assert(req.query == '')
+  local configured
+  for _, header in ipairs(req.headers) do
+    if header.name:lower() == 'x-sent' then configured = header.value end
+    assert(header.name:lower() ~= 'x-remove')
+  end
+  assert(configured == 'lua')
+  return {body = 'upstream data', headers = {['x-origin'] = 'remove'}}
+end})
+local gateway = check(server:group{prefix = '/gateway'})
+check(gateway:proxy{path = '/:name', target = origin .. '/wrong-prefix', alternate_targets = {origin},
+  preflight = function(req)
+    if req.params.name == 'deny' then return {status = 429, body = 'preflight refused'} end
+    assert(req.params.name == 'hold')
+  end,
+  rewrite = function(req)
+    assert(req.query == 'before=1')
+    return {path = '/proxy-origin', target = 2, query = false,
+      headers = {['x-sent'] = 'lua', ['x-remove'] = false}}
+  end,
+  modify_response = function(req, res)
+    assert(req.params.name == 'hold' and res.status == 200)
+    wait_for_gate('proxy response waiting')
+    return {status = 203, headers = {['x-origin'] = false, ['x-proxy'] = 'lua'}}
+  end,
+  on_exchange = function(req, event)
+    assert(req.params.name == 'hold')
+    assert(event.status == 203 and event.downstream_bytes == #'upstream data')
+    assert(event.kind == 'http' and event.route == '/gateway/:name')
+    record('proxy exchange callback')
+  end,
+})
+check(server:proxy{path = '/gateway-failure', target = 'https://127.0.0.1:' .. port,
+  connect_timeout_ms = 500, total_timeout_ms = 1000,
+  on_error = function(req, err, status)
+    assert(req.path == '/gateway-failure' and err.message and (status == 502 or status == 504))
+    return {status = 503, headers = {['x-fallback'] = 'lua'}, body = 'custom gateway response'}
+  end,
+})
+if mode == 'normal' then
+  check(server:proxy{path = '/socket-proxy', target = 'http://127.0.0.1:' .. geo_port,
+    hooks = {after = function(_, res)
+      assert(res.status == 101)
+      wait_for_gate('proxy handshake waiting')
+      return {headers = {['x-handshake'] = 'lua'}}
+    end},
+  })
+end
 if country_database then
   local country = check(server:text{path = '/country', body = 'country allowed'})
   check(country:set_acl{

@@ -950,14 +950,18 @@ static void start_runner(struct fixture *f, const char *work,
                          const char *runner, const char *script)
 {
     struct timespec retry = {0, 10000000L};
-    char port[16], out[4096];
+    char port[16], plain[16], out[4096], location[128];
     struct sockaddr_in address;
     int status, probe, i;
+    do {
+        close(bound_socket(&f->plain));
+    } while (f->plain == f->tls);
     snprintf(port, sizeof(port), "%u", (unsigned int)f->tls);
+    snprintf(plain, sizeof(plain), "%u", (unsigned int)f->plain);
     runner_pid = fork();
     CHECK(runner_pid >= 0);
     if (runner_pid == 0) {
-        execl(runner, runner, script, work, port, (char *)NULL);
+        execl(runner, runner, script, work, port, plain, (char *)NULL);
         _exit(126);
     }
     memset(&address, 0, sizeof(address));
@@ -976,6 +980,10 @@ static void start_runner(struct fixture *f, const char *work,
         nanosleep(&retry, NULL);
     }
     CHECK(i < 300);
+    CHECK(exchange(f, 0, "GET", "/health?probe=1", NULL, NULL, out) == 308);
+    snprintf(location, sizeof(location), "https://localhost:%u/health?probe=1",
+             (unsigned int)f->tls);
+    CHECK(strstr(out, location) != NULL);
 }
 
 static void stop_runner(void)

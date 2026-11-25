@@ -238,7 +238,7 @@ static knurl_status route_add(knurl_router *router,
                 error, KNURL_CONFLICT, "router_route",
                 "identical route kind/path overlaps an existing method mask");
     }
-    route = malloc(sizeof(struct knurl_route_impl));
+    route = calloc(1, sizeof(struct knurl_route_impl));
     if (route == NULL)
         return knurl_fail(error, KNURL_NOMEM, "router_route",
                           "cannot allocate route");
@@ -348,7 +348,7 @@ knurl_status knurl_router_group(knurl_router *router,
             return status;
         }
     }
-    group = malloc(sizeof(struct knurl_route_group_impl));
+    group = calloc(1, sizeof(struct knurl_route_group_impl));
     if (group == NULL) {
         free(copy);
         return knurl_fail(error, KNURL_NOMEM, "router_group",
@@ -533,6 +533,8 @@ void knurl_route_group_receiver_init(knurl_route_group *receiver)
         NULL,
         knurl_route_group_blocking_route,
         knurl_route_group_set_auth,
+        knurl_route_group_set_async_hooks,
+        knurl_route_group_proxy,
     };
     *receiver = methods;
     receiver->impl = (struct knurl_route_group_impl *)receiver;
@@ -545,6 +547,8 @@ void knurl_route_receiver_init(knurl_route *receiver)
         knurl_route_declaration,
         NULL,
         knurl_route_set_auth,
+        knurl_route_set_async_hooks,
+        knurl_route_set_proxy_async_hooks,
     };
     *receiver = methods;
     receiver->impl = (struct knurl_route_impl *)receiver;

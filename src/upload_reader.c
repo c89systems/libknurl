@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "upload_internal.h"
+#include "executor_internal.h"
 #include "native_io.h"
 #include "server_internal.h"
 #include <knurl/body.h>
@@ -90,8 +91,8 @@ static void blocking_pool_retired(void *data)
     ((knurl_loop *)data)->impl->blocking_executor = NULL;
 }
 
-static knurl_status blocking_pool(knurl_server *server, knurl_executor **out,
-                                  knurl_error *error)
+knurl_status knurl_blocking_pool_get(knurl_server *server, knurl_executor **out,
+                                     knurl_error *error)
 {
     knurl_loop *loop = knurl_server_loop(server);
     knurl_executor_config config;
@@ -125,7 +126,7 @@ knurl_status knurl_blocking_pool_start(knurl_server *server, knurl_error *error)
     const knurl_blocking_pool_config *config = &server->impl->blocking_pool;
     if (config->on_thread_start == NULL && config->on_thread_stop == NULL)
         return KNURL_OK;
-    return blocking_pool(server, &pool, error);
+    return knurl_blocking_pool_get(server, &pool, error);
 }
 static knurl_status io_error(knurl_error *error, const char *message)
 {
@@ -375,11 +376,11 @@ static knurl_status start(knurl_request *request, knurl_error *error)
         if (status != KNURL_OK)
             return status;
     }
-    status =
-        s->blocking
-            ? blocking_pool(knurl_request_server(s->request), &s->pool, error)
-            : knurl_native_io_pool(knurl_request_server(s->request), &s->pool,
-                                   error);
+    status = s->blocking
+                 ? knurl_blocking_pool_get(knurl_request_server(s->request),
+                                           &s->pool, error)
+                 : knurl_native_io_pool(knurl_request_server(s->request),
+                                        &s->pool, error);
     if (s->blocking && status == KNURL_LIMIT) {
         blocking_failure(s, KNURL_LIMIT, 503);
         return KNURL_OK;

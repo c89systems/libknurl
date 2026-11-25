@@ -45,7 +45,6 @@ static void knurl_proxy_route_data_free(void *userdata)
     for (i = 0u; i < data->target_count; ++i) {
         free(data->targets[i]);
     }
-    free(data->path);
     free(data->targets);
     free(data->tls_ca_pem);
     free(data->tls_client_cert_pem);
@@ -147,7 +146,7 @@ done:
     return valid;
 }
 
-knurl_status knurl_router_proxy(knurl_router *router,
+static knurl_status proxy_route(knurl_router *router, knurl_route_group *group,
                                 const knurl_proxy_config *config,
                                 knurl_route **out, knurl_error *error)
 {
@@ -164,7 +163,7 @@ knurl_status knurl_router_proxy(knurl_router *router,
 
     if (out != NULL)
         *out = NULL;
-    if (router == NULL || config == NULL) {
+    if ((router == NULL && group == NULL) || config == NULL) {
         knurl_proxy_error(error, KNURL_INVALID,
                           "proxy route requires a router and config");
         return KNURL_INVALID;
@@ -232,13 +231,6 @@ knurl_status knurl_router_proxy(knurl_router *router,
     if (data == NULL) {
         knurl_proxy_error(error, KNURL_NOMEM,
                           "failed to allocate proxy route configuration");
-        return KNURL_NOMEM;
-    }
-    data->path = knurl_proxy_copy_string(config->path);
-    if (data->path == NULL) {
-        knurl_proxy_route_data_free(data);
-        knurl_proxy_error(error, KNURL_NOMEM,
-                          "failed to copy proxy route path");
         return KNURL_NOMEM;
     }
     data->targets = (char **)calloc(count, sizeof(*data->targets));
@@ -321,7 +313,9 @@ knurl_status knurl_router_proxy(knurl_router *router,
     route.on_headers = knurl_proxy_dispatch;
     route.acl = config->acl;
     route.userdata = data;
-    status = knurl_router_route(router, &route, &registered, error);
+    status = group != NULL
+                 ? knurl_route_group_route(group, &route, &registered, error)
+                 : knurl_router_route(router, &route, &registered, error);
     if (status != KNURL_OK)
         knurl_proxy_route_data_free(data);
     else {
@@ -331,4 +325,35 @@ knurl_status knurl_router_proxy(knurl_router *router,
             *out = registered;
     }
     return status;
+}
+
+knurl_status knurl_router_proxy(knurl_router *router,
+                                const knurl_proxy_config *config,
+                                knurl_route **out, knurl_error *error)
+{
+    return proxy_route(router, NULL, config, out, error);
+}
+
+knurl_status knurl_route_group_proxy(knurl_route_group *group,
+                                     const knurl_proxy_config *config,
+                                     knurl_route **out, knurl_error *error)
+{
+    return proxy_route(NULL, group, config, out, error);
+}
+
+knurl_status knurl_route_set_proxy_async_hooks(
+    knurl_route *route, knurl_async_route_hook_fn admission,
+    knurl_async_route_hook_fn response, void *data, knurl_error *error)
+{
+    if (route == NULL || route->impl->config.on_headers != knurl_proxy_dispatch)
+        return knurl_fail(error, KNURL_INVALID, "proxy_async_hooks",
+                          "proxy route required");
+    if (route->impl->router->impl->frozen)
+        return knurl_fail(error, KNURL_STATE, "proxy_async_hooks",
+                          "configure hooks while inactive");
+    route->impl->proxy_hooks.before = admission;
+    route->impl->proxy_hooks.after = response;
+    route->impl->proxy_hooks.userdata = data;
+    knurl_error_clear(error);
+    return KNURL_OK;
 }

@@ -6,6 +6,7 @@
 #include "server_internal.h"
 #include "loop_internal.h"
 #include "policy_internal.h"
+#include "proxy_headers.h"
 
 #include <sys/stat.h>
 #include <errno.h>
@@ -512,12 +513,37 @@ static knurl_status flush_head(knurl_response *r, knurl_error *error)
     return KNURL_OK;
 }
 
-knurl_status knurl_response_begin(knurl_response *r, knurl_error *error)
+static knurl_status emit_head(knurl_response *r, knurl_error *error)
 {
     knurl_status status;
     knurl_owned_bytes head;
-    const char *version;
-    status = building(r, error);
+    status = knurl_response_head(r, &head, error);
+    if (status != KNURL_OK)
+        return status;
+    r->impl->pending_head = head.data;
+    r->impl->pending_head_length = head.length;
+    status = flush_head(r, error);
+    if (status != KNURL_OK && status != KNURL_AGAIN) {
+        free(r->impl->pending_head);
+        r->impl->pending_head = NULL;
+        r->impl->pending_head_length = r->impl->pending_head_position = 0;
+        return status;
+    }
+    knurl_error_clear(error);
+    return KNURL_OK;
+}
+
+int knurl_response_head_pending(const knurl_response *r)
+{
+    return r != NULL &&
+           (r->impl->final_headers_waiting || r->impl->pending_head != NULL ||
+            r->impl->head != NULL);
+}
+
+knurl_status knurl_response_begin(knurl_response *r, knurl_error *error)
+{
+    knurl_status status = building(r, error);
+    int http10;
     if (status != KNURL_OK)
         return status;
     if (knurl_request_auth(r->impl->request) != NULL &&
@@ -532,29 +558,98 @@ knurl_status knurl_response_begin(knurl_response *r, knurl_error *error)
         (r->impl->has_length || r->impl->suppressed))
         return knurl_fail(error, KNURL_INVALID, "response_begin",
                           "trailers conflict with final framing");
-    version = memcmp(r->impl->request->impl->version.data, "HTTP/1.0", 8) == 0
-                  ? "HTTP/1.0"
-                  : "HTTP/1.1";
-    r->impl->chunked = !r->impl->suppressed && !r->impl->has_length &&
-                       strcmp(version, "HTTP/1.1") == 0;
-    if (strcmp(version, "HTTP/1.0") == 0)
+    http10 = memcmp(r->impl->request->impl->version.data, "HTTP/1.0", 8) == 0;
+    r->impl->chunked = !r->impl->suppressed && !r->impl->has_length && !http10;
+    if (http10)
         r->impl->close_connection = 1;
-    status = knurl_response_head(r, &head, error);
-    if (status != KNURL_OK)
-        return status;
-    r->impl->pending_head = head.data;
-    r->impl->pending_head_length = head.length;
-    status = flush_head(r, error);
-    if (status != KNURL_OK && status != KNURL_AGAIN) {
-        free(r->impl->pending_head);
-        r->impl->pending_head = NULL;
-        r->impl->pending_head_length = r->impl->pending_head_position = 0;
-        return status;
+    r->impl->final_headers_waiting =
+        knurl_request_has_after_hooks(r->impl->request);
+    if (!r->impl->final_headers_waiting) {
+        status = emit_head(r, error);
+        if (status != KNURL_OK)
+            return status;
     }
     r->impl->phase = KNURL_RESPONSE_ACTIVE;
     r->impl->schedule(r);
     knurl_error_clear(error);
     return KNURL_OK;
+}
+
+knurl_status knurl_request_hook_remove_header(knurl_request *request,
+                                              const char *name,
+                                              knurl_error *error)
+{
+    knurl_reply *headers;
+    knurl_header *field;
+    char *lookup;
+    size_t i, retained = 0;
+    knurl_status status = knurl_loop_owner(knurl_request_loop(request), error);
+    if (status != KNURL_OK)
+        return status;
+    if (request->impl->hook_stage != KNURL_HOOK_AFTER ||
+        request->impl->hook_cancel == NULL)
+        return knurl_fail(error, KNURL_STATE, "response_hook",
+                          "requires a pending after-hook");
+    if (name == NULL || !knurl_header_name_valid(name) ||
+        !knurl_proxy_response_header_editable(name) ||
+        (knurl_request_auth(request) != NULL &&
+         knurl_text_equal_case(name, "cache-control")))
+        return knurl_fail(error, KNURL_INVALID, "response_hook",
+                          "cannot remove transport or policy headers");
+    headers = request->impl->response->impl->headers;
+    lookup = knurl_copy_text(name);
+    if (lookup == NULL)
+        return knurl_fail(error, KNURL_NOMEM, "response_hook",
+                          "copying header name");
+    for (i = 0; i < headers->impl->header_count; ++i) {
+        field = &headers->impl->headers[i];
+        if (knurl_text_equal_case(field->name.data, lookup)) {
+            free((void *)field->name.data);
+            free((void *)field->value.data);
+        } else
+            headers->impl->headers[retained++] = *field;
+    }
+    headers->impl->header_count = retained;
+    free(lookup);
+    knurl_error_clear(error);
+    return KNURL_OK;
+}
+
+knurl_status knurl_response_hook_edits(knurl_response *r,
+                                       const knurl_reply *edits,
+                                       knurl_error *error)
+{
+    int status_code = knurl_reply_status_code(edits);
+    knurl_response_phase phase = r->impl->phase;
+    knurl_status status = KNURL_OK;
+    size_t i;
+    if (!r->impl->final_headers_waiting)
+        return knurl_fail(error, KNURL_STATE, "response_hook",
+                          "headers are not waiting");
+    if (knurl_reply_is_selected(edits) &&
+        status_code != r->impl->outcome.status &&
+        (status_bodyless(status_code) ||
+         status_bodyless(r->impl->outcome.status)))
+        return knurl_fail(error, KNURL_INVALID, "response_hook",
+                          "status edit cannot change response framing");
+    r->impl->phase = KNURL_RESPONSE_BUILDING;
+    for (i = 0; status == KNURL_OK && i < edits->impl->header_count; ++i) {
+        const char *name = edits->impl->headers[i].name.data;
+        if (!knurl_proxy_response_header_editable(name))
+            status = knurl_fail(error, KNURL_INVALID, "response_hook",
+                                "cannot edit transport or handshake fields");
+        else
+            status = header(r, name, edits->impl->headers[i].value.data, 1, 0,
+                            error);
+    }
+    if (status == KNURL_OK && knurl_request_auth(r->impl->request) != NULL &&
+        r->impl->outcome.status >= 200)
+        status = knurl_response_header_set(r, "cache-control",
+                                           "private, no-store", error);
+    if (status == KNURL_OK && knurl_reply_is_selected(edits))
+        r->impl->outcome.status = status_code;
+    r->impl->phase = phase;
+    return status;
 }
 
 static knurl_status write_body(knurl_response *r, const void *data,
@@ -584,7 +679,7 @@ static knurl_status write_body(knurl_response *r, const void *data,
         knurl_error_clear(error);
         return KNURL_OK;
     }
-    if (r->impl->pending_head != NULL) {
+    if (r->impl->pending_head != NULL || r->impl->final_headers_waiting) {
         r->impl->blocked = 1;
         r->impl->writable_need = 1;
         knurl_error_clear(error);
@@ -733,6 +828,12 @@ static knurl_status end_response(knurl_response *r,
         r->impl->phase != KNURL_RESPONSE_FINISHING)
         return knurl_fail(error, KNURL_STATE, "response_end",
                           "response has not begun");
+    if (r->impl->final_headers_waiting) {
+        r->impl->blocked = 1;
+        r->impl->writable_need = 1;
+        knurl_error_clear(error);
+        return KNURL_AGAIN;
+    }
     status = make_ending(r, trailers, count, &ending, &length, error);
     if (status != KNURL_OK)
         return status;
@@ -809,7 +910,9 @@ knurl_status knurl_response_replace_uncommitted(knurl_response *r,
     status = access_response(r, error);
     if (status != KNURL_OK)
         return status;
-    if (r->impl->request->impl->websocket != NULL)
+    if (r->impl->request->impl->websocket != NULL ||
+        (r->impl->outcome.status == 101 &&
+         r->impl->request->impl->channel != NULL))
         return knurl_fail(
             error, KNURL_STATE, "response_replace",
             "accepted WebSocket owns the handshake; abort to cancel");
@@ -821,6 +924,11 @@ knurl_status knurl_response_replace_uncommitted(knurl_response *r,
     status = knurl_reply_new(&headers, error);
     if (status != KNURL_OK)
         return status;
+    knurl_request_hook_cancel(r->impl->request);
+    if (r->impl->final_headers_waiting) {
+        r->impl->final_headers_waiting = 0;
+        r->impl->request->impl->hook_after = KNURL_AFTER_HOOK_COUNT;
+    }
     {
         struct knurl_response_segment **slot;
         struct knurl_response_segment *segment;
@@ -1264,6 +1372,19 @@ void knurl_response_step(knurl_response *r)
         r->impl->busy = 1;
         knurl_source_release(retired, retired->impl->failure);
         r->impl->busy = 0;
+    }
+    if (r->impl->final_headers_waiting) {
+        status = knurl_request_hooks_after(r->impl->request, NULL);
+        if (status == KNURL_AGAIN)
+            return;
+        r->impl->final_headers_waiting = 0;
+        if (status == KNURL_OK)
+            status = emit_head(r, NULL);
+        if (status != KNURL_OK) {
+            r->impl->request->impl->hook_after = KNURL_AFTER_HOOK_COUNT;
+            knurl_response_fail(r, status);
+            return;
+        }
     }
     if (r->impl->pending_head != NULL &&
         r->impl->phase != KNURL_RESPONSE_ABORTED) {

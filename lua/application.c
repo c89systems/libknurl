@@ -5,13 +5,16 @@
 
 struct application {
     struct rl_server *server;
+    knurl_xml_config xml;
     int reference;
+    int xml_input;
 };
 
 struct request_call {
     const struct application *app;
     const knurl_request_snapshot *request;
     knurl_reply *reply;
+    knurl_source *source;
     struct rl_json *json;
     knurl_error *error;
     knurl_status status;
@@ -21,8 +24,8 @@ struct reader {
     knurl_source *source;
 };
 
-static knurl_status lua_failure(lua_State *L, int result, const char *operation,
-                                knurl_error *error)
+knurl_status rl_lua_failure(lua_State *L, int result, const char *operation,
+                            knurl_error *error)
 {
     const char *message = lua_type(L, -1) == LUA_TSTRING
                               ? lua_tostring(L, -1)
@@ -57,7 +60,7 @@ static knurl_status worker_callback(struct rl_server *server, const char *name,
     lua_pushlightuserdata(L, (void *)name);
     result = lua_pcall(L, 2, 0, 0);
     if (result != LUA_OK)
-        status = lua_failure(L, result, name, error);
+        status = rl_lua_failure(L, result, name, error);
     lua_settop(L, 1);
     return status;
 }
@@ -151,7 +154,8 @@ static void field_bytes(lua_State *L, const char *field, knurl_bytes bytes)
     lua_setfield(L, -2, field);
 }
 
-static void push_request(lua_State *L, const knurl_request_snapshot *request)
+void rl_push_request(lua_State *L, const knurl_request_snapshot *request,
+                     int reader_index)
 {
     size_t i;
     const knurl_auth_identity *identity = knurl_request_snapshot_auth(request);
@@ -185,12 +189,14 @@ static void push_request(lua_State *L, const knurl_request_snapshot *request)
         lua_rawseti(L, -2, (lua_Integer)i + 1);
     }
     lua_setfield(L, -2, "headers");
-    lua_pushvalue(L, 2);
-    lua_pushcclosure(L, read_body, 1);
-    lua_setfield(L, -2, "read");
-    lua_pushvalue(L, 2);
-    lua_pushcclosure(L, cancelled, 1);
-    lua_setfield(L, -2, "cancelled");
+    if (reader_index != 0) {
+        lua_pushvalue(L, reader_index);
+        lua_pushcclosure(L, read_body, 1);
+        lua_setfield(L, -2, "read");
+        lua_pushvalue(L, reader_index);
+        lua_pushcclosure(L, cancelled, 1);
+        lua_setfield(L, -2, "cancelled");
+    }
 }
 
 static knurl_status response_headers(lua_State *L, knurl_reply *reply,
@@ -228,13 +234,14 @@ static knurl_status response_headers(lua_State *L, knurl_reply *reply,
 
 static knurl_status stage_response(lua_State *L, struct request_call *call)
 {
-    static const char *const fields[] = {"status", "body", "content_type",
-                                         "headers", "json"};
+    static const char *const fields[] = {"status",  "body", "content_type",
+                                         "headers", "json", "stream",
+                                         "sse",     "xml"};
     const char *type = NULL;
     size_t status_code = 200;
     knurl_status status;
     knurl_bytes bytes;
-    int response;
+    int response, body, json, stream, sse, xml, selected;
     if (lua_isnil(L, -1))
         return knurl_reply_status(call->reply, 204, call->error);
     if (lua_type(L, -1) == LUA_TSTRING) {
@@ -254,20 +261,39 @@ static knurl_status stage_response(lua_State *L, struct request_call *call)
         return status;
 
     rl_field(L, response, "body");
+    body = lua_absindex(L, -1);
     rl_field(L, response, "json");
-    if (!lua_isnil(L, -1)) {
-        if (!lua_isnil(L, -2))
-            return rl_fail(call->error, KNURL_STATE,
-                           "choose a response body or JSON value");
-        return rl_json_reply(L, -1, call->reply, (int)status_code, type,
+    json = lua_absindex(L, -1);
+    rl_field(L, response, "stream");
+    stream = lua_absindex(L, -1);
+    rl_field(L, response, "sse");
+    sse = lua_absindex(L, -1);
+    rl_field(L, response, "xml");
+    xml = lua_absindex(L, -1);
+    selected = !lua_isnil(L, body) + !lua_isnil(L, json) +
+               !lua_isnil(L, stream) + !lua_isnil(L, sse) + !lua_isnil(L, xml);
+    if (selected > 1)
+        return rl_fail(call->error, KNURL_INVALID,
+                       "choose one of body, json, xml, stream or sse");
+    if (!lua_isnil(L, xml))
+        return rl_xml_reply(L, xml, call->reply, (int)status_code, type,
+                            call->error);
+    if (!lua_isnil(L, sse) || !lua_isnil(L, stream))
+        return rl_stream_reply(L, lua_isnil(L, sse) ? stream : sse,
+                               call->app->server, call->reply, (int)status_code,
+                               type, !lua_isnil(L, sse), call->error);
+    if (!lua_isnil(L, json)) {
+        if (rl_json_record_reply(L, json, call->reply, (int)status_code, type,
+                                 &status, call->error))
+            return status;
+        return rl_json_reply(L, json, call->reply, (int)status_code, type,
                              &call->json, call->error);
     }
-    lua_pop(L, 1);
-    if (lua_isnil(L, -1))
+    if (lua_isnil(L, body))
         return knurl_reply_status(call->reply, (int)status_code, call->error);
-    if (lua_type(L, -1) != LUA_TSTRING)
+    if (lua_type(L, body) != LUA_TSTRING)
         return rl_fail(call->error, KNURL_STATE, "response body must be bytes");
-    bytes.data = lua_tolstring(L, -1, &bytes.length);
+    bytes.data = lua_tolstring(L, body, &bytes.length);
     return knurl_reply_bytes(call->reply, (int)status_code,
                              type != NULL ? type : "text/plain; charset=utf-8",
                              bytes, call->error);
@@ -276,9 +302,30 @@ static knurl_status stage_response(lua_State *L, struct request_call *call)
 static int invoke_handler(lua_State *L)
 {
     struct request_call *call = lua_touserdata(L, 1);
+    int decorations, input;
     lua_rawgeti(L, 3, call->app->reference);
     lua_getiuservalue(L, -1, 1);
-    push_request(L, call->request);
+    decorations = lua_absindex(L, -1);
+    rl_field(L, decorations, "handler");
+    rl_push_request(L, call->request, 2);
+    input = lua_absindex(L, -1);
+    rl_field(L, decorations, "schema");
+    if (!lua_isnil(L, -1)) {
+        call->status =
+            rl_typed_input(L, -1, call->app->xml_input, &call->app->xml,
+                           call->source, call->error);
+        if (call->status != KNURL_OK) {
+            if (call->status == KNURL_INVALID || call->status == KNURL_LIMIT ||
+                call->status == KNURL_OVERFLOW) {
+                knurl_error cause = *call->error;
+                call->status = knurl_reply_error_json(
+                    call->reply, 400, "request_decode", &cause, call->error);
+            }
+            return 0;
+        }
+        lua_setfield(L, input, "input");
+    }
+    lua_pop(L, 1);
     lua_call(L, 1, 1);
     call->status = stage_response(L, call);
     return 0;
@@ -312,7 +359,7 @@ static knurl_status application_handler(const knurl_request_snapshot *request,
     lua_pushcfunction(L, new_reader);
     result = lua_pcall(L, 0, 1, 0);
     if (result != LUA_OK) {
-        knurl_status status = lua_failure(L, result, "lua_handler", error);
+        knurl_status status = rl_lua_failure(L, result, "lua_handler", error);
         lua_settop(L, 1);
         return status;
     }
@@ -321,6 +368,7 @@ static knurl_status application_handler(const knurl_request_snapshot *request,
     call.app = app;
     call.request = request;
     call.reply = reply;
+    call.source = source;
     call.error = error;
     /* Anchor the reader below the protected call so it survives error unwind.
      */
@@ -336,7 +384,7 @@ static knurl_status application_handler(const knurl_request_snapshot *request,
     rl_json_free(call.json);
     if (result == LUA_ERRRUN && lua_istable(L, -1)) {
         lua_rawgeti(L, -1, 1);
-        call.status = lua_failure(L, result, "lua_handler", error);
+        call.status = rl_lua_failure(L, result, "lua_handler", error);
         if (error != NULL) {
             lua_pop(L, 1);
             lua_rawgeti(L, -1, 2);
@@ -344,7 +392,7 @@ static knurl_status application_handler(const knurl_request_snapshot *request,
                      lua_tostring(L, -1));
         }
     } else if (result != LUA_OK)
-        call.status = lua_failure(L, result, "lua_handler", error);
+        call.status = rl_lua_failure(L, result, "lua_handler", error);
     lua_settop(L, 1);
     return call.status;
 }
@@ -352,8 +400,11 @@ static knurl_status application_handler(const knurl_request_snapshot *request,
 static int register_application(lua_State *L)
 {
     static const char *const fields[] = {
-        "path", "path_kind", "method",         "methods",     "acl",
-        "auth", "handler",   "max_body_bytes", "buffer_bytes"};
+        "path",         "path_kind",    "method",      "methods",
+        "acl",          "auth",         "handler",     "max_body_bytes",
+        "buffer_bytes", "request_json", "request_xml", "hooks"};
+    static const char *const xml_strings[] = {"root_element", "text_key",
+                                              "attribute_prefix"};
     struct rl_server *server = luaL_testudata(L, 1, RL_SERVER);
     struct rl_group *group = luaL_testudata(L, 1, RL_GROUP);
     struct application *app;
@@ -361,9 +412,11 @@ static int register_application(lua_State *L)
     knurl_auth *auth;
     knurl_route_config path;
     knurl_blocking_route_config route;
+    knurl_async_route_hooks hooks;
     knurl_error error;
     knurl_status status;
-    int callback, owner = 1, callbacks, result;
+    size_t i;
+    int callback, owner = 1, callbacks, result, json, xml, options;
 
     if (group != NULL) {
         server = group->server;
@@ -401,14 +454,36 @@ static int register_application(lua_State *L)
                     "application route requires a handler function"),
             &error);
     callback = lua_absindex(L, -1);
+    rl_field(L, 2, "request_json");
+    json = lua_absindex(L, -1);
+    rl_field(L, 2, "request_xml");
+    xml = lua_absindex(L, -1);
     handle = rl_route_new(L, server);
     result = lua_gettop(L);
     lua_getiuservalue(L, owner, 1);
     callbacks = lua_absindex(L, -1);
     app = lua_newuserdatauv(L, sizeof(*app), 1);
+    memset(app, 0, sizeof(*app));
     app->server = server;
+    if (!rl_typed_options(L, json, xml, &app->xml, &error))
+        return rl_error(L, &error);
+    app->xml_input = !lua_isnil(L, xml);
+    lua_createtable(L, 0, 5);
+    options = lua_absindex(L, -1);
     lua_pushvalue(L, callback);
+    lua_setfield(L, options, "handler");
+    if (app->xml_input) {
+        for (i = 0; i < RL_COUNT(xml_strings); ++i) {
+            rl_field(L, xml, xml_strings[i]);
+            lua_setfield(L, options, xml_strings[i]);
+        }
+        rl_field(L, xml, "schema");
+    } else
+        lua_pushvalue(L, json);
+    lua_setfield(L, options, "schema");
     lua_setiuservalue(L, -2, 1);
+    if (!rl_hooks_prepare(L, server, &hooks, &error))
+        return rl_error(L, &error);
     app->reference = luaL_ref(L, callbacks);
     route.handler = application_handler;
     route.userdata = app;
@@ -419,14 +494,17 @@ static int register_application(lua_State *L)
             : knurl_router_blocking_route(knurl_server_router(server->native),
                                           &route, &handle->native, &error);
     if (status != KNURL_OK) {
+        rl_hooks_finish(L, &hooks, status);
         luaL_unref(L, callbacks, app->reference);
         return rl_error(L, &error);
     }
-    if (auth != NULL) {
+    if (auth != NULL)
         status = knurl_route_set_auth(handle->native, auth, &error);
-        if (status != KNURL_OK)
-            return rl_error(L, &error);
-    }
+    if (status == KNURL_OK && hooks.userdata != NULL)
+        status = knurl_route_set_async_hooks(handle->native, &hooks, &error);
+    rl_hooks_finish(L, &hooks, status);
+    if (status != KNURL_OK)
+        return rl_error(L, &error);
     server->has_lua = 1;
     lua_pushvalue(L, result);
     return 1;

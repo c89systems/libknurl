@@ -1,4 +1,4 @@
-local work, port = ...
+local work, port, plain_port = ...
 local knurl = require('knurl')
 
 local function check(value, err)
@@ -15,9 +15,13 @@ local service <close> = check(knurl.auth{
   client_id = 'pipeline', client_secret = 'a local test secret with plenty of characters',
 })
 local server <close> = check(knurl.server{
-  port = assert(tonumber(port)), autoblock_disabled = true, backend_quiet = true,
+  listeners = {
+    {name = 'secure', kind = 'https', port = assert(tonumber(port)), identity = 1},
+    {name = 'redirect', kind = 'redirect', port = assert(tonumber(plain_port)), redirect_https_port = tonumber(port)},
+  },
+  autoblock_disabled = true, backend_quiet = true,
   tls = {
-    host = 'localhost', certificate = work .. '/cert.pem', private_key = work .. '/key.pem',
+    identities = {{domains = {'localhost'}, certificate = work .. '/cert.pem', private_key = work .. '/key.pem'}},
   },
 })
 check(server:text{path = '/health', body = 'ready'})

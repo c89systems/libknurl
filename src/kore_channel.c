@@ -287,9 +287,7 @@ static void interest(knurl_channel *channel)
         wanted |=
             backend->managed_wait ? backend->managed_wait : KNURL_WRITABLE;
     } else if (channel->impl->phase == KNURL_CHANNEL_TUNNEL &&
-               (channel->impl->response == NULL ||
-                (channel->impl->response->impl->head == NULL &&
-                 channel->impl->response->impl->pending_head == NULL))) {
+               !knurl_response_head_pending(channel->impl->response)) {
         if (channel->impl->head != NULL)
             wanted |= channel->impl->write_wait ? channel->impl->write_wait
                                                 : KNURL_WRITABLE;
@@ -369,9 +367,7 @@ static void pump(knurl_channel *channel)
             return;
     }
     if (channel->impl->phase != KNURL_CHANNEL_TUNNEL ||
-        (channel->impl->response != NULL &&
-         (channel->impl->response->impl->head != NULL ||
-          channel->impl->response->impl->pending_head != NULL)))
+        knurl_response_head_pending(channel->impl->response))
         return;
     if (!backend->handshake_drained) {
         backend->handshake_drained = 1;

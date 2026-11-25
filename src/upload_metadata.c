@@ -1,6 +1,52 @@
 #include "upload_internal.h"
+#include "loop_internal.h"
 #include <stdlib.h>
 #include <string.h>
+
+struct owned_snapshot {
+    struct knurl_native_metadata metadata;
+    void *text;
+    knurl_header *pairs;
+};
+
+knurl_status knurl_request_snapshot_copy(knurl_request *request,
+                                         knurl_request_snapshot **out,
+                                         knurl_error *error)
+{
+    struct owned_snapshot *snapshot;
+    knurl_status status;
+    if (out != NULL)
+        *out = NULL;
+    if (request == NULL || out == NULL)
+        return knurl_fail(error, KNURL_INVALID, "request_snapshot",
+                          "request and output are required");
+    status = knurl_loop_owner(knurl_request_loop(request), error);
+    if (status != KNURL_OK)
+        return status;
+    snapshot = malloc(sizeof(*snapshot));
+    if (snapshot == NULL)
+        return knurl_fail(error, KNURL_NOMEM, "request_snapshot",
+                          "allocating request snapshot");
+    status = knurl_upload_metadata_copy(
+        request, &snapshot->metadata, &snapshot->text, &snapshot->pairs, error);
+    if (status != KNURL_OK) {
+        free(snapshot);
+        return status;
+    }
+    *out = &snapshot->metadata.view;
+    knurl_error_clear(error);
+    return KNURL_OK;
+}
+
+void knurl_request_snapshot_destroy(knurl_request_snapshot *view)
+{
+    struct owned_snapshot *snapshot = (struct owned_snapshot *)view;
+    if (snapshot != NULL) {
+        free(snapshot->pairs);
+        free(snapshot->text);
+        free(snapshot);
+    }
+}
 
 knurl_status knurl_request_snapshot_path_param(const knurl_request_snapshot *m,
                                                const char *name,

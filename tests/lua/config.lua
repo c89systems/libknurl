@@ -59,8 +59,22 @@ rejects('callbacks.on_request_start', knurl.server{
   callbacks = {on_request_start = function() error('unexpected') end},
 })
 local server <close> = ok(knurl.server{
-  port = port, workers = 1, backend_quiet = true, callbacks = {},
+  listeners = {{name = 'public', port = port}}, workers = 1, backend_quiet = true, callbacks = {},
 })
+assert(not knurl.server{port = port, listeners = {{port = port}}})
+assert(not knurl.server{listeners = {{kind = 'invalid'}}})
+do
+  local acme <close> = ok(knurl.server{
+    listeners = {{kind = 'https', port = 0}, {kind = 'redirect', port = 0, redirect_https_port = 443}},
+    tls = {
+      version = 'both',
+      identities = {{domains = {'example.test'}, mode = 'acme'}},
+      acme = {email = 'ops@example.test', directory_url = 'https://example.test/directory',
+        runtime_directory = fixture:match('^(.*)/') .. '/acme', persist_timeout_ms = 1000},
+    },
+  })
+  ok(acme:validate())
+end
 local weak = setmetatable({}, {__mode = 'v'})
 do
   local root = pslog.new_json{min_level = 'disabled'}
@@ -74,11 +88,11 @@ local changed, log_error = server:set_pslog(unsafe)
 assert(changed == nil and log_error.message:find('native sink', 1, true))
 collectgarbage('collect')
 assert(weak[1] ~= nil)
-rejects('hooks.before', server:group{prefix = '/bad', hooks = {before = function() end}})
+rejects('hooks.before', server:group{prefix = '/bad', hooks = {before = true}})
 rejects('auth', server:static_file{path = '/bad', file_path = fixture, auth = {}})
 rejects('hooks.after', server:upload_file{path = '/bad', file_path = uploaded,
-  hooks = {after = function() end}})
-rejects('rewrite', server:proxy{path = '/bad', target = upstream, rewrite = function() end})
+  hooks = {after = true}})
+rejects('rewrite', server:proxy{path = '/bad', target = upstream, rewrite = true})
 rejects('handler', server:application{path = '/bad', target = upstream, handler = function() end})
 assert(not server:redirect{path = '/invalid', location = '/health\r\nX-Extra: injected'})
 assert(not server:redirect{path = '/invalid', location = ''})

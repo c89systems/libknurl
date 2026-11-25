@@ -3,6 +3,7 @@
 #include "proxy_common.h"
 #include "proxy_url.h"
 #include "auth_internal.h"
+#include "request_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -408,6 +409,15 @@ knurl_status knurl_proxy_director_prepare(
                               "proxy rewrite attempted an invalid edit");
             return out->failure;
         }
+    }
+    if (matched_request != NULL &&
+        matched_request->impl->proxy_rewrite != NULL) {
+        status = matched_request->impl->proxy_rewrite(
+            &input, out, matched_request->impl->proxy_rewrite_data, error);
+        if (status != KNURL_OK)
+            return status;
+        if (out->failure != KNURL_OK)
+            return out->failure;
     }
     status =
         knurl_proxy_target_build(route->targets[out->target_index], out->path,

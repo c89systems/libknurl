@@ -37,6 +37,7 @@ struct knurl_response_impl {
     unsigned char *pending_head;
     size_t pending_head_length;
     size_t pending_head_position;
+    int final_headers_waiting;
     struct knurl_response_segment *head;
     struct knurl_response_segment *tail;
     size_t queued;
@@ -74,6 +75,9 @@ knurl_status knurl_response_create(knurl_request *request,
                                    knurl_response **out, knurl_error *error);
 knurl_status knurl_response_submit(knurl_response *response, knurl_reply *reply,
                                    knurl_error *error);
+knurl_status knurl_response_hook_edits(knurl_response *, const knurl_reply *,
+                                       knurl_error *);
+int knurl_response_head_pending(const knurl_response *);
 void knurl_response_step(knurl_response *response);
 void knurl_response_fail(knurl_response *response, knurl_status cause);
 void knurl_response_error(knurl_response *response, knurl_status cause,

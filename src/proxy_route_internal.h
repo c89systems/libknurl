@@ -4,7 +4,6 @@
 #include <knurl/proxy.h>
 
 typedef struct knurl_proxy_route_data {
-    char *path;
     char **targets;
     size_t target_count;
     knurl_proxy_http_version upstream_http_version;

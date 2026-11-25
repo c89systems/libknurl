@@ -1,4 +1,6 @@
 file(MAKE_DIRECTORY "${WORK}")
+file(MAKE_DIRECTORY "${WORK}/acme")
+file(CHMOD "${WORK}/acme" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
 file(REMOVE "${WORK}/uploaded.txt")
 file(WRITE "${WORK}/asset.txt" "native static\n")
 foreach(component Unspecified lua)

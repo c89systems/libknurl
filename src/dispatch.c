@@ -142,7 +142,9 @@ knurl_status knurl_router_headers_selected(knurl_request *request,
                                            knurl_request_plan *plan,
                                            knurl_error *error)
 {
-    knurl_status status;
+    knurl_status status = knurl_request_hooks_admit(request, error);
+    if (status != KNURL_OK)
+        return status;
     plan->body = request->impl->route->impl->config.body;
     if (request->impl->route->impl->preflight != NULL) {
         status = request->impl->route->impl->preflight(

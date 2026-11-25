@@ -246,6 +246,13 @@ typedef knurl_upload_reader_config knurl_blocking_route_config;
 /** Immutable request snapshot shared by native application and upload routes.
  */
 typedef knurl_upload_metadata knurl_request_snapshot;
+/** Owner loop only. Copy metadata and verified identity independently of the
+ * request. Destroy the owned copy with knurl_request_snapshot_destroy. */
+KNURL_API knurl_status knurl_request_snapshot_copy(knurl_request *,
+                                                   knurl_request_snapshot **,
+                                                   knurl_error *);
+/** Release an owned snapshot. Borrowed handler snapshots cannot be freed. */
+KNURL_API void knurl_request_snapshot_destroy(knurl_request_snapshot *);
 /** Verified identity on a library-supplied snapshot during its callback.
  * Returns NULL for an unauthenticated request or NULL snapshot. */
 KNURL_API const knurl_auth_identity *

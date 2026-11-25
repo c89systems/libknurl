@@ -25,8 +25,9 @@ Queued cancellation can skip `work`; retirement still runs for admitted tasks.
 Work must return a terminal status; AGAIN and EOF become INVALID. A negative
 timeout is invalid even when the timeout is disabled.
 
-`work(task, userdata, error)` executes without Lua or live request/transport
-access. Poll `task->cancelled(task)`. `task->call` requests a short owner-loop
+`work(task, userdata, error)` runs on a native thread with retained userdata.
+Keep live requests and transport handles on the owner loop. Poll
+`task->cancelled(task)`. `task->call` requests a short owner-loop
 callback and waits only on the native thread. Borrowed callback data remains
 valid until it returns. Owner-loop callbacks must return promptly; blocking
 inside one occupies the worker again. Callbacks cannot yield or unwind a foreign
@@ -84,6 +85,20 @@ different pool threads can run concurrently. Start failure prevents readiness.
 Stop hooks run for successfully initialized threads and report errors through
 worker teardown. This supports thread-affine resources and runtimes owned by
 the handler thread. C process hooks retain their owner-loop contract.
+
+Use `knurl_server_submit_application_task` to submit to the same pool from
+the owner loop. A zero task timeout inherits the pool deadline. This lets an
+embedder share its thread-owned runtime across HTTP handlers and detached
+callbacks. `knurl_request_snapshot_copy` provides owned request metadata for
+such callbacks, released with `knurl_request_snapshot_destroy`.
+
+`knurl_route_set_async_hooks` and the group equivalent support owner-loop
+admission and response continuations. The hook installs a cancellation
+callback with `knurl_request_hook_wait` and returns KNURL_AGAIN.
+On native acknowledgment, finish the wait using `knurl_request_hook_resume`
+on the owner loop. Cancelling the wait expires its request pointer and
+detached work retains its own context through acknowledgment. A suspended
+after-hook holds final response headers and payload output until completion.
 
 When the pool cannot admit a task, the route returns HTTP 503. The pool deadline
 governs the admitted job and Kore sends 504 on expiry while cancellation

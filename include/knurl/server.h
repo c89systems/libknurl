@@ -1005,6 +1005,8 @@ struct pslog_logger;
  */
 struct knurl_task_pool;
 struct knurl_task_pool_config;
+struct knurl_task_config;
+struct knurl_task;
 struct knurl_blocking_pool_config;
 struct knurl_server {
     /** Return the packaged Kore commit string in static storage. */
@@ -1146,6 +1148,11 @@ struct knurl_server {
     /** Set the origin-thread callback for native log records while inactive. */
     knurl_status (*set_log_callback)(knurl_server *, knurl_log_fn, void *,
                                      knurl_error *);
+    /** Submit native work to the same worker pool as blocking routes. */
+    knurl_status (*submit_application_task)(knurl_server *,
+                                            const struct knurl_task_config *,
+                                            struct knurl_task **,
+                                            knurl_error *);
 };
 
 #ifdef __cplusplus

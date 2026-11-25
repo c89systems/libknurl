@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <knurl/task.h>
 #include "executor_internal.h"
+#include "server_internal.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -167,9 +168,10 @@ static void acknowledged(const knurl_job_outcome *outcome, void *data)
     t->error = outcome->error;
     (void)knurl_waker_destroy(t->waker, NULL);
 }
-knurl_status knurl_task_pool_submit(knurl_task_pool *pool,
-                                    const knurl_task_config *config,
-                                    knurl_task **out, knurl_error *error)
+static knurl_status submit(knurl_loop *loop, knurl_executor *executor,
+                           struct knurl_task_pool_impl *pool,
+                           const knurl_task_config *config, knurl_task **out,
+                           knurl_error *error)
 {
     static const knurl_task methods = {knurl_task_cancelled, knurl_task_call,
                                        knurl_task_cancel, NULL};
@@ -178,12 +180,12 @@ knurl_status knurl_task_pool_submit(knurl_task_pool *pool,
     knurl_status status;
     if (out != NULL)
         *out = NULL;
-    if (pool == NULL || config == NULL || config->work == NULL || out == NULL)
-        return fail(error, KNURL_INVALID, "pool, work and output required");
-    status = knurl_loop_owner(pool->impl->loop, error);
+    if (config == NULL || config->work == NULL || out == NULL)
+        return fail(error, KNURL_INVALID, "work and output required");
+    status = knurl_loop_owner(loop, error);
     if (status != KNURL_OK)
         return status;
-    if (pool->impl->executor == NULL)
+    if (executor == NULL)
         return fail(error, KNURL_STATE, "task pool is closed");
     t = calloc(1, sizeof(*t));
     if (t == NULL)
@@ -191,7 +193,7 @@ knurl_status knurl_task_pool_submit(knurl_task_pool *pool,
     t->shell = methods;
     t->shell.impl = t;
     t->config = *config;
-    t->loop = pool->impl->loop;
+    t->loop = loop;
     if (pthread_mutex_init(&t->lock, NULL) != 0) {
         free(t);
         return fail(error, KNURL_IO, "creating task lock");
@@ -214,16 +216,54 @@ knurl_status knurl_task_pool_submit(knurl_task_pool *pool,
     c.userdata = t;
     c.timeout_ms = config->timeout_ms;
     c.timeout_disabled = config->timeout_disabled;
-    status = knurl_executor_submit(pool->impl->executor, &c, &t->job, error);
+    status = knurl_executor_submit(executor, &c, &t->job, error);
     if (status != KNURL_OK) {
         (void)knurl_waker_destroy(t->waker, NULL);
         return status;
     }
     t->admitted = 1;
-    t->pool = pool->impl;
-    ++t->pool->refs;
+    t->pool = pool;
+    if (pool != NULL)
+        ++pool->refs;
     *out = &t->shell;
     return KNURL_OK;
+}
+knurl_status knurl_task_pool_submit(knurl_task_pool *pool,
+                                    const knurl_task_config *config,
+                                    knurl_task **out, knurl_error *error)
+{
+    if (pool == NULL) {
+        if (out != NULL)
+            *out = NULL;
+        return fail(error, KNURL_INVALID, "pool required");
+    }
+    return submit(pool->impl->loop, pool->impl->executor, pool->impl, config,
+                  out, error);
+}
+
+knurl_status
+knurl_server_submit_application_task(knurl_server *server,
+                                     const knurl_task_config *config,
+                                     knurl_task **out, knurl_error *error)
+{
+    knurl_task_config c;
+    knurl_executor *executor;
+    knurl_status status;
+    knurl_loop *loop = knurl_server_loop(server);
+    if (out != NULL)
+        *out = NULL;
+    if (server == NULL || config == NULL || config->work == NULL || out == NULL)
+        return fail(error, KNURL_INVALID, "server, work and output required");
+    status = knurl_loop_owner(loop, error);
+    if (status != KNURL_OK)
+        return status;
+    status = knurl_blocking_pool_get(server, &executor, error);
+    if (status != KNURL_OK)
+        return status;
+    c = *config;
+    if (c.timeout_ms == 0)
+        c.timeout_ms = server->impl->blocking_pool.timeout_ms;
+    return submit(loop, executor, NULL, &c, out, error);
 }
 knurl_status knurl_task_pool_close(knurl_task_pool *pool, knurl_error *error)
 {
