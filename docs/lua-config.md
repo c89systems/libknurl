@@ -7,19 +7,20 @@ available to a Lua host. The module calls libknurl's public C API.
 ## Build and run
 
 ```sh
-make build KNURL_BINARY=ON BUILD_DIR=build/knurl
-build/knurl/knurl app.lua
+make build TARGET=x86_64-linux-musl KNURL_BINARY=ON CONFIG=release
+build/x86_64-linux-musl/release/knurl app.lua
 ```
 
 Use `LUA_CONFIG=ON` to also build the loadable module. Install the C library
 with a normal `cmake --install`, then use `--component binary` for the
-executable and `--component lua` for the module. With an external Lua 5.5.1
-host, add `<prefix>/lib/lua/5.5/?.so` to `LUA_CPATH` and
+executable and `--component lua` for the module. The release tarballs ship
+the Linux runner as a static musl executable and the Apple Silicon runner
+with macOS system libraries and frameworks. See [release artifacts](https://github.com/c89systems/libknurl/blob/trunk/docs/releasing.md).
+With an external Lua 5.5.1 host, add `<prefix>/lib/lua/5.5/?.so` to `LUA_CPATH` and
 `<prefix>/lib/lua/5.5/?/init.lua` and `<prefix>/lib/lua/5.5/?.lua` to
-`LUA_PATH`. The runner uses the target's
-standard interpreter and finds libknurl relative to the installed executable.
-The platform loader also needs access to the selected cpkt, lonejson and pslog
-runtime libraries, typically via `LD_LIBRARY_PATH` on Linux.
+`LUA_PATH`. The module's platform loader needs the selected libknurl, cpkt,
+lonejson and pslog runtime libraries. A static Linux runner loads pure Lua
+modules and provides its built-in C modules through `require`.
 See [runtime direction](runtime-direction.md).
 
 ## Logging
@@ -102,6 +103,9 @@ is 16 and a full pool returns 503. `application_timeout_ms` defaults to
 30000 including queue time. Expiry returns 504. Cancellation is cooperative,
 so a running handler retains its slot until it returns. Kore continues
 serving native services while the application thread runs.
+
+Set `autoblock_disabled = true` to turn off the production profile's
+automatic abuse blocking.
 
 `validate()` checks declarations and `preflight()` also probes startup
 resources. Run from a host that can safely fork. `close()` releases the
@@ -225,10 +229,62 @@ in the same order you would use in the C router.
 `server:group{prefix = ..., acl = ...}` scopes fixed responses, static files,
 file uploads and inline handlers to a shared prefix and ACL. Declare upstream
 proxies directly on the server. Supply an ACL table or an object returned by
-`knurl.acl{...}`. Core retains the ACL for each registration. Use the
-[Core ACL policy](acl.md) fields, including `allow` and `deny` rule tables with
-`addresses`, `countries` and `unknown` fields.
+`knurl.acl{...}`. Successful route registrations return a route handle.
+Use `route:set_acl(value)` or `group:set_acl(value)` before serving to replace
+an attachment. Pass nil to clear it. Core retains each attachment.
 
 Native routes serve entirely in C. Empty `hooks = {}` and server
 `callbacks = {}` tables are accepted. The inline handler and worker hook
 methods are the Lua callback entry points. Authorization uses native ACLs.
+
+## ACLs and country data
+
+The [ACL policy](acl.md) supports the `allow` and `deny` sets, each with
+`addresses`, `countries` and `unknown`. Set `policy` to choose the fallback.
+Use `use_peer` to match the TCP peer, `country_database` for a file-backed
+MMDB and `max_heap_bytes` for the reader budget. `dns_refresh_ms`,
+`dns_max_addresses` and `dns_timeout_ms` control native hostname resolution.
+To check an ACL outside the server, call `acl:refresh()` before
+`acl:check(peer, effective)`.
+
+Behind a reverse proxy you control, configure `client_ip` on `knurl.server`.
+It accepts `trusted_proxies`, `forwarded_header`, `real_ip_header`,
+`max_hops`, and `forwarded_format` (`comma` or `rfc7239`). The
+[forwarding trust rules](acl.md#forwarding-trust) apply before country lookup.
+
+```lua
+local knurl = require('knurl')
+local database, err = knurl.country_database()
+assert(database, err and (err.message .. ' ' .. err.detail))
+
+local server = assert(knurl.server{port = 8080})
+assert(server:text{
+  path = '/regional', body = 'Hello',
+  acl = {policy = 'deny', allow = {countries = {'SE'}}, country_database = database},
+})
+assert(server:run())
+```
+
+Calling `knurl.country_database()` before `run()` opts in to the download.
+It uses `$XDG_CACHE_HOME/knurl/dbip-country-lite.mmdb`, falling back to
+`$HOME/.cache/knurl`. It returns a valid cached file immediately. On a miss,
+it fetches the current UTC month's DB-IP Country Lite release and tries the
+previous month if the publisher returns 404. The helper decompresses and
+validates the file before publishing it atomically. It keeps the cached
+database until the operator removes it or chooses a different cache path.
+Optional `cache_dir`, `url` and `timeout_ms` fields select an absolute cache
+directory, a mirror serving gzip-compressed MMDB, and the per-attempt timeout
+(30000 ms by default). HTTPS uses the host CA bundle or the configured
+`CURL_CA_BUNDLE`, `SSL_CERT_FILE` or `SSL_CERT_DIR`.
+
+[DB-IP Country Lite](https://db-ip.com/db/download/ip-to-country-lite) is
+licensed under CC BY 4.0. Add an [IP Geolocation by DB-IP](https://db-ip.com)
+link to application pages that use or display the data.
+
+## C host extension points
+
+The C host API provides custom ACL resolvers and borrowed country and asset
+providers, request hooks, proxy target selection hooks, downstream TLS/ACME,
+multiple listeners, WebDAV, WebSocket handlers, and mapped REST, JSON and XML
+routes. Lua covers the route declarations above, file-backed ACLs, worker
+hooks, logging, and inline request handlers.

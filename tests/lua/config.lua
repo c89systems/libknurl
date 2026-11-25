@@ -51,6 +51,10 @@ local function rejects(field, value, err)
   assert(err.detail == field, err.detail)
 end
 
+local missing, geo_error = knurl.country_database{cache_dir = 'relative-cache'}
+assert(missing == nil and geo_error.kind == 'invalid argument')
+rejects('resolve', knurl.server{client_ip = {resolve = function() end}})
+rejects('trusted_proxies', knurl.server{client_ip = {trusted_proxies = {a = '127.0.0.1'}}})
 rejects('callbacks.on_request_start', knurl.server{
   callbacks = {on_request_start = function() error('unexpected') end},
 })
@@ -81,7 +85,9 @@ assert(not server:redirect{path = '/invalid', location = ''})
 assert(not server:text{path = '/invalid', method = {}})
 
 local data = {path = '/health', body = 'ready', hooks = {}}
-ok(server:text(data))
+local health = ok(server:text(data))
+ok(health:set_acl{policy = 'deny'})
+ok(health:set_acl(nil))
 data.body = 'changed'
 ok(server:redirect{path = '/redirect', location = '/health', status = 307})
 ok(server:json{path = '/json', body = '{"native":true}'})
@@ -108,5 +114,7 @@ collectgarbage('collect')
 ok(server:validate())
 ok(server:run())
 ok(server:close())
+local updated, closed_error = health:set_acl(nil)
+assert(updated == nil and closed_error.kind == 'invalid state')
 collectgarbage('collect')
 assert(weak[1] == nil)

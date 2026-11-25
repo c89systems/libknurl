@@ -29,6 +29,12 @@ for target in $targets; do
       cmake -S cmake/checks -B "$binary/checks/qemu" "-DKNURL_BUILD=$binary" -DCHECK_KIND=qemu
       ctest --test-dir "$binary/checks/qemu" --parallel 1 --stop-on-failure --output-on-failure --no-tests=error ;;
   esac
+  case "$target" in
+    aarch64-linux-musl)
+      ctest --test-dir "$binary" -R '^knurl[.]binary-' --parallel 1 --stop-on-failure --output-on-failure --no-tests=error ;;
+    arm64-apple-darwin)
+      cmake "-DBUILD_DIR=$binary" -P binary/Package.cmake ;;
+  esac
   # Native Core's sdk-package test already verifies its actual SDK archive.
   # Cross targets need that artifact proof separately from the small smoke.
   if [[ $target != x86_64-linux-* ]]; then

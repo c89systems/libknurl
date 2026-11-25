@@ -58,7 +58,8 @@ static const char *copy_text(char **cursor, const char *text)
 
 static knurl_status register_fixed(lua_State *L, struct rl_server *server,
                                    knurl_route_group *group,
-                                   enum route_kind kind, knurl_error *error)
+                                   enum route_kind kind, knurl_route **out,
+                                   knurl_error *error)
 {
     static const char *const fields[] = {
         "path",         "path_kind", "method",       "methods",
@@ -140,9 +141,9 @@ static knurl_status register_fixed(lua_State *L, struct rl_server *server,
     route.handler = fixed_reply;
     route.userdata = fixed;
     status = group != NULL
-                 ? knurl_route_group_route(group, &route, NULL, error)
+                 ? knurl_route_group_route(group, &route, out, error)
                  : knurl_router_route(knurl_server_router(server->native),
-                                      &route, NULL, error);
+                                      &route, out, error);
     if (status == KNURL_OK) {
         fixed->next = server->replies;
         server->replies = fixed;
@@ -154,7 +155,7 @@ static knurl_status register_fixed(lua_State *L, struct rl_server *server,
 
 static knurl_status register_static(lua_State *L, knurl_router *router,
                                     knurl_route_group *group, int directory,
-                                    knurl_error *error)
+                                    knurl_route **out, knurl_error *error)
 {
     static const char *const fields[] = {"path",
                                          "file_path",
@@ -200,17 +201,17 @@ static knurl_status register_static(lua_State *L, knurl_router *router,
         !rl_acl_option(L, 2, &config.acl, error))
         return error->status;
     if (directory)
-        return group != NULL ? knurl_route_group_static_directory(
-                                   group, &config, NULL, error)
-                             : knurl_router_static_directory(router, &config,
-                                                             NULL, error);
+        return group != NULL
+                   ? knurl_route_group_static_directory(group, &config, out,
+                                                        error)
+                   : knurl_router_static_directory(router, &config, out, error);
     return group != NULL
-               ? knurl_route_group_static_file(group, &config, NULL, error)
-               : knurl_router_static_file(router, &config, NULL, error);
+               ? knurl_route_group_static_file(group, &config, out, error)
+               : knurl_router_static_file(router, &config, out, error);
 }
 
 static knurl_status register_upload(lua_State *L, struct rl_server *server,
-                                    knurl_route_group *group,
+                                    knurl_route_group *group, knurl_route **out,
                                     knurl_error *error)
 {
     static const char *const fields[] = {
@@ -233,13 +234,14 @@ static knurl_status register_upload(lua_State *L, struct rl_server *server,
     config.path = path.path;
     config.path_kind = path.path_kind;
     return group != NULL
-               ? knurl_route_group_upload_file(group, &config, NULL, error)
+               ? knurl_route_group_upload_file(group, &config, out, error)
                : knurl_router_upload_file(knurl_server_router(server->native),
-                                          &config, NULL, error);
+                                          &config, out, error);
 }
 
 static knurl_status register_proxy(lua_State *L, knurl_router *router,
-                                   int application, knurl_error *error)
+                                   int application, knurl_route **out,
+                                   knurl_error *error)
 {
     static const char *const fields[] = {"path",
                                          "path_kind",
@@ -292,7 +294,18 @@ static knurl_status register_proxy(lua_State *L, knurl_router *router,
     config.connect_timeout_ms = (long)connect;
     config.idle_timeout_ms = (long)idle;
     config.total_timeout_ms = (long)total;
-    return knurl_router_proxy(router, &config, NULL, error);
+    return knurl_router_proxy(router, &config, out, error);
+}
+
+struct rl_route *rl_route_new(lua_State *L, struct rl_server *server)
+{
+    struct rl_route *handle = lua_newuserdatauv(L, sizeof(*handle), 1);
+    handle->server = server;
+    handle->native = NULL;
+    luaL_setmetatable(L, RL_ROUTE);
+    lua_pushvalue(L, 1);
+    lua_setiuservalue(L, -2, 1);
+    return handle;
 }
 
 static int route(lua_State *L)
@@ -303,8 +316,10 @@ static int route(lua_State *L)
     enum route_kind kind =
         (enum route_kind)lua_tointeger(L, lua_upvalueindex(1));
     knurl_router *router;
+    struct rl_route *handle;
     knurl_error error;
     knurl_status status;
+    int result;
 
     if (group != NULL)
         server = group->server;
@@ -315,30 +330,38 @@ static int route(lua_State *L)
         return rl_result(L, rl_fail(&error, KNURL_STATE, "server is running"),
                          &error);
     router = knurl_server_router(server->native);
+    handle = rl_route_new(L, server);
+    result = lua_gettop(L);
     switch (kind) {
     case ROUTE_TEXT:
     case ROUTE_JSON:
     case ROUTE_REDIRECT:
-        status = register_fixed(L, server, native_group, kind, &error);
+        status = register_fixed(L, server, native_group, kind, &handle->native,
+                                &error);
         break;
     case ROUTE_STATIC_FILE:
     case ROUTE_STATIC_DIRECTORY:
         status = register_static(L, router, native_group,
-                                 kind == ROUTE_STATIC_DIRECTORY, &error);
+                                 kind == ROUTE_STATIC_DIRECTORY,
+                                 &handle->native, &error);
         break;
     case ROUTE_UPLOAD_FILE:
-        status = register_upload(L, server, native_group, &error);
+        status =
+            register_upload(L, server, native_group, &handle->native, &error);
         break;
     default:
         if (group != NULL)
             status = rl_fail(&error, KNURL_INVALID,
                              "proxy and application routes require a server");
         else
-            status =
-                register_proxy(L, router, kind == ROUTE_APPLICATION, &error);
+            status = register_proxy(L, router, kind == ROUTE_APPLICATION,
+                                    &handle->native, &error);
         break;
     }
-    return rl_result(L, status, &error);
+    if (status != KNURL_OK)
+        return rl_error(L, &error);
+    lua_pushvalue(L, result);
+    return 1;
 }
 
 void rl_routes_open(lua_State *L, int group)
@@ -347,6 +370,19 @@ void rl_routes_open(lua_State *L, int group)
         "text",        "json",  "redirect",   "static_file", "static_directory",
         "upload_file", "proxy", "application"};
     size_t i;
+    if (group) {
+        lua_pushcfunction(L, rl_set_acl);
+        lua_setfield(L, -2, "set_acl");
+    } else {
+        luaL_newmetatable(L, RL_ROUTE);
+        lua_pushcfunction(L, rl_set_acl);
+        lua_setfield(L, -2, "set_acl");
+        lua_pushvalue(L, -1);
+        lua_setfield(L, -2, "__index");
+        lua_pushliteral(L, "knurl");
+        lua_setfield(L, -2, "__metatable");
+        lua_pop(L, 1);
+    }
     for (i = 0; i < (group ? (size_t)ROUTE_PROXY : RL_COUNT(methods)); ++i) {
         lua_pushinteger(L, (lua_Integer)i);
         lua_pushcclosure(L, route, 1);

@@ -4,45 +4,6 @@
 struct acl_owner {
     knurl_acl *native;
 };
-static int strings(lua_State *L, int table, const char *key,
-                   const char *const **out, size_t *count, knurl_error *error)
-{
-    const char **items;
-    size_t n, i, length, array_key;
-    int list;
-    rl_field(L, table, key);
-    if (lua_isnil(L, -1)) {
-        lua_pop(L, 1);
-        return 1;
-    }
-    if (!lua_istable(L, -1) || (n = lua_rawlen(L, -1)) > 1024)
-        goto invalid;
-    list = lua_absindex(L, -1);
-    lua_pushnil(L);
-    while (lua_next(L, list)) {
-        if (!lua_isinteger(L, -2) || !rl_size(L, -2, &array_key) ||
-            array_key == 0 || array_key > n)
-            goto invalid;
-        lua_pop(L, 1);
-    }
-    items = lua_newuserdatauv(L, n * sizeof(*items), 0);
-    for (i = 0; i < n; ++i) {
-        lua_rawgeti(L, list, (lua_Integer)i + 1);
-        if (lua_type(L, -1) != LUA_TSTRING)
-            goto invalid;
-        items[i] = lua_tolstring(L, -1, &length);
-        if (memchr(items[i], 0, length))
-            goto invalid;
-        lua_pop(L, 1);
-    }
-    *out = items;
-    *count = n;
-    return 1;
-invalid:
-    rl_fail(error, KNURL_INVALID,
-            "ACL rules require arrays of at most 1024 strings without NUL");
-    return 0;
-}
 static int rules(lua_State *L, int table, const char *key, knurl_acl_rules *out,
                  knurl_error *error)
 {
@@ -57,10 +18,10 @@ static int rules(lua_State *L, int table, const char *key, knurl_acl_rules *out,
     if (!lua_istable(L, index) ||
         !rl_fields(L, index, fields, N(fields), error) ||
         !rl_field_bool(L, index, "unknown", &out->unknown) ||
-        !strings(L, index, "addresses", &out->addresses, &out->address_count,
-                 error) ||
-        !strings(L, index, "countries", &out->countries, &out->country_count,
-                 error))
+        !rl_string_array(L, index, "addresses", &out->addresses,
+                         &out->address_count, error) ||
+        !rl_string_array(L, index, "countries", &out->countries,
+                         &out->country_count, error))
         return 0;
     return 1;
 }
@@ -120,26 +81,23 @@ invalid:
         rl_fail(error, KNURL_INVALID, "invalid ACL configuration");
     return 0;
 }
-int rl_acl_option(lua_State *L, int options, knurl_acl **out,
-                  knurl_error *error)
+static int acl_value(lua_State *L, int index, knurl_acl **out,
+                     knurl_error *error)
 {
     struct acl_owner *owner;
     int top = lua_gettop(L);
-    options = lua_absindex(L, options);
     *out = NULL;
     knurl_error_clear(error);
-    rl_field(L, options, "acl");
-    if (lua_isnil(L, -1)) {
-        lua_settop(L, top);
+    if (lua_isnoneornil(L, index))
         return 1;
-    }
-    if (lua_istable(L, -1)) {
-        if (!build(L, -1, error)) {
+    if (lua_istable(L, index)) {
+        if (!build(L, index, error)) {
             lua_settop(L, top);
             return 0;
         }
+        index = -1;
     }
-    owner = luaL_testudata(L, -1, RL_ACL);
+    owner = luaL_testudata(L, index, RL_ACL);
     if (owner == NULL || owner->native == NULL) {
         lua_settop(L, top);
         rl_fail(error, KNURL_INVALID,
@@ -149,6 +107,40 @@ int rl_acl_option(lua_State *L, int options, knurl_acl **out,
     *out = owner->native;
     /* Keep inline ACL owners live through the retaining registration call. */
     return 1;
+}
+
+int rl_acl_option(lua_State *L, int options, knurl_acl **out,
+                  knurl_error *error)
+{
+    int ok;
+    rl_field(L, options, "acl");
+    ok = acl_value(L, -1, out, error);
+    if (lua_isnil(L, -1))
+        lua_pop(L, 1);
+    return ok;
+}
+
+int rl_set_acl(lua_State *L)
+{
+    const struct rl_route *route = luaL_testudata(L, 1, RL_ROUTE);
+    const struct rl_group *group = luaL_testudata(L, 1, RL_GROUP);
+    const struct rl_server *server = route   ? route->server
+                                     : group ? group->server
+                                             : NULL;
+    knurl_acl *acl;
+    knurl_error error;
+    knurl_status status;
+    if (server == NULL || server->native == NULL || server->running)
+        return rl_result(L,
+                         rl_fail(&error, KNURL_STATE,
+                                 "setting an ACL requires an inactive server"),
+                         &error);
+    if (!acl_value(L, 2, &acl, &error))
+        return rl_error(L, &error);
+    status = route != NULL
+                 ? knurl_route_set_acl(route->native, acl, &error)
+                 : knurl_route_group_set_acl(group->native, acl, &error);
+    return rl_result(L, status, &error);
 }
 static int l_new(lua_State *L)
 {

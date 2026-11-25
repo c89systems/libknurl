@@ -1,4 +1,4 @@
-local work, port, mode = ...
+local work, port, mode, geo_port, runtime = ...
 local knurl = require('knurl')
 local pslog = require('pslog')
 local curl = require('curl')
@@ -20,6 +20,25 @@ local function record(line)
   assert(file:write(line, '\n'))
 end
 
+local country_database
+if mode == 'normal' then
+  local endpoint = 'http://127.0.0.1:' .. geo_port
+  local expected = work .. '/geo-cache/knurl/dbip-country-lite.mmdb'
+  for _, path in ipairs{'/missing', '/broken', '/bad-mmdb'} do
+    local value, err = knurl.country_database{url = endpoint .. path, timeout_ms = 2000}
+    assert(not value and err.message)
+    assert(not io.open(expected, 'rb'))
+  end
+  country_database = check(knurl.country_database{url = endpoint .. '/country', timeout_ms = 2000})
+  assert(country_database == expected and check(knurl.country_database()) == expected)
+  local acl <close> = check(knurl.acl{
+    policy = 'deny', country_database = country_database, allow = {countries = {'US'}},
+    max_heap_bytes = 65536,
+  })
+  assert(check(acl:refresh()))
+  assert(acl:check('1.2.3.4') == true and acl:check('127.0.0.1') == false)
+end
+
 local calls = 40
 local database
 local saved_request
@@ -29,6 +48,11 @@ record('parent start')
 local server <close> = check(knurl.server{
   port = assert(tonumber(port)), workers = 1, backend_quiet = true,
   application_max_tasks = 1, logger = log,
+  autoblock_disabled = runtime == 'emulated',
+  client_ip = {
+    trusted_proxies = {'127.0.0.1/32'}, forwarded_header = 'forwarded',
+    real_ip_header = '', forwarded_format = 'rfc7239', max_hops = 2,
+  },
 })
 check(server:on_worker_start(function()
   assert(database == nil and calls == 40)
@@ -44,6 +68,16 @@ end))
 
 check(server:text{path = '/health', body = 'ready'})
 check(server:static_file{path = '/asset', file_path = work .. '/asset'})
+if country_database then
+  local country = check(server:text{path = '/country', body = 'country allowed'})
+  check(country:set_acl{
+    policy = 'deny', country_database = country_database, allow = {countries = {'US'}},
+  })
+  check(server:text{path = '/country-peer', body = 'country allowed', acl = {
+    policy = 'deny', country_database = country_database, allow = {countries = {'US'}},
+    use_peer = true,
+  }})
+end
 local uploaded = work .. '/curl-uploaded'
 local large = work .. '/curl-large'
 local large_size = 8 * 1024 * 1024 + 1
@@ -178,12 +212,14 @@ local function send_mail(port, action)
 end
 
 local routes = check(server:group{prefix = '/app'})
+check(routes:set_acl{policy = 'deny'})
+check(routes:set_acl(nil))
 local invalid = routes:route{
   path = '/invalid', max_body_bytes = 20 * 1024 * 1024,
   handler = function() end,
 }
 assert(invalid == nil)
-check(routes:route{
+local application = check(routes:route{
   path = '/:user/:action',
   methods = {'GET', 'POST'},
   max_body_bytes = 16,
@@ -256,6 +292,7 @@ check(routes:route{
     return {body = user .. ':' .. calls}
   end,
 })
+check(application:set_acl{policy = 'deny', allow = {addresses = {'127.0.0.1'}}, use_peer = true})
 
 local ok, err = server:run()
 if mode == 'init-failure' then

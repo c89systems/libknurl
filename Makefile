@@ -7,6 +7,7 @@ JOBS ?= 1
 DEFAULT_TARGET := x86_64-linux-gnu
 TARGET ?= $(DEFAULT_TARGET)
 SUPPORTED_TARGETS := $(shell bash scripts/lifecycle/cpkt-toolchains.sh targets)
+RUNNER_TARGETS := $(shell cat cmake/RunnerTargets.txt)
 BUILD_TYPE_debug := Debug
 BUILD_TYPE_release := Release
 ifeq ($(BUILD_TYPE_$(CONFIG)),)
@@ -32,8 +33,13 @@ ifeq ($(filter $(TARGET),aarch64-linux-gnu aarch64-linux-musl armhf-linux-gnu ar
 $(error QEMU smoke requires one of the four ARM Linux TARGET values)
 endif
 endif
+ifneq ($(filter runner-package,$(MAKECMDGOALS)),)
+ifeq ($(filter $(TARGET),$(RUNNER_TARGETS)),)
+$(error runner-package requires TARGET from: $(RUNNER_TARGETS))
+endif
+endif
 
-.PHONY: help deps deps-all toolchain toolchains configure build build-all sdk-package sdk-verify prepare-kore test install format format-check update-kore clean
+.PHONY: help deps deps-all toolchain toolchains configure build build-all sdk-package sdk-verify runner-package prepare-kore test install format format-check update-kore clean
 .NOTPARALLEL:
 .PHONY: memcheck qemu-smoke fuzz-toolchain fuzz-build fuzz-smoke fuzz verify-all prerelease release-check release-local
 
@@ -43,6 +49,7 @@ help:
 	  'make build-all             Compile all seven lifecycle/cpkt targets, serially.' \
 	  'make sdk-package           Stage the selected-target Core SDK binary rehearsal.' \
 	  'make sdk-verify            Verify that archive and its relocated example consumers.' \
+	  'make runner-package       Build and verify the selected standalone knurl tarball.' \
 	  'make test                  Build, then run registered CTest checks.' \
 	  'make memcheck              Valgrind C library checks; reuses the selected GNU build.' \
 	  'make qemu-smoke            Basic C/HTTP checks for an ARM Linux TARGET; no fuzzing.' \
@@ -79,7 +86,10 @@ deps-all:
 	@for target in $(SUPPORTED_TARGETS); do $(MAKE) --no-print-directory deps TARGET="$$target" || exit $$?; done
 
 build-all:
-	@for target in $(SUPPORTED_TARGETS); do $(MAKE) --no-print-directory build TARGET="$$target" || exit $$?; done
+	@for target in $(SUPPORTED_TARGETS); do \
+	  case ' $(RUNNER_TARGETS) ' in *" $$target "*) runner=ON ;; *) runner=OFF ;; esac; \
+	  $(MAKE) --no-print-directory build TARGET="$$target" KNURL_BINARY="$$runner" || exit $$?; \
+	done
 
 configure: deps
 	"$(CMAKE)" -S . -B '$(BUILD_DIR)' -G Ninja -DCMAKE_BUILD_TYPE='$(BUILD_TYPE_$(CONFIG))' -DBUILD_TESTING=ON -DCMAKE_TOOLCHAIN_FILE='$(TOOLCHAIN)' -DKNURL_TARGET='$(TARGET)' -DKNURL_BUILD_LUA='$(LUA_CONFIG)' -DKNURL_BUILD_BINARY='$(KNURL_BINARY)' '$(VERSION_ARG)'
@@ -130,6 +140,10 @@ sdk-package: build
 
 sdk-verify:
 	"$(CMAKE)" '-DBUILD_DIR=$(CURDIR)/$(BUILD_DIR)' -P cmake/VerifySDK.cmake
+
+runner-package: override KNURL_BINARY = ON
+runner-package: build
+	"$(CMAKE)" '-DBUILD_DIR=$(CURDIR)/$(BUILD_DIR)' -P binary/Package.cmake
 
 prepare-kore:
 	"$(CMAKE)" -S cmake/source -B build/source -DKNURL_ROOT='$(CURDIR)'

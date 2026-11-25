@@ -30,10 +30,10 @@ target_compile_definitions(knurl_lonejson_lua PRIVATE _GNU_SOURCE=1 $<$<PLATFORM
 target_compile_options(knurl_lonejson_lua PRIVATE "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
 
 add_library(knurl_lua_objects OBJECT module.c server.c routes.c acl.c value.c application.c json.c logging.c
-  curl.c curl_config.c curl_json.c)
+  curl.c curl_config.c curl_json.c geoip.c)
 target_include_directories(knurl_lua_objects PRIVATE "${pslog_lua_source}/include" "${lonejson_lua_source}/src/lua")
 target_link_libraries(knurl_lua_objects PUBLIC knurl::shared cpkt::lua_shared pslog::pslog_shared
-  cpkt::curl_shared lonejson::lonejson)
+  cpkt::curl_shared lonejson::lonejson cpkt::zlib_shared)
 target_compile_definitions(knurl_lua_objects PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
 knurl_c89(knurl_lua_objects)
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")

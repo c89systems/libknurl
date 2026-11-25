@@ -1,5 +1,47 @@
 #include "binding.h"
 
+int rl_string_array(lua_State *L, int table, const char *key,
+                    const char *const **out, size_t *count, knurl_error *error)
+{
+    const char **items;
+    size_t n, i, length, array_key;
+    int list, top = lua_gettop(L);
+    rl_field(L, table, key);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return 1;
+    }
+    if (!lua_istable(L, -1) || (n = lua_rawlen(L, -1)) > 1024)
+        goto invalid;
+    list = lua_absindex(L, -1);
+    lua_pushnil(L);
+    while (lua_next(L, list)) {
+        if (!lua_isinteger(L, -2) || !rl_size(L, -2, &array_key) ||
+            array_key == 0 || array_key > n)
+            goto invalid;
+        lua_pop(L, 1);
+    }
+    items = lua_newuserdatauv(L, n * sizeof(*items), 0);
+    for (i = 0; i < n; ++i) {
+        lua_rawgeti(L, list, (lua_Integer)i + 1);
+        if (lua_type(L, -1) != LUA_TSTRING)
+            goto invalid;
+        items[i] = lua_tolstring(L, -1, &length);
+        if (memchr(items[i], 0, length))
+            goto invalid;
+        lua_pop(L, 1);
+    }
+    *out = items;
+    *count = n;
+    return 1;
+invalid:
+    lua_settop(L, top);
+    rl_fail(error, KNURL_INVALID,
+            "expected a dense array of at most 1024 strings without NUL");
+    snprintf(error->detail, sizeof(error->detail), "%s", key);
+    return 0;
+}
+
 /* A Lua-owned declaration array stays anchored until Core copies its strings.
  * Validation of extensions/media types belongs to the public C configuration.
  */

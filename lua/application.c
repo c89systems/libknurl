@@ -347,11 +347,12 @@ static int register_application(lua_State *L)
     struct rl_server *server = luaL_testudata(L, 1, RL_SERVER);
     struct rl_group *group = luaL_testudata(L, 1, RL_GROUP);
     struct application *app;
+    struct rl_route *handle;
     knurl_route_config path;
     knurl_blocking_route_config route;
     knurl_error error;
     knurl_status status;
-    int callback, owner = 1, callbacks;
+    int callback, owner = 1, callbacks, result;
 
     if (group != NULL) {
         server = group->server;
@@ -388,6 +389,8 @@ static int register_application(lua_State *L)
                     "application route requires a handler function"),
             &error);
     callback = lua_absindex(L, -1);
+    handle = rl_route_new(L, server);
+    result = lua_gettop(L);
     lua_getiuservalue(L, owner, 1);
     callbacks = lua_absindex(L, -1);
     app = lua_newuserdatauv(L, sizeof(*app), 1);
@@ -399,15 +402,17 @@ static int register_application(lua_State *L)
     route.userdata = app;
     status =
         group != NULL
-            ? knurl_route_group_blocking_route(group->native, &route, NULL,
-                                               &error)
+            ? knurl_route_group_blocking_route(group->native, &route,
+                                               &handle->native, &error)
             : knurl_router_blocking_route(knurl_server_router(server->native),
-                                          &route, NULL, &error);
-    if (status == KNURL_OK)
-        server->has_lua = 1;
-    else
+                                          &route, &handle->native, &error);
+    if (status != KNURL_OK) {
         luaL_unref(L, callbacks, app->reference);
-    return rl_result(L, status, &error);
+        return rl_error(L, &error);
+    }
+    server->has_lua = 1;
+    lua_pushvalue(L, result);
+    return 1;
 }
 
 static int register_worker_hook(lua_State *L)

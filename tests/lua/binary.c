@@ -186,14 +186,73 @@ static int accept_origin(int listener)
     return fd;
 }
 
+static void origin_request(int fd, const char *expected)
+{
+    char response[1024];
+    size_t used = 0;
+    ssize_t n;
+    do {
+        CHECK(used < sizeof(response) - 1);
+        n = read(fd, response + used, sizeof(response) - 1 - used);
+        CHECK(n > 0);
+        used += (size_t)n;
+        response[used] = '\0';
+    } while (strstr(response, "\r\n\r\n") == NULL);
+    CHECK(strncmp(response, expected, strlen(expected)) == 0);
+}
+
+static void geoip_requests(int listener, const char *work)
+{
+    static const char *const requests[] = {"GET /missing ", "GET /broken ",
+                                           "GET /bad-mmdb ", "GET /country "};
+    static const char *const fixtures[] = {NULL, NULL, "bad-metadata.gz",
+                                           "valid-24-4.gz"};
+    char header[128], file_path[4096], bytes[2048];
+    struct timeval timeout = {3, 0};
+    struct pollfd ready;
+    FILE *file;
+    size_t i, size;
+    int client, length;
+    ready.fd = listener;
+    ready.events = POLLIN;
+    for (i = 0; i < sizeof(requests) / sizeof(requests[0]); ++i) {
+        CHECK(poll(&ready, 1, 4000) == 1);
+        client = accept(listener, NULL, NULL);
+        CHECK(client >= 0);
+        CHECK(setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                         sizeof(timeout)) == 0);
+        origin_request(client, requests[i]);
+        if (fixtures[i] != NULL) {
+            path(file_path, sizeof(file_path), work, fixtures[i]);
+            file = fopen(file_path, "rb");
+            CHECK(file != NULL);
+            size = fread(bytes, 1, sizeof(bytes), file);
+            CHECK(size > 1 && size < sizeof(bytes) && !ferror(file) &&
+                  fclose(file) == 0);
+        } else if (i != 0) {
+            memcpy(bytes, "bad gzip", 8);
+            size = 8;
+        } else
+            size = 0;
+        length = snprintf(
+            header, sizeof(header),
+            "HTTP/1.1 %s\r\nContent-Length: %lu\r\nConnection: close\r\n\r\n",
+            i == 0 ? "404 Not Found" : "200 OK", (unsigned long)size);
+        CHECK(length > 0 && (size_t)length < sizeof(header));
+        CHECK(write(client, header, (size_t)length) == length);
+        if (size != 0)
+            CHECK(write(client, bytes, size) == (ssize_t)size);
+        close(client);
+    }
+    close(listener);
+}
+
 static void curl_request(unsigned short port, const char *log, int timed_out)
 {
     static const char partial[] =
         "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\none";
     unsigned short upstream;
     char request[256], response[1024];
-    size_t used = 0;
-    ssize_t n;
     int listener, down, up, length;
     listener = bound_socket(&upstream);
     CHECK(listen(listener, 1) == 0);
@@ -205,14 +264,7 @@ static void curl_request(unsigned short port, const char *log, int timed_out)
     CHECK(length > 0 && (size_t)length < sizeof(request));
     down = open_request(port, request);
     up = accept_origin(listener);
-    do {
-        CHECK(used < sizeof(response) - 1);
-        n = read(up, response + used, sizeof(response) - 1 - used);
-        CHECK(n > 0);
-        used += (size_t)n;
-        response[used] = '\0';
-    } while (strstr(response, "\r\n\r\n") == NULL);
-    CHECK(strncmp(response, "GET /from-curl ", 15) == 0);
+    origin_request(up, "GET /from-curl ");
     if (!timed_out) {
         CHECK(write(up, partial, sizeof(partial) - 1) ==
               (ssize_t)sizeof(partial) - 1);
@@ -297,6 +349,12 @@ static void exercise(unsigned short port, const char *log, const char *gate)
     char response[1024];
     int fd, i, status;
     pid_t pending;
+    CHECK(knurl_test_acl_exchange(port, "GET", "/country", NULL, NULL) == 403);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/country",
+                                  "Forwarded: for=1.2.3.4\r\n",
+                                  "country allowed") == 200);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/country-peer",
+                                  "Forwarded: for=1.2.3.4\r\n", NULL) == 403);
     pending = fork();
     CHECK(pending >= 0);
     if (pending == 0)
@@ -362,12 +420,13 @@ static void exercise(unsigned short port, const char *log, const char *gate)
 
 int main(int argc, char **argv)
 {
-    char log[4096], gate[4096], asset[4096], port[16];
-    unsigned short selected;
+    char log[4096], gate[4096], asset[4096], cache[4096], port[16],
+        geo_port[16];
+    unsigned short selected, upstream = 0;
     pid_t child;
     FILE *file;
-    int normal, init_failure, fd;
-    CHECK(argc == 5 || argc == 7);
+    int normal, init_failure, fd, geo_listener = -1;
+    CHECK(argc == 5 || argc == 6);
     normal = strcmp(argv[4], "normal") == 0;
     init_failure = strcmp(argv[4], "init-failure") == 0;
     path(log, sizeof(log), argv[3], "events");
@@ -381,19 +440,31 @@ int main(int argc, char **argv)
     fd = bound_socket(&selected);
     close(fd);
     snprintf(port, sizeof(port), "%u", (unsigned int)selected);
+    if (normal) {
+        path(cache, sizeof(cache), argv[3], "geo-cache");
+        CHECK(setenv("XDG_CACHE_HOME", cache, 1) == 0);
+        CHECK(setenv("no_proxy", "127.0.0.1", 1) == 0);
+        geo_listener = bound_socket(&upstream);
+        CHECK(listen(geo_listener, 1) == 0);
+    }
+    snprintf(geo_port, sizeof(geo_port), "%u", (unsigned int)upstream);
     child = fork();
     CHECK(child >= 0);
     if (child == 0) {
-        if (argc == 7)
-            execl(argv[5], argv[5], "--library-path", argv[6], argv[1], argv[2],
-                  argv[3], port, argv[4], (char *)NULL);
+        if (geo_listener >= 0)
+            close(geo_listener);
+        if (argc == 6)
+            execl(argv[5], argv[5], argv[1], argv[2], argv[3], port, argv[4],
+                  geo_port, "emulated", (char *)NULL);
         else
-            execl(argv[1], argv[1], argv[2], argv[3], port, argv[4],
+            execl(argv[1], argv[1], argv[2], argv[3], port, argv[4], geo_port,
                   (char *)NULL);
         perror("starting knurl runner");
         _exit(126);
     }
     runner = child;
+    if (normal)
+        geoip_requests(geo_listener, argv[3]);
     if (!init_failure) {
         milestone(log, "worker start\n", 1);
         available(selected);

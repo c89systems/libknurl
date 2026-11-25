@@ -28,6 +28,7 @@ also require `ssh-keygen`; their temporary keys and refs stay under `build/`.
 | Native plain | Full GNU/musl C suites and relocated installed consumers. Release test assertions remain enabled. |
 | Native memory | Selected Core codec, source, storage, WebDAV, proxy and traversal cases, through Valgrind. Invalid memory/uninitialized uses and definite/indirect leaks fail. Logs are per process; no blanket suppressions. |
 | ARM QEMU | Core HTTP/count/MIME smoke, XML and Kore JSON worker-stack regressions. No full runtime suite, Valgrind or fuzzing. |
+| Standalone runner | Inspect extracted Linux and Darwin packages. Run the x86_64 package natively and the AArch64 package under QEMU, including application lifecycle, outbound transfers and GeoIP-backed ACLs. Apple Silicon runs the Darwin package's runtime smoke. |
 | Native fuzz | Owned proxy HTTP/chunk framing, WebSocket handshake/frame, route/range/ETag parsers. Instrumented C89 sources reuse the installed GNU Release SDK for support code. Seed replay, coverage-map presence, nonzero executions and zero saved crashes/hangs are required. |
 
 `make verify-all` builds each selected configuration once through `build-all`,

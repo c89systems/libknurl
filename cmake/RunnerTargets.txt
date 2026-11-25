@@ -1,0 +1,3 @@
+x86_64-linux-musl
+aarch64-linux-musl
+arm64-apple-darwin

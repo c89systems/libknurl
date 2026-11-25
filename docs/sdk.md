@@ -63,4 +63,5 @@ mode, so nested archive metadata neither discloses host IDs nor changes on repac
 These commands do not create a release, tag, upload or complete multi-product
 release inventory. [Release preparation](https://github.com/c89systems/libknurl/blob/trunk/docs/releasing.md) defines that inventory
 and the default-branch, signing, clean-build and final-artifact gates. A selected-
-target binary inventory cannot stand in for the seven-target release CHECKSUMS.
+target binary inventory covers one C SDK. The release CHECKSUMS covers all
+seven C SDKs and the three standalone runner packages.

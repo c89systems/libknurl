@@ -1,5 +1,41 @@
 #include "binding.h"
 
+static int client_ip(lua_State *L, knurl_client_ip_config *config,
+                     knurl_error *error)
+{
+    static const char *const fields[] = {"trusted_proxies", "forwarded_header",
+                                         "real_ip_header", "forwarded_format",
+                                         "max_hops"};
+    const char *format = "comma";
+    int options;
+    rl_field(L, 1, "client_ip");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return 1;
+    }
+    options = lua_absindex(L, -1);
+    if (!rl_fields(L, options, fields, RL_COUNT(fields), error) ||
+        !rl_string_array(L, options, "trusted_proxies",
+                         &config->trusted_proxies, &config->trusted_proxy_count,
+                         error))
+        return 0;
+    if (!rl_field_string(L, options, "forwarded_header",
+                         &config->forwarded_header) ||
+        !rl_field_string(L, options, "real_ip_header",
+                         &config->real_ip_header) ||
+        !rl_field_size(L, options, "max_hops", &config->max_hops) ||
+        !rl_field_string(L, options, "forwarded_format", &format) ||
+        (strcmp(format, "comma") && strcmp(format, "rfc7239"))) {
+        rl_fail(error, KNURL_INVALID,
+                "invalid client_ip forwarding configuration");
+        return 0;
+    }
+    config->forwarded_format = strcmp(format, "comma") == 0
+                                   ? KNURL_FORWARDED_COMMA
+                                   : KNURL_FORWARDED_RFC7239;
+    return 1;
+}
+
 static int server_new(lua_State *L)
 {
     static const char *const fields[] = {"bind",
@@ -9,6 +45,8 @@ static int server_new(lua_State *L)
                                          "backend_quiet",
                                          "logger",
                                          "access_log",
+                                         "client_ip",
+                                         "autoblock_disabled",
                                          "callbacks",
                                          "application_max_tasks",
                                          "application_timeout_ms"};
@@ -18,6 +56,7 @@ static int server_new(lua_State *L)
     knurl_error error;
     knurl_status status;
     size_t port = 8080, max_tasks = 0, timeout = 0;
+    int autoblock_disabled = 0;
 
     if (!rl_fields(L, 1, fields, RL_COUNT(fields), &error))
         return rl_error(L, &error);
@@ -35,6 +74,7 @@ static int server_new(lua_State *L)
         !rl_field_size(L, 1, "max_connections",
                        &config.limits.max_connections) ||
         !rl_field_bool(L, 1, "backend_quiet", &config.http.backend_quiet) ||
+        !rl_field_bool(L, 1, "autoblock_disabled", &autoblock_disabled) ||
         !rl_field_size(L, 1, "application_max_tasks", &max_tasks) ||
         max_tasks > 256 ||
         !rl_field_size(L, 1, "application_timeout_ms", &timeout) ||
@@ -44,6 +84,10 @@ static int server_new(lua_State *L)
             rl_fail(&error, KNURL_INVALID, "invalid HTTP server configuration"),
             &error);
     listener.port = (unsigned short)port;
+    if (autoblock_disabled)
+        config.autoblock.enabled = 0;
+    if (!client_ip(L, &config.client_ip, &error))
+        return rl_error(L, &error);
 
     server = lua_newuserdatauv(L, sizeof(*server), 1);
     memset(server, 0, sizeof(*server));

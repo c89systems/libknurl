@@ -7,10 +7,10 @@ TLS/ACME, logging and lifecycle. Native tasks and request resumption are public
 C primitives; see [tasks](tasks.md). Shared-library ABI remains 0 for 0.2.0;
 see [SDK delivery](sdk.md) for consumer build requirements.
 
-The optional [Lua module and `knurl` executable](lua-config.md) use Lua 5.5.1
-from the existing cpkt SDK. Both use the same module, which calls the public
-C API. The default Core build and the seven release SDK archives require no
-Lua runtime.
+The [loadable Lua module and `knurl` runner](lua-config.md) use Lua 5.5.1
+from the existing cpkt SDK. Both use the same Lua binding, which calls the
+public C API. The runner ships in its own tarballs with bundled dependencies.
+The C SDK packages declare their dependencies through CMake and pkg-config.
 
 Native routes serve entirely in C. Inline Lua routes and worker hooks use one
 dedicated thread per Kore worker, with closures inherited from the paused
