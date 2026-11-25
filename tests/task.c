@@ -36,7 +36,7 @@ static knurl_status owner_call(void *data, knurl_error *error)
     struct context *c = data;
     struct fixture *f = c->fixture;
     CHECK(pthread_equal(f->owner, pthread_self()));
-    CHECK(c->id == 0 && write(f->notes[1], "p", 1) == 1);
+    CHECK(c->id == 0);
     knurl_error_clear(error);
     return KNURL_OK;
 }
@@ -49,8 +49,10 @@ static knurl_status work(knurl_task *task, void *data, knurl_error *error)
     CHECK(!pthread_equal(c->fixture->owner, pthread_self()));
     ++c->started;
     CHECK(c->id != 1);
-    if (c->id == 0)
+    if (c->id == 0) {
         CHECK(task->call(task, owner_call, c, error) == KNURL_OK);
+        CHECK(write(c->fixture->notes[1], "p", 1) == 1);
+    }
     while (!task->cancelled(task))
         nanosleep(&pause, NULL);
     CHECK(task->call(task, owner_call, c, error) == KNURL_CANCELLED);
@@ -176,6 +178,7 @@ static knurl_status ready(knurl_server *s, const knurl_process_context *p,
     int status;
     (void)p;
     CHECK(knurl_server_listener_at(s, 0, &info, error) == KNURL_OK);
+    CHECK(knurl_server_set_serving(s, 1, error) == KNURL_OK);
     f->client = fork();
     CHECK(f->client >= 0);
     if (f->client != 0)
