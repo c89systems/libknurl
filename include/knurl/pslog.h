@@ -40,7 +40,9 @@ typedef struct knurl_access_log_config {
  */
 KNURL_API void knurl_access_log_config_init(knurl_access_log_config *);
 /** Inert outside-run registration. Both logger pointers are borrowed for every
- * run and called on the parent owner thread. Rules are copied.
+ * run. Logging calls the sink on the originating process's owner thread.
+ * Keep loggers idle at fork and use sinks suitable for the emitting processes.
+ * Rules are copied.
  * NULL configuration uses trace/warn/error; NULL root uses a library-owned
  * default logger during run. Without an override, access derives sub=http.
  * logger_disabled affects structured access only, independently of file logs.

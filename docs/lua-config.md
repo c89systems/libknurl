@@ -38,13 +38,11 @@ local server = assert(knurl.server{logger = log, access_log = {success_level = '
 log:info('configured the application')
 ```
 
-Kore records reach the registered native sink from the parent. Ordinary
-`log:info()` calls can run wherever `log` is in scope, including in application
-handlers. Those calls use libpslog directly. When a handler uses an inherited
-logger, its writes run in the worker and record integrity across processes
-depends on the configured sink. The server retains registered loggers until
-replacement or close. Use a native sink for a registered logger and keep its
-output available through the server run.
+Kore records reach the registered native sink in the process where they
+originate. Ordinary `log:info()` calls use libpslog directly wherever `log`
+is in scope, including in application handlers. The server retains registered
+loggers until replacement or close. Choose a native sink suitable for writes
+from multiple processes and keep its output available through the server run.
 
 ## Configure and serve
 

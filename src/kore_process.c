@@ -23,6 +23,7 @@ void knurl_kore_child_failure(struct knurl_runtime *runtime,
         runtime->shared->failures[index].error = *error;
         __atomic_store_n(&runtime->shared->failures[index].valid, 1,
                          __ATOMIC_RELEASE);
+        knurl_kore_log_failure(runtime, kore_worker_name(worker->id), error);
     }
 }
 
@@ -33,6 +34,7 @@ void knurl_kore_worker_event(void *userdata, const struct kore_worker *child,
     knurl_worker_event event;
     knurl_u64 one;
     size_t index;
+    int reported = 0;
     runtime = userdata;
     index = slot(child);
     if (kind == KORE_LIBRARY_WORKER_SPAWNING) {
@@ -83,6 +85,7 @@ void knurl_kore_worker_event(void *userdata, const struct kore_worker *child,
                __atomic_load_n(&runtime->shared->failures[index].valid,
                                __ATOMIC_ACQUIRE)) {
         event.error = runtime->shared->failures[index].error;
+        reported = 1;
     } else if (event.kind == KNURL_WORKER_EXITED &&
                (!expected || event.exit_status || event.signal_number ||
                 abandoned)) {
@@ -91,8 +94,9 @@ void knurl_kore_worker_event(void *userdata, const struct kore_worker *child,
         event.error.source = KNURL_ERROR_BACKEND;
     }
     if (event.error.status != KNURL_OK) {
-        knurl_kore_log_failure(runtime, kore_worker_name(child->id),
-                               &event.error);
+        if (!reported)
+            knurl_kore_log_failure(runtime, kore_worker_name(child->id),
+                                   &event.error);
         runtime->last_failure = event;
         runtime->has_failure = 1;
         if (event.kind == KNURL_WORKER_EXITED &&

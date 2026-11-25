@@ -69,3 +69,4 @@
 0069-absolute-tls-handshake-deadline.patch
 0070-atomic-acme-certificate-install.patch
 0071-native-log-callbacks.patch
+0072-emit-logs-in-origin-process.patch

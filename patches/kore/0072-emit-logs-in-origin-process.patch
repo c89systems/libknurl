@@ -1,0 +1,254 @@
+diff --git a/include/kore/kore.h b/include/kore/kore.h
+--- a/include/kore/kore.h
++++ b/include/kore/kore.h
+@@ -722,12 +722,8 @@
+ #define KORE_MSG_CRL			9
+ #define KORE_MSG_ACCEPT_AVAILABLE	10
+ #define KORE_PYTHON_SEND_OBJ		11
+-#define KORE_MSG_WORKER_LOG		12
+ #define KORE_MSG_FATALX			13
+ #define KORE_MSG_LIBRARY_DEADLINE	14
+-#define KORE_MSG_ACCESS_LOG		15
+-#define KORE_MSG_HANDLER_ERROR		16
+-#define KORE_ACCESS_LOG_MAX		(128U * 1024U)
+ #define KORE_MSG_ACME_BASE		100
+ 
+ /* messages for applications should start at 201. */
+@@ -973,7 +969,6 @@
+ void		kore_log_file(const char *);
+ void		kore_log_set_callback(void (*)(int, const char *,
+ 		    const char *, void *), void *);
+-int		kore_log_forward(u_int8_t, const void *, size_t);
+ 
+ /* config.c */
+ void		kore_parse_config(void);
+diff --git a/src/accesslog.c b/src/accesslog.c
+--- a/src/accesslog.c
++++ b/src/accesslog.c
+@@ -180,26 +180,8 @@
+ 	else
+ 		http_version = "HTTP/1.1";
+ 
+-	if (req->referer != NULL)
+-		referer = req->referer;
+-	else
+-		referer = "-";
+-
+-	if (req->agent == NULL)
+-		req->agent = "-";
+-
+-	cn = "-";
+-	cn_value = NULL;
+-
+-	if (req->owner != NULL && req->owner->tls_cert != NULL) {
+-		if (kore_x509_subject_name(req->owner, &cn_value,
+-		    KORE_X509_COMMON_NAME_ONLY))
+-			cn = cn_value;
+-	}
+-
+ 	if (peer != NULL) {
+-		kore_strlcpy(addr, peer, sizeof(addr));
+-		ptr = addr;
++		ptr = peer;
+ 	} else if (req->owner != NULL) {
+ 		switch (req->owner->family) {
+ 		case AF_INET:
+@@ -220,16 +202,21 @@
+ 		ptr = NULL;
+ 	}
+ 
+-	if (ptr == NULL) {
+-		addr[0] = '-';
+-		addr[1] = '\0';
+-	}
++	if (ptr == NULL)
++		ptr = "-";
+ 
+ 	if (accesslog_callback != NULL)
+-		accesslog_structured(req, method, http_version, addr);
+-	if (req->rt->dom->accesslog == 0) {
+-		kore_free(cn_value);
++		accesslog_structured(req, method, http_version, ptr);
++	if (req->rt->dom->accesslog == 0)
+ 		return;
++
++	referer = req->referer != NULL ? req->referer : "-";
++	cn = "-";
++	cn_value = NULL;
++	if (req->owner != NULL && req->owner->tls_cert != NULL) {
++		if (kore_x509_subject_name(req->owner, &cn_value,
++		    KORE_X509_COMMON_NAME_ONLY))
++			cn = cn_value;
+ 	}
+ 
+ 	now = kore_time_ms();
+@@ -260,7 +247,7 @@
+ 
+ 		len = snprintf(worker->lb.buf + worker->lb.offset + sizeof(*hdr), avail,
+ 		    "%s - %s [%s] \"%s %s %s\" %d %s \"%s\" \"%s\"\n",
+-		    addr, cn, tbuf, method, req->path, http_version,
++		    ptr, cn, tbuf, method, req->path, http_version,
+ 		    req->status, kore_u64_text(req->content_length, content_length), referer, req->agent != NULL ? req->agent : "-");
+ 		if (len == -1)
+ 			fatal("failed to create log entry");
+diff --git a/src/log.c b/src/log.c
+--- a/src/log.c
++++ b/src/log.c
+@@ -21,16 +21,8 @@
+ 
+ #include "kore.h"
+ 
+-struct kore_wlog {
+-	int		prio;
+-	u_int16_t	wid;
+-	size_t		loglen;
+-	char		logmsg[1];
+-};
+-
+ static void	log_print(int, const char *, ...)
+ 		    __attribute__((format (printf, 2, 3)));
+-static void	log_from_worker(struct kore_msg *, const void *);
+ 
+ static FILE	*fp = NULL;
+ static void	(*log_callback)(int, const char *, const char *, void *) = NULL;
+@@ -45,8 +37,6 @@
+ 
+ 	if (log_callback == NULL && !kore_foreground)
+ 		openlog(name, LOG_NDELAY | LOG_PID, LOG_DAEMON);
+-
+-	kore_msg_register(KORE_MSG_WORKER_LOG, log_from_worker);
+ }
+ 
+ void
+@@ -66,26 +56,12 @@
+ 	log_callback_arg = arg;
+ }
+ 
+-int
+-kore_log_forward(u_int8_t id, const void *data, size_t length)
+-{
+-	struct connection *c;
+-
+-	if (worker == NULL || (c = worker->msg[1]) == NULL ||
+-	    c->state != CONN_STATE_ESTABLISHED || !TAILQ_EMPTY(&c->send_queue))
+-		return (0);
+-	/* Only one pending diagnostic frame may occupy the send queue. */
+-	kore_msg_send(KORE_MSG_PARENT, id, data, length);
+-	return (1);
+-}
+-
+ void
+ kore_log(int prio, const char *fmt, ...)
+ {
+ 	va_list			args;
+-	const char		*str;
+-	struct kore_wlog	wlog;
+-	struct kore_buf		buf, pkt;
++	const char		*name, *text;
++	struct kore_buf		buf;
+ 
+ 	kore_buf_init(&buf, 128);
+ 
+@@ -93,79 +69,18 @@
+ 	kore_buf_appendv(&buf, fmt, args);
+ 	va_end(args);
+ 
+-	if (worker != NULL) {
+-		if (buf.offset > 8192U)
+-			buf.offset = 8192U;
+-		kore_buf_init(&pkt, offsetof(struct kore_wlog, logmsg) + buf.offset);
+-
+-		memset(&wlog, 0, sizeof(wlog));
+-
+-		wlog.prio = prio;
+-		wlog.wid = worker->id;
+-		wlog.loglen = buf.offset;
+-
+-		kore_buf_append(&pkt, &wlog, offsetof(struct kore_wlog, logmsg));
+-		kore_buf_append(&pkt, buf.data, buf.offset);
+-
+-		(void)kore_log_forward(KORE_MSG_WORKER_LOG, pkt.data, pkt.offset);
+-
+-		kore_buf_cleanup(&pkt);
+-	} else {
+-		str = kore_buf_stringify(&buf, NULL);
+-
+-		if (log_callback != NULL) {
+-			log_callback(prio, "parent", str, log_callback_arg);
+-		} else if (kore_foreground || fp != stdout)
+-			log_print(prio, "proc=[parent] log=[%s]\n", str);
+-		else
+-			syslog(prio, "proc=[parent] log=[%s]", str);
+-	}
+-
++	text = kore_buf_stringify(&buf, NULL);
++	name = worker == NULL ? "parent" : kore_worker_name(worker->id);
++	if (log_callback != NULL)
++		log_callback(prio, name, text, log_callback_arg);
++	else if (kore_foreground || fp != stdout)
++		log_print(prio, "proc=%s log=[%s]\n", name, text);
++	else
++		syslog(prio, "proc=%s log=[%s]", name, text);
+ 	kore_buf_cleanup(&buf);
+ }
+ 
+ static void
+-log_from_worker(struct kore_msg *msg, const void *data)
+-{
+-	const char		*name;
+-	const char		*text;
+-	const struct kore_wlog	*wlog;
+-	struct kore_buf		buf;
+-
+-	if (msg->length < offsetof(struct kore_wlog, logmsg)) {
+-		kore_log(LOG_NOTICE,
+-		    "too short worker log received (%lu < %lu)", (unsigned long)(msg->length), (unsigned long)offsetof(struct kore_wlog, logmsg));
+-		return;
+-	}
+-
+-	wlog = data;
+-	name = kore_worker_name(wlog->wid);
+-	if (wlog->loglen > 8192U) {
+-		kore_log(LOG_NOTICE, "oversize worker log received");
+-		return;
+-	}
+-	if (wlog->loglen != msg->length - offsetof(struct kore_wlog, logmsg)) {
+-		kore_log(LOG_NOTICE, "invalid worker log length");
+-		return;
+-	}
+-
+-	if (log_callback != NULL) {
+-		/* Worker messages carry a length, not a terminating NUL. */
+-		kore_buf_init(&buf, wlog->loglen + 1);
+-		kore_buf_append(&buf, wlog->logmsg, wlog->loglen);
+-		text = kore_buf_stringify(&buf, NULL);
+-		log_callback(wlog->prio, name, text, log_callback_arg);
+-		kore_buf_cleanup(&buf);
+-	} else if (kore_foreground || fp != stdout) {
+-		log_print(wlog->prio, "proc=%s log=[%.*s]\n",
+-		    name, (int)wlog->loglen, wlog->logmsg);
+-	} else {
+-		syslog(wlog->prio, "proc=%s log=[%.*s]",
+-		    name, (int)wlog->loglen, wlog->logmsg);
+-	}
+-}
+-
+-static void
+ log_print(int prio, const char *fmt, ...)
+ {
+ 	struct tm		*t;
+diff --git a/src/msg.c b/src/msg.c
+--- a/src/msg.c
++++ b/src/msg.c
+@@ -216,11 +216,6 @@
+ {
+ 	struct kore_msg		*msg = (struct kore_msg *)nb->buf;
+ 
+-	if ((msg->id == KORE_MSG_ACCESS_LOG && msg->length > KORE_ACCESS_LOG_MAX) ||
+-	    (msg->id == KORE_MSG_HANDLER_ERROR && msg->length > 1024U) ||
+-	    (msg->id == KORE_MSG_WORKER_LOG && msg->length > 8192U + 64U))
+-		return (KORE_RESULT_ERROR);
+-
+ 	if (msg->length > 0) {
+ 		net_recv_expand(nb->owner, msg->length, msg_recv_data);
+ 		return (KORE_RESULT_OK);

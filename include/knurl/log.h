@@ -27,7 +27,7 @@ typedef struct knurl_log_access {
     knurl_u64 bytes;
 } knurl_log_access;
 
-/** Borrowed for the callback only. Process identifies the record's origin.
+/** Borrowed for the callback only. Process labels the associated process.
  * Access and error are optional and carry typed details when applicable. */
 typedef struct knurl_log_record {
     knurl_log_level level;
@@ -41,9 +41,9 @@ typedef struct knurl_log_record {
 typedef void (*knurl_log_fn)(const knurl_log_record *, void *);
 
 /** Outside-run registration for native diagnostic and structured access logs.
- * Callbacks run on the parent owner thread and should return promptly. Worker
- * delivery is bounded and best effort. NULL selects the pslog adapter.
- * Userdata is borrowed through each run. */
+ * Callbacks run synchronously on the originating process's owner thread and
+ * should return promptly. Processes inherit the callback and borrowed userdata
+ * at fork. NULL selects the pslog adapter. */
 KNURL_API knurl_status knurl_server_set_log_callback(knurl_server *,
                                                      knurl_log_fn, void *,
                                                      knurl_error *);

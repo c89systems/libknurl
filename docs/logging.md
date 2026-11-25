@@ -2,15 +2,15 @@
 
 `<knurl/log.h>` exposes `knurl_server_set_log_callback()` for a native callback
 registered outside `run()`. Kore runtime diagnostics and structured HTTP access
-records reach the callback on the parent owner thread. The callback borrows each
-record for the duration of the call. Access records carry typed request metadata,
-and handler and worker failures can carry a `knurl_error`. Keep the callback
-prompt so the parent can continue supervising workers.
+records reach the callback synchronously on the originating process's owner
+thread. The callback borrows the record and its fields for the duration of the
+call. Access records carry typed request metadata, and handler and worker
+failures can carry a `knurl_error`. Sink latency is part of the emitting thread's
+work, including the Kore event loop for HTTP access records.
 
-Workers submit bounded log records without waiting for sink I/O. If the
-transport is occupied, a record can drop. Register a NULL callback to select
-the libpslog adapter. A native callback also honors configured access levels,
-per-status rules, and the structured access enablement policy.
+Register a NULL callback to select the libpslog adapter. A native callback also
+honors configured access levels, per-status rules, and the structured access
+enablement policy.
 
 ## libpslog adapter
 
@@ -26,7 +26,10 @@ Initialize `knurl_access_log_config` and call
 Registration copies the access rules and borrows both logger pointers. It
 creates no logger, opens no file and invokes no sink. Invalid registration
 preserves the previous configuration. Logger instances must remain alive
-through every run. Knurl emits through them from the parent owner thread.
+through every run. Each worker inherits the logger configuration. Keep the
+logger idle at fork and choose a sink suitable for use by the emitting
+processes. The libpslog adapter passes borrowed fields to the regular logging
+API so libpslog controls formatting and output chunking.
 
 A host can create one root pslog instance and pass it to this registration and
 its other native components. Derived context loggers share its sink. Retain the
@@ -99,20 +102,18 @@ reported and retried when records arrive; other startup open failures remain
 returned errors. Diagnostics require a functioning root log sink, so an independent
 sink is useful when the access-log filesystem is full.
 
-Worker-to-parent runtime messages retain initialized padding and explicit
-lengths. Messages are capped at an 8192-byte prefix and malformed/oversized
-incoming records are rejected before sink emission. Structured access packets
-are capped at 128 KiB. Logging runs in native code. A fresh run clears backend
-callbacks and recreates owned logger state.
+Runtime diagnostics use their originating process's logger. The parent reports
+failures it observes during supervision, such as unexpected worker exit or a
+missed deadline. A fresh run clears backend callbacks and recreates owned logger
+state.
 
 The [public live fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/policy-logs-runtime.c) covers copied rules,
 override/disabled sinks, independent file output, client identity and long IDs,
 status replacement, startup open failure, logger survival and server reuse.
 It also verifies final address/count records after a client resets a paused
 response connection, and runs against relocated static/shared SDKs. The
-[backend fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/log-backend.c) covers sender bounds, short/mismatched/
-oversized IPC records, a locked unfinished access buffer, parent-thread callback
-delivery and request progress while the sink is blocked. The [policy API](policy.md) supplies admission and observations;
+[backend fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/log-backend.c) covers complete long diagnostics, a locked unfinished file access buffer,
+origin-thread callback delivery and borrowed access fields. The [policy API](policy.md) supplies admission and observations;
 application loggers and metrics aggregation remain application-owned.
 The [file fixture](https://github.com/c89systems/libknurl/blob/trunk/tests/access-log-file.c) checks retention, exact thresholds,
 oversized records, restart append, permissions, truncate/disable options, failed

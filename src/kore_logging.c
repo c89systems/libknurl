@@ -17,13 +17,6 @@ struct knurl_log_runtime {
     long file_error;
 };
 
-struct access_packet {
-    u_int64_t bytes;
-    u_int16_t status;
-};
-
-static struct knurl_log_runtime *parent_log;
-
 static knurl_log_level diagnostic_level(int priority)
 {
     switch (priority) {
@@ -91,21 +84,9 @@ void knurl_kore_log_failure(struct knurl_runtime *runtime, const char *process,
 void knurl_request_log_handler_error(knurl_request *request,
                                      const knurl_error *error)
 {
-    (void)request;
-    (void)kore_log_forward(KORE_MSG_HANDLER_ERROR, error, sizeof(*error));
-}
-
-static void handler_error(struct kore_msg *msg, const void *data)
-{
-    knurl_error error;
-    if (parent_log == NULL || msg->length != sizeof(error))
-        return;
-    memcpy(&error, data, sizeof(error));
-    error.operation[sizeof(error.operation) - 1] = '\0';
-    error.message[sizeof(error.message) - 1] = '\0';
-    error.detail[sizeof(error.detail) - 1] = '\0';
-    diagnostic(parent_log, LOG_ERR, kore_worker_name(msg->src),
-               "application handler failed", &error);
+    struct knurl_runtime *runtime = request->impl->server->impl->runtime;
+    diagnostic(runtime->logging, LOG_ERR, kore_worker_name(worker->id),
+               "application handler failed", error);
 }
 
 static pslog_level access_level(const struct knurl_log_runtime *log,
@@ -123,119 +104,50 @@ static pslog_level access_level(const struct knurl_log_runtime *log,
     return log->policy.success_level;
 }
 
-static void queue_access(const struct kore_accesslog_record *record, void *data)
+static void access_record(const struct kore_accesslog_record *access,
+                          void *data)
 {
     const struct knurl_log_runtime *log = data;
-    const char *text[8];
-    size_t lengths[sizeof(text) / sizeof(text[0])];
-    size_t i, length = sizeof(struct access_packet);
-    struct access_packet header;
-    unsigned char *packet, *slot;
-    pslog_level level = access_level(log, record->status);
+    pslog_level level = access_level(log, access->status);
     if (level == PSLOG_LEVEL_DISABLED || (int)level < log->access_min_level)
         return;
-    text[0] = record->client_ip;
-    text[1] = record->real_ip;
-    text[2] = record->method;
-    text[3] = record->path;
-    text[4] = record->http_version;
-    text[5] = record->referer;
-    text[6] = record->user_agent;
-    text[7] = record->correlation_id;
-    for (i = 0; i < sizeof(text) / sizeof(text[0]); ++i) {
-        if (text[i] == NULL)
-            text[i] = "";
-        lengths[i] = strlen(text[i]) + 1;
-        if (lengths[i] > KORE_ACCESS_LOG_MAX - length)
-            return;
-        length += lengths[i];
-    }
-    packet = malloc(length);
-    if (packet == NULL)
-        return;
-    memset(&header, 0, sizeof(header));
-    header.bytes = record->bytes;
-    header.status = record->status;
-    memcpy(packet, &header, sizeof(header));
-    slot = packet + sizeof(header);
-    for (i = 0; i < sizeof(text) / sizeof(text[0]); ++i) {
-        memcpy(slot, text[i], lengths[i]);
-        slot += lengths[i];
-    }
-    (void)kore_log_forward(KORE_MSG_ACCESS_LOG, packet, length);
-    free(packet);
-}
-
-static void access_record(struct kore_msg *msg, const void *data)
-{
-    struct knurl_log_runtime *log = parent_log;
-    struct access_packet header;
-    knurl_log_access access;
-    const char **fields[8];
-    const char *cursor = data, *end, *nul;
-    size_t i;
-    pslog_level level;
-    if (log == NULL || log->policy.logger_disabled ||
-        msg->length < sizeof(header) || msg->length > KORE_ACCESS_LOG_MAX)
-        return;
-    memcpy(&header, cursor, sizeof(header));
-    if (header.status < 100 || header.status > 599)
-        return;
-    level = access_level(log, header.status);
-    if (level == PSLOG_LEVEL_DISABLED)
-        return;
-    fields[0] = &access.client_ip;
-    fields[1] = &access.real_ip;
-    fields[2] = &access.method;
-    fields[3] = &access.path;
-    fields[4] = &access.http_version;
-    fields[5] = &access.referer;
-    fields[6] = &access.user_agent;
-    fields[7] = &access.correlation_id;
-    end = cursor + msg->length;
-    cursor += sizeof(header);
-    for (i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i) {
-        nul = memchr(cursor, '\0', (size_t)(end - cursor));
-        if (nul == NULL)
-            return;
-        *fields[i] = cursor;
-        cursor = nul + 1;
-    }
-    if (cursor != end)
-        return;
-    access.status = header.status;
-    access.bytes.high = (unsigned long)(header.bytes >> 32);
-    access.bytes.low = (unsigned long)(header.bytes & 0xffffffffU);
     if (log->callback != NULL) {
         knurl_log_record record;
+        knurl_log_access view;
+        view.client_ip = access->client_ip;
+        view.real_ip = access->real_ip;
+        view.method = access->method;
+        view.path = access->path;
+        view.http_version = access->http_version;
+        view.referer = access->referer;
+        view.user_agent = access->user_agent;
+        view.correlation_id =
+            access->correlation_id != NULL ? access->correlation_id : "";
+        view.status = access->status;
+        view.bytes.high = (unsigned long)(access->bytes >> 32);
+        view.bytes.low = (unsigned long)(access->bytes & 0xffffffffU);
         memset(&record, 0, sizeof(record));
         record.level = (knurl_log_level)level;
         record.message = "http request";
-        record.process = kore_worker_name(msg->src);
-        record.access = &access;
+        record.process = kore_worker_name(worker->id);
+        record.access = &view;
         log->callback(&record, log->userdata);
     } else if (log->access != NULL) {
         pslog_field output[10];
         size_t count = 9;
-        output[0] = pslog_str("client_ip", access.client_ip);
-        output[1] = pslog_str("real_ip", access.real_ip);
-        output[2] = pslog_str("method", access.method);
-        output[3] = pslog_str("path", access.path);
-        output[4] = pslog_str("http_version", access.http_version);
-        output[5] = pslog_u64("status", access.status);
-        output[6] = pslog_u64("bytes", (pslog_uint64)header.bytes);
-        output[7] = pslog_str("referer", access.referer);
-        output[8] = pslog_str("user_agent", access.user_agent);
-        if (*access.correlation_id != '\0')
-            output[count++] = pslog_str("cid", access.correlation_id);
+        output[0] = pslog_str("client_ip", access->client_ip);
+        output[1] = pslog_str("real_ip", access->real_ip);
+        output[2] = pslog_str("method", access->method);
+        output[3] = pslog_str("path", access->path);
+        output[4] = pslog_str("http_version", access->http_version);
+        output[5] = pslog_u64("status", access->status);
+        output[6] = pslog_u64("bytes", (pslog_uint64)access->bytes);
+        output[7] = pslog_str("referer", access->referer);
+        output[8] = pslog_str("user_agent", access->user_agent);
+        if (access->correlation_id != NULL && *access->correlation_id != '\0')
+            output[count++] = pslog_str("cid", access->correlation_id);
         pslog_fields(log->access, level, "http request", output, count);
     }
-}
-
-void knurl_kore_logging_messages(void)
-{
-    kore_msg_register(KORE_MSG_ACCESS_LOG, access_record);
-    kore_msg_register(KORE_MSG_HANDLER_ERROR, handler_error);
 }
 
 static void file_failure(struct knurl_log_runtime *log,
@@ -348,10 +260,9 @@ knurl_status knurl_kore_logging_start(struct knurl_runtime *runtime,
                 log->access_min_level = PSLOG_LEVEL_INFO;
         }
     }
-    parent_log = log;
     kore_log_set_callback(runtime_record, log);
     if (!log->policy.logger_disabled)
-        kore_accesslog_set_callback(queue_access, log);
+        kore_accesslog_set_callback(access_record, log);
     kore_accesslog_set_real_ip_resolver(effective);
     kore_accesslog_set_correlation_id_resolver(correlation);
     if (runtime->server->impl->config.http.access_log_path != NULL) {
@@ -377,7 +288,6 @@ knurl_status knurl_kore_logging_start(struct knurl_runtime *runtime,
 }
 void knurl_kore_logging_child(struct knurl_runtime *runtime)
 {
-    parent_log = NULL;
     if (runtime->logging != NULL) {
         (void)knurl_access_file_close(runtime->logging->file);
         runtime->logging->file = NULL;
@@ -405,7 +315,6 @@ void knurl_kore_logging_finish(struct knurl_runtime *runtime)
     kore_accesslog_set_real_ip_resolver(NULL);
     kore_accesslog_set_correlation_id_resolver(NULL);
     kore_log_set_callback(NULL, NULL);
-    parent_log = NULL;
     if (log->owned_access)
         log->access->destroy(log->access);
     if (log->owned_root)
