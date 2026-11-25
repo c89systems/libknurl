@@ -50,6 +50,25 @@ static knurl_status current(struct auth_transaction *tx, const char *subject,
     return status;
 }
 
+/* An empty session revision identifies a subject that had no local account
+ * when the session was issued. Establishing TOTP creates one. */
+static knurl_status session_revision(struct auth_transaction *tx,
+                                     const char *subject, char revision[33],
+                                     int capture, knurl_error *error)
+{
+    struct auth_record account;
+    knurl_status status = user(tx, subject, &account, error);
+    if (status == KNURL_EOF && revision[0] == 0)
+        return KNURL_OK;
+    if (status != KNURL_OK)
+        return status;
+    if (account.disabled)
+        return KNURL_EOF;
+    if (capture && revision[0] == 0)
+        memcpy(revision, account.revision, sizeof(account.revision));
+    return strcmp(account.revision, revision) == 0 ? KNURL_OK : KNURL_EOF;
+}
+
 static knurl_status read_user(struct auth_transaction *tx,
                               knurl_auth_operation op, knurl_auth_exchange *x,
                               knurl_error *error)
@@ -149,7 +168,7 @@ static knurl_status email(struct auth_transaction *tx, knurl_auth_operation op,
     knurl_status status;
     if (!subject_path(path, 'e', x->scope, x->subject))
         return failed(error);
-    status = current(tx, x->subject, x->revision, error);
+    status = session_revision(tx, x->subject, x->revision, 1, error);
     if (status != KNURL_OK)
         return status;
     status = knurl_auth_json_read(tx, path, &record, error);
@@ -193,7 +212,7 @@ static knurl_status session(struct auth_transaction *tx,
     if (op == KNURL_AUTH_SESSION_REVOKE)
         return knurl_auth_json_delete(tx, path, error);
     if (op == KNURL_AUTH_SESSION_SAVE) {
-        status = current(tx, x->subject, x->revision, error);
+        status = session_revision(tx, x->subject, x->revision, 1, error);
         if (status != KNURL_OK)
             return status;
         memset(&record, 0, sizeof(record));
@@ -207,7 +226,7 @@ static knurl_status session(struct auth_transaction *tx,
         return status;
     if (record.expires <= now)
         return KNURL_EOF;
-    status = current(tx, record.subject, record.revision, error);
+    status = session_revision(tx, record.subject, record.revision, 0, error);
     if (status == KNURL_OK) {
         memcpy(x->identity.subject, record.subject, sizeof(record.subject));
         memcpy(x->revision, record.revision, sizeof(x->revision));
@@ -377,12 +396,18 @@ static knurl_status workflow_step(struct auth_transaction *tx,
             status = totp(tx, x, now, error);
             if (status != KNURL_OK)
                 return status;
+        } else if (x->next_workflow == NULL && x->client_id == NULL) {
+            status = session_revision(tx, x->subject, x->revision, 1, error);
+            if (status != KNURL_OK)
+                return status;
         }
         status = knurl_auth_json_delete(tx, path, error);
         if (status != KNURL_OK)
             return rollback(status, error);
     } else {
-        status = current(tx, x->subject, x->revision, error);
+        status = x->next_workflow == NULL && x->client_id == NULL
+                     ? session_revision(tx, x->subject, x->revision, 1, error)
+                     : current(tx, x->subject, x->revision, error);
         if (status != KNURL_OK)
             return status;
         memset(&row, 0, sizeof(row));

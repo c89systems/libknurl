@@ -58,6 +58,7 @@ static knurl_status submit(struct rl_work *work, long timeout,
     config.retired = retired;
     config.userdata = work;
     config.timeout_ms = timeout;
+    config.timeout_disabled = work->terminal;
     return knurl_server_submit_application_task(work->server->native, &config,
                                                 &work->task, error);
 }
@@ -71,7 +72,8 @@ static void unlink_work(struct rl_server *server, struct rl_work *work,
         server->pending_head = work->pending_next;
     if (server->pending_tail == work)
         server->pending_tail = previous;
-    --server->pending_count;
+    if (!work->terminal)
+        --server->pending_count;
     work->pending_next = NULL;
     work->pending = 0;
 }
@@ -81,7 +83,10 @@ static knurl_status submit_pending(struct rl_work *work, knurl_error *error)
     knurl_u64 now, pending;
     int order = 0;
     size_t remaining;
-    knurl_status status =
+    knurl_status status;
+    if (work->terminal)
+        return submit(work, 0, error);
+    status =
         knurl_loop_now(knurl_server_loop(work->server->native), &now, error);
     if (status == KNURL_OK)
         status = knurl_u64_compare(work->deadline, now, &order, error);
@@ -161,22 +166,26 @@ knurl_status rl_work_start(struct rl_work *work, knurl_error *error)
     knurl_status status;
     if (timeout == 0)
         timeout = 30000;
-    status = knurl_loop_now(loop, &start, error);
-    if (status != KNURL_OK)
-        return status;
+    if (!work->terminal) {
+        status = knurl_loop_now(loop, &start, error);
+        if (status != KNURL_OK)
+            return status;
+    }
     if (server->pending_head == NULL) {
         status = submit(work, timeout, error);
         if (status != KNURL_AGAIN)
             return status;
     }
-    if (server->pending_count >= limit)
-        return rl_fail(error, KNURL_LIMIT,
-                       "Lua callback admission queue is full");
-    status = knurl_u64_from_size((size_t)timeout, &delay, error);
-    if (status == KNURL_OK)
-        status = knurl_u64_add(start, delay, &work->deadline, error);
-    if (status != KNURL_OK)
-        return status;
+    if (!work->terminal) {
+        if (server->pending_count >= limit)
+            return rl_fail(error, KNURL_LIMIT,
+                           "Lua callback admission queue is full");
+        status = knurl_u64_from_size((size_t)timeout, &delay, error);
+        if (status == KNURL_OK)
+            status = knurl_u64_add(start, delay, &work->deadline, error);
+        if (status != KNURL_OK)
+            return status;
+    }
     status = arm_retry(server, error);
     if (status != KNURL_OK)
         return status;
@@ -186,7 +195,8 @@ knurl_status rl_work_start(struct rl_work *work, knurl_error *error)
     else
         server->pending_head = work;
     server->pending_tail = work;
-    ++server->pending_count;
+    if (!work->terminal)
+        ++server->pending_count;
     knurl_error_clear(error);
     return KNURL_OK;
 }

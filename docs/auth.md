@@ -79,6 +79,8 @@ origin.
 To rotate, submit `code=<current unused code>` instead of an empty form.
 The current seed remains active until you confirm the replacement. Successful
 confirmation invalidates existing sessions tied to the account's revision.
+The JSON store also applies this to sessions issued after directory-backed
+password or email verification.
 Sign in on the TOTP-required route with a fresh code after confirmation.
 The operator CLI can replace an enrollment directly.
 
@@ -204,6 +206,8 @@ assert(server:proxy{
 ```
 
 You can supply `token_endpoint` directly or discover it from `issuer`.
+If a discovered endpoint fails during renewal, Knurl fetches the metadata
+again and tries the replacement endpoint when it changes.
 Knurl obtains and caches a Bearer token on a native worker. It renews before
 expiry, retains rotating refresh tokens, and obtains new client-credentials
 tokens when there is no refresh token or the issuer rejects it as invalid.
@@ -237,8 +241,8 @@ Knurl syncs and atomically replaces each changed JSON file. Disabling a user
 changes the account revision, which invalidates existing sessions without a
 session-file rewrite. TOTP replay checks use the enrollment ID so seed rotation
 starts a new counter. Use `knurl auth prune ./auth-state` to remove expired
-state. Run the store on a local filesystem that supports advisory locks and
-atomic rename.
+state and machine credentials invalidated by local account changes. Run the
+store on a local filesystem that supports advisory locks and atomic rename.
 
 In C, set `backend` in `knurl_auth_config` to supply storage and
 verification operations. For a directory or identity provider, set `users`

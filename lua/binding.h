@@ -32,7 +32,7 @@ struct rl_work {
     void (*complete)(struct rl_work *, knurl_status, const knurl_error *);
     knurl_task *task;
     struct rl_work *pending_next;
-    int pending;
+    int pending, terminal;
     knurl_u64 deadline;
 };
 
@@ -62,6 +62,7 @@ struct rl_server {
     knurl_blocking_pool_config pool;
     knurl_u64 hard_body_bytes;
     size_t websocket_max_frame_bytes;
+    size_t max_connections, websocket_close_reservations;
     pslog_lua_logger_ref logger, access_logger;
     int running, has_lua;
     knurl_task *websocket_task;

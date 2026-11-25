@@ -216,6 +216,8 @@ static void drop_handle(lua_State *L, struct rl_cleanup *cleanup)
 
 static void dispose(struct connection *ws)
 {
+    if (ws->route->callbacks[EVENT_CLOSE])
+        --ws->route->server->websocket_close_reservations;
     knurl_request_snapshot_destroy(ws->request);
     ws->request = NULL;
     free(ws->message);
@@ -229,6 +231,8 @@ static void dispose(struct connection *ws)
 static void schedule_close(struct connection *ws)
 {
     ws->event = EVENT_CLOSE;
+    /* This admission was reserved before accepting the handshake. */
+    ws->work.terminal = 1;
     if (!ws->route->callbacks[EVENT_CLOSE] || schedule(ws, NULL) != KNURL_OK)
         dispose(ws);
 }
@@ -377,6 +381,21 @@ static void closed(knurl_websocket *socket,
         schedule_close(ws);
 }
 
+static knurl_status reject(knurl_request *request, knurl_request_plan *plan,
+                           unsigned short code, const char *message,
+                           knurl_error *error)
+{
+    knurl_bytes body;
+    knurl_status status;
+    body.data = message;
+    body.length = strlen(message);
+    status = knurl_response_bytes(knurl_request_response(request), code,
+                                  "text/plain", body, error);
+    if (status == KNURL_OK)
+        plan->disposition = KNURL_REQUEST_REPLY;
+    return status;
+}
+
 static knurl_status accept_websocket(knurl_request *request,
                                      knurl_request_plan *plan, void *data,
                                      knurl_error *error)
@@ -385,7 +404,12 @@ static knurl_status accept_websocket(knurl_request *request,
     struct connection *ws = NULL;
     knurl_websocket *native;
     knurl_websocket_config config = route->config;
+    struct rl_server *server = route->server;
     knurl_status status;
+    if (route->callbacks[EVENT_CLOSE] &&
+        server->websocket_close_reservations >= server->max_connections)
+        return reject(request, plan, 503,
+                      "WebSocket close callback capacity exhausted\n", error);
     if (config.on_close != NULL) {
         ws = calloc(1, sizeof(*ws));
         if (ws == NULL)
@@ -406,21 +430,19 @@ static knurl_status accept_websocket(knurl_request *request,
     }
     status = knurl_websocket_accept(request, &config, &native, error);
     if (status == KNURL_OK) {
-        if (ws != NULL)
+        if (ws != NULL) {
             ws->native = native;
+            if (route->callbacks[EVENT_CLOSE])
+                ++server->websocket_close_reservations;
+        }
         plan->disposition = KNURL_REQUEST_WEBSOCKET;
         return status;
     }
     if (ws != NULL)
         release(ws);
-    if (status == KNURL_INVALID) {
-        static const char message[] = "invalid WebSocket handshake\n";
-        knurl_bytes body = {message, sizeof(message) - 1};
-        status = knurl_response_bytes(knurl_request_response(request), 400,
-                                      "text/plain", body, error);
-        if (status == KNURL_OK)
-            plan->disposition = KNURL_REQUEST_REPLY;
-    }
+    if (status == KNURL_INVALID)
+        return reject(request, plan, 400, "invalid WebSocket handshake\n",
+                      error);
     return status;
 }
 

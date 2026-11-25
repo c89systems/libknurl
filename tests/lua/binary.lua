@@ -49,6 +49,7 @@ local server <close> = check(knurl.server{
   port = assert(tonumber(port)), workers = 1, backend_quiet = true,
   application_max_tasks = 1, logger = log,
   application_timeout_ms = mode == 'hook-timeout' and 500 or nil,
+  max_connections = mode == 'hook-timeout' and 6 or nil,
   autoblock_disabled = runtime == 'emulated',
   client_ip = {
     trusted_proxies = {'127.0.0.1/32'}, forwarded_header = 'forwarded',
@@ -162,6 +163,22 @@ check(server:text{path = '/queue-probe', body = 'unexpected',
 check(server:websocket{path = '/ws-queue', on_open = function()
   record('expired websocket callback ran')
 end})
+
+if mode == 'hook-timeout' then
+  local function closed(_, outcome)
+    assert(outcome.opened and outcome.clean and outcome.peer_code == 1000)
+    assert(outcome.peer_reason == 'bye')
+    record('websocket close delivered')
+  end
+  check(server:websocket{path = '/ws-close',
+    on_open = function(ws) check(ws:send_text('ready')) end,
+    on_close = closed,
+  })
+  check(server:websocket{path = '/ws-close-quiet', on_close = closed})
+  check(server:text{path = '/close-blocker', body = 'released', hooks = {
+    before = function() wait_for_gate('close blocker waiting') end,
+  }})
+end
 
 local hook_order = {}
 check(server:text{path = '/before-timeout', body = 'too late', hooks = {

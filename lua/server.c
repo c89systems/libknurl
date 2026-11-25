@@ -377,6 +377,7 @@ static int server_new(lua_State *L)
     if (status != KNURL_OK || !rl_logging_config(L, 1, server, &error))
         return rl_error(L, &error);
     server->hard_body_bytes = effective.config.limits.hard_body_bytes;
+    server->max_connections = effective.config.limits.max_connections;
     server->websocket_max_frame_bytes =
         effective.config.limits.websocket_max_frame_bytes;
     return 1;

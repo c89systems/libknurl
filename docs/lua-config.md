@@ -250,7 +250,11 @@ handlers. Each idle connection leaves that thread available. Use
 `ws:request()` to read the handshake metadata. Send messages and call
 `ws:close(code, reason)` from a WebSocket callback. `on_close(ws, outcome)`
 receives the peer and local close codes, peer reason, `opened`, `clean` and
-terminal `cause`.
+terminal `cause`. Each accepted connection with `on_close` reserves space
+for that callback until it retires. The callback waits for the Lua thread
+without an application deadline while the worker is running. A worker holds
+at most `max_connections` of these reservations and returns 503 on a new
+handshake that needs one when all are in use.
 `protocol`, `max_frame_bytes`, `max_message_bytes`, `output_queue_bytes`,
 and `close_timeout_ms` configure the connection. Use `on_writable(ws)` to
 retry a send when the bounded output queue has room.

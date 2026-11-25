@@ -451,12 +451,59 @@ knurl_status knurl_auth_json_read(struct auth_transaction *tx, const char *key,
     return KNURL_OK;
 }
 
-static void expire(struct auth_document *doc, lonejson_int64 now)
+struct account_index {
+    const struct auth_record **rows;
+    size_t count;
+};
+
+static int compare_subjects(const void *left, const void *right)
+{
+    const struct auth_record *const *a = left, *const *b = right;
+    return strcmp((*a)->subject, (*b)->subject);
+}
+
+static knurl_status index_accounts(const struct auth_document *doc,
+                                   struct account_index *index,
+                                   knurl_error *error)
+{
+    const struct auth_record *rows = doc->records.items;
+    size_t i;
+    if (doc->records.count == 0)
+        return KNURL_OK;
+    index->rows = malloc(doc->records.count * sizeof(*index->rows));
+    if (index->rows == NULL)
+        return knurl_fail(error, KNURL_NOMEM, "auth_prune",
+                          "indexing local account revisions");
+    for (i = 0; i < doc->records.count; ++i)
+        if (rows[i].key[0] == 'u')
+            index->rows[index->count++] = &rows[i];
+    qsort(index->rows, index->count, sizeof(*index->rows), compare_subjects);
+    return KNURL_OK;
+}
+
+static int stale_credential(const struct auth_record *row,
+                            const struct account_index *index)
+{
+    const struct auth_record *const *account;
+    if (index == NULL || row->expires != 0 || row->revision[0] == 0 ||
+        (row->key[0] != 'm' && row->key[0] != 'n' && row->key[0] != 'o'))
+        return 0;
+    account = index->count == 0
+                  ? NULL
+                  : bsearch(&row, index->rows, index->count,
+                            sizeof(*index->rows), compare_subjects);
+    return account == NULL || (*account)->disabled ||
+           strcmp((*account)->revision, row->revision) != 0;
+}
+
+static void expire(struct auth_document *doc, lonejson_int64 now,
+                   const struct account_index *accounts)
 {
     struct auth_record *rows = doc->records.items;
     size_t from, to = 0;
     for (from = 0; from < doc->records.count; ++from)
-        if (rows[from].expires == 0 || rows[from].expires > now)
+        if ((rows[from].expires == 0 || rows[from].expires > now) &&
+            !stale_credential(&rows[from], accounts))
             rows[to++] = rows[from];
     if (to != doc->records.count) {
         doc->records.count = to;
@@ -479,7 +526,7 @@ knurl_status knurl_auth_json_write(struct auth_transaction *tx, const char *key,
     index = find(doc, key);
     if (index == doc->records.count) {
         if (index == AUTH_MAX_RECORDS) {
-            expire(doc, (lonejson_int64)time(NULL));
+            expire(doc, (lonejson_int64)time(NULL), NULL);
             index = doc->records.count;
         }
         if (index >= AUTH_MAX_RECORDS)
@@ -521,24 +568,24 @@ knurl_status knurl_auth_json_delete(struct auth_transaction *tx,
 
 knurl_status knurl_auth_json_prune(knurl_auth_json *json, knurl_error *error)
 {
-    static const enum auth_collection expiring[] = {
-        AUTH_ACCOUNTS, AUTH_SESSIONS, AUTH_EMAIL_CODES, AUTH_TOTP_STEPS,
-        AUTH_ATTEMPTS};
     struct auth_transaction tx;
+    struct account_index accounts = {NULL, 0};
     lonejson_int64 now = (lonejson_int64)time(NULL);
-    size_t i;
+    enum auth_collection kind;
     knurl_status status;
     if (json == NULL || now < 0)
         return knurl_fail(error, KNURL_INVALID, "auth_prune",
                           "state and clock are required");
     status = knurl_auth_json_begin(json, 1, &tx, error);
-    for (i = 0;
-         status == KNURL_OK && i < sizeof(expiring) / sizeof(expiring[0]);
-         ++i) {
-        status = load_document(&tx, expiring[i], error);
+    for (kind = AUTH_ACCOUNTS; status == KNURL_OK && kind < AUTH_COLLECTIONS;
+         ++kind) {
+        status = load_document(&tx, kind, error);
         if (status == KNURL_OK)
-            expire(&tx.documents[expiring[i]], now);
+            expire(&tx.documents[kind], now, &accounts);
+        if (status == KNURL_OK && kind == AUTH_ACCOUNTS)
+            status = index_accounts(&tx.documents[kind], &accounts, error);
     }
+    free(accounts.rows);
     status = knurl_auth_json_end(&tx, status, error);
     if (status == KNURL_OK)
         knurl_error_clear(error);

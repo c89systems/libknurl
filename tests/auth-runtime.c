@@ -15,6 +15,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -156,11 +157,14 @@ static knurl_status provider(knurl_auth_operation operation,
 {
     struct fixture *f = userdata;
     (void)error;
-    if (operation == KNURL_AUTH_PASSWORD) {
+    if (operation == KNURL_AUTH_PASSWORD || operation == KNURL_AUTH_EMAIL) {
         if (strcmp(x->subject, "remote") != 0 ||
-            strcmp(x->secret, password) != 0)
+            (operation == KNURL_AUTH_PASSWORD &&
+             strcmp(x->secret, password) != 0))
             return KNURL_EOF;
         strcpy(x->identity.subject, "directory-user");
+        if (operation == KNURL_AUTH_EMAIL)
+            strcpy(x->email, "remote@example.test");
         return KNURL_OK;
     }
     CHECK(operation == KNURL_AUTH_MACHINE_VERIFY);
@@ -178,7 +182,8 @@ static knurl_status send_code(const char *address, const char *code, void *data,
     struct fixture *f = data;
     (void)error;
     CHECK(strcmp(address, "alice@example.test") == 0 ||
-          strcmp(address, "dave@example.test") == 0);
+          strcmp(address, "dave@example.test") == 0 ||
+          strcmp(address, "remote@example.test") == 0);
     CHECK(write(f->mail[1], code, 6) == 6);
     return KNURL_OK;
 }
@@ -526,6 +531,7 @@ static pid_t oauth_fixture(struct fixture *f)
     struct timeval timeout = {4, 0};
     SSL_CTX *context;
     unsigned int calls = 0, grants = 0, keys = 0, discovered = 0, posts = 0;
+    unsigned int short_posts = 0, retired_posts = 0, replacement_posts = 0;
     int listener = bound_socket(&f->oauth);
     pid_t pid;
     snprintf(f->issuer, sizeof(f->issuer), "https://localhost:%u",
@@ -544,8 +550,8 @@ static pid_t oauth_fixture(struct fixture *f)
           SSL_CTX_use_certificate_file(context, f->cert, SSL_FILETYPE_PEM) ==
               1 &&
           SSL_CTX_use_PrivateKey_file(context, f->key, SSL_FILETYPE_PEM) == 1);
-    while (calls < 8 || grants < 6 || keys < 2 || discovered < 3 ||
-           posts == 0) {
+    while (calls < 8 || grants < 6 || keys < 2 || discovered < 5 ||
+           posts == 0 || short_posts == 0 || replacement_posts == 0) {
         char wire[4096], json[512], response[2048];
         const char *body = NULL, *line, *challenge = "";
         int length, code = 200, fd = accept(listener, NULL, NULL);
@@ -556,12 +562,16 @@ static pid_t oauth_fixture(struct fixture *f)
               SSL_set_fd(tls, fd) == 1 && SSL_accept(tls) == 1);
         read_oauth_wire(tls, wire);
         if (strncmp(wire, "GET /.well-known/openid-configuration ", 38) == 0) {
-            CHECK(++discovered <= 3);
+            const char *endpoint;
+            CHECK(++discovered <= 5);
+            endpoint = discovered <= 3   ? "token"
+                       : discovered == 4 ? "retired-token"
+                                         : "replacement-token";
             snprintf(json, sizeof(json),
                      "{\"issuer\":\"%s\",\"jwks_uri\":\"%s/jwks\","
                      "\"authorization_endpoint\":\"%s/authorize\","
-                     "\"token_endpoint\":\"%s/token\"}",
-                     f->issuer, f->issuer, f->issuer, f->issuer);
+                     "\"token_endpoint\":\"%s/%s\"}",
+                     f->issuer, f->issuer, f->issuer, f->issuer, endpoint);
             body = json;
         } else if (strncmp(wire, "GET /jwks ", 10) == 0) {
             CHECK(keys < 2);
@@ -578,6 +588,23 @@ static pid_t oauth_fixture(struct fixture *f)
             if (grants == 2)
                 code = 400;
             body = results[grants++];
+        } else if (strncmp(wire, "POST /short-token ", 18) == 0) {
+            CHECK(++short_posts == 1 && sleep(2) == 0);
+            body = "{\"access_token\":\"just-issued\","
+                   "\"token_type\":\"Bearer\",\"expires_in\":2}";
+        } else if (strncmp(wire, "POST /retired-token ", 20) == 0) {
+            CHECK(++retired_posts <= 2);
+            if (retired_posts == 1) {
+                body = "{\"access_token\":\"before-move\","
+                       "\"token_type\":\"Bearer\",\"expires_in\":2}";
+            } else {
+                code = 404;
+                body = "{}";
+            }
+        } else if (strncmp(wire, "POST /replacement-token ", 24) == 0) {
+            CHECK(++replacement_posts == 1 && retired_posts == 2);
+            body = "{\"access_token\":\"after-move\","
+                   "\"token_type\":\"Bearer\",\"expires_in\":60}";
         } else if (strncmp(wire, "POST /post-token ", 17) == 0) {
             CHECK(++posts == 1 && strstr(wire, "\r\nAuthorization:") == NULL);
             CHECK(strcmp(strstr(wire, "\r\n\r\n") + 4,
@@ -673,7 +700,7 @@ static void oauth_lifecycle(struct fixture *f)
     CHECK(exchange(f, 1, "GET", "/rotating-oidc", auth, NULL, out) == 401);
 }
 
-static void oauth_form_credentials(struct fixture *f)
+static void oauth_client(struct fixture *f)
 {
     knurl_oauth2_config config;
     knurl_oauth2_client *client;
@@ -691,6 +718,28 @@ static void oauth_form_credentials(struct fixture *f)
     CHECK(knurl_oauth2_client_token(client, value, sizeof(value), NULL) ==
           KNURL_OK);
     CHECK(strcmp(value, "form-credentials") == 0);
+    knurl_oauth2_client_close(client);
+
+    snprintf(endpoint, sizeof(endpoint), "%s/short-token", f->issuer);
+    CHECK(knurl_oauth2_client_new(&config, &client, NULL) == KNURL_OK);
+    CHECK(knurl_oauth2_client_token(client, value, sizeof(value), NULL) ==
+              KNURL_OK &&
+          strcmp(value, "just-issued") == 0);
+    knurl_oauth2_client_close(client);
+
+    config.token_endpoint = NULL;
+    config.issuer = f->issuer;
+    CHECK(knurl_oauth2_client_new(&config, &client, NULL) == KNURL_OK);
+    CHECK(knurl_oauth2_client_token(client, value, sizeof(value), NULL) ==
+              KNURL_OK &&
+          strcmp(value, "before-move") == 0);
+    CHECK(sleep(2) == 0);
+    CHECK(knurl_oauth2_client_token(client, value, sizeof(value), NULL) ==
+              KNURL_OK &&
+          strcmp(value, "after-move") == 0);
+    CHECK(knurl_oauth2_client_token(client, value, sizeof(value), NULL) ==
+              KNURL_OK &&
+          strcmp(value, "after-move") == 0);
     knurl_oauth2_client_close(client);
 }
 
@@ -939,6 +988,8 @@ static void ordered_machine(struct fixture *f)
 {
     char out[4096], flow[65], form[160], email_form[96], code[160];
     char machine_id[41], auth[320], email_code[7];
+    char path[1200];
+    struct stat active, pruned, revoked;
     size_t i;
     CHECK(exchange(f, 1, "POST", "/ordered-machine", NULL, "username=unknown",
                    out) == 202);
@@ -983,9 +1034,18 @@ static void ordered_machine(struct fixture *f)
     CHECK(exchange(f, 1, "GET", "/ordered-api", auth, NULL, out) == 200 &&
           strstr(out, "\r\n\r\ndave") != NULL);
     CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 401);
+    CHECK(knurl_auth_json_prune(f->store, NULL) == KNURL_OK);
+    CHECK(exchange(f, 1, "GET", "/ordered-api", auth, NULL, out) == 200);
+    snprintf(path, sizeof(path), "%s/totp.json", f->store_path);
+    CHECK(stat(path, &active) == 0);
+    CHECK(knurl_auth_json_admin(f->store, KNURL_AUTH_USER_DISABLE, "dave", NULL,
+                                NULL) == KNURL_OK);
+    CHECK(exchange(f, 1, "GET", "/ordered-api", auth, NULL, out) == 401);
+    CHECK(knurl_auth_json_prune(f->store, NULL) == KNURL_OK);
+    CHECK(stat(path, &pruned) == 0 && pruned.st_size < active.st_size);
     CHECK(knurl_auth_json_revoke(f->store, "ordered-api", machine_id, NULL) ==
           KNURL_OK);
-    CHECK(exchange(f, 1, "GET", "/ordered-api", auth, NULL, out) == 401);
+    CHECK(stat(path, &revoked) == 0 && revoked.st_size == pruned.st_size);
 }
 
 static void totp_race(struct fixture *f, unsigned short other_port)
@@ -1113,6 +1173,48 @@ static void directory_status(struct fixture *f, int status)
     CHECK(file != NULL && fputc(status, file) == status && fclose(file) == 0);
 }
 
+static void directory_totp(struct fixture *f, char session[256])
+{
+    static const char credentials[] =
+        "username=remote&password=a+test+password+with+spaces";
+    char out[4096], other[256], uri[512], code[160], form[160], email_code[7];
+    size_t i;
+    CHECK(exchange(f, 1, "POST", "/external", NULL, credentials, out) == 204);
+    cookie(out, session);
+    CHECK(exchange(f, 1, "POST", "/external-email-code", NULL,
+                   "username=remote", out) == 202);
+    for (i = 0; i < 6; ++i)
+        CHECK((email_code[i] = note(f->mail[0], 3000)) != 0);
+    email_code[6] = 0;
+    snprintf(form, sizeof(form), "username=remote&code=%s", email_code);
+    CHECK(exchange(f, 1, "POST", "/external-email", NULL, form, out) == 204);
+    cookie(out, other);
+    CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 200 &&
+          strstr(out, "directory-user") != NULL);
+    CHECK(exchange(f, 1, "GET", "/external-email", other, NULL, out) == 200);
+    CHECK(exchange(f, 1, "POST", "/external-totp", session, "", out) == 202);
+    read_enrollment(out, uri);
+    totp_code_offset(uri, code, -1);
+    snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
+    CHECK(exchange(f, 1, "POST", "/external-totp", session, form, out) == 204);
+    CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 401);
+    CHECK(exchange(f, 1, "GET", "/external-email", other, NULL, out) == 401);
+
+    CHECK(exchange(f, 1, "POST", "/external", NULL, credentials, out) == 204);
+    cookie(out, session);
+    CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 200);
+    totp_code(uri, code);
+    CHECK(exchange(f, 1, "POST", "/external-totp", session,
+                   strrchr(code, '&') + 1, out) == 202);
+    read_enrollment(out, uri);
+    totp_code_offset(uri, code, -1);
+    snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
+    CHECK(exchange(f, 1, "POST", "/external-totp", session, form, out) == 204);
+    CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 401);
+    CHECK(exchange(f, 1, "POST", "/external", NULL, credentials, out) == 204);
+    cookie(out, session);
+}
+
 static void exercise(struct fixture *f)
 {
     char out[4096], session[256], form[160], code[7], encoded[256], auth[320];
@@ -1141,12 +1243,7 @@ static void exercise(struct fixture *f)
     CHECK(exchange(f, 1, "POST", "/logout", session, NULL, out) == 204 &&
           strstr(out, "Max-Age=0") != NULL);
     CHECK(exchange(f, 1, "GET", "/app/me", session, NULL, out) == 401);
-    CHECK(exchange(f, 1, "POST", "/external", NULL,
-                   "username=remote&password=a+test+password+with+spaces",
-                   out) == 204);
-    cookie(out, session);
-    CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 200 &&
-          strstr(out, "directory-user") != NULL);
+    directory_totp(f, session);
     directory_status(f, 'd');
     CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 401);
     directory_status(f, 'e');
@@ -1158,6 +1255,9 @@ static void exercise(struct fixture *f)
                        "username=remote&password=a+test+password+with+spaces",
                        out) == 201);
         issued_basic(out, client_id, basic);
+        CHECK(exchange(f, 1, "GET", "/external-machine", basic, NULL, out) ==
+              200);
+        CHECK(knurl_auth_json_prune(f->store, NULL) == KNURL_OK);
         CHECK(exchange(f, 1, "GET", "/external-machine", basic, NULL, out) ==
               200);
         directory_status(f, 'd');
@@ -1213,7 +1313,7 @@ static void exercise(struct fixture *f)
     CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 401);
     oidc(f);
     oauth_lifecycle(f);
-    oauth_form_credentials(f);
+    oauth_client(f);
     ordered_browser(f);
     ordered_machine(f);
     concurrency(f);
@@ -1271,7 +1371,8 @@ static void routes(knurl_router *router, struct fixture *f)
 {
     knurl_auth_config config;
     knurl_auth *browser, *otp, *email, *smtp, *external, *machine, *other,
-        *slow, *issuer, *rotating, *ordered, *ordered_api, *external_machine;
+        *slow, *issuer, *rotating, *ordered, *ordered_api, *external_machine,
+        *external_email;
     knurl_route_group_config group_config;
     knurl_route_group *group;
     knurl_blocking_route_config app;
@@ -1338,8 +1439,23 @@ static void routes(knurl_router *router, struct fixture *f)
     config.session_check = session_check;
     config.session_check_userdata = f;
     CHECK(knurl_auth_new(&config, &external, NULL) == KNURL_OK);
+    CHECK(knurl_auth_route(router, "/external-totp", external,
+                           KNURL_AUTH_TOTP_ENROLL_ENDPOINT, &handle,
+                           NULL) == KNURL_OK);
+    config.name = "external-email";
+    config.login = KNURL_AUTH_LOGIN_EMAIL;
+    config.send_email = send_code;
+    config.email_userdata = f;
+    CHECK(knurl_auth_new(&config, &external_email, NULL) == KNURL_OK);
+    CHECK(knurl_auth_route(router, "/external-email", external_email,
+                           KNURL_AUTH_LOGIN, &handle, NULL) == KNURL_OK);
+    CHECK(knurl_auth_route(router, "/external-email-code", external_email,
+                           KNURL_AUTH_EMAIL_START, &handle, NULL) == KNURL_OK);
     config.name = "external-machine";
     config.method = KNURL_AUTH_MACHINE;
+    config.login = KNURL_AUTH_LOGIN_PASSWORD;
+    config.send_email = NULL;
+    config.email_userdata = NULL;
     config.factors = KNURL_AUTH_FACTOR_PASSWORD;
     config.session_check = NULL;
     CHECK(knurl_auth_new(&config, &external_machine, NULL) == KNURL_INVALID);
@@ -1439,6 +1555,7 @@ static void routes(knurl_router *router, struct fixture *f)
     plain_route(router, "/oidc", issuer);
     plain_route(router, "/rotating-oidc", rotating);
     plain_route(router, "/external", external);
+    plain_route(router, "/external-email", external_email);
     plain_route(router, "/external-machine", external_machine);
     plain_route(router, "/ordered-subject", ordered);
     plain_route(router, "/ordered-api", ordered_api);
@@ -1447,6 +1564,7 @@ static void routes(knurl_router *router, struct fixture *f)
     knurl_auth_close(email);
     knurl_auth_close(smtp);
     knurl_auth_close(external);
+    knurl_auth_close(external_email);
     knurl_auth_close(external_machine);
     knurl_auth_close(machine);
     knurl_auth_close(other);

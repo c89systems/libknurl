@@ -440,6 +440,72 @@ static void hook_timeouts(unsigned short port, const char *log,
     CHECK(events(log, "expired route callback ran\n") == 0);
 }
 
+static int close_probe_socket(unsigned short port, const char *path, int code)
+{
+    char request[512], response[1024], expected[16];
+    int fd;
+    snprintf(request, sizeof(request),
+             "GET %s HTTP/1.1\r\nHost: localhost\r\n"
+             "Connection: Upgrade\r\nUpgrade: websocket\r\n"
+             "Sec-WebSocket-Version: 13\r\n"
+             "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+             path);
+    fd = open_request(port, request);
+    read_headers(fd, response, sizeof(response));
+    snprintf(expected, sizeof(expected), "HTTP/1.1 %d ", code);
+    CHECK(strncmp(response, expected, strlen(expected)) == 0);
+    return fd;
+}
+
+static void close_probe_peer(int fd)
+{
+    static const char farewell[] = "\003\350bye";
+    char byte;
+    send_frame(fd, 0x88, farewell, sizeof(farewell) - 1);
+    expect_frame(fd, 0x88, farewell, sizeof(farewell) - 1);
+    CHECK(read(fd, &byte, 1) == 0);
+    close(fd);
+}
+
+static void websocket_close_admission(unsigned short port, const char *log,
+                                      const char *gate)
+{
+    static const char queued[] =
+        "GET /queue-probe HTTP/1.1\r\nHost: localhost\r\n"
+        "Connection: close\r\n\r\n";
+    static const char delivered[] = "websocket close delivered\n";
+    char response[1024];
+    int ws, blocker, pending, i;
+    ws = close_probe_socket(port, "/ws-close", 101);
+    expect_frame(ws, 0x81, "ready", 5);
+    blocker =
+        open_request(port, "GET /close-blocker HTTP/1.1\r\n"
+                           "Host: localhost\r\nConnection: close\r\n\r\n");
+    milestone(log, "close blocker waiting\n", 1);
+    pending = open_request(port, queued);
+    pause_briefly();
+    receive(open_request(port, queued), response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 503", 12) == 0);
+    close_probe_peer(ws);
+    receive(blocker, response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 504", 12) == 0);
+    receive(pending, response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 504", 12) == 0);
+    /* Keep Lua busy beyond the normal callback timeout, then consume the
+     * remaining connection reservations without holding open sockets. */
+    CHECK(poll(NULL, 0, 100) == 0);
+    for (i = 1; i < 6; ++i)
+        close_probe_peer(close_probe_socket(port, "/ws-close-quiet", 101));
+    close(close_probe_socket(port, "/ws-close-quiet", 503));
+    CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
+          200);
+    CHECK(events(log, delivered) == 0);
+    release_gate(gate);
+    milestone(log, delivered, 6);
+    close_probe_peer(close_probe_socket(port, "/ws-close-quiet", 101));
+    milestone(log, delivered, 7);
+}
+
 static void upload(unsigned short port, const char *log)
 {
     static const char request[] =
@@ -803,8 +869,10 @@ int main(int argc, char **argv)
         if (normal) {
             exercise(selected, log, gate, geo_listener);
             close(geo_listener);
-        } else if (!stop_failure)
+        } else if (!stop_failure) {
             hook_timeouts(selected, log, gate);
+            websocket_close_admission(selected, log, gate);
+        }
         CHECK(kill(child, SIGTERM) == 0);
     }
     wait_ok(child);

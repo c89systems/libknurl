@@ -14,6 +14,7 @@
 
 struct knurl_oauth2_client {
     knurl_oauth2_config config;
+    char *discovered_endpoint;
     lonejson_oauth2_token_flow flow;
     pthread_mutex_t lock;
     size_t references;
@@ -42,6 +43,7 @@ void knurl_oauth2_client_close(knurl_oauth2_client *client)
     wipe((char *)client->config.client_secret);
     free((char *)client->config.issuer);
     free((char *)client->config.token_endpoint);
+    free(client->discovered_endpoint);
     free((char *)client->config.client_id);
     free((char *)client->config.client_secret);
     free((char *)client->config.scope);
@@ -181,8 +183,8 @@ static int invalid_grant(lonejson *runtime, const lonejson_http_response *http)
 }
 
 static knurl_status request_token(knurl_oauth2_client *client,
-                                  lonejson *runtime, int refresh,
-                                  lonejson_int64 now)
+                                  lonejson *runtime, const char *endpoint,
+                                  int refresh)
 {
     const knurl_oauth2_config *config = &client->config;
     const char *grant =
@@ -195,7 +197,7 @@ static knurl_status request_token(knurl_oauth2_client *client,
     knurl_status status = KNURL_BACKEND;
     char *authorization = NULL;
     char *borrowed = NULL;
-    lonejson_int64 lead;
+    lonejson_int64 now, lead;
     lonejson_owned_buffer_init(&form);
     lonejson_http_response_init(&http);
     lonejson_oauth2_token_response_init(&token);
@@ -217,7 +219,7 @@ static knurl_status request_token(knurl_oauth2_client *client,
     }
     memset(&request, 0, sizeof(request));
     request.method = "POST";
-    request.url = config->token_endpoint;
+    request.url = endpoint;
     request.content_type = "application/x-www-form-urlencoded";
     request.authorization = authorization;
     request.body = form.data;
@@ -225,6 +227,9 @@ static knurl_status request_token(knurl_oauth2_client *client,
     request.max_response_bytes = TOKEN_LIMIT;
     if (knurl_auth_http((void *)config->ca_file, &request, &http, NULL) !=
         LONEJSON_STATUS_OK)
+        goto done;
+    now = (lonejson_int64)time(NULL);
+    if (now < 0)
         goto done;
     if (refresh && invalid_grant(runtime, &http)) {
         status = KNURL_EOF;
@@ -272,31 +277,55 @@ done:
     return status;
 }
 
-static knurl_status renew(knurl_oauth2_client *client, lonejson_int64 now,
-                          knurl_error *error)
+static knurl_status grant_token(knurl_oauth2_client *client, lonejson *runtime,
+                                const char *endpoint)
+{
+    knurl_status status = request_token(client, runtime, endpoint,
+                                        client->flow.refresh_token != NULL);
+    return status == KNURL_EOF ? request_token(client, runtime, endpoint, 0)
+                               : status;
+}
+
+static char *discover(lonejson *runtime, const char *issuer)
 {
     lonejson_oidc_discovery discovery;
+    char *endpoint = NULL;
+    lonejson_oidc_discovery_init(&discovery);
+    if (lonejson_oidc_fetch_discovery(runtime, issuer, TOKEN_LIMIT, &discovery,
+                                      NULL) == LONEJSON_STATUS_OK &&
+        knurl_auth_https_url(discovery.token_endpoint))
+        endpoint = knurl_copy_text(discovery.token_endpoint);
+    lonejson_oidc_discovery_cleanup(&discovery);
+    return endpoint;
+}
+
+static knurl_status renew(knurl_oauth2_client *client, knurl_error *error)
+{
     lonejson *runtime;
+    const char *endpoint = client->config.token_endpoint;
     knurl_status status =
         knurl_auth_http_runtime(client->config.ca_file, &runtime, error);
     if (status != KNURL_OK)
         return status;
-    if (client->config.token_endpoint == NULL) {
-        lonejson_oidc_discovery_init(&discovery);
-        if (lonejson_oidc_fetch_discovery(runtime, client->config.issuer,
-                                          TOKEN_LIMIT, &discovery,
-                                          NULL) == LONEJSON_STATUS_OK &&
-            knurl_auth_https_url(discovery.token_endpoint))
-            client->config.token_endpoint =
-                knurl_copy_text(discovery.token_endpoint);
-        lonejson_oidc_discovery_cleanup(&discovery);
-    }
-    status = KNURL_BACKEND;
-    if (client->config.token_endpoint != NULL) {
-        int refresh = client->flow.refresh_token != NULL;
-        status = request_token(client, runtime, refresh, now);
-        if (status == KNURL_EOF)
-            status = request_token(client, runtime, 0, now);
+    if (endpoint != NULL) {
+        status = grant_token(client, runtime, endpoint);
+    } else if (client->discovered_endpoint == NULL) {
+        client->discovered_endpoint = discover(runtime, client->config.issuer);
+        status = client->discovered_endpoint != NULL
+                     ? grant_token(client, runtime, client->discovered_endpoint)
+                     : KNURL_BACKEND;
+    } else {
+        status = grant_token(client, runtime, client->discovered_endpoint);
+        if (status != KNURL_OK) {
+            char *updated = discover(runtime, client->config.issuer);
+            if (updated != NULL &&
+                strcmp(updated, client->discovered_endpoint) != 0) {
+                free(client->discovered_endpoint);
+                client->discovered_endpoint = updated;
+                status = grant_token(client, runtime, updated);
+            } else
+                free(updated);
+        }
     }
     lonejson_free(runtime);
     return status;
@@ -336,7 +365,7 @@ knurl_status knurl_oauth2_client_get(knurl_oauth2_client *client, char *out,
         now < client->renew_at && !rejected(client))
         status = KNURL_OK;
     else if (now >= 0 && now >= client->retry_at) {
-        status = renew(client, now, error);
+        status = renew(client, error);
         if (status != KNURL_OK)
             client->retry_at = (lonejson_int64)time(NULL) + 2;
     }
