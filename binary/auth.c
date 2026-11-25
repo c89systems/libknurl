@@ -13,9 +13,10 @@ static int usage(FILE *out)
           "       knurl auth prune DIRECTORY\n"
           "       knurl auth user-password DIRECTORY USER  < password.txt\n"
           "       knurl auth user-email DIRECTORY USER EMAIL\n"
-          "       knurl auth user-totp DIRECTORY USER  < seed.txt\n"
+          "       knurl auth user-totp DIRECTORY USER [--rotate]\n"
           "       knurl auth user-enable|user-disable DIRECTORY USER\n"
-          "       knurl auth client-issue|client-revoke DIRECTORY CLIENT\n",
+          "       knurl auth client-issue|client-revoke DIRECTORY POLICY "
+          "CLIENT\n",
           out);
     return out == stdout ? 0 : 2;
 }
@@ -87,17 +88,15 @@ int knurl_auth_cli(int argc, char **argv)
         int args;
     } commands[] = {{"user-password", KNURL_AUTH_USER_PASSWORD, 5},
                     {"user-email", KNURL_AUTH_USER_EMAIL, 6},
-                    {"user-totp", KNURL_AUTH_USER_TOTP, 5},
                     {"user-enable", KNURL_AUTH_USER_ENABLE, 5},
-                    {"user-disable", KNURL_AUTH_USER_DISABLE, 5},
-                    {"client-revoke", KNURL_AUTH_CLIENT_REVOKE, 5},
-                    {"client-issue", KNURL_AUTH_CLIENT_SET, 5}};
+                    {"user-disable", KNURL_AUTH_USER_DISABLE, 5}};
     knurl_auth_json *json = NULL;
     knurl_error error;
     knurl_status status;
     const char *value = NULL;
     char secret[1026];
     size_t i;
+    int enroll, issue, revoke;
     if (argc == 3 && strcmp(argv[2], "--help") == 0)
         return usage(stdout);
     if (argc == 4 && strcmp(argv[2], "init") == 0) {
@@ -112,20 +111,45 @@ int knurl_auth_cli(int argc, char **argv)
     }
     if (argc < 5)
         return usage(stderr);
+    enroll = strcmp(argv[2], "user-totp") == 0;
+    issue = strcmp(argv[2], "client-issue") == 0;
+    revoke = strcmp(argv[2], "client-revoke") == 0;
     for (i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i)
         if (strcmp(argv[2], commands[i].name) == 0)
             break;
-    if (i == sizeof(commands) / sizeof(commands[0]) || argc != commands[i].args)
+    if ((enroll && argc != 5 && (argc != 6 || strcmp(argv[5], "--rotate"))) ||
+        ((issue || revoke) && argc != 6) ||
+        (!enroll && !issue && !revoke &&
+         (i == sizeof(commands) / sizeof(commands[0]) ||
+          argc != commands[i].args)))
         return usage(stderr);
     status = knurl_auth_json_open(argv[3], &json, &error);
     if (status != KNURL_OK)
         goto done;
-    if (commands[i].op == KNURL_AUTH_USER_PASSWORD ||
-        commands[i].op == KNURL_AUTH_USER_TOTP) {
-        if (!read_secret(secret, sizeof(secret),
-                         commands[i].op == KNURL_AUTH_USER_PASSWORD
-                             ? "Password"
-                             : "Base32 TOTP seed")) {
+    if (enroll || issue || revoke) {
+        if (enroll)
+            status = knurl_auth_json_enroll_totp(json, argv[4], argc == 6,
+                                                 secret, &error);
+        else if (issue)
+            status =
+                knurl_auth_json_issue(json, argv[4], argv[5], secret, &error);
+        else
+            status = knurl_auth_json_revoke(json, argv[4], argv[5], &error);
+        if (!revoke && status == KNURL_OK &&
+            (puts(secret) == EOF || fflush(stdout) != 0)) {
+            fputs(enroll ? "knurl auth: enrollment was stored but could not be "
+                           "printed; run with --rotate\n"
+                         : "knurl auth: credential was issued but could not be "
+                           "printed; issue it again\n",
+                  stderr);
+            clear(secret, sizeof(secret));
+            knurl_auth_json_close(json);
+            return 1;
+        }
+        goto done;
+    }
+    if (commands[i].op == KNURL_AUTH_USER_PASSWORD) {
+        if (!read_secret(secret, sizeof(secret), "Password")) {
             fputs("knurl auth: enter a single credential on standard input\n",
                   stderr);
             clear(secret, sizeof(secret));
@@ -136,21 +160,8 @@ int knurl_auth_cli(int argc, char **argv)
     } else if (commands[i].op == KNURL_AUTH_USER_EMAIL) {
         value = argv[5];
     }
-    if (commands[i].op == KNURL_AUTH_CLIENT_SET) {
-        status = knurl_auth_json_issue(json, argv[4], secret, &error);
-        if (status == KNURL_OK &&
-            (puts(secret) == EOF || fflush(stdout) != 0)) {
-            fputs("knurl auth: credential was issued but could not be printed; "
-                  "issue it again\n",
-                  stderr);
-            clear(secret, sizeof(secret));
-            knurl_auth_json_close(json);
-            return 1;
-        }
-    } else {
-        status =
-            knurl_auth_json_admin(json, commands[i].op, argv[4], value, &error);
-    }
+    status =
+        knurl_auth_json_admin(json, commands[i].op, argv[4], value, &error);
 done:
     clear(secret, sizeof(secret));
     knurl_auth_json_close(json);

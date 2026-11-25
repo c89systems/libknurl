@@ -19,6 +19,11 @@ int knurl_auth_name(const char *name)
     return length != 0 && length <= 128 && name[length] == 0;
 }
 
+int knurl_auth_policy_name(const char *name)
+{
+    return knurl_auth_name(name) && strpbrk(name, "@+") == NULL;
+}
+
 int knurl_auth_unhex(const char *text, unsigned char *data, size_t length)
 {
     static const char alphabet[] = "0123456789abcdef";
@@ -116,8 +121,7 @@ knurl_status knurl_auth_new(const knurl_auth_config *config, knurl_auth **out,
     oidc = config->oidc.issuer != NULL || config->oidc.audience != NULL ||
            config->oidc.jwks_uri != NULL || config->oidc.jwks_json != NULL ||
            config->oidc.scope != NULL || config->oidc.token_type != NULL;
-    if (!knurl_auth_name(config->name) ||
-        strcspn(config->name, "@+") != strlen(config->name) ||
+    if (!knurl_auth_policy_name(config->name) ||
         (config->backend == NULL && config->json == NULL && !builtin &&
          !oidc) ||
         ((builtin || oidc) &&
@@ -129,6 +133,8 @@ knurl_status knurl_auth_new(const knurl_auth_config *config, knurl_auth **out,
           strlen(config->client_secret) > 512)) ||
         (config->method != KNURL_AUTH_SESSION &&
          config->method != KNURL_AUTH_MACHINE) ||
+        (config->session_check != NULL &&
+         config->method != KNURL_AUTH_SESSION) ||
         config->login < KNURL_AUTH_LOGIN_PASSWORD ||
         config->login > KNURL_AUTH_LOGIN_EMAIL ||
         config->session_seconds > 2592000UL || config->smtp.timeout_ms < 0 ||

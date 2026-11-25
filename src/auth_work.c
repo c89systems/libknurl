@@ -22,6 +22,7 @@ static knurl_status exchange(struct knurl_auth_job *job,
         fn = config->users;
         data = config->users_userdata;
     }
+    parameters->policy = config->name;
     parameters->scope = job->scope;
     parameters->peer = job->peer;
     return fn(operation, parameters, data, error);
@@ -59,8 +60,17 @@ static knurl_status session(struct knurl_auth_job *job, knurl_auth_operation op,
     if (op == KNURL_AUTH_SESSION_FIND) {
         status = checked_identity(&x, status, error);
         if (status == KNURL_OK) {
-            job->identity = x.identity;
-            job->identity.method = KNURL_AUTH_SESSION;
+            const knurl_auth_config *config = &job->auth->config;
+            x.identity.method = KNURL_AUTH_SESSION;
+            if (config->session_check != NULL) {
+                status = config->session_check(
+                    &x.identity, config->session_check_userdata, error);
+                if (status != KNURL_OK && status != KNURL_EOF)
+                    return knurl_fail(error, KNURL_BACKEND, "session_check",
+                                      "external account check failed");
+            }
+            if (status == KNURL_OK)
+                job->identity = x.identity;
         }
     }
     return status;
@@ -165,6 +175,7 @@ static knurl_status verify(knurl_job *task, struct knurl_auth_job *job,
             return session(job, KNURL_AUTH_SESSION_FIND, NULL, NULL, error);
         memset(&x, 0, sizeof(x));
         x.secret = job->credential;
+        x.policy = job->auth->config.name;
         x.scope = job->scope;
         x.peer = job->peer;
         status = checked_identity(

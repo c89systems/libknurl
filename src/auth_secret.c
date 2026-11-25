@@ -84,9 +84,30 @@ int knurl_auth_password_check(const char *password, const char *encoded)
     return valid && equal;
 }
 
+static const char base32_alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+int knurl_auth_seed_generate(char out[33])
+{
+    unsigned char seed[20];
+    unsigned int bits = 0, count = 0;
+    size_t i, length = 0;
+    if (RAND_bytes(seed, sizeof(seed)) != 1)
+        return 0;
+    for (i = 0; i < sizeof(seed); ++i) {
+        bits = (bits << 8) | seed[i];
+        count += 8;
+        while (count >= 5) {
+            count -= 5;
+            out[length++] = base32_alphabet[(bits >> count) & 31U];
+        }
+    }
+    out[length] = 0;
+    OPENSSL_cleanse(seed, sizeof(seed));
+    return 1;
+}
+
 static size_t base32(const char *text, unsigned char out[32])
 {
-    static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     unsigned long bits = 0;
     unsigned int count = 0;
     size_t size = 0;
@@ -96,10 +117,10 @@ static size_t base32(const char *text, unsigned char out[32])
         ch = (unsigned char)*text++;
         if (ch >= 'a' && ch <= 'z')
             ch = (unsigned char)(ch - ('a' - 'A'));
-        digit = strchr(alphabet, ch);
+        digit = strchr(base32_alphabet, ch);
         if (digit == NULL)
             return 0;
-        bits = (bits << 5) | (unsigned long)(digit - alphabet);
+        bits = (bits << 5) | (unsigned long)(digit - base32_alphabet);
         count += 5;
         if (count >= 8) {
             if (size == 32)

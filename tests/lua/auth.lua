@@ -7,6 +7,9 @@ local function check(value, err)
 end
 
 local login <close> = check(knurl.auth{name = 'browser', store = work .. '/state'})
+local otp <close> = check(knurl.auth{name = 'otp', store = work .. '/state', login = 'totp'})
+local machine <close> = check(knurl.auth{name = 'machine', store = work .. '/state', method = 'machine'})
+local other <close> = check(knurl.auth{name = 'machine-other', store = work .. '/state', method = 'machine'})
 local service <close> = check(knurl.auth{
   name = 'service', method = 'machine',
   client_id = 'pipeline', client_secret = 'a local test secret with plenty of characters',
@@ -19,7 +22,10 @@ local server <close> = check(knurl.server{
 })
 check(server:text{path = '/health', body = 'ready'})
 check(server:text{path = '/service', auth = service, body = 'allowed'})
+check(server:text{path = '/machine', auth = machine, body = 'allowed'})
+check(server:text{path = '/machine-other', auth = other, body = 'allowed'})
 check(server:login{path = '/login', auth = login})
+check(server:login{path = '/otp', auth = otp})
 check(server:logout{path = '/logout', auth = login})
 
 local app = check(server:group{prefix = '/app', auth = login})

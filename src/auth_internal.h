@@ -45,6 +45,7 @@ knurl_status knurl_auth_json_exchange(knurl_auth_operation,
                                       knurl_auth_exchange *, void *,
                                       knurl_error *);
 int knurl_auth_name(const char *);
+int knurl_auth_policy_name(const char *);
 int knurl_auth_email_address(const char *);
 int knurl_auth_basic(const char *, char[129], const char **);
 void knurl_auth_basic_clear(const char *);
@@ -55,6 +56,7 @@ int knurl_auth_password_make(const char *, char[97]);
 int knurl_auth_password_check(const char *, const char *);
 int knurl_auth_seed_seal(const unsigned char[32], const char *, const char *,
                          char[123]);
+int knurl_auth_seed_generate(char[33]);
 lonejson_int64 knurl_auth_totp_step(const unsigned char[32], const char *,
                                     const char *, const char *, lonejson_int64,
                                     lonejson_int64);

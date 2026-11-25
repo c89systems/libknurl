@@ -9,10 +9,10 @@ routes and the login endpoints require HTTPS.
 ## Browser sessions
 
 Create a private state directory under the operating-system account that runs
-Knurl. The password and TOTP commands read the credential from standard input
-and hide input when run interactively. Passwords must contain at least 15
-bytes. For TOTP, supply a base32 seed of 16 to 32 bytes and enroll the same
-seed in the user's authenticator.
+Knurl. The password command reads a password of at least 15 bytes from standard
+input and hides interactive input. The TOTP command generates and encrypts the
+seed, then prints the enrollment URI once for the user's authenticator. Use
+`--rotate` to replace an existing enrollment.
 
 ```sh
 knurl auth init ./auth-state
@@ -95,11 +95,12 @@ diagnostic logger.
 
 ## Machine authentication
 
-Issue a client secret with `knurl auth client-issue ./auth-state deployment`.
-This prints the secret once. Set `method = 'machine'` and
-`store = './auth-state'` in a policy and attach it to the machine routes.
+Issue a client secret with `knurl auth client-issue ./auth-state service deployment`.
+This prints the secret once. Set `name = 'service'`, `method = 'machine'`, and
+`store = './auth-state'` in the policy and attach it to the machine routes.
+Each credential belongs to its named policy, so policies can share the same store.
 Clients send HTTP Basic credentials over TLS. Use
-`knurl auth client-revoke ./auth-state deployment` to revoke it, or issue it
+`knurl auth client-revoke ./auth-state service deployment` to revoke it, or issue it
 again to rotate its secret.
 
 For a single client, you can supply `client_id` and a random `client_secret`
@@ -133,14 +134,22 @@ machine `Authorization` header from its default upstream request.
 
 ## State and C backends
 
-The built-in store uses private JSON records and a separate owner-only key
-file. Back up both together. It stores salted password hashes, encrypted TOTP
-seeds, the last accepted TOTP step per enrollment, and digests for active
-sessions, email codes and client credentials. Changes to a managed account
-invalidate its existing sessions. Use `user-disable` and `user-enable` to
-manage access and `knurl auth prune ./auth-state` to remove expired state.
-Run the store on a local filesystem that supports advisory locks and atomic
-rename.
+The built-in store writes a fixed set of files in one private directory.
+
+- `accounts.json` holds users, salted password hashes, encrypted TOTP seeds
+  and policy-scoped machine credentials.
+- `sessions.json`, `email.json`, `totp.json` and `attempts.json` hold
+  state for each flow and appear as they are used.
+- `key` holds the owner-only encryption key. Back it up with the JSON files.
+
+One interprocess lock protects updates and operations that read multiple files.
+Knurl syncs and atomically replaces each changed JSON file. Disabling a user
+changes the account revision, which invalidates existing sessions without a
+session-file rewrite. TOTP replay checks use the enrollment ID so seed rotation
+starts a new counter. Use `knurl auth prune ./auth-state` to remove expired
+state. Run the store on a local filesystem that supports advisory locks and
+atomic rename. Initialize a fresh directory when moving from the earlier
+development format that wrote one file per record.
 
 In C, set `backend` in `knurl_auth_config` to supply storage and
 verification operations. For a directory or identity provider, set `users`
@@ -152,7 +161,9 @@ from the directory. Configure `send_email` to replace the native SMTP sender
 with a C callback.
 
 Backend callbacks can run concurrently in multiple threads and worker
-processes. State operations must be atomic across them. A backend that mixes
-external identity verification with a separate session store can enforce
-external account revocation in its session lookup operation. The public
-`<knurl/auth.h>` header defines the callback contract and operation inputs.
+processes. State operations must be atomic across them. Set `session_check`
+in the C policy to revalidate the account after a valid session lookup.
+`KNURL_OK` admits the request, `KNURL_EOF` denies it with HTTP 401, and a
+provider failure returns HTTP 503. The callback runs after the store releases
+its lock. The public `<knurl/auth.h>` header defines the callback contract and
+operation inputs.

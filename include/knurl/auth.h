@@ -44,6 +44,8 @@ typedef enum knurl_auth_operation {
  * Strings are borrowed for the call. Zero the unused output fields.
  */
 typedef struct knurl_auth_exchange {
+    /** Stable policy name, used to isolate machine credentials. */
+    const char *policy;
     /** Opaque namespace for this policy and downstream authority. */
     const char *scope;
     /** Login name for ATTEMPT, PASSWORD and EMAIL. Canonical subject for
@@ -77,6 +79,11 @@ typedef knurl_status (*knurl_auth_backend_fn)(knurl_auth_operation,
 /** Deliver the six-digit code to the enrolled address on an auth worker. */
 typedef knurl_status (*knurl_auth_email_fn)(const char *, const char *, void *,
                                             knurl_error *);
+/** Optional account revalidation after session lookup, on a native worker.
+ * Return OK to admit, EOF to deny, or another terminal status when the
+ * identity provider is unavailable. */
+typedef knurl_status (*knurl_auth_session_check_fn)(const knurl_auth_identity *,
+                                                    void *, knurl_error *);
 
 typedef enum knurl_auth_login {
     KNURL_AUTH_LOGIN_PASSWORD = 0,
@@ -130,6 +137,8 @@ typedef struct knurl_auth_config {
     const char *client_id;
     const char *client_secret;
     knurl_auth_oidc oidc;
+    knurl_auth_session_check_fn session_check;
+    void *session_check_userdata;
 } knurl_auth_config;
 
 KNURL_API void knurl_auth_config_init(knurl_auth_config *);
@@ -159,7 +168,8 @@ KNURL_API knurl_status knurl_auth_route(knurl_router *, const char *,
 
 /** Open an existing private state directory. Initialize explicitly via
  * knurl_auth_json_init before opening. The directory contains the local key
- * and atomically replaced JSON state. Use a local filesystem with flock. */
+ * and a fixed set of atomically replaced JSON files. Use a local filesystem
+ * with flock. */
 KNURL_API knurl_status knurl_auth_json_init(const char *, knurl_error *);
 KNURL_API knurl_status knurl_auth_json_open(const char *, knurl_auth_json **,
                                             knurl_error *);
@@ -167,21 +177,27 @@ KNURL_API void knurl_auth_json_close(knurl_auth_json *);
 typedef enum knurl_auth_admin {
     KNURL_AUTH_USER_PASSWORD,
     KNURL_AUTH_USER_EMAIL,
-    KNURL_AUTH_USER_TOTP,
     KNURL_AUTH_USER_ENABLE,
-    KNURL_AUTH_USER_DISABLE,
-    KNURL_AUTH_CLIENT_SET,
-    KNURL_AUTH_CLIENT_REVOKE
+    KNURL_AUTH_USER_DISABLE
 } knurl_auth_admin;
-/** Create/update a named account or credential. TOTP takes a base32 seed.
- * Account changes revoke its sessions. Use NULL for operations with no value.
+/** Create/update a named account. Account changes revoke its sessions.
+ * Use NULL for operations with no value.
  */
 KNURL_API knurl_status knurl_auth_json_admin(knurl_auth_json *,
                                              knurl_auth_admin, const char *,
                                              const char *, knurl_error *);
-/** Issue or rotate a machine credential and return its new secret once. */
+/** Issue or rotate a machine credential within the named policy. */
 KNURL_API knurl_status knurl_auth_json_issue(knurl_auth_json *, const char *,
-                                             char[65], knurl_error *);
+                                             const char *, char[65],
+                                             knurl_error *);
+KNURL_API knurl_status knurl_auth_json_revoke(knurl_auth_json *, const char *,
+                                              const char *, knurl_error *);
+/** Generate and store an encrypted TOTP enrollment and return its URI once.
+ * Nonzero rotate permits replacing an existing enrollment. */
+#define KNURL_AUTH_TOTP_URI_CAPACITY 512
+KNURL_API knurl_status
+knurl_auth_json_enroll_totp(knurl_auth_json *, const char *, int,
+                            char[KNURL_AUTH_TOTP_URI_CAPACITY], knurl_error *);
 /** Remove expired sessions, challenges and throttle records. */
 KNURL_API knurl_status knurl_auth_json_prune(knurl_auth_json *, knurl_error *);
 

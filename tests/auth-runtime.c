@@ -5,6 +5,7 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -20,6 +21,7 @@
 
 static pid_t server_pid;
 static pid_t runner_pid;
+static pid_t secondary_runner;
 
 #define CHECK(x)                                                               \
     do {                                                                       \
@@ -31,6 +33,10 @@ static pid_t runner_pid;
                 (void)kill(runner_pid, SIGTERM);                               \
                 (void)waitpid(runner_pid, NULL, 0);                            \
             }                                                                  \
+            if (secondary_runner > 0) {                                        \
+                (void)kill(secondary_runner, SIGTERM);                         \
+                (void)waitpid(secondary_runner, NULL, 0);                      \
+            }                                                                  \
             exit(1);                                                           \
         }                                                                      \
     } while (0)
@@ -38,13 +44,11 @@ static pid_t runner_pid;
 static const char password[] = "a test password with spaces";
 static const char password_form[] =
     "username=alice&password=a+test+password+with+spaces";
-static const char seed[] = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
-static const char client_secret[] =
-    "an intentionally fake client secret for tests";
-
 struct fixture {
     knurl_auth_json *store;
     char cert[1024], key[1024], static_file[1024];
+    char directory_status[1024];
+    char enrollment[KNURL_AUTH_TOTP_URI_CAPACITY], client_secret[66];
     char jwks[1024];
     unsigned short tls, plain, smtp, proxy;
     int entered[2], resume[2], headers[2], mail[2];
@@ -486,13 +490,29 @@ static void oidc(struct fixture *f)
     CHECK(exchange(f, 1, "GET", "/oidc", auth, NULL, out) == 401);
 }
 
-static void totp_code(char form[160])
+static void totp_code(const char *uri, char form[160])
 {
-    static const unsigned char key[] = "12345678901234567890";
-    unsigned char step[8], digest[20];
-    unsigned int length, i, off;
+    static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    const char *secret = strstr(uri, "?secret="), *digit;
+    unsigned char step[8], digest[20], key[20];
+    unsigned int length, i, off, bits = 0, count = 0, used = 0;
     unsigned long value;
     time_t now = time(NULL) / 30;
+    CHECK(secret != NULL &&
+          strncmp(uri, "otpauth://totp/Knurl:alice?", 26) == 0);
+    secret += 8;
+    CHECK(strcspn(secret, "&") == 32);
+    for (i = 0; i < 32; ++i) {
+        digit = strchr(alphabet, secret[i]);
+        CHECK(digit != NULL);
+        bits = (bits << 5) | (unsigned int)(digit - alphabet);
+        count += 5;
+        if (count >= 8) {
+            count -= 8;
+            key[used++] = (unsigned char)(bits >> count);
+        }
+    }
+    CHECK(used == sizeof(key));
     for (i = 8; i != 0; --i) {
         step[i - 1] = (unsigned char)now;
         now >>= 8;
@@ -506,15 +526,17 @@ static void totp_code(char form[160])
     snprintf(form, 160, "%s&code=%06lu", password_form, value % 1000000UL);
 }
 
-static void totp_race(struct fixture *f)
+static void totp_race(struct fixture *f, unsigned short other_port)
 {
     char form[160], out[4096];
     pid_t peer;
     int first, second;
-    totp_code(form);
+    totp_code(f->enrollment, form);
     peer = fork();
     CHECK(peer >= 0);
     if (peer == 0) {
+        secondary_runner = runner_pid = 0;
+        f->tls = other_port;
         first = exchange(f, 1, "POST", "/otp", NULL, form, out);
         _exit(first == 204 ? 0 : first == 401 ? 1 : 2);
     }
@@ -523,6 +545,109 @@ static void totp_race(struct fixture *f)
     CHECK((first == 204 && WEXITSTATUS(second) == 1) ||
           (first == 401 && WEXITSTATUS(second) == 0));
     CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 401);
+}
+
+static void enroll_concurrently(struct fixture *f)
+{
+    char uri[KNURL_AUTH_TOTP_URI_CAPACITY];
+    int result[2], child_status;
+    knurl_status status;
+    ssize_t length;
+    pid_t child;
+    CHECK(pipe(result) == 0);
+    child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        close(result[0]);
+        status = knurl_auth_json_enroll_totp(f->store, "alice", 0, uri, NULL);
+        if (status == KNURL_OK)
+            CHECK(write(result[1], uri, strlen(uri) + 1) ==
+                  (ssize_t)(strlen(uri) + 1));
+        _exit(status == KNURL_OK ? 0 : status == KNURL_CONFLICT ? 1 : 2);
+    }
+    close(result[1]);
+    status =
+        knurl_auth_json_enroll_totp(f->store, "alice", 0, f->enrollment, NULL);
+    CHECK(waitpid(child, &child_status, 0) == child && WIFEXITED(child_status));
+    CHECK((status == KNURL_OK && WEXITSTATUS(child_status) == 1) ||
+          (status == KNURL_CONFLICT && WEXITSTATUS(child_status) == 0));
+    if (status == KNURL_CONFLICT) {
+        length = read(result[0], f->enrollment, sizeof(f->enrollment));
+        CHECK(length > 0 && f->enrollment[length - 1] == 0);
+    }
+    close(result[0]);
+}
+
+static void verify_state_files(const char *path)
+{
+    static const char *const names[] = {
+        "key",           "lock",       "accounts.json", "attempts.json",
+        "sessions.json", "email.json", "totp.json"};
+    DIR *dir = opendir(path);
+    struct dirent *entry;
+    size_t count = 0, i;
+    CHECK(dir != NULL);
+    while ((entry = readdir(dir)) != NULL) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+            continue;
+        for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+            if (strcmp(entry->d_name, names[i]) == 0)
+                break;
+        CHECK(i < sizeof(names) / sizeof(names[0]));
+        ++count;
+    }
+    CHECK(count == sizeof(names) / sizeof(names[0]));
+    closedir(dir);
+}
+
+static void large_store(const char *work)
+{
+    char store[1024], accounts[1040], secret[65];
+    knurl_auth_json *json;
+    FILE *file;
+    unsigned int i;
+    snprintf(store, sizeof(store), "%s/large-store", work);
+    snprintf(accounts, sizeof(accounts), "%s/accounts.json", store);
+    CHECK(knurl_auth_json_init(store, NULL) == KNURL_OK);
+    file = fopen(accounts, "wb");
+    CHECK(file != NULL && fputs("{\"records\":[", file) >= 0);
+    /* Enough mapped records to exceed LoneJSON's general-purpose parse budget.
+     */
+    for (i = 0; i < 1500; ++i)
+        CHECK(fprintf(file,
+                      "%s{\"key\":\"c-%064u\",\"subject\":\"seeded\","
+                      "\"policy\":\"seeded\",\"email\":\"\",\"secret\":\"\","
+                      "\"seed\":\"\",\"revision\":\"\",\"enrollment\":\"\"}",
+                      i == 0 ? "" : ",", i) > 0);
+    CHECK(fputs("]}", file) >= 0 && fclose(file) == 0);
+    CHECK(knurl_auth_json_open(store, &json, NULL) == KNURL_OK);
+    CHECK(knurl_auth_json_issue(json, "machine", "test-client", secret, NULL) ==
+          KNURL_OK);
+    CHECK(knurl_auth_json_revoke(json, "machine", "test-client", NULL) ==
+          KNURL_OK);
+    knurl_auth_json_close(json);
+}
+
+static knurl_status session_check(const knurl_auth_identity *identity,
+                                  void *userdata, knurl_error *error)
+{
+    struct fixture *f = userdata;
+    FILE *file;
+    int status;
+    (void)error;
+    CHECK(identity->method == KNURL_AUTH_SESSION &&
+          strcmp(identity->subject, "directory-user") == 0);
+    file = fopen(f->directory_status, "rb");
+    CHECK(file != NULL);
+    status = fgetc(file);
+    fclose(file);
+    return status == 'a' ? KNURL_OK : status == 'd' ? KNURL_EOF : KNURL_IO;
+}
+
+static void directory_status(struct fixture *f, int status)
+{
+    FILE *file = fopen(f->directory_status, "wb");
+    CHECK(file != NULL && fputc(status, file) == status && fclose(file) == 0);
 }
 
 static void exercise(struct fixture *f)
@@ -559,7 +684,17 @@ static void exercise(struct fixture *f)
     cookie(out, session);
     CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 200 &&
           strstr(out, "directory-user") != NULL);
-    totp_race(f);
+    directory_status(f, 'd');
+    CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 401);
+    directory_status(f, 'e');
+    CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 503);
+    totp_code(f->enrollment, form);
+    CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 204);
+    CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 401);
+    CHECK(knurl_auth_json_enroll_totp(f->store, "alice", 1, f->enrollment,
+                                      NULL) == KNURL_OK);
+    totp_code(f->enrollment, form);
+    CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 204);
     CHECK(exchange(f, 1, "POST", "/email-code", NULL, "username=unknown",
                    out) == 202);
     CHECK(exchange(f, 1, "POST", "/email-code", NULL, "username=alice", out) ==
@@ -579,16 +714,20 @@ static void exercise(struct fixture *f)
                                 NULL, NULL) == KNURL_OK);
     CHECK(exchange(f, 1, "GET", "/different-policy", session, NULL, out) ==
           401);
-    snprintf(form, sizeof(form), "pipeline:%s", client_secret);
+    snprintf(form, sizeof(form), "pipeline:%s", f->client_secret);
     CHECK(EVP_EncodeBlock((unsigned char *)encoded, (const unsigned char *)form,
                           (int)strlen(form)) > 0);
     snprintf(auth, sizeof(auth), "Authorization: Basic %s\r\n", encoded);
     CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 200 &&
           strstr(out, "pipeline") != NULL);
+    CHECK(exchange(f, 1, "GET", "/machine-other", auth, NULL, out) == 401);
     CHECK(exchange(f, 1, "GET", "/machine-proxy", auth, NULL, out) == 200);
     CHECK(strstr(out, "\r\nproxy") != NULL);
-    CHECK(knurl_auth_json_admin(f->store, KNURL_AUTH_CLIENT_REVOKE, "pipeline",
-                                NULL, NULL) == KNURL_OK);
+    CHECK(knurl_auth_json_revoke(f->store, "machine-other", "pipeline", NULL) ==
+          KNURL_OK);
+    CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 200);
+    CHECK(knurl_auth_json_revoke(f->store, "machine", "pipeline", NULL) ==
+          KNURL_OK);
     CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 401);
     oidc(f);
     concurrency(f);
@@ -644,8 +783,8 @@ static void plain_route(knurl_router *router, const char *path,
 static void routes(knurl_router *router, struct fixture *f)
 {
     knurl_auth_config config;
-    knurl_auth *browser, *otp, *email, *smtp, *external, *machine, *slow,
-        *issuer;
+    knurl_auth *browser, *otp, *email, *smtp, *external, *machine, *other,
+        *slow, *issuer;
     knurl_route_group_config group_config;
     knurl_route_group *group;
     knurl_blocking_route_config app;
@@ -677,6 +816,8 @@ static void routes(knurl_router *router, struct fixture *f)
     config.name = "machine";
     config.method = KNURL_AUTH_MACHINE;
     CHECK(knurl_auth_new(&config, &machine, NULL) == KNURL_OK);
+    config.name = "machine-other";
+    CHECK(knurl_auth_new(&config, &other, NULL) == KNURL_OK);
     knurl_auth_config_init(&config);
     config.name = "slow";
     config.method = KNURL_AUTH_MACHINE;
@@ -697,6 +838,8 @@ static void routes(knurl_router *router, struct fixture *f)
     config.json = f->store;
     config.users = provider;
     config.users_userdata = f;
+    config.session_check = session_check;
+    config.session_check_userdata = f;
     CHECK(knurl_auth_new(&config, &external, NULL) == KNURL_OK);
     CHECK(knurl_auth_route(router, "/login", browser, KNURL_AUTH_LOGIN, &handle,
                            NULL) == KNURL_OK);
@@ -748,6 +891,7 @@ static void routes(knurl_router *router, struct fixture *f)
     plain_route(router, "/fast", NULL);
     plain_route(router, "/different-policy", email);
     plain_route(router, "/machine", machine);
+    plain_route(router, "/machine-other", other);
     plain_route(router, "/oidc", issuer);
     plain_route(router, "/external", external);
     knurl_auth_close(browser);
@@ -756,22 +900,30 @@ static void routes(knurl_router *router, struct fixture *f)
     knurl_auth_close(smtp);
     knurl_auth_close(external);
     knurl_auth_close(machine);
+    knurl_auth_close(other);
     knurl_auth_close(slow);
     knurl_auth_close(issuer);
 }
 
 static void cli(const char *runner, const char *store, const char *operation,
-                const char *user, const char *value, const char *input)
+                const char *user, const char *value, const char *input,
+                char *output, size_t capacity)
 {
-    int pipes[2], status;
+    int pipes[2], result[2], status;
     pid_t child;
-    CHECK(pipe(pipes) == 0);
+    size_t length = 0;
+    ssize_t count;
+    CHECK(pipe(pipes) == 0 && pipe(result) == 0);
     child = fork();
     CHECK(child >= 0);
     if (child == 0) {
         close(pipes[1]);
         CHECK(dup2(pipes[0], STDIN_FILENO) >= 0);
         close(pipes[0]);
+        close(result[0]);
+        if (output != NULL)
+            CHECK(dup2(result[1], STDOUT_FILENO) >= 0);
+        close(result[1]);
         execl(runner, runner, "auth", operation, store, user, value,
               (char *)NULL);
         _exit(126);
@@ -780,6 +932,16 @@ static void cli(const char *runner, const char *store, const char *operation,
     if (input != NULL)
         CHECK(write(pipes[1], input, strlen(input)) == (ssize_t)strlen(input));
     close(pipes[1]);
+    close(result[1]);
+    if (output != NULL) {
+        while (length + 1 < capacity &&
+               (count = read(result[0], output + length,
+                             capacity - 1 - length)) > 0)
+            length += (size_t)count;
+        CHECK(length > 0 && output[length - 1] == '\n');
+        output[length - 1] = 0;
+    }
+    close(result[0]);
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
           WEXITSTATUS(status) == 0);
 }
@@ -831,12 +993,17 @@ static int runner_test(struct fixture *f, const char *work, const char *store,
 {
     const char credential[] =
         "pipeline:a local test secret with plenty of characters";
-    char out[4096], session[256], b64[100], auth[128];
-    cli(runner, store, "init", NULL, NULL, NULL);
-    cli(runner, store, "prune", NULL, NULL, NULL);
-    cli(runner, store, "user-password", "alice", NULL, password);
-    cli(runner, store, "user-email", "alice", "alice@example.test", NULL);
-    cli(runner, store, "user-totp", "alice", NULL, seed);
+    char out[4096], session[256], b64[128], auth[180], form[160];
+    unsigned short first_port, second_port;
+    cli(runner, store, "init", NULL, NULL, NULL, NULL, 0);
+    cli(runner, store, "prune", NULL, NULL, NULL, NULL, 0);
+    cli(runner, store, "user-password", "alice", NULL, password, NULL, 0);
+    cli(runner, store, "user-email", "alice", "alice@example.test", NULL, NULL,
+        0);
+    cli(runner, store, "user-totp", "alice", NULL, NULL, f->enrollment,
+        sizeof(f->enrollment));
+    cli(runner, store, "client-issue", "machine", "pipeline", NULL,
+        f->client_secret, sizeof(f->client_secret));
     close(bound_socket(&f->tls));
     f->tls_client = SSL_CTX_new(TLS_client_method());
     CHECK(f->tls_client != NULL &&
@@ -849,6 +1016,24 @@ static int runner_test(struct fixture *f, const char *work, const char *store,
                           sizeof(credential) - 1) > 0);
     snprintf(auth, sizeof(auth), "Authorization: Basic %s\r\n", b64);
     CHECK(exchange(f, 1, "GET", "/service", auth, NULL, out) == 200);
+    snprintf(form, sizeof(form), "pipeline:%s", f->client_secret);
+    CHECK(EVP_EncodeBlock((unsigned char *)b64, (const unsigned char *)form,
+                          (int)strlen(form)) > 0);
+    snprintf(auth, sizeof(auth), "Authorization: Basic %s\r\n", b64);
+    CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 200);
+    CHECK(exchange(f, 1, "GET", "/machine-other", auth, NULL, out) == 401);
+    cli(runner, store, "client-revoke", "machine", "pipeline", NULL, NULL, 0);
+    CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 401);
+    first_port = f->tls;
+    secondary_runner = runner_pid;
+    close(bound_socket(&f->tls));
+    start_runner(f, work, runner, script);
+    second_port = f->tls;
+    f->tls = first_port;
+    totp_race(f, second_port);
+    stop_runner();
+    runner_pid = secondary_runner;
+    secondary_runner = 0;
     CHECK(exchange(f, 1, "POST", "/login", NULL, password_form, out) == 204);
     cookie(out, session);
     CHECK(exchange(f, 1, "GET", "/app/settings", session, NULL, out) == 200 &&
@@ -856,7 +1041,7 @@ static int runner_test(struct fixture *f, const char *work, const char *store,
     stop_runner();
     start_runner(f, work, runner, script);
     CHECK(exchange(f, 1, "GET", "/app/settings", session, NULL, out) == 200);
-    cli(runner, store, "user-disable", "alice", NULL, NULL);
+    cli(runner, store, "user-disable", "alice", NULL, NULL, NULL, 0);
     CHECK(exchange(f, 1, "GET", "/app/settings", session, NULL, out) == 401);
     stop_runner();
     SSL_CTX_free(f->tls_client);
@@ -873,7 +1058,7 @@ int main(int argc, char **argv)
     knurl_error error;
     knurl_status status;
     const char *host = "localhost";
-    char store[1024];
+    char store[1024], uri[KNURL_AUTH_TOTP_URI_CAPACITY];
     FILE *file;
     int child;
     pid_t smtp_pid, proxy_pid;
@@ -885,7 +1070,11 @@ int main(int argc, char **argv)
     snprintf(f.key, sizeof(f.key), "%s/key.pem", argv[1]);
     if (argc == 4)
         return runner_test(&f, argv[1], store, argv[2], argv[3]);
+    large_store(argv[1]);
     snprintf(f.static_file, sizeof(f.static_file), "%s/file.txt", argv[1]);
+    snprintf(f.directory_status, sizeof(f.directory_status),
+             "%s/directory-status", argv[1]);
+    directory_status(&f, 'a');
     file = fopen(f.static_file, "wb");
     CHECK(file != NULL && fputs("protected fixture", file) >= 0 &&
           fclose(file) == 0);
@@ -894,12 +1083,19 @@ int main(int argc, char **argv)
     CHECK(knurl_auth_json_open(store, &f.store, &error) == KNURL_OK);
     CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, "alice",
                                 password, &error) == KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_TOTP, "alice", seed,
-                                &error) == KNURL_OK);
+    enroll_concurrently(&f);
+    CHECK(knurl_auth_json_enroll_totp(f.store, "alice", 0, uri, &error) ==
+              KNURL_CONFLICT &&
+          uri[0] == 0);
     CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_EMAIL, "alice",
                                 "alice@example.test", &error) == KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_CLIENT_SET, "pipeline",
-                                client_secret, &error) == KNURL_OK);
+    CHECK(knurl_auth_json_issue(f.store, "machine", "pipeline", f.client_secret,
+                                &error) == KNURL_OK);
+    {
+        char other[65];
+        CHECK(knurl_auth_json_issue(f.store, "machine-other", "pipeline", other,
+                                    &error) == KNURL_OK);
+    }
     CHECK(pipe(f.entered) == 0 && pipe(f.resume) == 0 && pipe(f.headers) == 0 &&
           pipe(f.mail) == 0);
     knurl_server_config_init(&config);
@@ -945,6 +1141,7 @@ int main(int argc, char **argv)
     CHECK(waitpid(proxy_pid, &child, 0) == proxy_pid && WIFEXITED(child) &&
           WEXITSTATUS(child) == 0);
     CHECK(knurl_server_destroy(server, NULL) == KNURL_OK);
+    verify_state_files(store);
     knurl_auth_json_close(f.store);
     return 0;
 }
