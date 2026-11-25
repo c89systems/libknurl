@@ -137,6 +137,7 @@ check(sockets:websocket{path = '/:name', max_message_bytes = 1024,
     assert(database and ws:request() == req and req.params.name == 'alice')
     current = ws
     check(ws:send_text('hello ' .. req.params.name))
+    wait_for_gate('websocket open waiting')
   end,
   on_message = function(ws, bytes, kind)
     assert(ws == current)

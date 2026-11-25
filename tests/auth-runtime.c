@@ -3,6 +3,7 @@
 #include <openssl/hmac.h>
 #include <openssl/core_names.h>
 #include <openssl/pem.h>
+#include <openssl/rsa.h>
 #include <openssl/ssl.h>
 #include <arpa/inet.h>
 #include <dirent.h>
@@ -56,6 +57,7 @@ struct fixture {
     int token_request[2], token_resume[2];
     pid_t client;
     SSL_CTX *tls_client;
+    EVP_PKEY *signing_key, *rotated_key;
 };
 
 struct connection {
@@ -420,9 +422,8 @@ static void base64url(const unsigned char *data, size_t length, char *out)
     }
 }
 
-static void jwks(struct fixture *f)
+static void jwks(EVP_PKEY *key, const char *kid, char out[1024])
 {
-    EVP_PKEY *key = fixture_key(f);
     BIGNUM *modulus = NULL, *exponent = NULL;
     unsigned char bytes[256];
     char n[345], e[16];
@@ -432,24 +433,18 @@ static void jwks(struct fixture *f)
     base64url(bytes, 256, n);
     CHECK(BN_bn2bin(exponent, bytes) == 3);
     base64url(bytes, 3, e);
-    snprintf(f->jwks, sizeof(f->jwks),
-             "{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"fixture\",\"alg\":"
+    snprintf(out, 1024,
+             "{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"%s\",\"alg\":"
              "\"RS256\",\"n\":\"%s\",\"e\":\"%s\"}]}",
-             n, e);
-    snprintf(f->next_jwks, sizeof(f->next_jwks),
-             "{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"rotated\",\"alg\":"
-             "\"RS256\",\"n\":\"%s\",\"e\":\"%s\"}]}",
-             n, e);
+             kid, n, e);
     BN_free(modulus);
     BN_free(exponent);
-    EVP_PKEY_free(key);
 }
 
-static void sign_bearer(struct fixture *f, const char *kind, const char *kid,
+static void sign_bearer(EVP_PKEY *key, const char *kind, const char *kid,
                         const char *issuer, const char *audience,
                         const char *scope, long expires, char out[2048])
 {
-    EVP_PKEY *key = fixture_key(f);
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     unsigned char signature[256];
     size_t size = sizeof(signature);
@@ -472,14 +467,13 @@ static void sign_bearer(struct fixture *f, const char *kind, const char *kid,
     base64url(signature, size, proof);
     snprintf(out, 2048, "Authorization: Bearer %s.%s\r\n", signed_bytes, proof);
     EVP_MD_CTX_free(ctx);
-    EVP_PKEY_free(key);
 }
 
 static void bearer(struct fixture *f, const char *kind, const char *audience,
                    const char *scope, long expires, char out[2048])
 {
-    sign_bearer(f, kind, "fixture", "https://issuer.example", audience, scope,
-                expires, out);
+    sign_bearer(f->signing_key, kind, "fixture", "https://issuer.example",
+                audience, scope, expires, out);
 }
 
 static void read_oauth_wire(SSL *tls, char wire[4096])
@@ -525,7 +519,7 @@ static pid_t oauth_fixture(struct fixture *f)
         "Bearer reacquired", "Bearer no-refresh"};
     struct timeval timeout = {4, 0};
     SSL_CTX *context;
-    unsigned int calls = 0, grants = 0, keys = 0, discovered = 0;
+    unsigned int calls = 0, grants = 0, keys = 0, discovered = 0, posts = 0;
     int listener = bound_socket(&f->oauth);
     pid_t pid;
     snprintf(f->issuer, sizeof(f->issuer), "https://localhost:%u",
@@ -544,7 +538,8 @@ static pid_t oauth_fixture(struct fixture *f)
           SSL_CTX_use_certificate_file(context, f->cert, SSL_FILETYPE_PEM) ==
               1 &&
           SSL_CTX_use_PrivateKey_file(context, f->key, SSL_FILETYPE_PEM) == 1);
-    while (calls < 5 || grants < 5 || keys < 2 || discovered < 3) {
+    while (calls < 5 || grants < 5 || keys < 2 || discovered < 3 ||
+           posts == 0) {
         char wire[4096], json[512], response[2048];
         const char *body = NULL, *line;
         int length, code = 200, fd = accept(listener, NULL, NULL);
@@ -577,6 +572,14 @@ static pid_t oauth_fixture(struct fixture *f)
             if (grants == 2)
                 code = 400;
             body = results[grants++];
+        } else if (strncmp(wire, "POST /post-token ", 17) == 0) {
+            CHECK(++posts == 1 && strstr(wire, "\r\nAuthorization:") == NULL);
+            CHECK(strcmp(strstr(wire, "\r\n\r\n") + 4,
+                         "grant_type=client_credentials&scope=machine%20read"
+                         "&client_id=post%3Aclient&client_secret=s%26ecret") ==
+                  0);
+            body = "{\"access_token\":\"form-credentials\","
+                   "\"token_type\":\"Bearer\",\"expires_in\":30}";
         } else if (strncmp(wire, "GET /oauth-proxy ", 17) == 0) {
             CHECK(calls < 5);
             for (line = wire; (line = strstr(line, "\r\n")) != NULL;) {
@@ -614,8 +617,8 @@ static void oauth_lifecycle(struct fixture *f)
     char auth[2048], out[4096];
     struct connection pending;
     long expiry = (long)time(NULL) + 60;
-    sign_bearer(f, "at+jwt", "fixture", f->issuer, "knurl", "machine", expiry,
-                auth);
+    sign_bearer(f->signing_key, "at+jwt", "fixture", f->issuer, "knurl",
+                "machine", expiry, auth);
     CHECK(exchange(f, 1, "GET", "/rotating-oidc", auth, NULL, out) == 200);
     pending = connect_to(f, 1);
     send_request(&pending,
@@ -637,12 +640,36 @@ static void oauth_lifecycle(struct fixture *f)
     sleep(2);
     CHECK(exchange(f, 1, "GET", "/oauth-proxy", NULL, NULL, out) == 200 &&
           strstr(out, "Bearer no-refresh") != NULL);
-    sign_bearer(f, "at+jwt", "rotated", f->issuer, "knurl", "machine", expiry,
-                auth);
+    sign_bearer(f->rotated_key, "at+jwt", "rotated", f->issuer, "knurl",
+                "machine", expiry, auth);
     CHECK(exchange(f, 1, "GET", "/rotating-oidc", auth, NULL, out) == 200);
-    sign_bearer(f, "at+jwt", "fixture", f->issuer, "knurl", "machine", expiry,
-                auth);
+    sign_bearer(f->signing_key, "at+jwt", "rotated", f->issuer, "knurl",
+                "machine", expiry, auth);
     CHECK(exchange(f, 1, "GET", "/rotating-oidc", auth, NULL, out) == 401);
+    sign_bearer(f->signing_key, "at+jwt", "fixture", f->issuer, "knurl",
+                "machine", expiry, auth);
+    CHECK(exchange(f, 1, "GET", "/rotating-oidc", auth, NULL, out) == 401);
+}
+
+static void oauth_form_credentials(struct fixture *f)
+{
+    knurl_oauth2_config config;
+    knurl_oauth2_client *client;
+    char endpoint[160], value[64];
+    memset(&config, 0, sizeof(config));
+    snprintf(endpoint, sizeof(endpoint), "%s/post-token", f->issuer);
+    config.token_endpoint = endpoint;
+    config.client_id = "post:client";
+    config.client_secret = "s&ecret";
+    config.client_secret_post = 1;
+    config.ca_file = f->cert;
+    config.scope = "machine read";
+    CHECK(knurl_oauth2_client_new(&config, &client, NULL) == KNURL_OK);
+    CHECK(knurl_oauth2_client_token(client, value, 3, NULL) == KNURL_LIMIT);
+    CHECK(knurl_oauth2_client_token(client, value, sizeof(value), NULL) ==
+          KNURL_OK);
+    CHECK(strcmp(value, "form-credentials") == 0);
+    knurl_oauth2_client_close(client);
 }
 
 static void oauth_saturation(struct fixture *f)
@@ -1115,6 +1142,7 @@ static void exercise(struct fixture *f)
     CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 401);
     oidc(f);
     oauth_lifecycle(f);
+    oauth_form_credentials(f);
     ordered_browser(f);
     ordered_machine(f);
     concurrency(f);
@@ -1593,7 +1621,11 @@ int main(int argc, char **argv)
     file = fopen(f.cert, "rb");
     CHECK(file != NULL && fread(f.ca_pem, 1, sizeof(f.ca_pem) - 1, file) > 0 &&
           feof(file) && fclose(file) == 0);
-    jwks(&f);
+    f.signing_key = fixture_key(&f);
+    f.rotated_key = EVP_RSA_gen(2048);
+    CHECK(f.rotated_key != NULL);
+    jwks(f.signing_key, "fixture", f.jwks);
+    jwks(f.rotated_key, "rotated", f.next_jwks);
     smtp_pid = smtp_fixture(&f);
     proxy_pid = proxy_fixture(&f);
     oauth_pid = oauth_fixture(&f);
@@ -1619,6 +1651,8 @@ int main(int argc, char **argv)
     CHECK(waitpid(oauth_pid, &child, 0) == oauth_pid && WIFEXITED(child) &&
           WEXITSTATUS(child) == 0);
     CHECK(knurl_server_destroy(server, NULL) == KNURL_OK);
+    EVP_PKEY_free(f.rotated_key);
+    EVP_PKEY_free(f.signing_key);
     verify_state_files(store);
     knurl_auth_json_close(f.store);
     return 0;

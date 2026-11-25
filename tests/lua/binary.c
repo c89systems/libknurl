@@ -207,7 +207,7 @@ static void websocket(unsigned short port, const char *log, const char *gate)
         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
     static const char farewell[] = "\003\350bye";
     char request[512], response[1024];
-    int fd;
+    int fd, code, i;
     CHECK(knurl_test_acl_exchange(port, "GET", "/ws/alice", NULL, NULL) == 400);
     CHECK(knurl_test_acl_exchange(port, "GET", "/ws/alice?fail=1", NULL,
                                   NULL) == 500);
@@ -223,8 +223,21 @@ static void websocket(unsigned short port, const char *log, const char *gate)
     CHECK(strstr(response, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") != NULL);
     CHECK(strstr(response, "x-socket: ready\r\n") != NULL);
     expect_frame(fd, 0x81, "hello alice", 11);
-    CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/count", NULL, NULL) ==
+    milestone(log, "websocket open waiting\n", 1);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
           200);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/count", NULL, NULL) ==
+          503);
+    release_gate(gate);
+    /* The greeting is sent on the owner loop before the callback retires. */
+    for (i = 0; i < 400; ++i) {
+        code =
+            knurl_test_acl_exchange(port, "GET", "/app/bob/count", NULL, NULL);
+        if (code != 503)
+            break;
+        pause_briefly();
+    }
+    CHECK(code == 200);
     send_frame(fd, 0x02, "one\0", 4);
     send_frame(fd, 0x80, "two", 3);
     expect_frame(fd, 0x82, "one\0two", 7);
