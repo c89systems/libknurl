@@ -148,8 +148,7 @@ changes the account revision, which invalidates existing sessions without a
 session-file rewrite. TOTP replay checks use the enrollment ID so seed rotation
 starts a new counter. Use `knurl auth prune ./auth-state` to remove expired
 state. Run the store on a local filesystem that supports advisory locks and
-atomic rename. Initialize a fresh directory when moving from the earlier
-development format that wrote one file per record.
+atomic rename.
 
 In C, set `backend` in `knurl_auth_config` to supply storage and
 verification operations. For a directory or identity provider, set `users`
