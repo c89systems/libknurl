@@ -22,6 +22,7 @@ struct websocket_route {
 
 struct connection {
     struct rl_work work;
+    struct rl_cleanup cleanup;
     struct websocket_route *route;
     knurl_websocket *native;
     knurl_request_snapshot *request;
@@ -202,16 +203,42 @@ static knurl_status work(knurl_task *task, struct rl_work *job,
 
 static knurl_status schedule(struct connection *, knurl_error *);
 
+static void drop_handle(lua_State *L, struct rl_cleanup *cleanup)
+{
+    struct connection *ws =
+        (struct connection *)((char *)cleanup -
+                              offsetof(struct connection, cleanup));
+    if (L != NULL)
+        luaL_unref(L, LUA_REGISTRYINDEX, ws->handle_ref);
+    ws->handle_ref = LUA_NOREF;
+    release(ws);
+}
+
+static void dispose(struct connection *ws)
+{
+    knurl_request_snapshot_destroy(ws->request);
+    ws->request = NULL;
+    free(ws->message);
+    ws->message = NULL;
+    if (ws->handle_ref != LUA_NOREF)
+        rl_cleanup_later(ws->work.server, &ws->cleanup, drop_handle);
+    else
+        release(ws);
+}
+
+static void schedule_close(struct connection *ws)
+{
+    ws->event = EVENT_CLOSE;
+    if (!ws->route->callbacks[EVENT_CLOSE] || schedule(ws, NULL) != KNURL_OK)
+        dispose(ws);
+}
+
 static void completed(struct connection *ws, knurl_status status)
 {
     enum event event = ws->event;
     ws->event = EVENT_IDLE;
     if (event == EVENT_CLOSE) {
-        knurl_request_snapshot_destroy(ws->request);
-        ws->request = NULL;
-        free(ws->message);
-        ws->message = NULL;
-        release(ws);
+        dispose(ws);
         return;
     }
     if (ws->handle_ref != LUA_NOREF) {
@@ -219,9 +246,7 @@ static void completed(struct connection *ws, knurl_status status)
         ws->request = NULL;
     }
     if (ws->native == NULL) {
-        ws->event = EVENT_CLOSE;
-        if (schedule(ws, NULL) != KNURL_OK)
-            release(ws);
+        schedule_close(ws);
         return;
     }
     if (status != KNURL_OK) {
@@ -254,7 +279,6 @@ static void retired(struct rl_work *job, knurl_status status,
 
 static knurl_status schedule(struct connection *ws, knurl_error *error)
 {
-    ws->work.cleanup = ws->event == EVENT_CLOSE;
     return rl_work_start(&ws->work, error);
 }
 
@@ -349,15 +373,8 @@ static void closed(knurl_websocket *socket,
         memcpy(ws->reason, outcome->peer_reason.data,
                outcome->peer_reason.length);
     ws->outcome.peer_reason.data = ws->reason;
-    if (ws->event == EVENT_IDLE) {
-        if (ws->handle_ref == LUA_NOREF && !ws->route->callbacks[EVENT_CLOSE]) {
-            release(ws);
-            return;
-        }
-        ws->event = EVENT_CLOSE;
-        if (schedule(ws, NULL) != KNURL_OK)
-            release(ws);
-    }
+    if (ws->event == EVENT_IDLE)
+        schedule_close(ws);
 }
 
 static knurl_status accept_websocket(knurl_request *request,
@@ -376,7 +393,7 @@ static knurl_status accept_websocket(knurl_request *request,
                            "allocating WebSocket connection");
         ws->route = route;
         ws->refs = 1;
-        ws->work.server = route->server->native;
+        ws->work.server = route->server;
         ws->work.run = work;
         ws->work.complete = retired;
         ws->handle_ref = LUA_NOREF;

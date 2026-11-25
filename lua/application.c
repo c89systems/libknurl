@@ -72,7 +72,12 @@ static knurl_status start(void *data, knurl_error *error)
 
 static knurl_status stop(void *data, knurl_error *error)
 {
-    return worker_callback(data, WORKER_STOP, error);
+    struct rl_server *server = data;
+    knurl_status status;
+    rl_cleanup_drain(server, 0);
+    status = worker_callback(server, WORKER_STOP, error);
+    rl_cleanup_drain(server, 1);
+    return status;
 }
 
 knurl_status rl_server_run(lua_State *L, struct rl_server *server,
@@ -353,6 +358,7 @@ static knurl_status application_handler(const knurl_request_snapshot *request,
     struct reader *reader;
     int result;
 
+    rl_cleanup_drain(app->server, 0);
     if (!lua_checkstack(L, 6))
         return rl_fail(error, KNURL_NOMEM,
                        "reserving application callback stack");
@@ -394,6 +400,7 @@ static knurl_status application_handler(const knurl_request_snapshot *request,
     } else if (result != LUA_OK)
         call.status = rl_lua_failure(L, result, "lua_handler", error);
     lua_settop(L, 1);
+    rl_cleanup_drain(app->server, 0);
     return call.status;
 }
 

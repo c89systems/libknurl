@@ -4,7 +4,7 @@
 
 struct stream {
     struct rl_work work;
-    struct rl_server *server;
+    struct rl_cleanup cleanup;
     knurl_source *source;
     knurl_error error;
     knurl_status status;
@@ -96,23 +96,21 @@ static knurl_status work(knurl_task *task, struct rl_work *job,
                          knurl_error *error)
 {
     struct stream *s = (struct stream *)job;
-    lua_State *L = s->server->worker;
+    lua_State *L = job->server->worker;
     int result;
     (void)task;
-    if (!job->cleanup) {
-        if (!lua_checkstack(L, 2))
-            s->status =
-                rl_fail(&s->error, KNURL_NOMEM, "reserving Lua stream stack");
-        else {
-            lua_pushcfunction(L, pull);
-            lua_pushlightuserdata(L, s);
-            result = lua_pcall(L, 1, 0, 0);
-            if (result != LUA_OK)
-                s->status = rl_lua_failure(L, result, "lua_stream", &s->error);
-            lua_settop(L, 1);
-        }
+    if (!lua_checkstack(L, 2))
+        s->status =
+            rl_fail(&s->error, KNURL_NOMEM, "reserving Lua stream stack");
+    else {
+        lua_pushcfunction(L, pull);
+        lua_pushlightuserdata(L, s);
+        result = lua_pcall(L, 1, 0, 0);
+        if (result != LUA_OK)
+            s->status = rl_lua_failure(L, result, "lua_stream", &s->error);
+        lua_settop(L, 1);
     }
-    if (job->cleanup || s->status != KNURL_OK) {
+    if (s->status != KNURL_OK) {
         luaL_unref(L, LUA_REGISTRYINDEX, s->ref);
         s->ref = LUA_NOREF;
     }
@@ -130,14 +128,23 @@ static void free_stream(struct stream *s)
     free(s);
 }
 
+static void drop_producer(lua_State *L, struct rl_cleanup *cleanup)
+{
+    struct stream *s =
+        (struct stream *)((char *)cleanup - offsetof(struct stream, cleanup));
+    if (L != NULL)
+        luaL_unref(L, LUA_REGISTRYINDEX, s->ref);
+    free_stream(s);
+}
+
 static void dispose(struct stream *s)
 {
-    if (s->ref != LUA_NOREF && !s->work.cleanup) {
-        s->work.cleanup = 1;
-        if (rl_work_start(&s->work, NULL) == KNURL_OK)
-            return;
-    }
-    free_stream(s);
+    if (s->ref != LUA_NOREF) {
+        free(s->chunk);
+        s->chunk = NULL;
+        rl_cleanup_later(s->work.server, &s->cleanup, drop_producer);
+    } else
+        free_stream(s);
 }
 
 static void completed(struct rl_work *work, knurl_status status,
@@ -220,8 +227,7 @@ knurl_status rl_stream_reply(lua_State *L, int index, struct rl_server *server,
         }
         s->ref = ref;
     }
-    s->server = server;
-    s->work.server = server->native;
+    s->work.server = server;
     s->work.run = work;
     s->work.complete = completed;
     s->sse = sse;

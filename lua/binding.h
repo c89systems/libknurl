@@ -21,19 +21,27 @@ struct rl_json;
 struct rl_server;
 struct rl_proxy_rewrite;
 
+struct rl_cleanup {
+    struct rl_cleanup *next;
+    void (*dispose)(lua_State *, struct rl_cleanup *);
+};
+
 struct rl_work {
-    knurl_server *server;
+    struct rl_server *server;
     knurl_status (*run)(knurl_task *, struct rl_work *, knurl_error *);
     void (*complete)(struct rl_work *, knurl_status, const knurl_error *);
     knurl_task *task;
     knurl_timer *retry;
     knurl_error retry_error;
     knurl_status retry_status;
-    int cleanup;
+    knurl_u64 deadline;
 };
 
 knurl_status rl_work_start(struct rl_work *, knurl_error *);
 void rl_work_cancel(struct rl_work *);
+void rl_cleanup_later(struct rl_server *, struct rl_cleanup *,
+                      void (*)(lua_State *, struct rl_cleanup *));
+void rl_cleanup_drain(struct rl_server *, int);
 int rl_hooks_prepare(lua_State *, struct rl_server *, knurl_async_route_hooks *,
                      knurl_error *);
 void rl_hooks_finish(lua_State *, const knurl_async_route_hooks *,
@@ -58,6 +66,7 @@ struct rl_server {
     pslog_lua_logger_ref logger, access_logger;
     int running, has_lua;
     knurl_task *websocket_task;
+    struct rl_cleanup *cleanup;
 };
 
 struct rl_group {

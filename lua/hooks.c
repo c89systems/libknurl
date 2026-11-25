@@ -348,7 +348,7 @@ static knurl_status dispatch(knurl_request *request, const knurl_reply *headers,
     if (phase == PROXY_ERROR)
         call->gateway_error = *knurl_request_proxy_gateway_error(request);
     call->request = request;
-    call->work.server = hooks->server->native;
+    call->work.server = hooks->server;
     call->work.run = work;
     call->work.complete = completed;
     status = knurl_request_snapshot_copy(request, &call->snapshot, error);
@@ -443,7 +443,7 @@ static void proxy_exchange(knurl_request *req,
     call->refs = 1;
     call->hooks = hooks;
     call->phase = PROXY_EXCHANGE;
-    call->work.server = hooks->server->native;
+    call->work.server = hooks->server;
     call->work.run = work;
     call->work.complete = completed;
     call->exchange.request_id = event->request_id;

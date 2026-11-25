@@ -378,9 +378,15 @@ static void hook_timeouts(unsigned short port, const char *log,
                           const char *gate)
 {
     static const char *const paths[] = {"before", "after"};
+    static const char upgrade[] =
+        "GET /ws-queue HTTP/1.1\r\nHost: localhost\r\n"
+        "Connection: Upgrade\r\nUpgrade: websocket\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+    static const char internal_error[] = "\x03\xf3";
     char request[256], response[1024], waiting[80];
     size_t i;
-    int fd;
+    int fd, ws;
     for (i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
         snprintf(request, sizeof(request),
                  "GET /%s-timeout HTTP/1.1\r\n"
@@ -394,8 +400,17 @@ static void hook_timeouts(unsigned short port, const char *log,
         CHECK(strstr(response, "too late") == NULL);
         CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
               200);
+        if (i == 0) {
+            ws = open_request(port, upgrade);
+            read_headers(ws, response, sizeof(response));
+            CHECK(strncmp(response, "HTTP/1.1 101", 12) == 0);
+            expect_frame(ws, 0x88, internal_error, 2);
+            send_frame(ws, 0x88, internal_error, 2);
+            close(ws);
+        }
         release_gate(gate);
     }
+    CHECK(events(log, "expired websocket callback ran\n") == 0);
 }
 
 static void upload(unsigned short port, const char *log)

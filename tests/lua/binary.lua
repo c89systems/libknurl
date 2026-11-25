@@ -93,14 +93,19 @@ end}, handler = function()
     end
   end}
 end})
+local producers = setmetatable({}, {__mode = 'v'})
 check(server:route{path = '/sse', methods = {'GET', 'HEAD'}, handler = function()
+  collectgarbage('collect')
+  assert(producers.last == nil, 'previous SSE producer is still retained')
   local sent = false
-  return {sse = function()
+  local function produce()
     record('SSE pulled')
     if sent then return end
     sent = true
     return {event = 'update', id = '1', data = 'hello\nworld', retry_ms = 500}
-  end}
+  end
+  producers.last = produce
+  return {sse = produce}
 end})
 
 local json = lonejson.new()
@@ -151,6 +156,9 @@ check(sockets:websocket{path = '/:name', max_message_bytes = 1024,
   end,
 })
 check(server:websocket{path = '/ws-denied', acl = {policy = 'deny'}})
+check(server:websocket{path = '/ws-queue', on_open = function()
+  record('expired websocket callback ran')
+end})
 
 local hook_order = {}
 check(server:text{path = '/before-timeout', body = 'too late', hooks = {
