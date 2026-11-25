@@ -133,6 +133,8 @@ traceback on the server.
 
 The runner and optional Lua install provide `require('curl')`. The same call
 works at the top level, in worker hooks, and in an application handler.
+Use `require('lonejson')` for the bundled upstream Lua module, including
+the schema constructors for streaming JSON.
 
 ```lua
 local curl = require('curl')
@@ -174,6 +176,33 @@ with `request = {schema = schema, value = value}` and
 Return `true` from a write callback to accept the chunk. An optional
 `progress(info)` callback returns `true` to continue. Callbacks run on the
 calling Lua thread, and nested transfers raise an error.
+
+## Send mail over SMTP
+
+`require('knurl.smtp').send` uses the same synchronous curl binding. Supply
+the SMTP envelope and a complete email message, including its headers.
+
+```lua
+local smtp = require('knurl.smtp')
+local result = smtp.send{
+  url = 'smtps://mail.example.com:465',
+  username = os.getenv('SMTP_USER'),
+  password = os.getenv('SMTP_PASSWORD'),
+  from = 'notifications@example.com',
+  to = {'ops@example.com'},
+  body_path = 'message.eml',
+  timeout_ms = 5000,
+}
+assert(result.ok, result.error_message)
+```
+
+`to` accepts one address or an array. Use `body` or `message` to supply a
+string with CRLF line endings, `body_path` or `upload_path` for a file, or
+`read(max_bytes)` to supply chunks. The default protocol allowlist is SMTP
+and SMTPS. With an `smtp://` endpoint, set `smtp = {use_ssl = true}` to require
+STARTTLS. Credentials, certificate options and deadlines are passed to curl.
+Invalid arguments raise a Lua error. Transfer failures return `ok = false`
+with a structured `error` and the SMTP reply code in `status` when available.
 
 ## Route declarations
 

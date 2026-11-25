@@ -3,6 +3,8 @@ local knurl = require('knurl')
 local pslog = require('pslog')
 local curl = require('curl')
 local lonejson = require('lonejson')
+local smtp = require('knurl.smtp')
+assert(knurl.smtp == smtp)
 assert(require('curl.core') == curl.core and knurl.curl == curl.core)
 assert(type(curl.version()) == 'string')
 
@@ -132,6 +134,49 @@ local function curl_smoke()
   assert(request('/curl-message').ok)
 end
 
+local function send_mail(port, action)
+  local message = 'Subject: knurl test\r\n\r\n.payload\r\n'
+  local options = {
+    url = 'smtp://127.0.0.1:' .. assert(tonumber(port)),
+    proxy = '', timeout_ms = 2000, from = 'sender@example.test', to = 'one@example.test',
+  }
+  if action == 'smtp-file' then
+    local path = work .. '/message.eml'
+    do
+      local file <close> = assert(io.open(path, 'wb'))
+      assert(file:write(message))
+    end
+    options.body_path = path
+    options.smtp = {rcpt = {'one@example.test', 'two@example.test'}}
+  elseif action == 'smtp-read' then
+    local start = 1
+    options.read = function(size)
+      if start > #message then return nil end
+      local part = message:sub(start, start + math.min(size, 4) - 1)
+      start = start + #part
+      return part
+    end
+  else
+    options.message = message
+  end
+  if action == 'smtp-timeout' then options.timeout_ms = 250 end
+  local result = smtp.send(options)
+  assert(options.from == 'sender@example.test' and options.to == 'one@example.test' and options.body == nil)
+  if action == 'smtp-rejected' or action == 'smtp-timeout' then
+    local failure = result.error
+    assert(not result.ok and not result.transport_ok, 'unexpected SMTP success')
+    assert(failure.source == 'curl' and failure.dependency_code == result.code and result.error_message == failure.message)
+    if action == 'smtp-timeout' then
+      assert(result.code == 28 and failure.kind == 'timeout', failure.message)
+    else
+      assert(result.status == 550 and failure.kind == 'transport', failure.message)
+    end
+  else
+    assert(result.ok and result.transport_ok and result.status == 250, result.error_message)
+  end
+  return 'smtp checked'
+end
+
 local routes = check(server:group{prefix = '/app'})
 local invalid = routes:route{
   path = '/invalid', max_body_bytes = 20 * 1024 * 1024,
@@ -150,6 +195,8 @@ check(routes:route{
     if action == 'curl-smoke' then
       curl_smoke()
       return 'curl works'
+    elseif action:sub(1, 5) == 'smtp-' then
+      return send_mail(user, action)
     elseif action == 'curl-stream' or action == 'curl-timeout' then
       local chunks = {}
       local result = curl.perform{

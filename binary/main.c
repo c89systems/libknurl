@@ -13,6 +13,7 @@ int rl_curl_core(lua_State *L);
 #include "pslog_facade.inc"
 #include "lonejson_facade.inc"
 #include "curl_facade.inc"
+#include "smtp_facade.inc"
 
 struct command {
     int argc;
@@ -46,6 +47,12 @@ static int load_curl(lua_State *L)
                        "@embedded/curl.lua");
 }
 
+static int load_smtp(lua_State *L)
+{
+    return load_facade(L, smtp_facade, sizeof(smtp_facade),
+                       "@embedded/knurl/smtp.lua");
+}
+
 static int execute(lua_State *L)
 {
     static const luaL_Reg modules[] = {{"pslog.core", luaopen_pslog_core},
@@ -54,6 +61,7 @@ static int execute(lua_State *L)
                                        {"lonejson", load_lonejson},
                                        {"curl.core", rl_curl_core},
                                        {"curl", load_curl},
+                                       {"knurl.smtp", load_smtp},
                                        {NULL, NULL}};
     const struct command *command = lua_touserdata(L, 1);
     int i;

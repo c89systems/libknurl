@@ -174,7 +174,7 @@ if(KNURL_BUILD_LUA OR KNURL_BUILD_BINARY)
 endif()
 if(KNURL_BUILD_BINARY)
   set(binary_facades "")
-  foreach(module pslog lonejson curl)
+  foreach(module pslog lonejson curl smtp)
     set(facade "${CMAKE_CURRENT_BINARY_DIR}/${module}_facade.inc")
     add_custom_command(OUTPUT "${facade}" COMMAND "${CMAKE_COMMAND}"
       "-DINPUT=${knurl_${module}_facade}" "-DOUTPUT=${facade}" "-DNAME=${module}_facade"

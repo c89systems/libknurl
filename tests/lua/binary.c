@@ -170,13 +170,27 @@ static void reject_upload(unsigned short port, const char *framing)
     CHECK(body != NULL && strcmp(body + 4, "rejected") == 0);
 }
 
+static int accept_origin(int listener)
+{
+    struct timeval timeout = {3, 0};
+    struct pollfd ready;
+    int fd;
+    ready.fd = listener;
+    ready.events = POLLIN;
+    CHECK(poll(&ready, 1, 3000) == 1);
+    fd = accept(listener, NULL, NULL);
+    CHECK(fd >= 0);
+    close(listener);
+    CHECK(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+          0);
+    return fd;
+}
+
 static void curl_request(unsigned short port, const char *log, int timed_out)
 {
     static const char partial[] =
         "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\none";
     unsigned short upstream;
-    struct timeval timeout = {3, 0};
-    struct pollfd ready;
     char request[256], response[1024];
     size_t used = 0;
     ssize_t n;
@@ -190,14 +204,7 @@ static void curl_request(unsigned short port, const char *log, int timed_out)
                       timed_out ? "curl-timeout" : "curl-stream");
     CHECK(length > 0 && (size_t)length < sizeof(request));
     down = open_request(port, request);
-    ready.fd = listener;
-    ready.events = POLLIN;
-    CHECK(poll(&ready, 1, 3000) == 1);
-    up = accept(listener, NULL, NULL);
-    CHECK(up >= 0);
-    close(listener);
-    CHECK(setsockopt(up, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
-          0);
+    up = accept_origin(listener);
     do {
         CHECK(used < sizeof(response) - 1);
         n = read(up, response + used, sizeof(response) - 1 - used);
@@ -221,6 +228,68 @@ static void curl_request(unsigned short port, const char *log, int timed_out)
     CHECK(strncmp(response, "HTTP/1.1 200", 12) == 0);
     CHECK(strstr(response,
                  timed_out ? "\r\n\r\ntimed out" : "\r\n\r\nonetwo") != NULL);
+}
+
+static void smtp_exchange(int fd, const char *reply, const char *expected)
+{
+    char line[256];
+    size_t i, length = strlen(reply);
+    if (length != 0)
+        CHECK(write(fd, reply, length) == (ssize_t)length);
+    for (i = 0; i < sizeof(line) - 1; ++i) {
+        CHECK(read(fd, line + i, 1) == 1);
+        if (line[i] == '\n')
+            break;
+    }
+    CHECK(i < sizeof(line) - 1);
+    line[i + 1] = '\0';
+    CHECK(strncmp(line, expected, strlen(expected)) == 0);
+}
+
+static void smtp_request(unsigned short port, const char *mode)
+{
+    unsigned short upstream;
+    char request[256], response[1024];
+    int listener, down, up, length;
+    listener = bound_socket(&upstream);
+    CHECK(listen(listener, 1) == 0);
+    length = snprintf(request, sizeof(request),
+                      "GET /app/%u/%s HTTP/1.1\r\nHost: localhost\r\n"
+                      "Connection: close\r\n\r\n",
+                      (unsigned int)upstream, mode);
+    CHECK(length > 0 && (size_t)length < sizeof(request));
+    down = open_request(port, request);
+    up = accept_origin(listener);
+    if (strcmp(mode, "smtp-timeout") != 0) {
+        smtp_exchange(up, "220 local test server\r\n", "EHLO ");
+        smtp_exchange(up, "250 localhost\r\n",
+                      "MAIL FROM:<sender@example.test>\r\n");
+        smtp_exchange(up, "250 sender ok\r\n",
+                      "RCPT TO:<one@example.test>\r\n");
+        if (strcmp(mode, "smtp-rejected") == 0) {
+            smtp_exchange(up, "550 rejected\r\n", "QUIT\r\n");
+        } else {
+            if (strcmp(mode, "smtp-file") == 0)
+                smtp_exchange(up, "250 recipient ok\r\n",
+                              "RCPT TO:<two@example.test>\r\n");
+            smtp_exchange(up, "250 recipient ok\r\n", "DATA\r\n");
+            smtp_exchange(up, "354 send message\r\n",
+                          "Subject: knurl test\r\n");
+            smtp_exchange(up, "", "\r\n");
+            smtp_exchange(up, "", "..payload\r\n");
+            smtp_exchange(up, "", ".\r\n");
+            CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL,
+                                          "ready") == 200);
+            smtp_exchange(up, "250 queued\r\n", "QUIT\r\n");
+        }
+        CHECK(write(up, "221 bye\r\n", 9) == 9);
+        close(up);
+    }
+    receive(down, response, sizeof(response));
+    if (strcmp(mode, "smtp-timeout") == 0)
+        close(up);
+    CHECK(strncmp(response, "HTTP/1.1 200", 12) == 0);
+    CHECK(strstr(response, "\r\n\r\nsmtp checked") != NULL);
 }
 
 static void exercise(unsigned short port, const char *log, const char *gate)
@@ -276,6 +345,11 @@ static void exercise(unsigned short port, const char *log, const char *gate)
                                   "curl works") == 200);
     curl_request(port, log, 0);
     curl_request(port, log, 1);
+    smtp_request(port, "smtp-memory");
+    smtp_request(port, "smtp-file");
+    smtp_request(port, "smtp-read");
+    smtp_request(port, "smtp-rejected");
+    smtp_request(port, "smtp-timeout");
 
     /* Abandon a worker. Its replacement starts from the same parent snapshot.
      */

@@ -5,6 +5,18 @@ local knurl = require('knurl')
 local pslog = require('pslog')
 local curl = require('curl')
 local lonejson = require('lonejson')
+local smtp = knurl.smtp
+assert(smtp == require('knurl.smtp') and type(smtp.send) == 'function')
+for _, options in ipairs{
+  {url = 'https://localhost', from = 'a', to = 'b', body = 'message'},
+  {url = 'smtp://localhost', to = 'b', body = 'message'},
+  {url = 'smtp://localhost', from = 'a', to = {}, body = 'message'},
+  {url = 'smtp://localhost', from = 'a', to = 'b'},
+  {url = 'smtp://localhost', from = 'a\r\nMAIL', to = 'b', body = 'message'},
+  {url = 'smtp://localhost', from = 'a', to = 'b', body = 'message', smtp = {use_tls = true}},
+} do
+  assert(not pcall(smtp.send, options))
+end
 assert(require('curl.core') == curl.core and knurl.curl == curl.core)
 assert(type(curl.version()) == 'string')
 local transfer = curl.perform{url = 'file://' .. fixture}

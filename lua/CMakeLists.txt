@@ -13,6 +13,7 @@ foreach(provider pslog lonejson)
   set(knurl_${provider}_license "${${provider}_lua_source}/LICENSE" PARENT_SCOPE)
 endforeach()
 set(knurl_curl_facade "${CMAKE_CURRENT_SOURCE_DIR}/curl.lua" PARENT_SCOPE)
+set(knurl_smtp_facade "${CMAKE_CURRENT_SOURCE_DIR}/knurl/smtp.lua" PARENT_SCOPE)
 
 add_library(knurl_pslog_lua OBJECT "${pslog_lua_source}/lua/src/pslog_lua.c")
 set_target_properties(knurl_pslog_lua PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED YES
@@ -66,5 +67,7 @@ if(KNURL_BUILD_LUA)
   install(FILES curl.lua DESTINATION "${CMAKE_INSTALL_LIBDIR}/lua/5.5/curl" RENAME init.lua
     COMPONENT lua EXCLUDE_FROM_ALL)
   install(FILES curl-core.lua DESTINATION "${CMAKE_INSTALL_LIBDIR}/lua/5.5/curl" RENAME core.lua
+    COMPONENT lua EXCLUDE_FROM_ALL)
+  install(FILES knurl/smtp.lua DESTINATION "${CMAKE_INSTALL_LIBDIR}/lua/5.5/knurl"
     COMPONENT lua EXCLUDE_FROM_ALL)
 endif()
