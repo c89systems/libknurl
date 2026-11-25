@@ -25,13 +25,24 @@ knurl_status knurl_request_snapshot_path_param(const knurl_request_snapshot *m,
     knurl_error_clear(error);
     return KNURL_EOF;
 }
+const knurl_auth_identity *
+knurl_request_snapshot_auth(const knurl_request_snapshot *view)
+{
+    const struct knurl_native_metadata *metadata =
+        (const struct knurl_native_metadata *)view;
+    return metadata != NULL && metadata->identity.method != 0
+               ? &metadata->identity
+               : NULL;
+}
+
 /* One string slab and one ordered pair slab, both retained through native ACK.
  */
 knurl_status knurl_upload_metadata_copy(knurl_request *r,
-                                        knurl_upload_metadata *m, void **text,
-                                        knurl_header **pairs,
+                                        struct knurl_native_metadata *metadata,
+                                        void **text, knurl_header **pairs,
                                         knurl_error *error)
 {
+    knurl_upload_metadata *m = &metadata->view;
     knurl_bytes input[11], *output[11];
     const knurl_header *groups[3];
     size_t sizes[3], i, j, total = 0, count = 0;
@@ -136,6 +147,7 @@ knurl_status knurl_upload_metadata_copy(knurl_request *r,
     m->tls = r->impl->tls;
     m->content_length = r->impl->content_length;
     m->has_content_length = r->impl->has_length;
+    metadata->identity = r->impl->auth_identity;
     return KNURL_OK;
 overflow:
     return knurl_fail(error, KNURL_OVERFLOW, "upload_metadata",

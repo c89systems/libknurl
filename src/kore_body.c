@@ -4,6 +4,7 @@
 #include "body_internal.h"
 #include "policy_internal.h"
 #include "http_framing.h"
+#include "auth_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -81,7 +82,7 @@ static void count_received(struct knurl_input *input, const void *bytes,
     }
 }
 
-static void stop_read(knurl_request *request)
+void knurl_kore_body_pause_headers(knurl_request *request)
 {
     struct http_request *native;
     struct connection *connection;
@@ -159,7 +160,7 @@ void knurl_kore_body_cancel(knurl_request *request, knurl_status cause)
         if (request->impl->body_store != NULL)
             request->impl->body_store->impl->failure = cause;
     }
-    stop_read(request);
+    knurl_kore_body_pause_headers(request);
 }
 
 void knurl_request_stop_input(knurl_request *request, knurl_status cause)
@@ -202,7 +203,7 @@ static int received(struct netbuf *buffer)
     input->pending_length = buffer->s_off;
     count_received(input, input->pending, input->pending_length);
     input->waiting = 0;
-    stop_read(request);
+    knurl_kore_body_pause_headers(request);
     request->impl->response->impl->schedule(request->impl->response);
     return KORE_RESULT_OK;
 }
@@ -403,7 +404,8 @@ void knurl_kore_body_step(knurl_request *request)
     size_t consumed;
     knurl_http_frame_result framed;
     input = request->impl->input;
-    if (input == NULL || input->dead || request->impl->outcome.body_complete)
+    if (input == NULL || input->dead || request->impl->auth_pending_headers ||
+        request->impl->outcome.body_complete)
         return;
     if (request->impl->response->impl->phase >= KNURL_RESPONSE_FINISHING) {
         knurl_kore_body_cancel(request, KNURL_CANCELLED);
@@ -550,6 +552,7 @@ void knurl_kore_request_closed(knurl_request *request)
     if (request->impl->close_notified)
         return;
     request->impl->close_notified = 1;
+    knurl_auth_disconnect(request);
     if (!request->impl->outcome.body_complete &&
         request->impl->outcome.body_cause == KNURL_OK)
         request->impl->outcome.body_cause = KNURL_CANCELLED;

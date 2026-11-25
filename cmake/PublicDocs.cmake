@@ -13,6 +13,7 @@ set(knurl_public_docs
   docs/mmdb.md
   docs/logging.md
   docs/lua-config.md
+  docs/auth.md
   docs/tasks.md
   docs/runtime-direction.md
   docs/openapi.md

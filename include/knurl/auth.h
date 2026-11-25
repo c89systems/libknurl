@@ -1,0 +1,191 @@
+#ifndef KNURL_AUTH_H
+#define KNURL_AUTH_H
+
+#include <knurl/common.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct knurl_auth knurl_auth;
+typedef struct knurl_auth_json knurl_auth_json;
+
+typedef enum knurl_auth_method {
+    KNURL_AUTH_SESSION = 1,
+    KNURL_AUTH_MACHINE
+} knurl_auth_method;
+
+/** Verified, stable subject. Borrowed from a request or a native snapshot. */
+typedef struct knurl_auth_identity {
+    knurl_auth_method method;
+    char subject[129];
+} knurl_auth_identity;
+
+typedef enum knurl_auth_operation {
+    KNURL_AUTH_ATTEMPT,
+    KNURL_AUTH_PASSWORD,
+    KNURL_AUTH_TOTP,
+    KNURL_AUTH_EMAIL,
+    KNURL_AUTH_EMAIL_SAVE,
+    KNURL_AUTH_EMAIL_CONSUME,
+    KNURL_AUTH_SESSION_SAVE,
+    KNURL_AUTH_SESSION_FIND,
+    KNURL_AUTH_SESSION_REVOKE,
+    KNURL_AUTH_MACHINE_VERIFY
+} knurl_auth_operation;
+
+/** On PASSWORD, EMAIL, SESSION_FIND and MACHINE_VERIFY, return a canonical
+ * subject in identity. EMAIL also returns the enrolled delivery address.
+ * ATTEMPT limits login attempts per peer and scope. TOTP checks and consumes
+ * a time step in one transaction.
+ * EMAIL_SAVE replaces the challenge subject to a resend limit and EMAIL_CONSUME
+ * atomically checks the digest, expiry and attempt limit and consumes a match.
+ * Session operations use an opaque digest scoped to the policy and host.
+ * Strings are borrowed for the call. Zero the unused output fields.
+ */
+typedef struct knurl_auth_exchange {
+    /** Opaque namespace for this policy and downstream authority. */
+    const char *scope;
+    /** Login name for ATTEMPT, PASSWORD and EMAIL. Canonical subject for
+     * TOTP, email challenge state and SESSION_SAVE. */
+    const char *subject;
+    /** Password, six-digit TOTP code, or the raw machine Authorization field,
+     * supplied only to the corresponding verification operation. */
+    const char *secret;
+    /** Lowercase hex digest for session and email challenge state operations.
+     */
+    const char *digest;
+    /** Effective client address after the server's trusted forwarding policy.
+     */
+    const char *peer;
+    /** Expiry interval from the time of EMAIL_SAVE or SESSION_SAVE. */
+    unsigned long lifetime_seconds;
+    knurl_auth_identity identity;
+    char email[255];
+    /** Optional opaque credential revision, propagated to the state backend
+     * when both operations use the same provider. */
+    char revision[33];
+} knurl_auth_exchange;
+
+/** Runs on a native worker. Return EOF for a denial or missing entry,
+ * LIMIT for throttling, and another terminal failure for backend errors.
+ * State operations must be atomic across processes/threads. A provider may
+ * implement only the operations used by the configured policies. */
+typedef knurl_status (*knurl_auth_backend_fn)(knurl_auth_operation,
+                                              knurl_auth_exchange *, void *,
+                                              knurl_error *);
+/** Deliver the six-digit code to the enrolled address on an auth worker. */
+typedef knurl_status (*knurl_auth_email_fn)(const char *, const char *, void *,
+                                            knurl_error *);
+
+typedef enum knurl_auth_login {
+    KNURL_AUTH_LOGIN_PASSWORD = 0,
+    KNURL_AUTH_LOGIN_TOTP,
+    KNURL_AUTH_LOGIN_EMAIL
+} knurl_auth_login;
+
+typedef struct knurl_auth_smtp {
+    const char *url;
+    const char *from;
+    const char *username;
+    const char *password;
+    const char *ca_file;
+    long timeout_ms;
+} knurl_auth_smtp;
+
+/** Pinned issuer configuration. Supply the issuer's public JWKS JSON and a
+ * scope issued to machine clients. Keys are installed when configuring auth. */
+typedef struct knurl_auth_oidc {
+    const char *issuer;
+    const char *audience;
+    const char *jwks_uri;
+    const char *jwks_json;
+    const char *scope;
+    /** Default is at+jwt. Set to the issuer's access-token JOSE type. */
+    const char *token_type;
+} knurl_auth_oidc;
+
+typedef struct knurl_auth_config {
+    /** Required policy identifier. Distinct browser policies use distinct
+     * names so a session issued under one cannot satisfy another. */
+    const char *name;
+    knurl_auth_method method;
+    knurl_auth_login login;
+    knurl_auth_backend_fn backend;
+    void *userdata;
+    /** Optional separate backend for PASSWORD and EMAIL. */
+    knurl_auth_backend_fn users;
+    void *users_userdata;
+    /** Optional retained JSON store for the default backend. */
+    knurl_auth_json *json;
+    knurl_auth_email_fn send_email;
+    void *email_userdata;
+    knurl_auth_smtp smtp;
+    unsigned long session_seconds;
+    /** Hex-encoded 32-byte secret for email challenge digests. A JSON store
+     * supplies its own key when this is omitted. */
+    const char *email_key;
+    /** Machine-only alternatives to a backend. Configure a Basic credential
+     * pair or JWT bearer validation. Use a random client secret. */
+    const char *client_id;
+    const char *client_secret;
+    knurl_auth_oidc oidc;
+} knurl_auth_config;
+
+KNURL_API void knurl_auth_config_init(knurl_auth_config *);
+/** Copies configuration strings. Custom callback userdata stays borrowed
+ * through all attached routes and in-flight tasks. */
+KNURL_API knurl_status knurl_auth_new(const knurl_auth_config *, knurl_auth **,
+                                      knurl_error *);
+KNURL_API void knurl_auth_close(knurl_auth *);
+/** Attach or clear a policy on an inactive route or group. A route's explicit
+ * policy takes precedence over its group's default. */
+KNURL_API knurl_status knurl_route_set_auth(knurl_route *, knurl_auth *,
+                                            knurl_error *);
+KNURL_API knurl_status knurl_route_group_set_auth(knurl_route_group *,
+                                                  knurl_auth *, knurl_error *);
+KNURL_API const knurl_auth_identity *knurl_request_auth(const knurl_request *);
+
+/** Register a browser endpoint under its exact path. POST bodies use
+ * application/x-www-form-urlencoded. TLS is required for all auth routes. */
+typedef enum knurl_auth_endpoint {
+    KNURL_AUTH_LOGIN,
+    KNURL_AUTH_EMAIL_START,
+    KNURL_AUTH_LOGOUT
+} knurl_auth_endpoint;
+KNURL_API knurl_status knurl_auth_route(knurl_router *, const char *,
+                                        knurl_auth *, knurl_auth_endpoint,
+                                        knurl_route **, knurl_error *);
+
+/** Open an existing private state directory. Initialize explicitly via
+ * knurl_auth_json_init before opening. The directory contains the local key
+ * and atomically replaced JSON state. Use a local filesystem with flock. */
+KNURL_API knurl_status knurl_auth_json_init(const char *, knurl_error *);
+KNURL_API knurl_status knurl_auth_json_open(const char *, knurl_auth_json **,
+                                            knurl_error *);
+KNURL_API void knurl_auth_json_close(knurl_auth_json *);
+typedef enum knurl_auth_admin {
+    KNURL_AUTH_USER_PASSWORD,
+    KNURL_AUTH_USER_EMAIL,
+    KNURL_AUTH_USER_TOTP,
+    KNURL_AUTH_USER_ENABLE,
+    KNURL_AUTH_USER_DISABLE,
+    KNURL_AUTH_CLIENT_SET,
+    KNURL_AUTH_CLIENT_REVOKE
+} knurl_auth_admin;
+/** Create/update a named account or credential. TOTP takes a base32 seed.
+ * Account changes revoke its sessions. Use NULL for operations with no value.
+ */
+KNURL_API knurl_status knurl_auth_json_admin(knurl_auth_json *,
+                                             knurl_auth_admin, const char *,
+                                             const char *, knurl_error *);
+/** Issue or rotate a machine credential and return its new secret once. */
+KNURL_API knurl_status knurl_auth_json_issue(knurl_auth_json *, const char *,
+                                             char[65], knurl_error *);
+/** Remove expired sessions, challenges and throttle records. */
+KNURL_API knurl_status knurl_auth_json_prune(knurl_auth_json *, knurl_error *);
+
+#ifdef __cplusplus
+}
+#endif
+#endif

@@ -29,7 +29,7 @@ target_link_libraries(knurl_lonejson_lua PUBLIC lonejson::lonejson cpkt::lua_sha
 target_compile_definitions(knurl_lonejson_lua PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
 target_compile_options(knurl_lonejson_lua PRIVATE "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
 
-add_library(knurl_lua_objects OBJECT module.c server.c routes.c acl.c value.c application.c json.c logging.c
+add_library(knurl_lua_objects OBJECT module.c server.c routes.c acl.c auth.c value.c application.c json.c logging.c
   curl.c curl_config.c curl_json.c geoip.c)
 target_include_directories(knurl_lua_objects PRIVATE "${pslog_lua_source}/include" "${lonejson_lua_source}/src/lua")
 target_link_libraries(knurl_lua_objects PUBLIC knurl::shared cpkt::lua_shared pslog::pslog_shared

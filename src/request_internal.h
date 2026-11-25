@@ -4,6 +4,7 @@
 #include "router_internal.h"
 #include <knurl/request.h>
 #include <knurl/dispatch.h>
+#include <knurl/auth.h>
 
 struct knurl_request_impl {
     knurl_request receiver;
@@ -64,6 +65,9 @@ struct knurl_request_impl {
     unsigned int route_phase;
     int route_pending;
     int blocking_job_pending;
+    struct knurl_auth_job *auth_job;
+    knurl_auth_identity auth_identity;
+    int auth_pending_headers, expect_continue;
 };
 
 knurl_bytes knurl_view(const char *text);

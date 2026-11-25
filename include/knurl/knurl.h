@@ -6,6 +6,7 @@
  */
 
 #include <knurl/common.h>
+#include <knurl/auth.h>
 #include <knurl/input.h>
 #include <knurl/mmdb.h>
 #include <knurl/acl.h>

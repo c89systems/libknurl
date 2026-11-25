@@ -8,6 +8,7 @@
 
 #include <knurl/http.h>
 #include <knurl/io.h>
+#include <knurl/auth.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -407,6 +408,8 @@ struct knurl_request {
                            struct knurl_error *);
     /** Private library state; applications must not access it. */
     struct knurl_request_impl *impl;
+    /** Borrow the identity verified by the route's native auth policy. */
+    const knurl_auth_identity *(*auth)(const struct knurl_request *);
 };
 
 #ifdef __cplusplus

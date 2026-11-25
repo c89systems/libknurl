@@ -2,6 +2,7 @@
 #define KNURL_UPLOAD_H
 #include <knurl/router.h>
 #include <knurl/request.h>
+#include <knurl/auth.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -245,6 +246,10 @@ typedef knurl_upload_reader_config knurl_blocking_route_config;
 /** Immutable request snapshot shared by native application and upload routes.
  */
 typedef knurl_upload_metadata knurl_request_snapshot;
+/** Verified identity on a library-supplied snapshot during its callback.
+ * Returns NULL for an unauthenticated request or NULL snapshot. */
+KNURL_API const knurl_auth_identity *
+knurl_request_snapshot_auth(const knurl_request_snapshot *);
 
 /** Callback on a blocking pool thread. May run concurrently with the
  * lifecycle callbacks of other threads. Return a terminal status. */

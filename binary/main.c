@@ -4,6 +4,7 @@
 #include <knurl/common.h>
 #include <stdio.h>
 #include <string.h>
+#include "auth.h"
 
 int luaopen_knurl(lua_State *L);
 int luaopen_pslog_core(lua_State *L);
@@ -92,6 +93,7 @@ static int execute(lua_State *L)
 static void usage(FILE *out)
 {
     fputs("Usage: knurl FILE.lua [ARG ...]\n"
+          "       knurl auth --help\n"
           "       knurl --help | --version\n",
           out);
 }
@@ -103,6 +105,8 @@ int main(int argc, char **argv)
     const char *message;
     int status;
 
+    if (argc >= 2 && strcmp(argv[1], "auth") == 0)
+        return knurl_auth_cli(argc, argv);
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         usage(stdout);
         return 0;

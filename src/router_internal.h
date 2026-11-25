@@ -3,6 +3,7 @@
 
 #include "internal.h"
 #include <knurl/router.h>
+#include <knurl/auth.h>
 #include <regex.h>
 
 struct knurl_route_impl {
@@ -13,6 +14,7 @@ struct knurl_route_impl {
     int raw_path;
     int directory_mount;
     knurl_headers_fn preflight;
+    knurl_auth *auth;
     knurl_route_group *group;
     knurl_router *router;
     void (*release_userdata)(void *);
@@ -22,6 +24,7 @@ struct knurl_route_group_impl {
     knurl_route_group receiver;
     knurl_router *router;
     knurl_route_group_config config;
+    knurl_auth *auth;
     knurl_route_group *next;
 };
 

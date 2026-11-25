@@ -154,11 +154,21 @@ static void field_bytes(lua_State *L, const char *field, knurl_bytes bytes)
 static void push_request(lua_State *L, const knurl_request_snapshot *request)
 {
     size_t i;
+    const knurl_auth_identity *identity = knurl_request_snapshot_auth(request);
     lua_createtable(L, 0, 8);
     field_bytes(L, "method", request->method_token);
     field_bytes(L, "path", request->path);
     field_bytes(L, "raw_path", request->raw_path);
     field_bytes(L, "query", request->query);
+    if (identity != NULL) {
+        lua_createtable(L, 0, 2);
+        lua_pushstring(L, identity->subject);
+        lua_setfield(L, -2, "subject");
+        lua_pushstring(L, identity->method == KNURL_AUTH_MACHINE ? "machine"
+                                                                 : "session");
+        lua_setfield(L, -2, "method");
+        lua_setfield(L, -2, "auth");
+    }
     lua_createtable(L, 0, (int)request->param_count);
     for (i = 0; i < request->param_count; ++i) {
         const knurl_header *pair = &request->params[i];
@@ -342,12 +352,13 @@ static knurl_status application_handler(const knurl_request_snapshot *request,
 static int register_application(lua_State *L)
 {
     static const char *const fields[] = {
-        "path", "path_kind", "method",         "methods",
-        "acl",  "handler",   "max_body_bytes", "buffer_bytes"};
+        "path", "path_kind", "method",         "methods",     "acl",
+        "auth", "handler",   "max_body_bytes", "buffer_bytes"};
     struct rl_server *server = luaL_testudata(L, 1, RL_SERVER);
     struct rl_group *group = luaL_testudata(L, 1, RL_GROUP);
     struct application *app;
     struct rl_route *handle;
+    knurl_auth *auth;
     knurl_route_config path;
     knurl_blocking_route_config route;
     knurl_error error;
@@ -377,7 +388,8 @@ static int register_application(lua_State *L)
             rl_fail(&error, KNURL_INVALID, "invalid application route fields"),
             &error);
     if (!rl_body_limit(L, 2, server, &route.body.max_bytes, &error) ||
-        !rl_acl_option(L, 2, &route.acl, &error))
+        !rl_acl_option(L, 2, &route.acl, &error) ||
+        !rl_auth_option(L, 2, &auth, &error))
         return rl_error(L, &error);
     route.path = path.path;
     route.path_kind = path.path_kind;
@@ -409,6 +421,11 @@ static int register_application(lua_State *L)
     if (status != KNURL_OK) {
         luaL_unref(L, callbacks, app->reference);
         return rl_error(L, &error);
+    }
+    if (auth != NULL) {
+        status = knurl_route_set_auth(handle->native, auth, &error);
+        if (status != KNURL_OK)
+            return rl_error(L, &error);
     }
     server->has_lua = 1;
     lua_pushvalue(L, result);

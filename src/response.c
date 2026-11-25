@@ -520,6 +520,13 @@ knurl_status knurl_response_begin(knurl_response *r, knurl_error *error)
     status = building(r, error);
     if (status != KNURL_OK)
         return status;
+    if (knurl_request_auth(r->impl->request) != NULL &&
+        r->impl->outcome.status >= 200) {
+        status = knurl_response_header_set(r, "cache-control",
+                                           "private, no-store", error);
+        if (status != KNURL_OK)
+            return status;
+    }
     r->impl->suppressed = bodyless(r);
     if (r->impl->trailers_enabled &&
         (r->impl->has_length || r->impl->suppressed))

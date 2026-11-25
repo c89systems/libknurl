@@ -28,6 +28,7 @@ typedef struct knurl_executor_config {
     knurl_status (*on_thread_start)(void *, knurl_error *);
     knurl_status (*on_thread_stop)(void *, knurl_error *);
     void *thread_userdata;
+    int auth_pool;
 } knurl_executor_config;
 typedef struct knurl_job_config {
     knurl_job_fn work;

@@ -2,6 +2,7 @@
 
 #include "proxy_common.h"
 #include "proxy_url.h"
+#include "auth_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -292,6 +293,35 @@ void knurl_proxy_director_cleanup(knurl_proxy_outbound *out)
     memset(out, 0, sizeof(*out));
 }
 
+static char *forward_cookies(const char *value)
+{
+    const char *p = value, *end, *last;
+    char *copy = malloc(strlen(value) + 1), *cursor = copy;
+    size_t length;
+    if (copy == NULL)
+        return NULL;
+    while (*p != 0) {
+        p += strspn(p, "; \t");
+        end = strchr(p, ';');
+        if (end == NULL)
+            end = p + strlen(p);
+        last = end;
+        while (last > p && (last[-1] == ' ' || last[-1] == '\t'))
+            --last;
+        length = (size_t)(last - p);
+        if (length > 0 && strncmp(p, KNURL_AUTH_COOKIE_PREFIX,
+                                  sizeof(KNURL_AUTH_COOKIE_PREFIX) - 1) != 0) {
+            if (cursor != copy)
+                *cursor++ = ';';
+            memcpy(cursor, p, length);
+            cursor += length;
+        }
+        p = end;
+    }
+    *cursor = 0;
+    return copy;
+}
+
 knurl_status knurl_proxy_director_prepare(
     const knurl_proxy_route_data *route, knurl_http_method method,
     const char *path, const char *query, const char *host, int websocket,
@@ -304,6 +334,7 @@ knurl_status knurl_proxy_director_prepare(
     char *initial_target;
     char *initial_authority;
     char *default_authority;
+    const knurl_auth_identity *identity = knurl_request_auth(matched_request);
     size_t i;
 
     if (out == NULL || target == NULL || authority == NULL || route == NULL ||
@@ -329,9 +360,28 @@ knurl_status knurl_proxy_director_prepare(
     out->method = method;
     out->websocket = websocket;
     for (i = 0u; i < sanitized->count; ++i) {
-        if (knurl_proxy_headers_add(&out->headers, sanitized->fields[i].name,
-                                    sanitized->fields[i].value) !=
-            KNURL_PROXY_HEADER_OK) {
+        const char *name = sanitized->fields[i].name;
+        const char *value = sanitized->fields[i].value;
+        char *cookies = NULL;
+        int copied;
+        if (identity != NULL && identity->method == KNURL_AUTH_MACHINE &&
+            knurl_text_equal_case(name, "authorization"))
+            continue;
+        if (identity != NULL && knurl_text_equal_case(name, "cookie") &&
+            strstr(value, KNURL_AUTH_COOKIE_PREFIX) != NULL) {
+            cookies = forward_cookies(value);
+            if (cookies == NULL) {
+                knurl_proxy_error(error, KNURL_NOMEM,
+                                  "failed to filter proxy cookies");
+                return KNURL_NOMEM;
+            }
+            value = cookies;
+        }
+        copied = (cookies != NULL && *cookies == 0) ||
+                 knurl_proxy_headers_add(&out->headers, name, value) ==
+                     KNURL_PROXY_HEADER_OK;
+        free(cookies);
+        if (!copied) {
             knurl_proxy_error(error, KNURL_NOMEM,
                               "failed to copy proxy outbound headers");
             return KNURL_NOMEM;

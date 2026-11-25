@@ -8,6 +8,7 @@
 
 #include <knurl/http.h>
 #include <knurl/acl.h>
+#include <knurl/auth.h>
 #include <knurl/reply.h>
 #include <knurl/dispatch.h>
 
@@ -361,6 +362,10 @@ struct knurl_router {
     knurl_status (*blocking_route)(struct knurl_router *,
                                    const struct knurl_upload_reader_config *,
                                    struct knurl_route **, struct knurl_error *);
+    /** Register a native browser-auth POST endpoint. */
+    knurl_status (*auth_route)(struct knurl_router *, const char *,
+                               knurl_auth *, knurl_auth_endpoint,
+                               struct knurl_route **, struct knurl_error *);
 };
 
 struct knurl_error;
@@ -473,6 +478,9 @@ struct knurl_route_group {
     knurl_status (*blocking_route)(struct knurl_route_group *,
                                    const struct knurl_upload_reader_config *,
                                    struct knurl_route **, struct knurl_error *);
+    /** Replace the group's default auth policy on an inactive router. */
+    knurl_status (*set_auth)(struct knurl_route_group *, knurl_auth *,
+                             struct knurl_error *);
 };
 
 struct knurl_route_config;
@@ -490,6 +498,9 @@ struct knurl_route {
         const struct knurl_route *route);
     /** Private library state; applications must not access it. */
     struct knurl_route_impl *impl;
+    /** Replace the route's retained auth policy on an inactive router. */
+    knurl_status (*set_auth)(struct knurl_route *, knurl_auth *,
+                             struct knurl_error *);
 };
 
 #ifdef __cplusplus

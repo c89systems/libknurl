@@ -233,7 +233,10 @@ static void unlink_executor(knurl_executor *e)
     if (*p == e)
         *p = e->next;
     e->linked = 0;
-    --e->loop->impl->executor_count;
+    if (!e->config.auth_pool)
+        --e->loop->impl->executor_count;
+    else if (e->loop->impl->auth_executor == e)
+        e->loop->impl->auth_executor = NULL;
 }
 static void release_executor(knurl_executor *e)
 {
@@ -442,7 +445,8 @@ knurl_status knurl_executor_new(knurl_server *server,
         return status;
     if (!loop->impl->accepting || loop->impl->executor_stopping)
         return fail(error, KNURL_STATE, "worker is stopping");
-    if (loop->impl->executor_count >= KNURL_EXECUTOR_MAX_POOLS)
+    if ((config == NULL || !config->auth_pool) &&
+        loop->impl->executor_count >= KNURL_EXECUTOR_MAX_POOLS)
         return fail(error, KNURL_LIMIT, "worker executor pool budget is full");
     knurl_executor_config_init(&defaults);
     if (config != NULL)
@@ -500,7 +504,8 @@ knurl_status knurl_executor_new(knurl_server *server,
     e->next = loop->impl->executors;
     loop->impl->executors = e;
     e->linked = 1;
-    ++loop->impl->executor_count;
+    if (!defaults.auth_pool)
+        ++loop->impl->executor_count;
     code = pthread_attr_init(&attributes);
     if (code == 0) {
         code =

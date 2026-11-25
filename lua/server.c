@@ -1,5 +1,40 @@
 #include "binding.h"
 
+static int tls(lua_State *L, knurl_server_config *config,
+               knurl_listener_config *listener, knurl_tls_identity *identity,
+               const char **host, knurl_error *error)
+{
+    static const char *const fields[] = {"host", "certificate", "private_key"};
+    int ok;
+    rl_field(L, 1, "tls");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return 1;
+    }
+    if (!rl_fields(L, -1, fields, RL_COUNT(fields), error))
+        return 0;
+    knurl_tls_identity_init(identity);
+    ok = rl_field_string(L, -1, "host", host) &&
+         rl_field_string(L, -1, "certificate", &identity->certificate.path) &&
+         rl_field_string(L, -1, "private_key", &identity->private_key.path);
+    lua_pop(L, 1);
+    if (!ok || *host == NULL || identity->certificate.path == NULL ||
+        identity->private_key.path == NULL) {
+        rl_fail(error, KNURL_INVALID,
+                "TLS requires host, certificate and private_key");
+        return 0;
+    }
+    identity->mode = KNURL_TLS_MANUAL;
+    identity->domains = host;
+    identity->domain_count = 1;
+    identity->certificate.kind = KNURL_MATERIAL_FILE;
+    identity->private_key.kind = KNURL_MATERIAL_FILE;
+    config->tls.identities = identity;
+    config->tls.identity_count = 1;
+    listener->kind = KNURL_LISTENER_HTTPS;
+    return 1;
+}
+
 static int client_ip(lua_State *L, knurl_client_ip_config *config,
                      knurl_error *error)
 {
@@ -48,10 +83,13 @@ static int server_new(lua_State *L)
                                          "client_ip",
                                          "autoblock_disabled",
                                          "callbacks",
+                                         "tls",
                                          "application_max_tasks",
                                          "application_timeout_ms"};
     knurl_server_config config;
     knurl_listener_config listener;
+    knurl_tls_identity identity;
+    const char *host = NULL;
     struct rl_server *server;
     knurl_error error;
     knurl_status status;
@@ -86,7 +124,8 @@ static int server_new(lua_State *L)
     listener.port = (unsigned short)port;
     if (autoblock_disabled)
         config.autoblock.enabled = 0;
-    if (!client_ip(L, &config.client_ip, &error))
+    if (!client_ip(L, &config.client_ip, &error) ||
+        !tls(L, &config, &listener, &identity, &host, &error))
         return rl_error(L, &error);
 
     server = lua_newuserdatauv(L, sizeof(*server), 1);
@@ -108,10 +147,11 @@ static int server_new(lua_State *L)
 
 static int server_group(lua_State *L)
 {
-    static const char *const fields[] = {"prefix", "acl", "hooks"};
+    static const char *const fields[] = {"prefix", "acl", "auth", "hooks"};
     struct rl_server *server = luaL_testudata(L, 1, RL_SERVER);
     struct rl_group *group;
     knurl_route_group_config config;
+    knurl_auth *auth;
     knurl_error error;
     knurl_status status;
 
@@ -129,7 +169,8 @@ static int server_group(lua_State *L)
         return rl_result(
             L, rl_fail(&error, KNURL_INVALID, "group prefix is required"),
             &error);
-    if (!rl_acl_option(L, 2, &config.acl, &error))
+    if (!rl_acl_option(L, 2, &config.acl, &error) ||
+        !rl_auth_option(L, 2, &auth, &error))
         return rl_error(L, &error);
     group = lua_newuserdatauv(L, sizeof(*group), 1);
     group->server = server;
@@ -139,6 +180,8 @@ static int server_group(lua_State *L)
     lua_setiuservalue(L, -2, 1);
     status = knurl_router_group(knurl_server_router(server->native), &config,
                                 &group->native, &error);
+    if (status == KNURL_OK && auth != NULL)
+        status = knurl_route_group_set_auth(group->native, auth, &error);
     return status == KNURL_OK ? 1 : rl_error(L, &error);
 }
 
@@ -210,6 +253,7 @@ void rl_server_open(lua_State *L)
     }
     rl_routes_open(L, 0);
     rl_application_open(L, 0);
+    rl_auth_endpoints(L);
     lua_pop(L, 1);
 
     luaL_newmetatable(L, RL_GROUP);

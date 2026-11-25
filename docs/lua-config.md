@@ -23,6 +23,9 @@ lonejson and pslog runtime libraries. A static Linux runner loads pure Lua
 modules and provides its built-in C modules through `require`.
 See [runtime direction](runtime-direction.md).
 
+Use `knurl.auth` to configure native browser or machine authentication for
+both configuration-only and application routes. [Native auth and administration](auth.md)
+
 ## Logging
 
 The runner and optional Lua install provide `require('pslog')` using the pinned
@@ -95,8 +98,9 @@ process- or thread-affine resources in `on_worker_start` before readiness.
 worker initializes from the parent's snapshot. The server reports errors from
 worker initialization or cleanup through its lifecycle.
 
-`knurl.server` uses the C production webserver profile with one HTTP
-listener (default `127.0.0.1:8080`) and one HTTP worker. Set `workers`,
+`knurl.server` uses the C production webserver profile with one listener
+(default `127.0.0.1:8080`) and one HTTP worker. Supply `tls = {host, certificate,
+private_key}` with named fields to serve HTTPS using PEM files. Set `workers`,
 `max_connections` or `backend_quiet` as needed. `application_max_tasks`
 limits admitted Lua requests per worker, including queued work. Its default
 is 16 and a full pool returns 503. `application_timeout_ms` defaults to
@@ -235,7 +239,8 @@ an attachment. Pass nil to clear it. Core retains each attachment.
 
 Native routes serve entirely in C. Empty `hooks = {}` and server
 `callbacks = {}` tables are accepted. The inline handler and worker hook
-methods are the Lua callback entry points. Authorization uses native ACLs.
+methods are the Lua callback entry points. Use `acl` for network policy and
+`auth` for identity policy.
 
 ## ACLs and country data
 
@@ -283,8 +288,8 @@ link to application pages that use or display the data.
 
 ## C host extension points
 
-The C host API provides custom ACL resolvers and borrowed country and asset
-providers, request hooks, proxy target selection hooks, downstream TLS/ACME,
-multiple listeners, WebDAV, WebSocket handlers, and mapped REST, JSON and XML
-routes. Lua covers the route declarations above, file-backed ACLs, worker
-hooks, logging, and inline request handlers.
+The C host API provides custom ACL resolvers, auth backends, and borrowed
+country and asset providers. It also exposes request hooks, proxy target
+selection hooks, ACME, multiple listeners, WebDAV, WebSocket handlers, and
+mapped REST, JSON and XML routes. Lua covers the route declarations above,
+native auth, file-backed ACLs, worker hooks, logging, and inline request handlers.

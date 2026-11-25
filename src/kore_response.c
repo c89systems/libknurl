@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "kore_internal.h"
+#include "auth_internal.h"
 #include "response_internal.h"
 #include "channel_internal.h"
 
@@ -242,6 +243,7 @@ int knurl_kore_response_release(void *userdata, struct http_request *native)
         return 1;
     if (request->impl->response->impl->phase < KNURL_RESPONSE_COMPLETE) {
         request->impl->disconnect_side = KNURL_DISCONNECT_DOWNSTREAM;
+        knurl_auth_disconnect(request);
         knurl_kore_body_cancel(request, KNURL_IO);
         (void)knurl_response_abort(request->impl->response, KNURL_IO, NULL);
     }

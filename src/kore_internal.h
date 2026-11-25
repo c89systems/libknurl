@@ -124,6 +124,7 @@ void knurl_kore_responses_shutdown(struct knurl_runtime *runtime);
 knurl_status knurl_kore_body_create(knurl_request *request, const void *data,
                                     size_t length, knurl_error *error);
 void knurl_kore_body_cancel(knurl_request *request, knurl_status cause);
+void knurl_kore_body_pause_headers(knurl_request *request);
 void knurl_kore_body_step(knurl_request *request);
 knurl_status knurl_kore_body_empty_reply(knurl_request *request,
                                          knurl_error *error);

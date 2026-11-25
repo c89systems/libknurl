@@ -23,7 +23,7 @@ struct reader_upload {
     int host_acquired;
     /* Owner loop only; revoked before request close. */
     knurl_request *request;
-    knurl_upload_metadata metadata;
+    struct knurl_native_metadata metadata;
     void *text;
     knurl_header *pairs;
     knurl_source *reader;
@@ -264,18 +264,19 @@ static knurl_status work(knurl_job *job, knurl_bytes arguments, void *data,
     s->reader->impl->native_job = job;
     status = knurl_source_cancelled(s->reader)
                  ? KNURL_CANCELLED
-                 : s->config.handler(&s->metadata, s->reader, s->result,
+                 : s->config.handler(&s->metadata.view, s->reader, s->result,
                                      s->codec.open != NULL ? s->codec_state
                                      : s->host_acquired    ? s->host_state
                                                            : s->config.userdata,
                                      error);
-    complete =
-        s->reader->impl->eof ||
-        (s->metadata.has_content_length &&
-         s->reader->impl->position.high == s->metadata.content_length.high &&
-         s->reader->impl->position.low == s->metadata.content_length.low) ||
-        (s->unframed && s->reader->impl->position.high == 0 &&
-         s->reader->impl->position.low == 0);
+    complete = s->reader->impl->eof ||
+               (s->metadata.view.has_content_length &&
+                s->reader->impl->position.high ==
+                    s->metadata.view.content_length.high &&
+                s->reader->impl->position.low ==
+                    s->metadata.view.content_length.low) ||
+               (s->unframed && s->reader->impl->position.high == 0 &&
+                s->reader->impl->position.low == 0);
     if (status == KNURL_OK && s->reader->impl->failure != KNURL_OK)
         status = s->reader->impl->failure;
     if (status == KNURL_OK && !complete) {
@@ -400,8 +401,8 @@ static knurl_status start(knurl_request *request, knurl_error *error)
     if (status != KNURL_OK)
         return status;
     if (s->config.acquire != NULL) {
-        status = s->config.acquire(s->request, &s->metadata, s->config.userdata,
-                                   &s->host_state, error);
+        status = s->config.acquire(s->request, &s->metadata.view,
+                                   s->config.userdata, &s->host_state, error);
         if (status == KNURL_AGAIN || status == KNURL_EOF)
             return knurl_fail(error, KNURL_INVALID, "upload_reader",
                               "acquire must return OK or a terminal failure");
@@ -412,8 +413,8 @@ static knurl_status start(knurl_request *request, knurl_error *error)
     knurl_source_config_init(&config);
     config.read = read_pipe;
     config.userdata = s;
-    config.has_length = s->metadata.has_content_length;
-    config.length = s->metadata.content_length;
+    config.has_length = s->metadata.view.has_content_length;
+    config.length = s->metadata.view.content_length;
     status = knurl_source_new(&config, &s->reader, error);
     if (status != KNURL_OK)
         return status;

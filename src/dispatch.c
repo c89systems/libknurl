@@ -3,6 +3,7 @@
 #include "server_internal.h"
 #include "acl_internal.h"
 #include "loop_internal.h"
+#include "auth_internal.h"
 
 void knurl_request_plan_init(knurl_request_plan *plan)
 {
@@ -131,6 +132,17 @@ knurl_status knurl_router_dispatch_headers(knurl_router *router,
     status = knurl_acl_route_check(request, error);
     if (status != KNURL_OK)
         return status;
+    status = knurl_auth_admit(request, plan, error);
+    if (status != KNURL_OK || plan->disposition != KNURL_REQUEST_MANAGED)
+        return status;
+    return knurl_router_headers_selected(request, plan, error);
+}
+
+knurl_status knurl_router_headers_selected(knurl_request *request,
+                                           knurl_request_plan *plan,
+                                           knurl_error *error)
+{
+    knurl_status status;
     plan->body = request->impl->route->impl->config.body;
     if (request->impl->route->impl->preflight != NULL) {
         status = request->impl->route->impl->preflight(

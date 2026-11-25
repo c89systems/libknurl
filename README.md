@@ -22,6 +22,8 @@ available from source.
   use HTTP/2 upstreams, or implement SSE and WebSocket handlers in your app.
 - **Serve files and WebDAV.** Mount directories or application asset providers,
   support range and conditional requests, and back WebDAV with custom storage.
+- **Protect routes.** Configure browser sessions, password and TOTP or email
+  login, and machine authentication. [Native authentication](docs/auth.md)
 - **Operate the server.** Configure TLS, mutual TLS and ACME, control worker
   readiness and graceful shutdown, and collect structured access logs.
 

@@ -5,6 +5,7 @@
 #include "body_internal.h"
 #include "channel_internal.h"
 #include "policy_internal.h"
+#include "auth_internal.h"
 #include <knurl/kore.h>
 
 #include <sys/socket.h>
@@ -245,6 +246,62 @@ static knurl_status admit(knurl_request *request, knurl_error *error)
         &request->impl->body_store, error);
 }
 
+static void headers_finish(knurl_request *request, knurl_status status,
+                           knurl_error *error)
+{
+    knurl_request_plan *plan = &request->impl->plan;
+    struct http_request *native = request->impl->native;
+    struct knurl_runtime *runtime = kore_library_hooks.arg;
+    if (status == KNURL_OK)
+        status = admit(request, error);
+    if (status == KNURL_OK && request->impl->on_body_admitted != NULL)
+        status = request->impl->on_body_admitted(request, error);
+    if (status != KNURL_OK) {
+        knurl_channel_finish(request->impl->channel,
+                             status > KNURL_EOF && status <= KNURL_BACKEND
+                                 ? status
+                                 : KNURL_INVALID);
+        knurl_kore_request_fail_message(
+            request, status,
+            request->impl->rejection_status
+                ? request->impl->rejection_status
+                : (status == KNURL_NOT_SUPPORTED ? 501 : 500),
+            request->impl->rejection_status == 413 ? error->message : NULL);
+        return;
+    }
+    if (request->impl->expect_continue &&
+        plan->disposition == KNURL_REQUEST_MANAGED &&
+        (request->impl->has_coding ||
+         (request->impl->has_length && (request->impl->content_length.high ||
+                                        request->impl->content_length.low))) &&
+        request->impl->response->impl->phase == KNURL_RESPONSE_BUILDING) {
+        status = knurl_response_interim(request->impl->response, 100, NULL, 0,
+                                        error);
+        if (status != KNURL_OK)
+            knurl_kore_request_fail(request, status, 500);
+        else
+            knurl_kore_http_status(runtime, native, 100);
+    }
+    request->impl->response->impl->schedule(request->impl->response);
+}
+
+void knurl_kore_headers_resume(knurl_request *request, int allowed)
+{
+    knurl_status status = KNURL_OK;
+    knurl_error error;
+    request->impl->auth_pending_headers = 0;
+    knurl_error_clear(&error);
+    if (allowed) {
+        request->impl->in_headers = 1;
+        status = knurl_router_headers_selected(request, &request->impl->plan,
+                                               &error);
+        request->impl->in_headers = 0;
+    } else {
+        request->impl->plan.disposition = KNURL_REQUEST_REPLY;
+    }
+    headers_finish(request, status, &error);
+}
+
 int knurl_kore_prebody(struct http_request *native, const void *data,
                        size_t length)
 {
@@ -344,36 +401,14 @@ int knurl_kore_prebody(struct http_request *native, const void *data,
                                                request, &plan, &error);
     request->impl->plan = plan;
     request->impl->in_headers = 0;
-    if (status == KNURL_OK)
-        status = admit(request, &error);
-    if (status == KNURL_OK && request->impl->on_body_admitted != NULL)
-        status = request->impl->on_body_admitted(request, &error);
-    if (status != KNURL_OK) {
-        knurl_channel_finish(request->impl->channel,
-                             status > KNURL_EOF && status <= KNURL_BACKEND
-                                 ? status
-                                 : KNURL_INVALID);
-        knurl_kore_request_fail_message(
-            request, status,
-            request->impl->rejection_status
-                ? request->impl->rejection_status
-                : (status == KNURL_NOT_SUPPORTED ? 501 : 500),
-            request->impl->rejection_status == 413 ? error.message : NULL);
-        return KORE_RESULT_RETRY;
+    request->impl->expect_continue = expect != 0;
+    if (status == KNURL_AGAIN && request->impl->auth_pending_headers) {
+        knurl_kore_body_pause_headers(request);
+    } else {
+        if (request->impl->auth_pending_headers)
+            knurl_auth_disconnect(request);
+        headers_finish(request, status, &error);
     }
-    if (expect && plan.disposition == KNURL_REQUEST_MANAGED &&
-        (request->impl->has_coding ||
-         (request->impl->has_length && (request->impl->content_length.high ||
-                                        request->impl->content_length.low))) &&
-        request->impl->response->impl->phase == KNURL_RESPONSE_BUILDING) {
-        status = knurl_response_interim(request->impl->response, 100, NULL, 0,
-                                        &error);
-        if (status != KNURL_OK)
-            knurl_kore_request_fail(request, status, 500);
-        else
-            knurl_kore_http_status(runtime, native, 100);
-    }
-    request->impl->response->impl->schedule(request->impl->response);
     return KORE_RESULT_RETRY;
 }
 

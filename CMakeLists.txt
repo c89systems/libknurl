@@ -80,6 +80,8 @@ add_library(knurl_objects OBJECT src/common.c src/u64.c src/input.c src/input_re
 target_sources(knurl_objects PRIVATE src/static_gzip.c src/static_encoding.c)
 target_sources(knurl_objects PRIVATE src/ca.c)
 target_sources(knurl_objects PRIVATE src/task.c)
+target_sources(knurl_objects PRIVATE src/auth.c src/auth_work.c src/auth_route.c
+  src/auth_secret.c src/auth_json.c src/auth_store.c src/auth_smtp.c src/auth_oidc.c)
 target_sources(knurl_objects PRIVATE src/acme_file.c)
 target_sources(knurl_objects PRIVATE src/mmdb.c src/mmdb_decode.c src/mmdb_file.c src/mmdb_cache.c)
 target_sources(knurl_objects PRIVATE src/mmdb_prefix.c)
@@ -87,6 +89,7 @@ target_sources(knurl_objects PRIVATE src/ip.c src/forwarded.c src/acl.c src/acl_
 target_include_directories(knurl_objects PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(knurl_objects PRIVATE "${kore_source_dir}/include/kore")
 target_link_libraries(knurl_objects PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::LibXml2 lonejson::lonejson pslog::pslog_shared)
+target_link_libraries(knurl_objects PRIVATE lonejson::oidc lonejson::openssl)
 target_link_libraries(knurl_objects PRIVATE ZLIB::ZLIB)
 file(STRINGS vendor/kore.revision kore_revision LIMIT_COUNT 1)
 target_compile_definitions(knurl_objects PRIVATE KNURL_VERSION="${PROJECT_VERSION}"
@@ -134,7 +137,7 @@ target_link_libraries(knurl_static PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::L
   pslog::pslog_static Threads::Threads)
 target_link_libraries(knurl_static PUBLIC lonejson::lonejson_static)
 target_link_libraries(knurl_static PRIVATE ZLIB::ZLIB)
-set(knurl_core_headers include/knurl/mmdb.h include/knurl/common.h include/knurl/input.h include/knurl/http.h include/knurl/knurl.h
+set(knurl_core_headers include/knurl/mmdb.h include/knurl/common.h include/knurl/auth.h include/knurl/input.h include/knurl/http.h include/knurl/knurl.h
   include/knurl/io.h include/knurl/reply.h include/knurl/tls.h
   include/knurl/server.h include/knurl/log.h include/knurl/pslog.h include/knurl/openapi.h include/knurl/router.h include/knurl/request.h include/knurl/kore.h
   include/knurl/loop.h include/knurl/task.h include/knurl/response.h include/knurl/dispatch.h
@@ -187,7 +190,7 @@ if(KNURL_BUILD_BINARY)
       DEPENDS "${knurl_${module}_facade}" cmake/EmbedLua.cmake VERBATIM)
     list(APPEND binary_facades "${facade}")
   endforeach()
-  add_executable(knurl binary/main.c ${binary_facades})
+  add_executable(knurl binary/main.c binary/auth.c ${binary_facades})
   target_include_directories(knurl PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_sources(knurl PRIVATE $<TARGET_OBJECTS:knurl_lua_objects>
     $<TARGET_OBJECTS:knurl_pslog_lua> $<TARGET_OBJECTS:knurl_lonejson_lua>)
@@ -625,6 +628,24 @@ if(BUILD_TESTING)
   knurl_c89(knurl_task)
   knurl_local_runtime(knurl_task)
   add_test(NAME knurl.task COMMAND knurl_task)
+  add_executable(knurl_auth_runtime tests/auth-runtime.c)
+  target_link_libraries(knurl_auth_runtime PRIVATE knurl::shared cpkt::openssl_ssl_shared)
+  target_compile_definitions(knurl_auth_runtime PRIVATE $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
+  knurl_c89(knurl_auth_runtime)
+  knurl_local_runtime(knurl_auth_runtime)
+  if(knurl_can_run)
+    add_test(NAME knurl.auth-runtime COMMAND "${CMAKE_COMMAND}"
+      "-DTEST=$<TARGET_FILE:knurl_auth_runtime>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/tests/auth-runtime"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/RunAuth.cmake")
+    set_tests_properties(knurl.auth-runtime PROPERTIES TIMEOUT 30)
+    if(KNURL_BUILD_BINARY)
+      add_test(NAME knurl.auth-runner COMMAND "${CMAKE_COMMAND}"
+        "-DTEST=$<TARGET_FILE:knurl_auth_runtime>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/tests/auth-runner"
+        "-DRUNNER=$<TARGET_FILE:knurl>" "-DSCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/lua/auth.lua"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/RunAuth.cmake")
+      set_tests_properties(knurl.auth-runner PROPERTIES TIMEOUT 30)
+    endif()
+  endif()
   add_executable(knurl_blocking_route tests/blocking-route.c tests/acl-wire.c)
   target_link_libraries(knurl_blocking_route PRIVATE knurl::shared Threads::Threads)
   knurl_c89(knurl_blocking_route)

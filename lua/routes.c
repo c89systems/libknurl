@@ -62,9 +62,9 @@ static knurl_status register_fixed(lua_State *L, struct rl_server *server,
                                    knurl_error *error)
 {
     static const char *const fields[] = {
-        "path",         "path_kind", "method",       "methods",
-        "acl",          "hooks",     "status",       "body",
-        "content_type", "location",  "cache_control"};
+        "path", "path_kind",    "method",   "methods",
+        "acl",  "auth",         "hooks",    "status",
+        "body", "content_type", "location", "cache_control"};
     knurl_route_config route;
     knurl_reply *validation;
     struct rl_fixed input, *fixed;
@@ -163,6 +163,7 @@ static knurl_status register_static(lua_State *L, knurl_router *router,
                                          "method",
                                          "methods",
                                          "acl",
+                                         "auth",
                                          "hooks",
                                          "content_type",
                                          "cache_control",
@@ -215,8 +216,8 @@ static knurl_status register_upload(lua_State *L, struct rl_server *server,
                                     knurl_error *error)
 {
     static const char *const fields[] = {
-        "path",    "file_path",      "path_kind", "method",
-        "methods", "max_body_bytes", "acl",       "hooks"};
+        "path",           "file_path", "path_kind", "method", "methods",
+        "max_body_bytes", "acl",       "auth",      "hooks"};
     knurl_upload_file_config config;
     knurl_route_config path;
     if (!rl_fields(L, 2, fields, RL_COUNT(fields), error))
@@ -249,6 +250,7 @@ static knurl_status register_proxy(lua_State *L, knurl_router *router,
                                          "method",
                                          "methods",
                                          "acl",
+                                         "auth",
                                          "hooks",
                                          "connect_timeout_ms",
                                          "idle_timeout_ms",
@@ -317,6 +319,7 @@ static int route(lua_State *L)
         (enum route_kind)lua_tointeger(L, lua_upvalueindex(1));
     knurl_router *router;
     struct rl_route *handle;
+    knurl_auth *auth;
     knurl_error error;
     knurl_status status;
     int result;
@@ -329,6 +332,12 @@ static int route(lua_State *L)
     if (server->running)
         return rl_result(L, rl_fail(&error, KNURL_STATE, "server is running"),
                          &error);
+    if (!lua_istable(L, 2))
+        return rl_result(
+            L, rl_fail(&error, KNURL_INVALID, "configuration table required"),
+            &error);
+    if (!rl_auth_option(L, 2, &auth, &error))
+        return rl_error(L, &error);
     router = knurl_server_router(server->native);
     handle = rl_route_new(L, server);
     result = lua_gettop(L);
@@ -358,6 +367,8 @@ static int route(lua_State *L)
                                     &handle->native, &error);
         break;
     }
+    if (status == KNURL_OK && auth != NULL)
+        status = knurl_route_set_auth(handle->native, auth, &error);
     if (status != KNURL_OK)
         return rl_error(L, &error);
     lua_pushvalue(L, result);
@@ -373,10 +384,14 @@ void rl_routes_open(lua_State *L, int group)
     if (group) {
         lua_pushcfunction(L, rl_set_acl);
         lua_setfield(L, -2, "set_acl");
+        lua_pushcfunction(L, rl_set_auth);
+        lua_setfield(L, -2, "set_auth");
     } else {
         luaL_newmetatable(L, RL_ROUTE);
         lua_pushcfunction(L, rl_set_acl);
         lua_setfield(L, -2, "set_acl");
+        lua_pushcfunction(L, rl_set_auth);
+        lua_setfield(L, -2, "set_auth");
         lua_pushvalue(L, -1);
         lua_setfield(L, -2, "__index");
         lua_pushliteral(L, "knurl");
