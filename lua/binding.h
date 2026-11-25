@@ -31,9 +31,8 @@ struct rl_work {
     knurl_status (*run)(knurl_task *, struct rl_work *, knurl_error *);
     void (*complete)(struct rl_work *, knurl_status, const knurl_error *);
     knurl_task *task;
-    knurl_timer *retry;
-    knurl_error retry_error;
-    knurl_status retry_status;
+    struct rl_work *pending_next;
+    int pending;
     knurl_u64 deadline;
 };
 
@@ -67,6 +66,10 @@ struct rl_server {
     int running, has_lua;
     knurl_task *websocket_task;
     struct rl_cleanup *cleanup;
+    struct rl_work *pending_head, *pending_tail;
+    size_t pending_count;
+    knurl_timer *retry_timer;
+    int retry_ready;
 };
 
 struct rl_group {

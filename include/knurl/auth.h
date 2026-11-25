@@ -34,7 +34,7 @@ typedef enum knurl_auth_factor {
 /** Verified, stable subject. Borrowed from a request or a native snapshot. */
 typedef struct knurl_auth_identity {
     knurl_auth_method method;
-    char subject[129];
+    char subject[256];
 } knurl_auth_identity;
 
 typedef enum knurl_auth_operation {
@@ -51,7 +51,8 @@ typedef enum knurl_auth_operation {
     KNURL_AUTH_TOTP_ENROLL,
     KNURL_AUTH_WORKFLOW_BEGIN,
     KNURL_AUTH_WORKFLOW_FIND,
-    KNURL_AUTH_WORKFLOW_STEP
+    KNURL_AUTH_WORKFLOW_STEP,
+    KNURL_AUTH_TOTP_CONFIRM
 } knurl_auth_operation;
 
 /** On PASSWORD, EMAIL, SESSION_FIND and MACHINE_VERIFY, return a canonical
@@ -62,8 +63,10 @@ typedef enum knurl_auth_operation {
  * enrollment. EMAIL_SAVE replaces the challenge subject to a resend limit.
  * TOTP_ENROLL receives a subject from a verified session. An empty secret
  * requests first enrollment, a code authorizes rotation. Verify the supplied
- * session digest and revision atomically with the update. Return the
- * provisioning URI on success.
+ * session digest and revision when staging the pending seed. Return its
+ * provisioning URI. TOTP_CONFIRM verifies the code from that pending seed,
+ * its lifetime and the same session digest. Replace the active seed and
+ * invalidate old sessions in the same transaction on successful confirmation.
  * Session operations use an opaque digest scoped to the policy and host.
  * Strings are borrowed for the call. Zero the unused output fields.
  */
@@ -125,7 +128,7 @@ typedef knurl_status (*knurl_auth_backend_fn)(knurl_auth_operation,
 /** Deliver the six-digit code to the enrolled address on an auth worker. */
 typedef knurl_status (*knurl_auth_email_fn)(const char *, const char *, void *,
                                             knurl_error *);
-/** Optional account revalidation after session lookup, on a native worker.
+/** Account revalidation after credential lookup, on a native worker.
  * Return OK to admit, EOF to deny, or another terminal status when the
  * identity provider is unavailable. */
 typedef knurl_status (*knurl_auth_session_check_fn)(const knurl_auth_identity *,
@@ -149,7 +152,7 @@ typedef struct knurl_auth_oidc {
     const char *jwks_uri;
     const char *jwks_json;
     const char *scope;
-    /** Default is at+jwt. Set to the issuer's access-token JOSE type. */
+    /** Defaults to at+jwt and application/at+jwt. Set to one explicit type. */
     const char *token_type;
     const char *ca_file;
     int pin_jwks;
@@ -213,6 +216,10 @@ typedef struct knurl_auth_config {
     knurl_auth_oidc oidc;
     knurl_auth_session_check_fn session_check;
     void *session_check_userdata;
+    /** Revalidate the account on machine admission after credential lookup.
+     * Required for a machine workflow using a separate users backend. */
+    knurl_auth_session_check_fn machine_check;
+    void *machine_check_userdata;
 } knurl_auth_config;
 
 KNURL_API void knurl_auth_config_init(knurl_auth_config *);
@@ -236,7 +243,8 @@ typedef enum knurl_auth_endpoint {
     KNURL_AUTH_EMAIL_START,
     KNURL_AUTH_LOGOUT,
     /** Authorize with this policy's session cookie. POST an empty form to
-     * enroll, or code=<current TOTP> to rotate. */
+     * stage enrollment or code=<current TOTP> to stage rotation. POST
+     * confirm=<new TOTP> with the same session to activate the new seed. */
     KNURL_AUTH_TOTP_ENROLL_ENDPOINT,
     /** Start or continue the configured factor workflow. A form has either
      * username and its first factor, or workflow and the requested factor.

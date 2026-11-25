@@ -1382,7 +1382,7 @@ void knurl_response_step(knurl_response *r)
             status = emit_head(r, NULL);
         if (status != KNURL_OK) {
             r->impl->request->impl->hook_after = KNURL_AFTER_HOOK_COUNT;
-            knurl_response_fail(r, status);
+            knurl_response_error(r, status, status == KNURL_LIMIT ? 503 : 500);
             return;
         }
     }

@@ -168,7 +168,7 @@ static knurl_status read_chunk(void *buffer, size_t capacity, size_t *produced,
     struct stream *s = data;
     knurl_status status;
     size_t count;
-    if (s->work.task != NULL || s->work.retry != NULL)
+    if (s->work.task != NULL || s->work.pending)
         return KNURL_AGAIN;
     if (s->status != KNURL_OK) {
         if (s->status != KNURL_EOF && error != NULL)
@@ -200,7 +200,7 @@ static void close_source(void *data, knurl_status outcome)
     struct stream *s = data;
     (void)outcome;
     s->source = NULL;
-    if (s->work.task != NULL || s->work.retry != NULL)
+    if (s->work.task != NULL || s->work.pending)
         rl_work_cancel(&s->work);
     else
         dispose(s);

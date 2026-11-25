@@ -42,6 +42,7 @@ struct knurl_auth_job {
     char cookie[65];
     char revision[33];
     char totp_uri[KNURL_AUTH_TOTP_URI_CAPACITY];
+    int confirm_totp;
     char workflow[65];
     char next_workflow[65];
     char path_digest[65];
@@ -90,8 +91,12 @@ int knurl_auth_https_url(const char *);
 void knurl_oauth2_client_retain(knurl_oauth2_client *);
 knurl_status knurl_oauth2_proxy_admit(knurl_request *, const knurl_reply *, int,
                                       void *, knurl_error *);
-knurl_status knurl_auth_executor(knurl_request *, knurl_executor **,
-                                 knurl_error *);
+enum knurl_auth_service { KNURL_AUTH_LOCAL, KNURL_AUTH_OIDC, KNURL_AUTH_PROXY };
+knurl_status knurl_auth_executor(knurl_request *, enum knurl_auth_service,
+                                 knurl_executor **, knurl_error *);
+knurl_status knurl_oauth2_client_get(knurl_oauth2_client *, char *, size_t,
+                                     uint64_t *, knurl_error *);
+void knurl_oauth2_client_reject(knurl_oauth2_client *, uint64_t);
 knurl_status knurl_auth_exchange_run(struct knurl_auth_job *,
                                      knurl_auth_operation,
                                      knurl_auth_exchange *, knurl_error *);

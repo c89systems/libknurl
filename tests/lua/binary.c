@@ -414,6 +414,19 @@ static void hook_timeouts(unsigned short port, const char *log,
         CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
               200);
         if (i == 0) {
+            int queued[3], j, expired = 0;
+            for (j = 0; j < 3; ++j)
+                queued[j] = open_request(
+                    port, "GET /queue-probe HTTP/1.1\r\nHost: localhost\r\n"
+                          "Connection: close\r\n\r\n");
+            for (j = 0; j < 3; ++j) {
+                receive(queued[j], response, sizeof(response));
+                if (strncmp(response, "HTTP/1.1 504", 12) == 0)
+                    ++expired;
+                else
+                    CHECK(strncmp(response, "HTTP/1.1 503", 12) == 0);
+            }
+            CHECK(expired == 1);
             ws = open_request(port, upgrade);
             read_headers(ws, response, sizeof(response));
             CHECK(strncmp(response, "HTTP/1.1 101", 12) == 0);
@@ -424,6 +437,7 @@ static void hook_timeouts(unsigned short port, const char *log,
         release_gate(gate);
     }
     CHECK(events(log, "expired websocket callback ran\n") == 0);
+    CHECK(events(log, "expired route callback ran\n") == 0);
 }
 
 static void upload(unsigned short port, const char *log)

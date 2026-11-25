@@ -157,6 +157,8 @@ check(sockets:websocket{path = '/:name', max_message_bytes = 1024,
   end,
 })
 check(server:websocket{path = '/ws-denied', acl = {policy = 'deny'}})
+check(server:text{path = '/queue-probe', body = 'unexpected',
+  hooks = {before = function() record('expired route callback ran') end}})
 check(server:websocket{path = '/ws-queue', on_open = function()
   record('expired websocket callback ran')
 end})

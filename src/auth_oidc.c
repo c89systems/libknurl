@@ -80,13 +80,12 @@ knurl_status knurl_auth_oidc_init(const knurl_auth_oidc *config,
     issuer->ca_file = knurl_copy_text(config->ca_file);
     issuer->audience = knurl_copy_text(config->audience);
     issuer->scope = knurl_copy_text(config->scope);
-    issuer->token_type = knurl_copy_text(
-        config->token_type != NULL ? config->token_type : "at+jwt");
+    issuer->token_type = knurl_copy_text(config->token_type);
     if (issuer->name == NULL ||
         (config->jwks_uri != NULL && issuer->jwks_uri == NULL) ||
         (config->ca_file != NULL && issuer->ca_file == NULL) ||
         issuer->audience == NULL || issuer->scope == NULL ||
-        issuer->token_type == NULL) {
+        (config->token_type != NULL && issuer->token_type == NULL)) {
         knurl_auth_oidc_close(issuer);
         return knurl_fail(error, KNURL_NOMEM, "auth_oidc",
                           "copying issuer configuration");
@@ -135,6 +134,17 @@ static int refresh_keys(struct knurl_auth_issuer *issuer, lonejson *runtime,
     key_policy(issuer, keys);
     issuer->retry_at = keys->now + 5;
     return status == LONEJSON_STATUS_OK;
+}
+
+static int access_token_type(const struct knurl_auth_issuer *issuer,
+                             const char *type)
+{
+    if (type == NULL)
+        return 0;
+    if (issuer->token_type != NULL)
+        return strcasecmp(type, issuer->token_type) == 0;
+    return strcasecmp(type, "at+jwt") == 0 ||
+           strcasecmp(type, "application/at+jwt") == 0;
 }
 
 knurl_status knurl_auth_oidc_verify(struct knurl_auth_issuer *issuer,
@@ -199,9 +209,9 @@ knurl_status knurl_auth_oidc_verify(struct knurl_auth_issuer *issuer,
         pthread_mutex_unlock(&issuer->lock);
         if (status == LONEJSON_STATUS_OK &&
             token.failure == LONEJSON_AUTH_FAILURE_NONE &&
-            token.header.typ != NULL &&
-            strcasecmp(token.header.typ, issuer->token_type) == 0 &&
-            knurl_auth_name(token.claims.sub)) {
+            access_token_type(issuer, token.header.typ) &&
+            token.claims.sub != NULL && token.claims.sub[0] != 0 &&
+            strlen(token.claims.sub) < sizeof(x->identity.subject)) {
             memcpy(x->identity.subject, token.claims.sub,
                    strlen(token.claims.sub) + 1);
         } else if (token.failure == LONEJSON_AUTH_FAILURE_CACHE_UNAVAILABLE) {

@@ -670,6 +670,8 @@ static knurl_status final_headers(struct proxy_exchange *x)
     r = x->request->impl->response;
     up = &x->upstream.response;
     if (!x->final_prepared) {
+        knurl_proxy_oauth2_response(x->request, x->route->oauth2, up->status,
+                                    &up->headers);
         status = knurl_proxy_response_apply(
             up, &x->upstream.outbound_headers, x->route->modify_response,
             x->route->modify_response_userdata, &code, NULL);

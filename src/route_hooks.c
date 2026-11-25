@@ -103,6 +103,8 @@ static knurl_status invoke(knurl_request *request,
     if (status == KNURL_AGAIN && request->impl->hook_cancel != NULL)
         return KNURL_AGAIN;
     knurl_request_hook_cancel(request);
+    if (status == KNURL_LIMIT && stage == KNURL_HOOK_ADMISSION)
+        request->impl->rejection_status = 503;
     return status == KNURL_AGAIN
                ? fail(error, KNURL_STATE,
                       "async hook returned AGAIN without a wait")

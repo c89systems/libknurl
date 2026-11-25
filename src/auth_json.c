@@ -294,6 +294,7 @@ static enum auth_collection collection(const char *key)
     switch (key[0]) {
     case 'u':
     case 'c':
+    case 'y':
         return AUTH_ACCOUNTS;
     case 's':
     case 'f':
@@ -477,9 +478,7 @@ knurl_status knurl_auth_json_write(struct auth_transaction *tx, const char *key,
         return status;
     index = find(doc, key);
     if (index == doc->records.count) {
-        if (index == AUTH_MAX_RECORDS &&
-            (kind == AUTH_SESSIONS || kind == AUTH_EMAIL_CODES ||
-             kind == AUTH_TOTP_STEPS || kind == AUTH_ATTEMPTS)) {
+        if (index == AUTH_MAX_RECORDS) {
             expire(doc, (lonejson_int64)time(NULL));
             index = doc->records.count;
         }
@@ -523,7 +522,8 @@ knurl_status knurl_auth_json_delete(struct auth_transaction *tx,
 knurl_status knurl_auth_json_prune(knurl_auth_json *json, knurl_error *error)
 {
     static const enum auth_collection expiring[] = {
-        AUTH_SESSIONS, AUTH_EMAIL_CODES, AUTH_TOTP_STEPS, AUTH_ATTEMPTS};
+        AUTH_ACCOUNTS, AUTH_SESSIONS, AUTH_EMAIL_CODES, AUTH_TOTP_STEPS,
+        AUTH_ATTEMPTS};
     struct auth_transaction tx;
     lonejson_int64 now = (lonejson_int64)time(NULL);
     size_t i;

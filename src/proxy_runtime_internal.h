@@ -8,6 +8,8 @@
 #include "server_internal.h"
 struct knurl_proxy_ws;
 struct proxy_exchange;
+void knurl_proxy_oauth2_response(knurl_request *, knurl_oauth2_client *,
+                                 unsigned, const knurl_proxy_headers *);
 struct knurl_proxy_worker {
     knurl_proxy_transport *transport;
     struct proxy_exchange *exchanges;

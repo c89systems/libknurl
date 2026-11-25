@@ -69,12 +69,18 @@ assert(server:totp_enroll{path = '/enroll/totp', auth = bootstrap})
 
 The TOTP login returns HTTP 428 after password verification if the account
 needs enrollment. First sign in under the bootstrap policy, then POST an
-empty form to `/enroll/totp` with its cookie. The endpoint returns HTTP 201
-with a one-time JSON `uri` field for the authenticator. Use
-`application/x-www-form-urlencoded` on the same HTTPS origin. Rotation
-requires the current authenticator's unused `code` or the operator CLI.
-Enrollment and rotation invalidate existing account sessions. Sign in on the
-TOTP-required route to establish a new session.
+empty form to `/enroll/totp` with its cookie. The endpoint returns HTTP 202
+with a JSON `uri` for the authenticator. POST `confirm=<new code>` with
+the same cookie within ten minutes to activate the seed and receive HTTP
+204. If the provisioning response was lost, repeat the first POST to stage
+a fresh seed. Use `application/x-www-form-urlencoded` on the same HTTPS
+origin.
+
+To rotate, submit `code=<current unused code>` instead of an empty form.
+The current seed remains active until you confirm the replacement. Successful
+confirmation invalidates existing sessions tied to the account's revision.
+Sign in on the TOTP-required route with a fresh code after confirmation.
+The operator CLI can replace an enrollment directly.
 
 An application receives `req.auth.subject` and `req.auth.method`. The method
 is `session` or `machine`. C handlers use `knurl_request_auth()` or
@@ -173,8 +179,8 @@ assert(server:text{path = '/integration/health', body = 'ready', auth = service}
 ```
 
 LoneJSON verifies the signature, issuer, audience, expiry, required scope and
-subject. The JOSE type defaults to `at+jwt`. Set `token_type` to the type
-your issuer uses for access tokens. Knurl discovers the JWKS endpoint over
+subject. The default JOSE types are `at+jwt` and `application/at+jwt`.
+Set `token_type` to require one specific type. Knurl discovers the JWKS endpoint over
 HTTPS and refreshes cached keys on expiry or when an unfamiliar key ID
 appears. An explicit `jwks_uri` skips discovery. You can seed that cache with
 `jwks_json`, or set `pin_jwks = true` to use only the supplied keys.
@@ -204,6 +210,10 @@ tokens when there is no refresh token or the issuer rejects it as invalid.
 The proxy supplies the resulting `Authorization` header automatically. All
 upstream targets must use HTTPS. The token endpoint uses
 `client_secret_basic` by default and supports `client_secret_post = true`.
+An upstream Bearer `invalid_token` response marks that token generation as
+unusable. Knurl returns the upstream response and obtains a fresh token for a
+later request. Proxy token acquisition and inbound JWT verification each use
+a native executor separate from the one for local sign-in.
 Both the inbound OIDC and outbound OAuth2 configuration accept `ca_file`
 for a private trust root. A Lua application worker can also call
 `upstream:token()` for a separate outbound request. The call may wait for
@@ -244,5 +254,8 @@ processes. State operations must be atomic across them. Set `session_check`
 in the C policy to revalidate the account after a valid session lookup.
 `KNURL_OK` admits the request, `KNURL_EOF` denies it with HTTP 401, and a
 provider failure returns HTTP 503. The callback runs after the store releases
-its lock. The public `<knurl/auth.h>` header defines the callback contract and
+its lock. Set `machine_check` for the equivalent check after machine credential
+lookup. Machine workflows with a separate `users` backend require that
+callback so directory disablement also revokes access through previously issued
+credentials. The public `<knurl/auth.h>` header defines the callback contract and
 operation inputs.

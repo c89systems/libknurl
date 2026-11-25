@@ -19,6 +19,7 @@ struct knurl_oauth2_client {
     size_t references;
     lonejson_int64 renew_at;
     lonejson_int64 retry_at;
+    uint64_t generation, rejected_generation;
 };
 
 static void wipe(char *secret)
@@ -251,6 +252,7 @@ static knurl_status request_token(knurl_oauth2_client *client,
         wipe(client->flow.id_token);
         lonejson_oauth2_token_flow_cleanup(&client->flow);
         client->flow = next;
+        ++client->generation;
         /* Without expires_in, obtain a fresh token on the next use. */
         lead = token.has_expires_in ? token.expires_in / 10 : 0;
         if (lead > 30)
@@ -300,8 +302,27 @@ static knurl_status renew(knurl_oauth2_client *client, lonejson_int64 now,
     return status;
 }
 
-knurl_status knurl_oauth2_client_token(knurl_oauth2_client *client, char *out,
-                                       size_t capacity, knurl_error *error)
+static int rejected(const knurl_oauth2_client *client)
+{
+    return client->generation ==
+           __atomic_load_n(&client->rejected_generation, __ATOMIC_ACQUIRE);
+}
+
+void knurl_oauth2_client_reject(knurl_oauth2_client *client,
+                                uint64_t generation)
+{
+    uint64_t previous =
+        __atomic_load_n(&client->rejected_generation, __ATOMIC_RELAXED);
+    while (previous < generation &&
+           !__atomic_compare_exchange_n(&client->rejected_generation, &previous,
+                                        generation, 0, __ATOMIC_RELEASE,
+                                        __ATOMIC_RELAXED))
+        ;
+}
+
+knurl_status knurl_oauth2_client_get(knurl_oauth2_client *client, char *out,
+                                     size_t capacity, uint64_t *generation,
+                                     knurl_error *error)
 {
     lonejson_int64 now;
     knurl_status status = KNURL_BACKEND;
@@ -311,7 +332,8 @@ knurl_status knurl_oauth2_client_token(knurl_oauth2_client *client, char *out,
     out[0] = 0;
     pthread_mutex_lock(&client->lock);
     now = (lonejson_int64)time(NULL);
-    if (now >= 0 && client->flow.access_token != NULL && now < client->renew_at)
+    if (now >= 0 && client->flow.access_token != NULL &&
+        now < client->renew_at && !rejected(client))
         status = KNURL_OK;
     else if (now >= 0 && now >= client->retry_at) {
         status = renew(client, now, error);
@@ -320,17 +342,21 @@ knurl_status knurl_oauth2_client_token(knurl_oauth2_client *client, char *out,
     }
     now = (lonejson_int64)time(NULL);
     if (status != KNURL_OK && now >= 0 && client->flow.has_expires_at &&
-        now < client->flow.expires_at)
+        !rejected(client) && now < client->flow.expires_at)
         status = KNURL_OK;
-    if (status == KNURL_OK && client->flow.has_expires_at &&
-        now >= client->flow.expires_at)
+    if (status == KNURL_OK &&
+        (rejected(client) ||
+         (client->flow.has_expires_at && now >= client->flow.expires_at)))
         status = KNURL_BACKEND;
     if (status == KNURL_OK) {
         size_t length = strlen(client->flow.access_token);
         if (length >= capacity)
             status = KNURL_LIMIT;
-        else
+        else {
             memcpy(out, client->flow.access_token, length + 1);
+            if (generation != NULL)
+                *generation = client->generation;
+        }
     }
     pthread_mutex_unlock(&client->lock);
     if (status == KNURL_OK) {
@@ -340,4 +366,10 @@ knurl_status knurl_oauth2_client_token(knurl_oauth2_client *client, char *out,
     return knurl_fail(error, status, "oauth2",
                       status == KNURL_LIMIT ? "token output is too small"
                                             : "token endpoint unavailable");
+}
+
+knurl_status knurl_oauth2_client_token(knurl_oauth2_client *client, char *out,
+                                       size_t capacity, knurl_error *error)
+{
+    return knurl_oauth2_client_get(client, out, capacity, NULL, error);
 }

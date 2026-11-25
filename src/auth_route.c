@@ -116,10 +116,19 @@ static int fields(knurl_bytes input, struct knurl_auth_job *job)
 static int enroll_fields(knurl_bytes body, struct knurl_auth_job *job)
 {
     const char *data = body.data;
+    size_t offset;
     if (body.length == 0)
         return 1;
-    return body.length == 11 && memcmp(data, "code=", 5) == 0 &&
-           decode(data + 5, data + 11, job->code, sizeof(job->code)) &&
+    if (body.length == 14 && memcmp(data, "confirm=", 8) == 0) {
+        job->confirm_totp = 1;
+        offset = 8;
+    } else if (body.length == 11 && memcmp(data, "code=", 5) == 0) {
+        offset = 5;
+    } else {
+        return 0;
+    }
+    return decode(data + offset, data + body.length, job->code,
+                  sizeof(job->code)) &&
            strspn(job->code, "0123456789") == 6;
 }
 

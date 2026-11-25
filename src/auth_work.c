@@ -191,6 +191,7 @@ static knurl_status verify(knurl_job *task, struct knurl_auth_job *job,
     knurl_status status;
     char digest[65];
     if (job->admission) {
+        const knurl_auth_config *config = &job->auth->config;
         if (job->auth->config.method == KNURL_AUTH_SESSION)
             return session(job, KNURL_AUTH_SESSION_FIND, NULL, NULL, error);
         memset(&x, 0, sizeof(x));
@@ -198,8 +199,17 @@ static knurl_status verify(knurl_job *task, struct knurl_auth_job *job,
         x.policy = job->auth->config.name;
         x.scope = job->scope;
         x.peer = job->peer;
-        status = knurl_auth_checked_identity(
-            &x, knurl_auth_machine_verify(&x, job->auth, error), error);
+        status = knurl_auth_machine_verify(&x, job->auth, error);
+        if (job->auth->issuer == NULL)
+            status = knurl_auth_checked_identity(&x, status, error);
+        if (status == KNURL_OK && config->machine_check != NULL) {
+            x.identity.method = KNURL_AUTH_MACHINE;
+            status = config->machine_check(
+                &x.identity, config->machine_check_userdata, error);
+            if (status != KNURL_OK && status != KNURL_EOF)
+                status = knurl_fail(error, KNURL_BACKEND, "machine_check",
+                                    "external account check failed");
+        }
         if (status == KNURL_OK) {
             job->identity = x.identity;
             job->identity.method = KNURL_AUTH_MACHINE;
@@ -231,8 +241,11 @@ static knurl_status verify(knurl_job *task, struct knurl_auth_job *job,
         x.session_digest = digest;
         memcpy(x.revision, job->revision, sizeof(x.revision));
         status =
-            knurl_auth_exchange_run(job, KNURL_AUTH_TOTP_ENROLL, &x, error);
-        if (status == KNURL_OK) {
+            knurl_auth_exchange_run(job,
+                                    job->confirm_totp ? KNURL_AUTH_TOTP_CONFIRM
+                                                      : KNURL_AUTH_TOTP_ENROLL,
+                                    &x, error);
+        if (status == KNURL_OK && !job->confirm_totp) {
             static const char safe[] =
                 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
                 "0123456789-._~+/:?&=%@";
@@ -304,10 +317,10 @@ static void finish(struct knurl_auth_job *job, knurl_status status)
         }
     }
     if (!job->admission && job->endpoint == KNURL_AUTH_TOTP_ENROLL_ENDPOINT &&
-        status == KNURL_OK) {
+        status == KNURL_OK && !job->confirm_totp) {
         char json[KNURL_AUTH_TOTP_URI_CAPACITY + 12];
         snprintf(json, sizeof(json), "{\"uri\":\"%s\"}", job->totp_uri);
-        result = knurl_auth_json_reply(request, 201, json, NULL);
+        result = knurl_auth_json_reply(request, 202, json, NULL);
         OPENSSL_cleanse(json, sizeof(json));
         if (result != KNURL_OK)
             knurl_kore_request_fail(request, result, 500);
@@ -327,8 +340,11 @@ static void finish(struct knurl_auth_job *job, knurl_status status)
     else
         code = 503;
     if (job->admission && code == 401)
-        challenge = knurl_auth_challenge(job->auth);
-    if (!job->admission && code == 204) {
+        challenge = job->auth->issuer != NULL
+                        ? "Bearer realm=\"knurl\", error=\"invalid_token\""
+                        : knurl_auth_challenge(job->auth);
+    if (!job->admission && code == 204 &&
+        job->endpoint != KNURL_AUTH_TOTP_ENROLL_ENDPOINT) {
         if (job->endpoint == KNURL_AUTH_LOGOUT)
             snprintf(value, sizeof(value),
                      KNURL_AUTH_COOKIE_PREFIX
@@ -424,20 +440,24 @@ static void scope(struct knurl_auth_job *job, knurl_request *request)
                  : "");
 }
 
-knurl_status knurl_auth_executor(knurl_request *request, knurl_executor **out,
-                                 knurl_error *error)
+knurl_status knurl_auth_executor(knurl_request *request,
+                                 enum knurl_auth_service service,
+                                 knurl_executor **out, knurl_error *error)
 {
     struct knurl_loop_impl *loop = knurl_request_loop(request)->impl;
+    knurl_executor **slot = service == KNURL_AUTH_PROXY ? &loop->oauth2_executor
+                            : service == KNURL_AUTH_OIDC ? &loop->oidc_executor
+                                                         : &loop->auth_executor;
     knurl_executor_config pool;
     knurl_status status = KNURL_OK;
-    if (loop->auth_executor == NULL) {
+    if (*slot == NULL) {
         knurl_executor_config_init(&pool);
         pool.max_jobs = 32;
         pool.auth_pool = 1;
-        status = knurl_executor_new(knurl_request_server(request), &pool,
-                                    &loop->auth_executor, error);
+        status = knurl_executor_new(knurl_request_server(request), &pool, slot,
+                                    error);
     }
-    *out = loop->auth_executor;
+    *out = *slot;
     return status;
 }
 
@@ -454,7 +474,9 @@ knurl_status knurl_auth_start(struct knurl_auth_job *job, knurl_error *error)
     }
     job->runtime = knurl_request_server(request)->impl->runtime;
     scope(job, request);
-    status = knurl_auth_executor(request, &pool, error);
+    status = knurl_auth_executor(
+        request, job->auth->issuer != NULL ? KNURL_AUTH_OIDC : KNURL_AUTH_LOCAL,
+        &pool, error);
     if (status == KNURL_OK) {
         knurl_job_config_init(&config);
         config.work = work;

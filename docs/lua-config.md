@@ -102,7 +102,9 @@ worker initialization or cleanup through its lifecycle.
 `127.0.0.1:8080`. Set `workers`, `max_connections` or `backend_quiet` as
 needed. `application_max_tasks` limits admitted Lua work per worker, including
 queued work, and defaults to 16. A full pool returns 503 for a new inline HTTP
-handler. `application_timeout_ms` defaults to 30000 including queue time.
+handler. Detached Lua callbacks can wait in a separate queue of the same
+size. A shared timer retries its head, and HTTP hooks rejected by this queue
+return 503. `application_timeout_ms` defaults to 30000 including queue time.
 Knurl returns 504 when an HTTP handler or route hook times out. Cancellation is
 cooperative and a running callback retains its slot until it returns. Kore
 continues serving native services while the application thread runs.

@@ -263,6 +263,7 @@ static knurl_status parse_head(struct proxy_exchange *x, int *complete)
     status = parsed == KNURL_PROXY_WS_HEAD_MORE ? KNURL_AGAIN : KNURL_INVALID;
     if (parsed != KNURL_PROXY_WS_HEAD_COMPLETE)
         goto done;
+    knurl_proxy_oauth2_response(x->request, x->route->oauth2, code, &headers);
     if (code == 101) {
         s->head_wait = 1;
         if (x->interims != NULL) {

@@ -117,6 +117,11 @@ knurl_status knurl_auth_new(const knurl_auth_config *config, knurl_auth **out,
     if (config == NULL || out == NULL)
         return knurl_fail(error, KNURL_INVALID, "auth_new",
                           "policy configuration and output are required");
+    if (config->method == KNURL_AUTH_MACHINE && config->factors != 0 &&
+        config->users != NULL && config->machine_check == NULL)
+        return knurl_fail(error, KNURL_INVALID, "auth_new",
+                          "machine workflows with a separate users backend "
+                          "require machine_check");
     builtin = config->client_id != NULL || config->client_secret != NULL;
     oidc = config->oidc.issuer != NULL || config->oidc.audience != NULL ||
            config->oidc.jwks_uri != NULL || config->oidc.jwks_json != NULL ||
@@ -136,6 +141,8 @@ knurl_status knurl_auth_new(const knurl_auth_config *config, knurl_auth **out,
          config->method != KNURL_AUTH_MACHINE) ||
         (config->session_check != NULL &&
          config->method != KNURL_AUTH_SESSION) ||
+        (config->machine_check != NULL &&
+         config->method != KNURL_AUTH_MACHINE) ||
         config->login < KNURL_AUTH_LOGIN_PASSWORD ||
         config->login > KNURL_AUTH_LOGIN_EMAIL ||
         (config->factors != 0 &&

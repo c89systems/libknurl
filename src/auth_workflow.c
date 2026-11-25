@@ -154,7 +154,7 @@ knurl_status knurl_auth_workflow_run(knurl_job *task,
             return failed(error);
         if ((factor == KNURL_AUTH_FACTOR_PASSWORD) !=
             ((job->fields & KNURL_AUTH_FIELD_PASSWORD) != 0))
-            return KNURL_INVALID;
+            return KNURL_EOF;
         state.workflow = previous;
         state.subject = identity.identity.subject;
         memcpy(state.revision, identity.revision, sizeof(state.revision));

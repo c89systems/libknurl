@@ -6,6 +6,7 @@
 #include <knurl/dispatch.h>
 #include <knurl/auth.h>
 #include <knurl/proxy.h>
+#include <stdint.h>
 
 enum { KNURL_HOOK_NONE, KNURL_HOOK_ADMISSION, KNURL_HOOK_AFTER };
 #define KNURL_AFTER_HOOK_COUNT 3
@@ -76,6 +77,7 @@ struct knurl_request_impl {
     int hook_invoking;
     int proxy_admission_invoked;
     char *proxy_authorization;
+    uint64_t proxy_token_generation;
     unsigned int hook_stage, hook_before, hook_after;
     void (*hook_cancel)(void *);
     void *hook_userdata;
