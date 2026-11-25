@@ -161,11 +161,34 @@ static int oidc(lua_State *L, knurl_auth_oidc *config, knurl_error *error)
     return ok;
 }
 
+static int factors(lua_State *L, unsigned int *out, knurl_error *error)
+{
+    const char *const *steps = NULL;
+    size_t count = 0, i;
+    unsigned int previous = 0, next;
+    if (!rl_string_array(L, 1, "steps", &steps, &count, error))
+        return 0;
+    for (i = 0; i < count; ++i) {
+        next = !strcmp(steps[i], "email_code") ? KNURL_AUTH_FACTOR_EMAIL
+               : !strcmp(steps[i], "password") ? KNURL_AUTH_FACTOR_PASSWORD
+               : !strcmp(steps[i], "totp")     ? KNURL_AUTH_FACTOR_TOTP
+                                               : 0;
+        if (next <= previous || (i == 0 && next == KNURL_AUTH_FACTOR_TOTP)) {
+            rl_fail(error, KNURL_INVALID,
+                    "steps must follow the order email_code, password, totp");
+            return 0;
+        }
+        *out |= next;
+        previous = next;
+    }
+    return 1;
+}
+
 static int new_policy(lua_State *L)
 {
     static const char *const fields[] = {
         "name", "store",     "method",        "login", "session_seconds",
-        "smtp", "client_id", "client_secret", "oidc"};
+        "smtp", "client_id", "client_secret", "oidc",  "steps"};
     knurl_auth_config config;
     knurl_auth **owner;
     knurl_error error;
@@ -196,7 +219,8 @@ static int new_policy(lua_State *L)
         config.login = KNURL_AUTH_LOGIN_TOTP;
     else if (!strcmp(login, "email"))
         config.login = KNURL_AUTH_LOGIN_EMAIL;
-    if (!smtp(L, &config.smtp, &error) || !oidc(L, &config.oidc, &error))
+    if (!smtp(L, &config.smtp, &error) || !oidc(L, &config.oidc, &error) ||
+        !factors(L, &config.factors, &error))
         return rl_error(L, &error);
     owner = lua_newuserdatauv(L, sizeof(*owner), 0);
     *owner = NULL;
@@ -268,7 +292,7 @@ static int endpoint(lua_State *L)
 void rl_auth_endpoints(lua_State *L)
 {
     static const char *const names[] = {"login", "email_code", "logout",
-                                        "totp_enroll"};
+                                        "totp_enroll", "auth_workflow"};
     size_t i;
     for (i = 0; i < RL_COUNT(names); ++i) {
         lua_pushinteger(L, (lua_Integer)i);

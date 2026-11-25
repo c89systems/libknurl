@@ -9,6 +9,13 @@ end
 local login <close> = check(knurl.auth{name = 'browser', store = work .. '/state'})
 local otp <close> = check(knurl.auth{name = 'otp', store = work .. '/state', login = 'totp'})
 local machine <close> = check(knurl.auth{name = 'machine', store = work .. '/state', method = 'machine'})
+local provision <close> = check(knurl.auth{
+  name = 'provision', store = work .. '/state', method = 'machine', steps = {'password'},
+})
+local oauth <close> = check(knurl.oauth2{
+  token_endpoint = 'https://localhost:' .. port .. '/missing-token',
+  ca_file = work .. '/cert.pem', client_id = 'fixture', client_secret = 'secret',
+})
 local other <close> = check(knurl.auth{name = 'machine-other', store = work .. '/state', method = 'machine'})
 local service <close> = check(knurl.auth{
   name = 'service', method = 'machine',
@@ -28,6 +35,9 @@ check(server:text{path = '/health', body = 'ready'})
 check(server:text{path = '/service', auth = service, body = 'allowed'})
 check(server:text{path = '/machine', auth = machine, body = 'allowed'})
 check(server:text{path = '/machine-other', auth = other, body = 'allowed'})
+check(server:text{path = '/issued', auth = provision, body = 'allowed'})
+check(server:auth_workflow{path = '/provision', auth = provision})
+check(server:proxy{path = '/unavailable-token', target = 'https://localhost:' .. port, oauth2 = oauth})
 check(server:login{path = '/login', auth = login})
 check(server:login{path = '/otp', auth = otp})
 check(server:totp_enroll{path = '/totp-enroll', auth = login})
@@ -42,4 +52,5 @@ check(app:route{
   end,
 })
 assert(not server:text{path = '/invalid', auth = function() end, body = 'no'})
+assert(not knurl.auth{name = 'invalid', store = work .. '/state', steps = {'totp', 'password'}})
 check(server:run())

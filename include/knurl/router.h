@@ -386,7 +386,7 @@ struct knurl_router {
     knurl_status (*blocking_route)(struct knurl_router *,
                                    const struct knurl_upload_reader_config *,
                                    struct knurl_route **, struct knurl_error *);
-    /** Register a native browser-auth POST endpoint. */
+    /** Register a native auth POST endpoint. */
     knurl_status (*auth_route)(struct knurl_router *, const char *,
                                knurl_auth *, knurl_auth_endpoint,
                                struct knurl_route **, struct knurl_error *);
@@ -538,6 +538,8 @@ struct knurl_route {
                                           knurl_async_route_hook_fn,
                                           knurl_async_route_hook_fn, void *,
                                           knurl_error *);
+    knurl_status (*set_proxy_oauth2)(struct knurl_route *,
+                                     knurl_oauth2_client *, knurl_error *);
 };
 
 #ifdef __cplusplus

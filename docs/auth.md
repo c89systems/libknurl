@@ -114,6 +114,38 @@ optional `ca_file` overrides the system trust bundle and `timeout_ms` sets a
 timeout up to ten seconds. SMTP delivery errors go to the configured Knurl
 diagnostic logger.
 
+## Ordered factors and machine credential issuance
+
+```lua
+local clients <close> = assert(knurl.auth{
+  name = 'deployment', store = './auth-state', method = 'machine',
+  steps = {'password', 'totp'},
+})
+assert(server:auth_workflow{path = '/provision', auth = clients})
+assert(server:text{path = '/integration/health', auth = clients, body = 'ready'})
+```
+
+Select an ordered subset of `email_code`, `password` and `totp`. TOTP
+requires a preceding factor. Configure SMTP when using `email_code`.
+POST an HTTPS form to the workflow route with `username` and, if password
+comes first, `password`. An email-first workflow sends a code to the
+account's enrolled address and returns the same HTTP 202 shape for unknown
+accounts.
+
+Each HTTP 202 includes an opaque `workflow`, the current `step` and its
+`required` field. POST back to the same path with that workflow and the
+requested `password` or six-digit `code`. The workflow expires after ten
+minutes and each successful continuation replaces its identifier.
+
+For a machine policy, the final HTTP 201 returns `client_id` and
+`client_secret` once. Use the pair as HTTP Basic credentials on routes
+protected by the named policy. The authenticated subject is the account
+that completed the workflow. Account changes invalidate its issued
+credentials. An operator can revoke an individual credential with
+`knurl auth client-revoke ./auth-state deployment <client_id>`. For a
+browser policy, choose `method = 'session'`. The final HTTP 204 sets the
+policy's session cookie and the existing logout route revokes it.
+
 ## Machine authentication
 
 Issue a client secret with `knurl auth client-issue ./auth-state service deployment`.
@@ -186,7 +218,8 @@ The built-in store writes a fixed set of files in one private directory.
 - `sessions.json`, `email.json`, `totp.json` and `attempts.json` hold
   state for each flow and appear as they are used. Email and TOTP sessions
   are written to the same file as the factor they consume, in one atomic
-  update.
+  update. Ordered workflows keep pending steps and the final session or
+  machine credential in the same file as the terminal factor.
 - `key` holds the owner-only encryption key. Back it up with the JSON files.
 
 One interprocess lock protects updates and operations that read multiple files.

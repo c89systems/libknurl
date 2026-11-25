@@ -43,18 +43,23 @@ static int fields(knurl_bytes input, struct knurl_auth_job *job)
 {
     const char *p = input.data, *limit, *end, *separator;
     char key[16];
-    int required = 1, optional = 0, seen = 0, bit;
+    unsigned int required = KNURL_AUTH_FIELD_USER, optional = 0, seen = 0, bit;
     size_t capacity;
     char *target;
     if (input.length == 0)
         return 0;
     if (job->endpoint == KNURL_AUTH_LOGIN) {
         if (job->auth->config.login != KNURL_AUTH_LOGIN_EMAIL)
-            required |= 2;
+            required |= KNURL_AUTH_FIELD_PASSWORD;
         if (job->auth->config.login == KNURL_AUTH_LOGIN_EMAIL)
-            required |= 4;
+            required |= KNURL_AUTH_FIELD_CODE;
         if (job->auth->config.login == KNURL_AUTH_LOGIN_TOTP)
-            optional |= 4;
+            optional |= KNURL_AUTH_FIELD_CODE;
+    }
+    if (job->endpoint == KNURL_AUTH_WORKFLOW) {
+        optional = KNURL_AUTH_FIELD_USER | KNURL_AUTH_FIELD_PASSWORD |
+                   KNURL_AUTH_FIELD_CODE | KNURL_AUTH_FIELD_WORKFLOW;
+        required = 0;
     }
     limit = p + input.length;
     while (p < limit) {
@@ -65,17 +70,21 @@ static int fields(knurl_bytes input, struct knurl_auth_job *job)
         if (separator == NULL || !decode(p, separator, key, sizeof(key)))
             return 0;
         if (strcmp(key, "username") == 0) {
-            bit = 1;
+            bit = KNURL_AUTH_FIELD_USER;
             target = job->subject;
             capacity = sizeof(job->subject);
         } else if (strcmp(key, "password") == 0) {
-            bit = 2;
+            bit = KNURL_AUTH_FIELD_PASSWORD;
             target = job->credential;
             capacity = sizeof(job->credential);
         } else if (strcmp(key, "code") == 0) {
-            bit = 4;
+            bit = KNURL_AUTH_FIELD_CODE;
             target = job->code;
             capacity = sizeof(job->code);
+        } else if (strcmp(key, "workflow") == 0) {
+            bit = KNURL_AUTH_FIELD_WORKFLOW;
+            target = job->workflow;
+            capacity = sizeof(job->workflow);
         } else {
             return 0;
         }
@@ -85,9 +94,23 @@ static int fields(knurl_bytes input, struct knurl_auth_job *job)
         seen |= bit;
         p = end < limit ? end + 1 : end;
     }
-    return (seen & required) == required && knurl_auth_name(job->subject) &&
-           (!(seen & 4) ||
-            (strlen(job->code) == 6 && strspn(job->code, "0123456789") == 6));
+    job->fields = seen;
+    if ((seen & KNURL_AUTH_FIELD_CODE) &&
+        (strlen(job->code) != 6 || strspn(job->code, "0123456789") != 6))
+        return 0;
+    if (job->endpoint == KNURL_AUTH_WORKFLOW) {
+        if (seen & KNURL_AUTH_FIELD_WORKFLOW)
+            return (seen == (KNURL_AUTH_FIELD_WORKFLOW |
+                             KNURL_AUTH_FIELD_PASSWORD) ||
+                    seen ==
+                        (KNURL_AUTH_FIELD_WORKFLOW | KNURL_AUTH_FIELD_CODE)) &&
+                   strspn(job->workflow, "0123456789abcdef") == 64;
+        required = KNURL_AUTH_FIELD_USER;
+        if (!(job->auth->config.factors & KNURL_AUTH_FACTOR_EMAIL))
+            required |= KNURL_AUTH_FIELD_PASSWORD;
+        return seen == required && knurl_auth_name(job->subject);
+    }
+    return (seen & required) == required && knurl_auth_name(job->subject);
 }
 
 static int enroll_fields(knurl_bytes body, struct knurl_auth_job *job)
@@ -123,6 +146,7 @@ static knurl_status body_end(knurl_request *request, void *userdata,
     struct knurl_auth_job *job;
     knurl_status status;
     knurl_bytes body;
+    char email_workflow[65];
     int valid = 1;
     job = calloc(1, sizeof(*job));
     if (job == NULL)
@@ -152,11 +176,29 @@ static knurl_status body_end(knurl_request *request, void *userdata,
         knurl_auth_job_free(job);
         return knurl_auth_reply(request, 401, NULL, NULL, error);
     }
+    email_workflow[0] = 0;
+    if (job->endpoint == KNURL_AUTH_WORKFLOW) {
+        if (!knurl_auth_digest(NULL, "workflow", "route",
+                               request->impl->raw_path.data,
+                               job->path_digest) ||
+            !knurl_auth_random_hex(job->next_workflow, 32)) {
+            knurl_auth_job_free(job);
+            return knurl_auth_reply(request, 503, NULL, NULL, error);
+        }
+        if (job->fields == KNURL_AUTH_FIELD_USER)
+            memcpy(email_workflow, job->next_workflow, sizeof(email_workflow));
+    }
     status = knurl_auth_start(job, error);
     if (status != KNURL_OK)
         return knurl_auth_reply(request, 503, NULL, NULL, error);
     if (endpoint->kind == KNURL_AUTH_EMAIL_START)
         return knurl_auth_reply(request, 202, NULL, NULL, error);
+    if (email_workflow[0] != 0) {
+        status = knurl_auth_workflow_pending(request, email_workflow,
+                                             KNURL_AUTH_FACTOR_EMAIL, error);
+        OPENSSL_cleanse(email_workflow, sizeof(email_workflow));
+        return status;
+    }
     return KNURL_OK;
 }
 
@@ -208,8 +250,11 @@ knurl_status knurl_auth_route(knurl_router *router, const char *path,
     if (out != NULL)
         *out = NULL;
     if (router == NULL || path == NULL || auth == NULL || out == NULL ||
-        auth->config.method != KNURL_AUTH_SESSION || kind < KNURL_AUTH_LOGIN ||
-        kind > KNURL_AUTH_TOTP_ENROLL_ENDPOINT ||
+        kind < KNURL_AUTH_LOGIN || kind > KNURL_AUTH_WORKFLOW ||
+        (kind != KNURL_AUTH_WORKFLOW &&
+         auth->config.method != KNURL_AUTH_SESSION) ||
+        (kind == KNURL_AUTH_WORKFLOW && auth->config.factors == 0) ||
+        (kind == KNURL_AUTH_LOGIN && auth->config.factors != 0) ||
         (kind == KNURL_AUTH_EMAIL_START &&
          auth->config.login != KNURL_AUTH_LOGIN_EMAIL))
         return knurl_fail(

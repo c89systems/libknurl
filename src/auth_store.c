@@ -213,6 +213,15 @@ static knurl_status session(struct auth_transaction *tx,
     return status;
 }
 
+static char client_kind(const char *id)
+{
+    if (strlen(id) == 40 && strncmp(id, "knurl-", 6) == 0 &&
+        (id[6] == 'm' || id[6] == 'n' || id[6] == 'o') && id[7] == '-' &&
+        strspn(id + 8, "0123456789abcdef") == 32)
+        return id[6];
+    return 'c';
+}
+
 static knurl_status machine(struct auth_transaction *tx, knurl_auth_exchange *x,
                             knurl_error *error)
 {
@@ -222,18 +231,156 @@ static knurl_status machine(struct auth_transaction *tx, knurl_auth_exchange *x,
     char name[129], path[67], digest[65];
     if (!knurl_auth_basic(x->secret, name, &secret))
         return KNURL_EOF;
-    if (!subject_path(path, 'c', x->policy, name) ||
+    if (!subject_path(path, client_kind(name), x->policy, name) ||
         !knurl_auth_digest(tx->store->key, x->policy, name, secret, digest))
         status = failed(error);
     else {
         status = knurl_auth_json_read(tx, path, &record, error);
         if (status == KNURL_OK && CRYPTO_memcmp(record.secret, digest, 64) != 0)
             status = KNURL_EOF;
+        if (status == KNURL_OK)
+            status = current(tx, record.subject, record.revision, error);
     }
     if (status == KNURL_OK)
         memcpy(x->identity.subject, record.subject, sizeof(record.subject));
     knurl_auth_basic_clear(secret);
     return status;
+}
+
+static char workflow_kind(const knurl_auth_exchange *x)
+{
+    if (x->login == KNURL_AUTH_LOGIN_TOTP)
+        return 'h';
+    if (x->login == KNURL_AUTH_LOGIN_EMAIL)
+        return 'g';
+    return 'f';
+}
+
+static knurl_status workflow_read(struct auth_transaction *tx,
+                                  knurl_auth_exchange *x,
+                                  struct auth_record *record, char path[67],
+                                  lonejson_int64 now, knurl_error *error)
+{
+    knurl_status status;
+    record_path(path, workflow_kind(x), x->workflow);
+    status = knurl_auth_json_read(tx, path, record, error);
+    if (status != KNURL_OK)
+        return status;
+    if (record->disabled || record->expires <= now || record->attempts >= 5)
+        return KNURL_EOF;
+    return current(tx, record->subject, record->revision, error);
+}
+
+static knurl_status rollback(knurl_status status, knurl_error *error)
+{
+    if (status == KNURL_LIMIT || status == KNURL_EOF)
+        return knurl_fail(error, KNURL_BACKEND, "auth_workflow",
+                          "cannot persist completed factor and its result");
+    return status;
+}
+
+static knurl_status workflow_begin(struct auth_transaction *tx,
+                                   knurl_auth_exchange *x, lonejson_int64 now,
+                                   knurl_error *error)
+{
+    struct auth_record row;
+    char resend[67], next[67];
+    knurl_status status;
+    if (!subject_path(resend, workflow_kind(x), x->scope, x->subject))
+        return failed(error);
+    status = current(tx, x->subject, x->revision, error);
+    if (status != KNURL_OK)
+        return status;
+    status = knurl_auth_json_read(tx, resend, &row, error);
+    if (status != KNURL_OK && status != KNURL_EOF)
+        return status;
+    if (row.expires > now)
+        return KNURL_LIMIT;
+    memset(&row, 0, sizeof(row));
+    row.expires = now + 60;
+    status = knurl_auth_json_write(tx, resend, &row, error);
+    if (status != KNURL_OK)
+        return status;
+    memset(&row, 0, sizeof(row));
+    row.expires = now + 600;
+    row.updated = KNURL_AUTH_FACTOR_EMAIL;
+    row.disabled = !x->active;
+    memcpy(row.secret, x->digest, 65);
+    memcpy(row.revision, x->revision, sizeof(row.revision));
+    snprintf(row.subject, sizeof(row.subject), "%s", x->subject);
+    record_path(next, workflow_kind(x), x->next_workflow);
+    return rollback(knurl_auth_json_write(tx, next, &row, error), error);
+}
+
+static knurl_status workflow_result(struct auth_transaction *tx,
+                                    knurl_auth_exchange *x,
+                                    struct auth_record *row, lonejson_int64 now,
+                                    knurl_error *error)
+{
+    struct auth_record credential;
+    char path[67];
+    if (x->next_workflow != NULL) {
+        record_path(path, workflow_kind(x), x->next_workflow);
+        row->updated = knurl_auth_next_factor(x->factors, x->factor);
+        row->attempts = 0;
+        memset(row->secret, 0, sizeof(row->secret));
+        return knurl_auth_json_write(tx, path, row, error);
+    }
+    if (x->client_id == NULL) {
+        knurl_auth_exchange save = *x;
+        save.digest = x->session_digest;
+        return session(tx, KNURL_AUTH_SESSION_SAVE, &save, now, error);
+    }
+    memset(&credential, 0, sizeof(credential));
+    if (!subject_path(path, client_kind(x->client_id), x->policy,
+                      x->client_id) ||
+        !knurl_auth_digest(tx->store->key, x->policy, x->client_id,
+                           x->client_secret, credential.secret))
+        return failed(error);
+    memcpy(credential.revision, x->revision, sizeof(credential.revision));
+    snprintf(credential.subject, sizeof(credential.subject), "%s", x->subject);
+    snprintf(credential.policy, sizeof(credential.policy), "%s", x->policy);
+    return knurl_auth_json_write(tx, path, &credential, error);
+}
+
+static knurl_status workflow_step(struct auth_transaction *tx,
+                                  knurl_auth_exchange *x, lonejson_int64 now,
+                                  knurl_error *error)
+{
+    struct auth_record row;
+    char path[67];
+    knurl_status status;
+    if (x->workflow != NULL) {
+        status = workflow_read(tx, x, &row, path, now, error);
+        if (status != KNURL_OK)
+            return status;
+        if (row.updated != x->factor || strcmp(row.subject, x->subject) ||
+            strcmp(row.revision, x->revision))
+            return KNURL_EOF;
+        if (x->factor == KNURL_AUTH_FACTOR_EMAIL &&
+            CRYPTO_memcmp(row.secret, x->digest, 64) != 0) {
+            ++row.attempts;
+            status = knurl_auth_json_write(tx, path, &row, error);
+            return status == KNURL_OK ? KNURL_EOF : status;
+        }
+        if (x->factor == KNURL_AUTH_FACTOR_TOTP) {
+            status = totp(tx, x, now, error);
+            if (status != KNURL_OK)
+                return status;
+        }
+        status = knurl_auth_json_delete(tx, path, error);
+        if (status != KNURL_OK)
+            return rollback(status, error);
+    } else {
+        status = current(tx, x->subject, x->revision, error);
+        if (status != KNURL_OK)
+            return status;
+        memset(&row, 0, sizeof(row));
+        row.expires = now + 600;
+        snprintf(row.subject, sizeof(row.subject), "%s", x->subject);
+        memcpy(row.revision, x->revision, sizeof(row.revision));
+    }
+    return rollback(workflow_result(tx, x, &row, now, error), error);
 }
 
 static knurl_status enroll(struct auth_transaction *, const char *, int, int,
@@ -248,8 +395,7 @@ knurl_status knurl_auth_json_exchange(knurl_auth_operation op,
     struct auth_transaction tx;
     lonejson_int64 now = (lonejson_int64)time(NULL);
     knurl_status status;
-    int locked = op != KNURL_AUTH_PASSWORD && op != KNURL_AUTH_EMAIL &&
-                 op != KNURL_AUTH_MACHINE_VERIFY;
+    int locked = op != KNURL_AUTH_PASSWORD && op != KNURL_AUTH_EMAIL;
     if (now < 0)
         return failed(error);
     status = knurl_auth_json_begin(json, locked, &tx, error);
@@ -285,6 +431,23 @@ knurl_status knurl_auth_json_exchange(knurl_auth_operation op,
     case KNURL_AUTH_EMAIL_SAVE:
     case KNURL_AUTH_EMAIL_SESSION:
         status = email(&tx, op, x, now, error);
+        break;
+    case KNURL_AUTH_WORKFLOW_BEGIN:
+        status = workflow_begin(&tx, x, now, error);
+        break;
+    case KNURL_AUTH_WORKFLOW_FIND: {
+        struct auth_record row;
+        char path[67];
+        status = workflow_read(&tx, x, &row, path, now, error);
+        if (status == KNURL_OK) {
+            x->factor = (unsigned int)row.updated;
+            memcpy(x->identity.subject, row.subject, sizeof(row.subject));
+            memcpy(x->revision, row.revision, sizeof(row.revision));
+        }
+        break;
+    }
+    case KNURL_AUTH_WORKFLOW_STEP:
+        status = workflow_step(&tx, x, now, error);
         break;
     case KNURL_AUTH_SESSION_SAVE:
     case KNURL_AUTH_SESSION_FIND:
@@ -375,10 +538,10 @@ knurl_status knurl_auth_json_issue(knurl_auth_json *json, const char *policy,
     if (out != NULL)
         out[0] = 0;
     if (json == NULL || !knurl_auth_policy_name(policy) ||
-        !knurl_auth_name(subject) || out == NULL)
-        return knurl_fail(
-            error, KNURL_INVALID, "auth_issue",
-            "store, policy, client identifier and secret output are required");
+        !knurl_auth_name(subject) || out == NULL || client_kind(subject) != 'c')
+        return knurl_fail(error, KNURL_INVALID, "auth_issue",
+                          "store, policy, non-workflow client identifier and "
+                          "output required");
     memset(&record, 0, sizeof(record));
     if (!subject_path(path, 'c', policy, subject) ||
         !knurl_auth_random_hex(out, 32) ||
@@ -409,7 +572,7 @@ knurl_status knurl_auth_json_revoke(knurl_auth_json *json, const char *policy,
         !knurl_auth_name(subject))
         return knurl_fail(error, KNURL_INVALID, "auth_revoke",
                           "store, policy and client identifier are required");
-    if (!subject_path(path, 'c', policy, subject))
+    if (!subject_path(path, client_kind(subject), policy, subject))
         return failed(error);
     status = knurl_auth_json_begin(json, 1, &tx, error);
     if (status == KNURL_OK)

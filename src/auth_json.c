@@ -296,12 +296,18 @@ static enum auth_collection collection(const char *key)
     case 'c':
         return AUTH_ACCOUNTS;
     case 's':
+    case 'f':
+    case 'm':
         return AUTH_SESSIONS;
     case 'e':
     case 'v':
+    case 'g':
+    case 'n':
         return AUTH_EMAIL_CODES;
     case 't':
     case 'w':
+    case 'h':
+    case 'o':
         return AUTH_TOTP_STEPS;
     default:
         return AUTH_ATTEMPTS;

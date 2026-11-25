@@ -549,6 +549,7 @@ void knurl_route_receiver_init(knurl_route *receiver)
         knurl_route_set_auth,
         knurl_route_set_async_hooks,
         knurl_route_set_proxy_async_hooks,
+        knurl_route_set_proxy_oauth2,
     };
     *receiver = methods;
     receiver->impl = (struct knurl_route_impl *)receiver;

@@ -23,6 +23,14 @@ typedef enum knurl_auth_login {
     KNURL_AUTH_LOGIN_EMAIL
 } knurl_auth_login;
 
+/** Select an ordered subset from email code, password, TOTP. TOTP requires
+ * a preceding factor. Zero uses the single-form login selection. */
+typedef enum knurl_auth_factor {
+    KNURL_AUTH_FACTOR_EMAIL = 1,
+    KNURL_AUTH_FACTOR_PASSWORD = 2,
+    KNURL_AUTH_FACTOR_TOTP = 4
+} knurl_auth_factor;
+
 /** Verified, stable subject. Borrowed from a request or a native snapshot. */
 typedef struct knurl_auth_identity {
     knurl_auth_method method;
@@ -40,7 +48,10 @@ typedef enum knurl_auth_operation {
     KNURL_AUTH_SESSION_FIND,
     KNURL_AUTH_SESSION_REVOKE,
     KNURL_AUTH_MACHINE_VERIFY,
-    KNURL_AUTH_TOTP_ENROLL
+    KNURL_AUTH_TOTP_ENROLL,
+    KNURL_AUTH_WORKFLOW_BEGIN,
+    KNURL_AUTH_WORKFLOW_FIND,
+    KNURL_AUTH_WORKFLOW_STEP
 } knurl_auth_operation;
 
 /** On PASSWORD, EMAIL, SESSION_FIND and MACHINE_VERIFY, return a canonical
@@ -74,6 +85,23 @@ typedef struct knurl_auth_exchange {
      * digest for enrollment. */
     const char *session_digest;
     knurl_auth_login login;
+    /** Workflow callbacks receive the configured factors and current factor.
+     * BEGIN stores next_workflow with its expected factor and optional email
+     * code digest. active is false for a decoy enrollment challenge.
+     * FIND returns factor, identity and revision for the workflow digest.
+     * STEP checks the expected factor, canonical identity and revision
+     * against the stored workflow. Core verifies PASSWORD before STEP.
+     * STEP atomically consumes EMAIL (digest) or TOTP (secret), rotates to
+     * next_workflow (if set), or creates the session or machine credential.
+     * Without a workflow digest, STEP follows a verified initial password.
+     * Bind all digests and writes to the supplied policy and scope. */
+    unsigned int factors;
+    unsigned int factor;
+    const char *workflow;
+    const char *next_workflow;
+    const char *client_id;
+    const char *client_secret;
+    int active;
     /** Effective client address after the server's trusted forwarding policy.
      */
     const char *peer;
@@ -163,6 +191,7 @@ typedef struct knurl_auth_config {
     const char *name;
     knurl_auth_method method;
     knurl_auth_login login;
+    unsigned int factors;
     knurl_auth_backend_fn backend;
     void *userdata;
     /** Optional separate backend for PASSWORD and EMAIL. */
@@ -208,7 +237,11 @@ typedef enum knurl_auth_endpoint {
     KNURL_AUTH_LOGOUT,
     /** Authorize with this policy's session cookie. POST an empty form to
      * enroll, or code=<current TOTP> to rotate. */
-    KNURL_AUTH_TOTP_ENROLL_ENDPOINT
+    KNURL_AUTH_TOTP_ENROLL_ENDPOINT,
+    /** Start or continue the configured factor workflow. A form has either
+     * username and its first factor, or workflow and the requested factor.
+     * Terminal results are a session cookie or fresh Basic credentials. */
+    KNURL_AUTH_WORKFLOW
 } knurl_auth_endpoint;
 KNURL_API knurl_status knurl_auth_route(knurl_router *, const char *,
                                         knurl_auth *, knurl_auth_endpoint,

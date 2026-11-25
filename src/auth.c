@@ -127,7 +127,7 @@ knurl_status knurl_auth_new(const knurl_auth_config *config, knurl_auth **out,
          !oidc) ||
         ((builtin || oidc) &&
          (config->method != KNURL_AUTH_MACHINE || config->backend != NULL ||
-          config->json != NULL)) ||
+          config->json != NULL || config->factors != 0)) ||
         (builtin &&
          (oidc || !knurl_auth_name(config->client_id) ||
           config->client_secret == NULL || strlen(config->client_secret) < 32 ||
@@ -138,10 +138,17 @@ knurl_status knurl_auth_new(const knurl_auth_config *config, knurl_auth **out,
          config->method != KNURL_AUTH_SESSION) ||
         config->login < KNURL_AUTH_LOGIN_PASSWORD ||
         config->login > KNURL_AUTH_LOGIN_EMAIL ||
+        (config->factors != 0 &&
+         (config->login != KNURL_AUTH_LOGIN_PASSWORD ||
+          config->factors >
+              (KNURL_AUTH_FACTOR_EMAIL | KNURL_AUTH_FACTOR_PASSWORD |
+               KNURL_AUTH_FACTOR_TOTP) ||
+          config->factors == KNURL_AUTH_FACTOR_TOTP)) ||
         config->session_seconds > 2592000UL || config->smtp.timeout_ms < 0 ||
         config->smtp.timeout_ms > 10000L ||
-        (config->method == KNURL_AUTH_SESSION &&
-         config->login == KNURL_AUTH_LOGIN_EMAIL &&
+        (((config->method == KNURL_AUTH_SESSION &&
+           config->login == KNURL_AUTH_LOGIN_EMAIL) ||
+          (config->factors & KNURL_AUTH_FACTOR_EMAIL)) &&
          ((config->send_email == NULL &&
            (config->smtp.url == NULL ||
             !knurl_auth_email_address(config->smtp.from) ||

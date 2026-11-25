@@ -105,6 +105,9 @@ knurl_status knurl_oauth2_proxy_admit(knurl_request *request,
     status = knurl_executor_submit(executor, &config, &job->job, error);
     if (status != KNURL_OK) {
         free(job);
+        if (status == KNURL_AGAIN)
+            return knurl_fail(error, KNURL_LIMIT, "proxy_oauth2",
+                              "native token worker queue is full or busy");
         return status;
     }
     knurl_oauth2_client_retain(client);

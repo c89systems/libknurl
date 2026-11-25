@@ -7,6 +7,10 @@
 #include <lonejson.h>
 
 #define KNURL_AUTH_COOKIE_PREFIX "__Host-knurl-"
+#define KNURL_AUTH_FIELD_USER 1
+#define KNURL_AUTH_FIELD_PASSWORD 2
+#define KNURL_AUTH_FIELD_CODE 4
+#define KNURL_AUTH_FIELD_WORKFLOW 8
 
 struct knurl_auth {
     knurl_auth_config config;
@@ -38,6 +42,12 @@ struct knurl_auth_job {
     char cookie[65];
     char revision[33];
     char totp_uri[KNURL_AUTH_TOTP_URI_CAPACITY];
+    char workflow[65];
+    char next_workflow[65];
+    char path_digest[65];
+    char client_id[41];
+    unsigned int fields;
+    unsigned int next_factor;
     knurl_auth_identity identity;
 };
 
@@ -77,15 +87,23 @@ knurl_status knurl_auth_oidc_init(const knurl_auth_oidc *,
                                   struct knurl_auth_issuer **, knurl_error *);
 void knurl_auth_oidc_close(struct knurl_auth_issuer *);
 int knurl_auth_https_url(const char *);
-lonejson_status knurl_auth_http(void *, const lonejson_http_request *,
-                                lonejson_http_response *, lonejson_error *);
-void knurl_auth_http_clear(lonejson_http_response *);
-knurl_status knurl_auth_http_runtime(const char *, lonejson **, knurl_error *);
 void knurl_oauth2_client_retain(knurl_oauth2_client *);
 knurl_status knurl_oauth2_proxy_admit(knurl_request *, const knurl_reply *, int,
                                       void *, knurl_error *);
 knurl_status knurl_auth_executor(knurl_request *, knurl_executor **,
                                  knurl_error *);
+knurl_status knurl_auth_exchange_run(struct knurl_auth_job *,
+                                     knurl_auth_operation,
+                                     knurl_auth_exchange *, knurl_error *);
+knurl_status knurl_auth_checked_identity(knurl_auth_exchange *, knurl_status,
+                                         knurl_error *);
+int knurl_auth_email_code_make(char[7]);
+unsigned int knurl_auth_next_factor(unsigned int, unsigned int);
+knurl_auth_login knurl_auth_factor_storage(unsigned int);
+knurl_status knurl_auth_workflow_run(knurl_job *, struct knurl_auth_job *,
+                                     knurl_error *);
+knurl_status knurl_auth_workflow_pending(knurl_request *, const char *,
+                                         unsigned int, knurl_error *);
 knurl_status knurl_auth_oidc_verify(struct knurl_auth_issuer *,
                                     knurl_auth_exchange *, knurl_error *);
 knurl_status knurl_auth_start(struct knurl_auth_job *, knurl_error *);

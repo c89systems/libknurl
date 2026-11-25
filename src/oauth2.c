@@ -1,5 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
-#include "auth_internal.h"
+#include "auth_http.h"
 #include <curl/curl.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>

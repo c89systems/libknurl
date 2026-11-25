@@ -1,4 +1,4 @@
-#include "auth_internal.h"
+#include "auth_http.h"
 #include "json_internal.h"
 #include <pthread.h>
 #include <stdlib.h>
