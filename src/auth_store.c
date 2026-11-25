@@ -27,37 +27,25 @@ static knurl_status failed(knurl_error *error)
                       "cannot derive authentication state");
 }
 
-static knurl_status user(struct auth_transaction *tx, const char *subject,
-                         struct auth_record *record, knurl_error *error)
+static knurl_status user(struct auth_transaction *tx, const char *users_id,
+                         const char *subject, struct auth_record *record,
+                         knurl_error *error)
 {
     char path[67];
-    if (!subject_path(path, 'u', "", subject))
+    if (!subject_path(path, 'u', users_id, subject))
         return failed(error);
     return knurl_auth_json_read(tx, path, record, error);
 }
 
-static knurl_status current(struct auth_transaction *tx, const char *subject,
-                            const char *revision, knurl_error *error)
+/* An empty revision represents a subject that had no local account state
+ * when the credential was issued. Establishing TOTP creates that state. */
+static knurl_status account_revision(struct auth_transaction *tx,
+                                     const char *users_id, const char *subject,
+                                     char revision[33], int capture,
+                                     knurl_error *error)
 {
     struct auth_record account;
-    knurl_status status;
-    if (*revision == 0)
-        return KNURL_OK;
-    status = user(tx, subject, &account, error);
-    if (status == KNURL_OK &&
-        (account.disabled || strcmp(account.revision, revision) != 0))
-        return KNURL_EOF;
-    return status;
-}
-
-/* An empty session revision identifies a subject that had no local account
- * when the session was issued. Establishing TOTP creates one. */
-static knurl_status session_revision(struct auth_transaction *tx,
-                                     const char *subject, char revision[33],
-                                     int capture, knurl_error *error)
-{
-    struct auth_record account;
-    knurl_status status = user(tx, subject, &account, error);
+    knurl_status status = user(tx, users_id, subject, &account, error);
     if (status == KNURL_EOF && revision[0] == 0)
         return KNURL_OK;
     if (status != KNURL_OK)
@@ -74,7 +62,7 @@ static knurl_status read_user(struct auth_transaction *tx,
                               knurl_error *error)
 {
     struct auth_record record;
-    knurl_status status = user(tx, x->subject, &record, error);
+    knurl_status status = user(tx, x->users_id, x->subject, &record, error);
     if (status != KNURL_OK && status != KNURL_EOF)
         return status;
     if (op == KNURL_AUTH_PASSWORD &&
@@ -112,14 +100,22 @@ static knurl_status throttle(struct auth_transaction *tx, char kind,
     return knurl_auth_json_write(tx, path, &record, error);
 }
 
-static knurl_status totp_check(struct auth_transaction *tx, const char *subject,
+static const char *seed_binding(const char *users_id, const char *subject,
+                                const char *path)
+{
+    /* The digest in account and replay keys is identical for this identity. */
+    return users_id[0] == 0 ? subject : path + 2;
+}
+
+static knurl_status totp_check(struct auth_transaction *tx,
+                               const char *users_id, const char *subject,
                                const char *code,
                                const struct auth_record *account,
                                lonejson_int64 now, char path[67],
                                struct auth_record *record, knurl_error *error)
 {
     knurl_status status;
-    if (!subject_path(path, 't', "", subject))
+    if (!subject_path(path, 't', users_id, subject))
         return failed(error);
     status = knurl_auth_json_read(tx, path, record, error);
     if (status != KNURL_OK && status != KNURL_EOF)
@@ -129,7 +125,8 @@ static knurl_status totp_check(struct auth_transaction *tx, const char *subject,
     if (record->last_step < account->last_step)
         record->last_step = account->last_step;
     record->last_step = knurl_auth_totp_step(
-        tx->store->key, subject, account->seed, code, now, record->last_step);
+        tx->store->key, seed_binding(users_id, subject, path), account->seed,
+        code, now, record->last_step);
     if (record->last_step == 0)
         return KNURL_EOF;
     memcpy(record->enrollment, account->enrollment, sizeof(record->enrollment));
@@ -141,7 +138,7 @@ static knurl_status totp(struct auth_transaction *tx, knurl_auth_exchange *x,
 {
     char path[67];
     struct auth_record account, record;
-    knurl_status status = user(tx, x->subject, &account, error);
+    knurl_status status = user(tx, x->users_id, x->subject, &account, error);
     if (status == KNURL_EOF && x->revision[0] == 0)
         return KNURL_CONFLICT;
     if (status != KNURL_OK)
@@ -151,8 +148,8 @@ static knurl_status totp(struct auth_transaction *tx, knurl_auth_exchange *x,
         return KNURL_EOF;
     if (account.seed[0] == 0 || account.enrollment[0] == 0)
         return KNURL_CONFLICT;
-    status = totp_check(tx, x->subject, x->secret, &account, now, path, &record,
-                        error);
+    status = totp_check(tx, x->users_id, x->subject, x->secret, &account, now,
+                        path, &record, error);
     if (status != KNURL_OK)
         return status;
     memcpy(x->revision, account.revision, sizeof(x->revision));
@@ -181,7 +178,8 @@ static knurl_status email_delivery(struct auth_transaction *tx,
             return status;
         if (pending.expires <= now)
             return KNURL_EOF;
-        status = session_revision(tx, x->subject, pending.revision, 0, error);
+        status = account_revision(tx, x->users_id, x->subject, pending.revision,
+                                  0, error);
         if (status != KNURL_OK)
             return status;
         memset(&record, 0, sizeof(record));
@@ -195,7 +193,8 @@ static knurl_status email_delivery(struct auth_transaction *tx,
         return status;
     if (status == KNURL_OK && pending.expires > now)
         return KNURL_LIMIT;
-    status = session_revision(tx, x->subject, x->revision, 1, error);
+    status =
+        account_revision(tx, x->users_id, x->subject, x->revision, 1, error);
     if (status != KNURL_OK)
         return status;
     status = knurl_auth_json_read(tx, path, &record, error);
@@ -218,7 +217,8 @@ static knurl_status email(struct auth_transaction *tx, knurl_auth_exchange *x,
     knurl_status status;
     if (!subject_path(path, 'e', x->scope, x->subject))
         return failed(error);
-    status = session_revision(tx, x->subject, x->revision, 1, error);
+    status =
+        account_revision(tx, x->users_id, x->subject, x->revision, 1, error);
     if (status != KNURL_OK)
         return status;
     status = knurl_auth_json_read(tx, path, &record, error);
@@ -250,11 +250,13 @@ static knurl_status session(struct auth_transaction *tx,
     if (op == KNURL_AUTH_SESSION_REVOKE)
         return knurl_auth_json_delete(tx, path, error);
     if (op == KNURL_AUTH_SESSION_SAVE) {
-        status = session_revision(tx, x->subject, x->revision, 1, error);
+        status = account_revision(tx, x->users_id, x->subject, x->revision, 1,
+                                  error);
         if (status != KNURL_OK)
             return status;
         memset(&record, 0, sizeof(record));
         snprintf(record.subject, sizeof(record.subject), "%s", x->subject);
+        snprintf(record.users_id, sizeof(record.users_id), "%s", x->users_id);
         memcpy(record.revision, x->revision, sizeof(record.revision));
         record.expires = now + (lonejson_int64)x->lifetime_seconds;
         return knurl_auth_json_write(tx, path, &record, error);
@@ -262,9 +264,10 @@ static knurl_status session(struct auth_transaction *tx,
     status = knurl_auth_json_read(tx, path, &record, error);
     if (status != KNURL_OK)
         return status;
-    if (record.expires <= now)
+    if (record.expires <= now || strcmp(record.users_id, x->users_id) != 0)
         return KNURL_EOF;
-    status = session_revision(tx, record.subject, record.revision, 0, error);
+    status = account_revision(tx, record.users_id, record.subject,
+                              record.revision, 0, error);
     if (status == KNURL_OK) {
         memcpy(x->identity.subject, record.subject, sizeof(record.subject));
         memcpy(x->revision, record.revision, sizeof(x->revision));
@@ -295,10 +298,13 @@ static knurl_status machine(struct auth_transaction *tx, knurl_auth_exchange *x,
         status = failed(error);
     else {
         status = knurl_auth_json_read(tx, path, &record, error);
-        if (status == KNURL_OK && CRYPTO_memcmp(record.secret, digest, 64) != 0)
+        if (status == KNURL_OK &&
+            (CRYPTO_memcmp(record.secret, digest, 64) != 0 ||
+             strcmp(record.users_id, x->users_id) != 0))
             status = KNURL_EOF;
-        if (status == KNURL_OK)
-            status = current(tx, record.subject, record.revision, error);
+        if (status == KNURL_OK && client_kind(name) != 'c')
+            status = account_revision(tx, record.users_id, record.subject,
+                                      record.revision, 0, error);
     }
     if (status == KNURL_OK)
         memcpy(x->identity.subject, record.subject, sizeof(record.subject));
@@ -325,14 +331,16 @@ static knurl_status workflow_read(struct auth_transaction *tx,
     status = knurl_auth_json_read(tx, path, record, error);
     if (status != KNURL_OK)
         return status;
-    if (record->expires <= now || record->attempts >= 5 || record->updated == 0)
+    if (record->expires <= now || record->attempts >= 5 ||
+        record->updated == 0 || strcmp(record->users_id, x->users_id) != 0)
         return KNURL_EOF;
     if (record->disabled) {
         struct auth_record account;
-        status = user(tx, record->subject, &account, error);
+        status = user(tx, record->users_id, record->subject, &account, error);
         return status == KNURL_EOF ? KNURL_OK : status;
     }
-    return current(tx, record->subject, record->revision, error);
+    return account_revision(tx, record->users_id, record->subject,
+                            record->revision, 0, error);
 }
 
 static knurl_status rollback(knurl_status status, knurl_error *error)
@@ -352,9 +360,12 @@ static knurl_status workflow_begin(struct auth_transaction *tx,
     knurl_status status;
     if (!subject_path(resend, workflow_kind(x), x->scope, x->subject))
         return failed(error);
-    status = current(tx, x->subject, x->revision, error);
-    if (status != KNURL_OK)
-        return status;
+    if (x->active) {
+        status = account_revision(tx, x->users_id, x->subject, x->revision, 1,
+                                  error);
+        if (status != KNURL_OK)
+            return status;
+    }
     status = knurl_auth_json_read(tx, resend, &row, error);
     if (status != KNURL_OK && status != KNURL_EOF)
         return status;
@@ -374,6 +385,7 @@ static knurl_status workflow_begin(struct auth_transaction *tx,
     memcpy(row.secret, x->digest, 65);
     memcpy(row.revision, x->revision, sizeof(row.revision));
     snprintf(row.subject, sizeof(row.subject), "%s", x->subject);
+    snprintf(row.users_id, sizeof(row.users_id), "%s", x->users_id);
     record_path(next, workflow_kind(x), x->next_workflow);
     return rollback(knurl_auth_json_write(tx, next, &row, error), error);
 }
@@ -395,7 +407,8 @@ static knurl_status workflow_delivery_finish(struct auth_transaction *tx,
         return KNURL_EOF;
     record_path(next, workflow_kind(x), x->next_workflow);
     status = x->active && reservation.expires > now
-                 ? current(tx, x->subject, x->revision, error)
+                 ? account_revision(tx, x->users_id, x->subject, x->revision, 0,
+                                    error)
                  : KNURL_EOF;
     if (status == KNURL_EOF) {
         knurl_status cleanup = knurl_auth_json_delete(tx, next, error);
@@ -446,6 +459,8 @@ static knurl_status workflow_result(struct auth_transaction *tx,
         return failed(error);
     memcpy(credential.revision, x->revision, sizeof(credential.revision));
     snprintf(credential.subject, sizeof(credential.subject), "%s", x->subject);
+    snprintf(credential.users_id, sizeof(credential.users_id), "%s",
+             x->users_id);
     snprintf(credential.policy, sizeof(credential.policy), "%s", x->policy);
     return knurl_auth_json_write(tx, path, &credential, error);
 }
@@ -477,23 +492,19 @@ static knurl_status workflow_step(struct auth_transaction *tx,
             status = totp(tx, x, now, error);
             if (status != KNURL_OK)
                 return status;
-        } else if (x->next_workflow == NULL && x->client_id == NULL) {
-            status = session_revision(tx, x->subject, x->revision, 1, error);
-            if (status != KNURL_OK)
-                return status;
         }
         status = knurl_auth_json_delete(tx, path, error);
         if (status != KNURL_OK)
             return rollback(status, error);
     } else {
-        status = x->next_workflow == NULL && x->client_id == NULL
-                     ? session_revision(tx, x->subject, x->revision, 1, error)
-                     : current(tx, x->subject, x->revision, error);
+        status = account_revision(tx, x->users_id, x->subject, x->revision, 1,
+                                  error);
         if (status != KNURL_OK)
             return status;
         memset(&row, 0, sizeof(row));
         row.expires = now + 600;
         snprintf(row.subject, sizeof(row.subject), "%s", x->subject);
+        snprintf(row.users_id, sizeof(row.users_id), "%s", x->users_id);
         memcpy(row.revision, x->revision, sizeof(row.revision));
     }
     return rollback(workflow_result(tx, x, &row, now, error), error);
@@ -528,7 +539,8 @@ knurl_status knurl_auth_json_exchange(knurl_auth_operation op,
     case KNURL_AUTH_ATTEMPT:
         status = throttle(&tx, 'p', "", x->peer, now, 60, error);
         if (status == KNURL_OK)
-            status = throttle(&tx, 'a', "", x->subject, now, 12, error);
+            status =
+                throttle(&tx, 'a', x->users_id, x->subject, now, 12, error);
         break;
     case KNURL_AUTH_TOTP_SESSION:
         status = totp(&tx, x, now, error);
@@ -596,8 +608,8 @@ knurl_status knurl_auth_json_exchange(knurl_auth_operation op,
 }
 
 knurl_status knurl_auth_json_admin(knurl_auth_json *json, knurl_auth_admin op,
-                                   const char *subject, const char *value,
-                                   knurl_error *error)
+                                   const char *users_id, const char *subject,
+                                   const char *value, knurl_error *error)
 {
     struct auth_transaction tx;
     struct auth_record record;
@@ -605,6 +617,9 @@ knurl_status knurl_auth_json_admin(knurl_auth_json *json, knurl_auth_admin op,
     size_t length = value != NULL ? strlen(value) : 0;
     knurl_status status;
     if (json == NULL || !knurl_auth_name(subject) ||
+        (users_id != NULL &&
+         (!knurl_auth_policy_name(users_id) || op == KNURL_AUTH_USER_PASSWORD ||
+          op == KNURL_AUTH_USER_EMAIL)) ||
         op < KNURL_AUTH_USER_PASSWORD || op > KNURL_AUTH_USER_DISABLE ||
         (op == KNURL_AUTH_USER_PASSWORD && (length < 15 || length > 1024)) ||
         (op == KNURL_AUTH_USER_EMAIL && !knurl_auth_email_address(value)) ||
@@ -612,7 +627,7 @@ knurl_status knurl_auth_json_admin(knurl_auth_json *json, knurl_auth_admin op,
          value != NULL))
         return knurl_fail(error, KNURL_INVALID, "auth_admin",
                           "invalid account, credential or operation");
-    if (!subject_path(path, 'u', "", subject) ||
+    if (!subject_path(path, 'u', users_id != NULL ? users_id : "", subject) ||
         (op == KNURL_AUTH_USER_PASSWORD &&
          !knurl_auth_password_make(value, encoded)))
         return failed(error);
@@ -620,7 +635,8 @@ knurl_status knurl_auth_json_admin(knurl_auth_json *json, knurl_auth_admin op,
     if (status == KNURL_OK)
         status = knurl_auth_json_read(&tx, path, &record, error);
     if (status == KNURL_EOF &&
-        (op == KNURL_AUTH_USER_DISABLE || op == KNURL_AUTH_USER_ENABLE))
+        (op == KNURL_AUTH_USER_ENABLE ||
+         (op == KNURL_AUTH_USER_DISABLE && users_id == NULL)))
         status = knurl_fail(error, KNURL_INVALID, "auth_admin",
                             "account does not exist");
     if (status == KNURL_OK || status == KNURL_EOF) {
@@ -628,6 +644,9 @@ knurl_status knurl_auth_json_admin(knurl_auth_json *json, knurl_auth_admin op,
             status = failed(error);
         } else {
             snprintf(record.subject, sizeof(record.subject), "%s", subject);
+            if (users_id != NULL)
+                snprintf(record.users_id, sizeof(record.users_id), "%s",
+                         users_id);
             switch (op) {
             case KNURL_AUTH_USER_PASSWORD:
                 memcpy(record.secret, encoded, sizeof(encoded));
@@ -706,7 +725,8 @@ knurl_status knurl_auth_json_revoke(knurl_auth_json *json, const char *policy,
     return status;
 }
 
-static void enrollment_uri(const char *subject, const char seed[33],
+static void enrollment_uri(const char *users_id, const char *subject,
+                           const char seed[33],
                            char out[KNURL_AUTH_TOTP_URI_CAPACITY])
 {
     char label[385], *p = label;
@@ -721,16 +741,19 @@ static void enrollment_uri(const char *subject, const char seed[33],
     }
     *p = 0;
     snprintf(out, KNURL_AUTH_TOTP_URI_CAPACITY,
-             "otpauth://totp/Knurl:%s?secret=%s&issuer=Knurl", label, seed);
+             "otpauth://totp/Knurl:%s%s%s?secret=%s&issuer=Knurl", users_id,
+             *users_id != 0 ? "%2F" : "", label, seed);
 }
 
-static int activate_seed(struct auth_record *account, const char *subject,
-                         const char *encrypted, lonejson_int64 step)
+static int activate_seed(struct auth_record *account, const char *users_id,
+                         const char *subject, const char *encrypted,
+                         lonejson_int64 step)
 {
     if (!knurl_auth_random_hex(account->revision, 16) ||
         !knurl_auth_random_hex(account->enrollment, 16))
         return 0;
     snprintf(account->subject, sizeof(account->subject), "%s", subject);
+    snprintf(account->users_id, sizeof(account->users_id), "%s", users_id);
     snprintf(account->seed, sizeof(account->seed), "%s", encrypted);
     account->last_step = step;
     return 1;
@@ -744,8 +767,8 @@ static knurl_status enrollment(struct auth_transaction *tx,
     char path[67], staged[67], step_path[67], seed[33];
     lonejson_int64 step;
     knurl_status status;
-    if (!subject_path(path, 'u', "", x->subject) ||
-        !subject_path(staged, 'y', "", x->subject))
+    if (!subject_path(path, 'u', x->users_id, x->subject) ||
+        !subject_path(staged, 'y', x->users_id, x->subject))
         return failed(error);
     status = knurl_auth_json_read(tx, path, &account, error);
     if (status != KNURL_OK && status != KNURL_EOF)
@@ -761,11 +784,13 @@ static knurl_status enrollment(struct auth_transaction *tx,
             strcmp(pending.revision, account.revision) != 0 ||
             CRYPTO_memcmp(pending.secret, x->session_digest, 64) != 0)
             return KNURL_EOF;
-        step = knurl_auth_totp_step(tx->store->key, x->subject, pending.seed,
-                                    x->secret, now, 0);
+        step = knurl_auth_totp_step(tx->store->key,
+                                    seed_binding(x->users_id, x->subject, path),
+                                    pending.seed, x->secret, now, 0);
         if (step == 0)
             return KNURL_EOF;
-        if (!activate_seed(&account, x->subject, pending.seed, step))
+        if (!activate_seed(&account, x->users_id, x->subject, pending.seed,
+                           step))
             return failed(error);
         status = knurl_auth_json_delete(tx, staged, error);
         if (status == KNURL_OK)
@@ -777,14 +802,16 @@ static knurl_status enrollment(struct auth_transaction *tx,
     if (x->secret[0] != 0) {
         if (account.seed[0] == 0)
             return KNURL_EOF;
-        status = totp_check(tx, x->subject, x->secret, &account, now, step_path,
-                            &replay, error);
+        status = totp_check(tx, x->users_id, x->subject, x->secret, &account,
+                            now, step_path, &replay, error);
         if (status != KNURL_OK)
             return status;
     }
     memset(&pending, 0, sizeof(pending));
     if (!knurl_auth_seed_generate(seed) ||
-        !knurl_auth_seed_seal(tx->store->key, x->subject, seed, pending.seed)) {
+        !knurl_auth_seed_seal(tx->store->key,
+                              seed_binding(x->users_id, x->subject, path), seed,
+                              pending.seed)) {
         OPENSSL_cleanse(seed, sizeof(seed));
         return failed(error);
     }
@@ -800,18 +827,19 @@ static knurl_status enrollment(struct auth_transaction *tx,
             rollback(knurl_auth_json_write(tx, path, &account, error), error);
     }
     if (status == KNURL_OK)
-        enrollment_uri(x->subject, seed, x->totp_uri);
+        enrollment_uri(x->users_id, x->subject, seed, x->totp_uri);
     OPENSSL_cleanse(seed, sizeof(seed));
     return status;
 }
 
-static knurl_status enroll(struct auth_transaction *tx, const char *subject,
-                           int rotate, char *out, knurl_error *error)
+static knurl_status enroll(struct auth_transaction *tx, const char *users_id,
+                           const char *subject, int rotate, char *out,
+                           knurl_error *error)
 {
     struct auth_record record;
     char path[67], seed[33], encrypted[123];
     knurl_status status;
-    if (!subject_path(path, 'u', "", subject))
+    if (!subject_path(path, 'u', users_id, subject))
         return failed(error);
     status = knurl_auth_json_read(tx, path, &record, error);
     if (status != KNURL_OK && status != KNURL_EOF)
@@ -820,19 +848,22 @@ static knurl_status enroll(struct auth_transaction *tx, const char *subject,
         return knurl_fail(error, KNURL_CONFLICT, "auth_enroll_totp",
                           "TOTP is already enrolled");
     if (!knurl_auth_seed_generate(seed) ||
-        !knurl_auth_seed_seal(tx->store->key, subject, seed, encrypted) ||
-        !activate_seed(&record, subject, encrypted, 0)) {
+        !knurl_auth_seed_seal(tx->store->key,
+                              seed_binding(users_id, subject, path), seed,
+                              encrypted) ||
+        !activate_seed(&record, users_id, subject, encrypted, 0)) {
         OPENSSL_cleanse(seed, sizeof(seed));
         return failed(error);
     }
     status = knurl_auth_json_write(tx, path, &record, error);
     if (status == KNURL_OK)
-        enrollment_uri(subject, seed, out);
+        enrollment_uri(users_id, subject, seed, out);
     OPENSSL_cleanse(seed, sizeof(seed));
     return status;
 }
 
 knurl_status knurl_auth_json_enroll_totp(knurl_auth_json *json,
+                                         const char *users_id,
                                          const char *subject, int rotate,
                                          char out[KNURL_AUTH_TOTP_URI_CAPACITY],
                                          knurl_error *error)
@@ -841,13 +872,15 @@ knurl_status knurl_auth_json_enroll_totp(knurl_auth_json *json,
     knurl_status status;
     if (out != NULL)
         out[0] = 0;
-    if (json == NULL || !knurl_auth_name(subject) || out == NULL)
+    if (json == NULL || !knurl_auth_name(subject) || out == NULL ||
+        (users_id != NULL && !knurl_auth_policy_name(users_id)))
         return knurl_fail(
             error, KNURL_INVALID, "auth_enroll_totp",
             "store, account and enrollment URI output are required");
     status = knurl_auth_json_begin(json, 1, &tx, error);
     if (status == KNURL_OK)
-        status = enroll(&tx, subject, rotate, out, error);
+        status = enroll(&tx, users_id != NULL ? users_id : "", subject, rotate,
+                        out, error);
     status = knurl_auth_json_end(&tx, status, error);
     if (status == KNURL_OK)
         knurl_error_clear(error);

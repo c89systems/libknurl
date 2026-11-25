@@ -34,7 +34,7 @@ struct knurl_auth_job {
     knurl_auth_endpoint endpoint;
     int admission;
     knurl_status status;
-    char scope[512];
+    char scope[640];
     char peer[46];
     char subject[129];
     char credential[16385];

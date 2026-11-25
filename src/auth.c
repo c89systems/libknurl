@@ -117,6 +117,10 @@ knurl_status knurl_auth_new(const knurl_auth_config *config, knurl_auth **out,
     if (config == NULL || out == NULL)
         return knurl_fail(error, KNURL_INVALID, "auth_new",
                           "policy configuration and output are required");
+    if (config->users != NULL ? !knurl_auth_policy_name(config->users_id)
+                              : config->users_id != NULL)
+        return knurl_fail(error, KNURL_INVALID, "auth_new",
+                          "users and a stable users_id must be set together");
     if (config->method == KNURL_AUTH_MACHINE && config->factors != 0 &&
         config->users != NULL && config->machine_check == NULL)
         return knurl_fail(error, KNURL_INVALID, "auth_new",
@@ -176,12 +180,14 @@ knurl_status knurl_auth_new(const knurl_auth_config *config, knurl_auth **out,
     knurl_auth_json_retain(config->json);
     auth->config.email_key = NULL;
     auth->config.name = knurl_copy_text(config->name);
+    auth->config.users_id = knurl_copy_text(config->users_id);
     auth->config.smtp.url = knurl_copy_text(config->smtp.url);
     auth->config.smtp.from = knurl_copy_text(config->smtp.from);
     auth->config.smtp.username = knurl_copy_text(config->smtp.username);
     auth->config.smtp.password = knurl_copy_text(config->smtp.password);
     auth->config.smtp.ca_file = knurl_copy_text(config->smtp.ca_file);
     if (auth->config.name == NULL ||
+        (config->users_id != NULL && auth->config.users_id == NULL) ||
         (config->smtp.url && !auth->config.smtp.url) ||
         (config->smtp.from && !auth->config.smtp.from) ||
         (config->smtp.username && !auth->config.smtp.username) ||
@@ -241,6 +247,7 @@ void knurl_auth_close(knurl_auth *auth)
     knurl_auth_json_close(auth->config.json);
     knurl_auth_oidc_close(auth->issuer);
     free((void *)auth->config.name);
+    free((void *)auth->config.users_id);
     free((void *)auth->config.smtp.url);
     free((void *)auth->config.smtp.from);
     free((void *)auth->config.smtp.username);

@@ -248,10 +248,20 @@ state and machine credentials invalidated by local account changes. Run the
 store on a local filesystem that supports advisory locks and atomic rename.
 
 In C, set `backend` in `knurl_auth_config` to supply storage and
-verification operations. For a directory or identity provider, set `users`
-to supply password verification and enrolled-email lookup while the state
-backend handles sessions, TOTP replay protection and email challenges. A
-provider verifies one named user directly and returns their canonical subject.
+verification operations. For an external user backend, set `users` for
+password verification and enrolled-email lookup. Set its stable `users_id`
+to a name such as `staff-ldap`. Give every policy that uses this backend the
+same ID and give each independent backend a distinct ID. The state backend
+receives `users_id` in each exchange and uses it with the canonical subject
+for account state. The verified identity also exposes `users_id`, including
+as `req.auth.users_id` when available in Lua.
+
+The JSON store lets independent backends share a state directory. For a scoped
+operator enrollment, use `knurl auth user-totp ./auth-state alice --users-id staff-ldap`.
+The same option applies to `user-enable` and `user-disable`. The external
+backend manages passwords and email addresses.
+
+A provider verifies one named user directly and returns its canonical subject.
 The interface never requires account enumeration or retrieving password hashes
 from the directory. Configure `send_email` to replace the native SMTP sender
 with a C callback.

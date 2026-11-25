@@ -9,6 +9,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+static const char *users_id(const knurl_auth_config *config)
+{
+    return config->users_id != NULL ? config->users_id : "";
+}
+
 knurl_status knurl_auth_exchange_run(struct knurl_auth_job *job,
                                      knurl_auth_operation operation,
                                      knurl_auth_exchange *parameters,
@@ -23,6 +28,7 @@ knurl_status knurl_auth_exchange_run(struct knurl_auth_job *job,
         data = config->users_userdata;
     }
     parameters->policy = config->name;
+    parameters->users_id = users_id(config);
     parameters->scope = job->scope;
     parameters->peer = job->peer;
     parameters->login = config->factors
@@ -67,6 +73,8 @@ static knurl_status session(struct knurl_auth_job *job, knurl_auth_operation op,
         if (status == KNURL_OK) {
             const knurl_auth_config *config = &job->auth->config;
             x.identity.method = KNURL_AUTH_SESSION;
+            snprintf(x.identity.users_id, sizeof(x.identity.users_id), "%s",
+                     users_id(config));
             if (config->session_check != NULL) {
                 status = config->session_check(
                     &x.identity, config->session_check_userdata, error);
@@ -219,10 +227,13 @@ static knurl_status verify(knurl_job *task, struct knurl_auth_job *job,
         x.secret = job->credential;
         x.policy = job->auth->config.name;
         x.scope = job->scope;
+        x.users_id = users_id(config);
         x.peer = job->peer;
         status = knurl_auth_machine_verify(&x, job->auth, error);
         if (job->auth->issuer == NULL)
             status = knurl_auth_checked_identity(&x, status, error);
+        snprintf(x.identity.users_id, sizeof(x.identity.users_id), "%s",
+                 users_id(config));
         if (status == KNURL_OK && config->machine_check != NULL) {
             x.identity.method = KNURL_AUTH_MACHINE;
             status = config->machine_check(
@@ -445,10 +456,12 @@ void knurl_auth_disconnect(knurl_request *request)
 static void scope(struct knurl_auth_job *job, knurl_request *request)
 {
     const char *authority = request->impl->authority.data;
+    const char *id = users_id(&job->auth->config);
     size_t i, start;
-    snprintf(job->scope, sizeof(job->scope), "%s/%d/%d/%u/",
+    snprintf(job->scope, sizeof(job->scope), "%s/%d/%d/%u/%s%s",
              job->auth->config.name, (int)job->auth->config.login,
-             (int)job->auth->config.method, job->auth->config.factors);
+             (int)job->auth->config.method, job->auth->config.factors, id,
+             *id != 0 ? "/" : "");
     start = strlen(job->scope);
     for (i = 0; authority[i] && start + i < sizeof(job->scope) - 1; ++i) {
         char ch = authority[i];

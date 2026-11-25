@@ -170,9 +170,13 @@ void rl_push_request(lua_State *L, const knurl_request_snapshot *request,
     field_bytes(L, "raw_path", request->raw_path);
     field_bytes(L, "query", request->query);
     if (identity != NULL) {
-        lua_createtable(L, 0, 2);
+        lua_createtable(L, 0, 3);
         lua_pushstring(L, identity->subject);
         lua_setfield(L, -2, "subject");
+        if (identity->users_id[0] != 0) {
+            lua_pushstring(L, identity->users_id);
+            lua_setfield(L, -2, "users_id");
+        }
         lua_pushstring(L, identity->method == KNURL_AUTH_MACHINE ? "machine"
                                                                  : "session");
         lua_setfield(L, -2, "method");

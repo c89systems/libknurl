@@ -13,8 +13,10 @@ static int usage(FILE *out)
           "       knurl auth prune DIRECTORY\n"
           "       knurl auth user-password DIRECTORY USER  < password.txt\n"
           "       knurl auth user-email DIRECTORY USER EMAIL\n"
-          "       knurl auth user-totp DIRECTORY USER [--rotate]\n"
-          "       knurl auth user-enable|user-disable DIRECTORY USER\n"
+          "       knurl auth user-totp DIRECTORY USER [--rotate] [--users-id "
+          "ID]\n"
+          "       knurl auth user-enable|user-disable DIRECTORY USER "
+          "[--users-id ID]\n"
           "       knurl auth client-issue|client-revoke DIRECTORY POLICY "
           "CLIENT\n",
           out);
@@ -93,7 +95,7 @@ int knurl_auth_cli(int argc, char **argv)
     knurl_auth_json *json = NULL;
     knurl_error error;
     knurl_status status;
-    const char *value = NULL;
+    const char *value = NULL, *users_id = NULL;
     char secret[1026];
     size_t i;
     int enroll, issue, revoke;
@@ -111,13 +113,19 @@ int knurl_auth_cli(int argc, char **argv)
     }
     if (argc < 5)
         return usage(stderr);
+    if (argc >= 7 && strcmp(argv[argc - 2], "--users-id") == 0) {
+        users_id = argv[argc - 1];
+        argc -= 2;
+    }
     enroll = strcmp(argv[2], "user-totp") == 0;
     issue = strcmp(argv[2], "client-issue") == 0;
     revoke = strcmp(argv[2], "client-revoke") == 0;
     for (i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i)
         if (strcmp(argv[2], commands[i].name) == 0)
             break;
-    if ((enroll && argc != 5 && (argc != 6 || strcmp(argv[5], "--rotate"))) ||
+    if ((users_id != NULL && !enroll && strcmp(argv[2], "user-enable") != 0 &&
+         strcmp(argv[2], "user-disable") != 0) ||
+        (enroll && argc != 5 && (argc != 6 || strcmp(argv[5], "--rotate"))) ||
         ((issue || revoke) && argc != 6) ||
         (!enroll && !issue && !revoke &&
          (i == sizeof(commands) / sizeof(commands[0]) ||
@@ -128,8 +136,8 @@ int knurl_auth_cli(int argc, char **argv)
         goto done;
     if (enroll || issue || revoke) {
         if (enroll)
-            status = knurl_auth_json_enroll_totp(json, argv[4], argc == 6,
-                                                 secret, &error);
+            status = knurl_auth_json_enroll_totp(json, users_id, argv[4],
+                                                 argc == 6, secret, &error);
         else if (issue)
             status =
                 knurl_auth_json_issue(json, argv[4], argv[5], secret, &error);
@@ -160,8 +168,8 @@ int knurl_auth_cli(int argc, char **argv)
     } else if (commands[i].op == KNURL_AUTH_USER_EMAIL) {
         value = argv[5];
     }
-    status =
-        knurl_auth_json_admin(json, commands[i].op, argv[4], value, &error);
+    status = knurl_auth_json_admin(json, commands[i].op, users_id, argv[4],
+                                   value, &error);
 done:
     clear(secret, sizeof(secret));
     knurl_auth_json_close(json);

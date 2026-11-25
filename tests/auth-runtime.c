@@ -46,9 +46,12 @@ static pid_t secondary_runner;
 static const char password[] = "a test password with spaces";
 static const char password_form[] =
     "username=alice&password=a+test+password+with+spaces";
+static const char partner_credentials[] =
+    "username=remote&password=the+other+test+password";
 struct fixture {
     knurl_auth_json *store;
     knurl_auth_json *mail_store;
+    knurl_auth_json *users_store;
     char cert[1024], key[1024], static_file[1024];
     char directory_status[1024], store_path[1024], mail_store_path[1024];
     char enrollment[KNURL_AUTH_TOTP_URI_CAPACITY], client_secret[66];
@@ -170,6 +173,7 @@ static knurl_status provider(knurl_auth_operation operation,
     struct fixture *f = userdata;
     (void)error;
     if (operation == KNURL_AUTH_PASSWORD || operation == KNURL_AUTH_EMAIL) {
+        CHECK(strcmp(x->users_id, "staff") == 0);
         if (strcmp(x->subject, "remote") != 0 ||
             (operation == KNURL_AUTH_PASSWORD &&
              strcmp(x->secret, password) != 0))
@@ -185,6 +189,21 @@ static knurl_status provider(knurl_auth_operation operation,
     CHECK(write(f->entered[1], "e", 1) == 1);
     CHECK(note(f->resume[0], 3000) == 'r');
     strcpy(x->identity.subject, "sleeping-service");
+    return KNURL_OK;
+}
+
+static knurl_status partner_users(knurl_auth_operation operation,
+                                  knurl_auth_exchange *x, void *userdata,
+                                  knurl_error *error)
+{
+    (void)userdata;
+    (void)error;
+    CHECK(operation == KNURL_AUTH_PASSWORD &&
+          strcmp(x->users_id, "partner") == 0);
+    if (strcmp(x->subject, "remote") != 0 ||
+        strcmp(x->secret, "the other test password") != 0)
+        return KNURL_EOF;
+    strcpy(x->identity.subject, "directory-user");
     return KNURL_OK;
 }
 
@@ -1090,8 +1109,8 @@ static void ordered_machine(struct fixture *f)
     CHECK(exchange(f, 1, "GET", "/ordered-api", auth, NULL, out) == 200);
     snprintf(path, sizeof(path), "%s/totp.json", f->store_path);
     CHECK(stat(path, &active) == 0);
-    CHECK(knurl_auth_json_admin(f->store, KNURL_AUTH_USER_DISABLE, "dave", NULL,
-                                NULL) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f->store, KNURL_AUTH_USER_DISABLE, NULL, "dave",
+                                NULL, NULL) == KNURL_OK);
     CHECK(exchange(f, 1, "GET", "/ordered-api", auth, NULL, out) == 401);
     CHECK(knurl_auth_json_prune(f->store, NULL) == KNURL_OK);
     CHECK(stat(path, &pruned) == 0 && pruned.st_size < active.st_size);
@@ -1133,15 +1152,16 @@ static void enroll_concurrently(struct fixture *f)
     CHECK(child >= 0);
     if (child == 0) {
         close(result[0]);
-        status = knurl_auth_json_enroll_totp(f->store, "alice", 0, uri, NULL);
+        status =
+            knurl_auth_json_enroll_totp(f->store, NULL, "alice", 0, uri, NULL);
         if (status == KNURL_OK)
             CHECK(write(result[1], uri, strlen(uri) + 1) ==
                   (ssize_t)(strlen(uri) + 1));
         _exit(status == KNURL_OK ? 0 : status == KNURL_CONFLICT ? 1 : 2);
     }
     close(result[1]);
-    status =
-        knurl_auth_json_enroll_totp(f->store, "alice", 0, f->enrollment, NULL);
+    status = knurl_auth_json_enroll_totp(f->store, NULL, "alice", 0,
+                                         f->enrollment, NULL);
     CHECK(waitpid(child, &child_status, 0) == child && WIFEXITED(child_status));
     CHECK((status == KNURL_OK && WEXITSTATUS(child_status) == 1) ||
           (status == KNURL_CONFLICT && WEXITSTATUS(child_status) == 0));
@@ -1211,12 +1231,23 @@ static knurl_status session_check(const knurl_auth_identity *identity,
     (void)error;
     CHECK((identity->method == KNURL_AUTH_SESSION ||
            identity->method == KNURL_AUTH_MACHINE) &&
+          strcmp(identity->users_id, "staff") == 0 &&
           strcmp(identity->subject, "directory-user") == 0);
     file = fopen(f->directory_status, "rb");
     CHECK(file != NULL);
     status = fgetc(file);
     fclose(file);
     return status == 'a' ? KNURL_OK : status == 'd' ? KNURL_EOF : KNURL_IO;
+}
+
+static knurl_status partner_check(const knurl_auth_identity *identity,
+                                  void *userdata, knurl_error *error)
+{
+    (void)userdata;
+    (void)error;
+    CHECK(strcmp(identity->users_id, "partner") == 0 &&
+          strcmp(identity->subject, "directory-user") == 0);
+    return KNURL_OK;
 }
 
 static void directory_status(struct fixture *f, int status)
@@ -1229,7 +1260,8 @@ static void directory_totp(struct fixture *f, char session[256])
 {
     static const char credentials[] =
         "username=remote&password=a+test+password+with+spaces";
-    char out[4096], other[256], uri[512], code[160], form[160], email_code[7];
+    char out[4096], other[256], uri[512], code[160], form[256], email_code[7];
+    char partner[256], partner_uri[KNURL_AUTH_TOTP_URI_CAPACITY];
     size_t i;
     CHECK(exchange(f, 1, "POST", "/external", NULL, credentials, out) == 204);
     cookie(out, session);
@@ -1246,11 +1278,28 @@ static void directory_totp(struct fixture *f, char session[256])
     CHECK(exchange(f, 1, "GET", "/external-email", other, NULL, out) == 200);
     CHECK(exchange(f, 1, "POST", "/external-totp", session, "", out) == 202);
     read_enrollment(out, uri);
+    CHECK(strstr(uri, "Knurl:staff%2Fdirectory-user") != NULL);
+    CHECK(exchange(f, 1, "POST", "/partner", NULL, partner_credentials, out) ==
+          204);
+    cookie(out, partner);
+    CHECK(exchange(f, 1, "POST", "/partner-totp", partner, "", out) == 202);
+    read_enrollment(out, partner_uri);
+    CHECK(strstr(partner_uri, "Knurl:partner%2Fdirectory-user") != NULL);
     totp_code_offset(uri, code, -1);
     snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
     CHECK(exchange(f, 1, "POST", "/external-totp", session, form, out) == 204);
     CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 401);
     CHECK(exchange(f, 1, "GET", "/external-email", other, NULL, out) == 401);
+    CHECK(exchange(f, 1, "GET", "/partner", partner, NULL, out) == 200);
+    totp_code_offset(partner_uri, code, -1);
+    snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
+    CHECK(exchange(f, 1, "POST", "/partner-totp", partner, form, out) == 204);
+    CHECK(exchange(f, 1, "GET", "/partner", partner, NULL, out) == 401);
+    totp_code(partner_uri, code);
+    snprintf(form, sizeof(form), "%s%s", partner_credentials,
+             strrchr(code, '&'));
+    CHECK(exchange(f, 1, "POST", "/partner-otp", NULL, form, out) == 204);
+    cookie(out, partner);
 
     CHECK(exchange(f, 1, "POST", "/external", NULL, credentials, out) == 204);
     cookie(out, session);
@@ -1263,6 +1312,10 @@ static void directory_totp(struct fixture *f, char session[256])
     snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
     CHECK(exchange(f, 1, "POST", "/external-totp", session, form, out) == 204);
     CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 401);
+    CHECK(exchange(f, 1, "GET", "/partner-otp", partner, NULL, out) == 200);
+    totp_code(uri, code);
+    snprintf(form, sizeof(form), "%s%s", credentials, strrchr(code, '&'));
+    CHECK(exchange(f, 1, "POST", "/external-otp", NULL, form, out) == 204);
     CHECK(exchange(f, 1, "POST", "/external", NULL, credentials, out) == 204);
     cookie(out, session);
 }
@@ -1403,7 +1456,7 @@ static void exercise(struct fixture *f)
     directory_status(f, 'e');
     CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 503);
     {
-        char client_id[41], basic[320];
+        char client_id[41], basic[320], partner[320];
         directory_status(f, 'a');
         CHECK(exchange(f, 1, "POST", "/external-provision", NULL,
                        "username=remote&password=a+test+password+with+spaces",
@@ -1411,21 +1464,40 @@ static void exercise(struct fixture *f)
         issued_basic(out, client_id, basic);
         CHECK(exchange(f, 1, "GET", "/external-machine", basic, NULL, out) ==
               200);
-        CHECK(knurl_auth_json_prune(f->store, NULL) == KNURL_OK);
+        CHECK(exchange(f, 1, "POST", "/partner-provision", NULL,
+                       partner_credentials, out) == 201);
+        issued_basic(out, client_id, partner);
+        CHECK(knurl_auth_json_prune(f->users_store, NULL) == KNURL_OK);
         CHECK(exchange(f, 1, "GET", "/external-machine", basic, NULL, out) ==
               200);
+        CHECK(exchange(f, 1, "GET", "/partner-machine", partner, NULL, out) ==
+              200);
+        CHECK(exchange(f, 1, "GET", "/partner-machine", basic, NULL, out) ==
+              401);
+        CHECK(exchange(f, 1, "GET", "/external-machine", partner, NULL, out) ==
+              401);
         directory_status(f, 'd');
         CHECK(exchange(f, 1, "GET", "/external-machine", basic, NULL, out) ==
               401);
         directory_status(f, 'e');
         CHECK(exchange(f, 1, "GET", "/external-machine", basic, NULL, out) ==
               503);
+        directory_status(f, 'a');
+        CHECK(knurl_auth_json_admin(f->users_store, KNURL_AUTH_USER_DISABLE,
+                                    "staff", "directory-user", NULL,
+                                    NULL) == KNURL_OK);
+        CHECK(knurl_auth_json_prune(f->users_store, NULL) == KNURL_OK);
+        CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 401);
+        CHECK(exchange(f, 1, "GET", "/external-machine", basic, NULL, out) ==
+              401);
+        CHECK(exchange(f, 1, "GET", "/partner-machine", partner, NULL, out) ==
+              200);
     }
     totp_code(f->enrollment, form);
     CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 204);
     totp_enrollment(f);
     CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 401);
-    CHECK(knurl_auth_json_enroll_totp(f->store, "alice", 1, f->enrollment,
+    CHECK(knurl_auth_json_enroll_totp(f->store, NULL, "alice", 1, f->enrollment,
                                       NULL) == KNURL_OK);
     totp_code(f->enrollment, form);
     CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 204);
@@ -1446,8 +1518,8 @@ static void exercise(struct fixture *f)
           200);
     CHECK(exchange(f, 1, "POST", "/totp-enroll-email", session, "", out) ==
           409);
-    CHECK(knurl_auth_json_admin(f->store, KNURL_AUTH_USER_DISABLE, "alice",
-                                NULL, NULL) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f->store, KNURL_AUTH_USER_DISABLE, NULL,
+                                "alice", NULL, NULL) == KNURL_OK);
     CHECK(exchange(f, 1, "GET", "/different-policy", session, NULL, out) ==
           401);
     snprintf(form, sizeof(form), "pipeline:%s", f->client_secret);
@@ -1613,15 +1685,57 @@ static void routes(knurl_router *router, struct fixture *f)
     CHECK(knurl_auth_new(&config, &rotating, NULL) == KNURL_OK);
     knurl_auth_config_init(&config);
     config.name = "external";
-    config.json = f->store;
+    config.json = f->users_store;
     config.users = provider;
     config.users_userdata = f;
     config.session_check = session_check;
     config.session_check_userdata = f;
+    CHECK(knurl_auth_new(&config, &external, NULL) == KNURL_INVALID);
+    config.users_id = "staff";
     CHECK(knurl_auth_new(&config, &external, NULL) == KNURL_OK);
     CHECK(knurl_auth_route(router, "/external-totp", external,
                            KNURL_AUTH_TOTP_ENROLL_ENDPOINT, &handle,
                            NULL) == KNURL_OK);
+    {
+        knurl_auth_config partner = config;
+        knurl_auth *policy;
+        config.name = "external-otp";
+        config.login = KNURL_AUTH_LOGIN_TOTP;
+        CHECK(knurl_auth_new(&config, &policy, NULL) == KNURL_OK);
+        CHECK(knurl_auth_route(router, "/external-otp", policy,
+                               KNURL_AUTH_LOGIN, &handle, NULL) == KNURL_OK);
+        knurl_auth_close(policy);
+        partner.name = "partner";
+        partner.users = partner_users;
+        partner.users_id = "partner";
+        partner.session_check = partner_check;
+        CHECK(knurl_auth_new(&partner, &policy, NULL) == KNURL_OK);
+        CHECK(knurl_auth_route(router, "/partner", policy, KNURL_AUTH_LOGIN,
+                               &handle, NULL) == KNURL_OK);
+        CHECK(knurl_auth_route(router, "/partner-totp", policy,
+                               KNURL_AUTH_TOTP_ENROLL_ENDPOINT, &handle,
+                               NULL) == KNURL_OK);
+        plain_route(router, "/partner", policy);
+        knurl_auth_close(policy);
+        partner.name = "partner-otp";
+        partner.login = KNURL_AUTH_LOGIN_TOTP;
+        CHECK(knurl_auth_new(&partner, &policy, NULL) == KNURL_OK);
+        CHECK(knurl_auth_route(router, "/partner-otp", policy, KNURL_AUTH_LOGIN,
+                               &handle, NULL) == KNURL_OK);
+        plain_route(router, "/partner-otp", policy);
+        knurl_auth_close(policy);
+        partner.name = "external-machine";
+        partner.login = KNURL_AUTH_LOGIN_PASSWORD;
+        partner.method = KNURL_AUTH_MACHINE;
+        partner.factors = KNURL_AUTH_FACTOR_PASSWORD;
+        partner.session_check = NULL;
+        partner.machine_check = partner_check;
+        CHECK(knurl_auth_new(&partner, &policy, NULL) == KNURL_OK);
+        CHECK(knurl_auth_route(router, "/partner-provision", policy,
+                               KNURL_AUTH_WORKFLOW, &handle, NULL) == KNURL_OK);
+        plain_route(router, "/partner-machine", policy);
+        knurl_auth_close(policy);
+    }
     config.name = "external-email";
     config.login = KNURL_AUTH_LOGIN_EMAIL;
     config.send_email = send_code;
@@ -1757,7 +1871,7 @@ static void routes(knurl_router *router, struct fixture *f)
 
 static void cli(const char *runner, const char *store, const char *operation,
                 const char *user, const char *value, const char *input,
-                char *output, size_t capacity)
+                char *output, size_t capacity, const char *users_id)
 {
     int pipes[2], result[2], status;
     pid_t child;
@@ -1767,6 +1881,8 @@ static void cli(const char *runner, const char *store, const char *operation,
     child = fork();
     CHECK(child >= 0);
     if (child == 0) {
+        const char *arguments[9];
+        size_t count = 0;
         close(pipes[1]);
         CHECK(dup2(pipes[0], STDIN_FILENO) >= 0);
         close(pipes[0]);
@@ -1774,8 +1890,20 @@ static void cli(const char *runner, const char *store, const char *operation,
         if (output != NULL)
             CHECK(dup2(result[1], STDOUT_FILENO) >= 0);
         close(result[1]);
-        execl(runner, runner, "auth", operation, store, user, value,
-              (char *)NULL);
+        arguments[count++] = runner;
+        arguments[count++] = "auth";
+        arguments[count++] = operation;
+        arguments[count++] = store;
+        if (user != NULL)
+            arguments[count++] = user;
+        if (value != NULL)
+            arguments[count++] = value;
+        if (users_id != NULL) {
+            arguments[count++] = "--users-id";
+            arguments[count++] = users_id;
+        }
+        arguments[count] = NULL;
+        execv(runner, (char *const *)arguments);
         _exit(126);
     }
     close(pipes[0]);
@@ -1853,16 +1981,28 @@ static int runner_test(struct fixture *f, const char *work, const char *store,
         "pipeline:a local test secret with plenty of characters";
     char out[4096], session[256], b64[128], auth[180], form[160];
     char issued[320], client_id[41];
+    char staff[KNURL_AUTH_TOTP_URI_CAPACITY],
+        partner[KNURL_AUTH_TOTP_URI_CAPACITY];
     unsigned short first_port, second_port;
-    cli(runner, store, "init", NULL, NULL, NULL, NULL, 0);
-    cli(runner, store, "prune", NULL, NULL, NULL, NULL, 0);
-    cli(runner, store, "user-password", "alice", NULL, password, NULL, 0);
+    cli(runner, store, "init", NULL, NULL, NULL, NULL, 0, NULL);
+    cli(runner, store, "prune", NULL, NULL, NULL, NULL, 0, NULL);
+    cli(runner, store, "user-password", "alice", NULL, password, NULL, 0, NULL);
     cli(runner, store, "user-email", "alice", "alice@example.test", NULL, NULL,
-        0);
+        0, NULL);
     cli(runner, store, "user-totp", "alice", NULL, NULL, f->enrollment,
-        sizeof(f->enrollment));
+        sizeof(f->enrollment), NULL);
+    cli(runner, store, "user-totp", "alice", NULL, NULL, staff, sizeof(staff),
+        "staff");
+    cli(runner, store, "user-totp", "alice", NULL, NULL, partner,
+        sizeof(partner), "partner");
+    CHECK(strstr(staff, "Knurl:staff%2Falice") != NULL &&
+          strstr(partner, "Knurl:partner%2Falice") != NULL);
+    cli(runner, store, "user-totp", "alice", "--rotate", NULL, out, sizeof(out),
+        "staff");
+    CHECK(strstr(out, "Knurl:staff%2Falice") != NULL &&
+          strcmp(out, staff) != 0);
     cli(runner, store, "client-issue", "machine", "pipeline", NULL,
-        f->client_secret, sizeof(f->client_secret));
+        f->client_secret, sizeof(f->client_secret), NULL);
     close(bound_socket(&f->tls));
     f->tls_client = SSL_CTX_new(TLS_client_method());
     CHECK(f->tls_client != NULL &&
@@ -1886,7 +2026,8 @@ static int runner_test(struct fixture *f, const char *work, const char *store,
     snprintf(auth, sizeof(auth), "Authorization: Basic %s\r\n", b64);
     CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 200);
     CHECK(exchange(f, 1, "GET", "/machine-other", auth, NULL, out) == 401);
-    cli(runner, store, "client-revoke", "machine", "pipeline", NULL, NULL, 0);
+    cli(runner, store, "client-revoke", "machine", "pipeline", NULL, NULL, 0,
+        NULL);
     CHECK(exchange(f, 1, "GET", "/machine", auth, NULL, out) == 401);
     first_port = f->tls;
     secondary_runner = runner_pid;
@@ -1905,7 +2046,10 @@ static int runner_test(struct fixture *f, const char *work, const char *store,
     stop_runner();
     start_runner(f, work, runner, script);
     CHECK(exchange(f, 1, "GET", "/app/settings", session, NULL, out) == 200);
-    cli(runner, store, "user-disable", "alice", NULL, NULL, NULL, 0);
+    cli(runner, store, "user-disable", "alice", NULL, NULL, NULL, 0, "staff");
+    CHECK(exchange(f, 1, "GET", "/app/settings", session, NULL, out) == 200);
+    cli(runner, store, "user-enable", "alice", NULL, NULL, NULL, 0, "staff");
+    cli(runner, store, "user-disable", "alice", NULL, NULL, NULL, 0, NULL);
     CHECK(exchange(f, 1, "GET", "/app/settings", session, NULL, out) == 401);
     CHECK(exchange(f, 1, "GET", "/issued", issued, NULL, out) == 401);
     stop_runner();
@@ -1923,7 +2067,7 @@ int main(int argc, char **argv)
     knurl_error error;
     knurl_status status;
     const char *host = "localhost";
-    char store[1024], uri[KNURL_AUTH_TOTP_URI_CAPACITY];
+    char store[1024], users_store[1024], uri[KNURL_AUTH_TOTP_URI_CAPACITY];
     FILE *file;
     int child;
     pid_t smtp_pid, proxy_pid, oauth_pid;
@@ -1936,18 +2080,24 @@ int main(int argc, char **argv)
     snprintf(f.key, sizeof(f.key), "%s/key.pem", argv[1]);
     if (argc == 4)
         return runner_test(&f, argv[1], store, argv[2], argv[3]);
+    snprintf(users_store, sizeof(users_store), "%s/users-state", argv[1]);
+    CHECK(knurl_auth_json_init(users_store, &error) == KNURL_OK);
+    CHECK(knurl_auth_json_open(users_store, &f.users_store, &error) ==
+          KNURL_OK);
     snprintf(f.mail_store_path, sizeof(f.mail_store_path), "%s/mail", argv[1]);
     CHECK(knurl_auth_json_init(f.mail_store_path, &error) == KNURL_OK);
     CHECK(knurl_auth_json_open(f.mail_store_path, &f.mail_store, &error) ==
           KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_PASSWORD, "alice",
-                                password, &error) == KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_EMAIL, "alice",
-                                "alice@example.test", &error) == KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_PASSWORD, "dave",
-                                password, &error) == KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_EMAIL, "dave",
-                                "dave@example.test", &error) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_PASSWORD, NULL,
+                                "alice", password, &error) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_EMAIL, NULL,
+                                "alice", "alice@example.test",
+                                &error) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_PASSWORD, NULL,
+                                "dave", password, &error) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.mail_store, KNURL_AUTH_USER_EMAIL, NULL,
+                                "dave", "dave@example.test",
+                                &error) == KNURL_OK);
     large_store(argv[1]);
     snprintf(f.static_file, sizeof(f.static_file), "%s/file.txt", argv[1]);
     snprintf(f.directory_status, sizeof(f.directory_status),
@@ -1959,25 +2109,27 @@ int main(int argc, char **argv)
     CHECK(knurl_auth_json_init(store, &error) == KNURL_OK);
     CHECK(knurl_auth_json_init(store, &error) == KNURL_OK);
     CHECK(knurl_auth_json_open(store, &f.store, &error) == KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, "alice",
+    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, NULL,
+                                "alice", password, &error) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, NULL, "bob",
                                 password, &error) == KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, "bob",
+    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, NULL,
+                                "carol", password, &error) == KNURL_OK);
+    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, NULL, "dave",
                                 password, &error) == KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, "carol",
-                                password, &error) == KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_PASSWORD, "dave",
-                                password, &error) == KNURL_OK);
-    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_EMAIL, "dave",
+    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_EMAIL, NULL, "dave",
                                 "dave@example.test", &error) == KNURL_OK);
-    CHECK(knurl_auth_json_enroll_totp(f.store, "carol", 0, f.flow_enrollment[0],
+    CHECK(knurl_auth_json_enroll_totp(f.store, NULL, "carol", 0,
+                                      f.flow_enrollment[0],
                                       &error) == KNURL_OK);
-    CHECK(knurl_auth_json_enroll_totp(f.store, "dave", 0, f.flow_enrollment[1],
+    CHECK(knurl_auth_json_enroll_totp(f.store, NULL, "dave", 0,
+                                      f.flow_enrollment[1],
                                       &error) == KNURL_OK);
     enroll_concurrently(&f);
-    CHECK(knurl_auth_json_enroll_totp(f.store, "alice", 0, uri, &error) ==
+    CHECK(knurl_auth_json_enroll_totp(f.store, NULL, "alice", 0, uri, &error) ==
               KNURL_CONFLICT &&
           uri[0] == 0);
-    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_EMAIL, "alice",
+    CHECK(knurl_auth_json_admin(f.store, KNURL_AUTH_USER_EMAIL, NULL, "alice",
                                 "alice@example.test", &error) == KNURL_OK);
     CHECK(knurl_auth_json_issue(f.store, "machine", "pipeline", f.client_secret,
                                 &error) == KNURL_OK);
@@ -2049,5 +2201,6 @@ int main(int argc, char **argv)
     verify_state_files(store);
     knurl_auth_json_close(f.store);
     knurl_auth_json_close(f.mail_store);
+    knurl_auth_json_close(f.users_store);
     return 0;
 }

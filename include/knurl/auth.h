@@ -10,7 +10,7 @@ extern "C" {
 typedef struct knurl_auth knurl_auth;
 typedef struct knurl_auth_json knurl_auth_json;
 
-#define KNURL_AUTH_TOTP_URI_CAPACITY 512
+#define KNURL_AUTH_TOTP_URI_CAPACITY 640
 
 typedef enum knurl_auth_method {
     KNURL_AUTH_SESSION = 1,
@@ -35,6 +35,8 @@ typedef enum knurl_auth_factor {
 typedef struct knurl_auth_identity {
     knurl_auth_method method;
     char subject[256];
+    /** Stable external users backend ID. Empty for native accounts. */
+    char users_id[129];
 } knurl_auth_identity;
 
 typedef enum knurl_auth_operation {
@@ -125,6 +127,8 @@ typedef struct knurl_auth_exchange {
      * when both operations use the same provider. */
     char revision[33];
     char totp_uri[KNURL_AUTH_TOTP_URI_CAPACITY];
+    /** Pair with subject for account state. Empty for native accounts. */
+    const char *users_id;
 } knurl_auth_exchange;
 
 /** Runs on a native worker. Return EOF for a denial or missing entry,
@@ -229,6 +233,9 @@ typedef struct knurl_auth_config {
      * Required for a machine workflow using a separate users backend. */
     knurl_auth_session_check_fn machine_check;
     void *machine_check_userdata;
+    /** Required stable ID when users is set. All policies for the same
+     * user backend share an ID. Distinct backends use distinct IDs. */
+    const char *users_id;
 } knurl_auth_config;
 
 KNURL_API void knurl_auth_config_init(knurl_auth_config *);
@@ -278,12 +285,16 @@ typedef enum knurl_auth_admin {
     KNURL_AUTH_USER_ENABLE,
     KNURL_AUTH_USER_DISABLE
 } knurl_auth_admin;
-/** Create/update a named account. Account changes revoke its sessions.
- * Use NULL for operations with no value.
+/** Update an account in the supplied users backend namespace. Pass NULL
+ * for the native account namespace. Password and email are managed by
+ * the external user backend when an ID is supplied. Use NULL for operations
+ * with no value. Account changes revoke its sessions.
  */
 KNURL_API knurl_status knurl_auth_json_admin(knurl_auth_json *,
-                                             knurl_auth_admin, const char *,
-                                             const char *, knurl_error *);
+                                             knurl_auth_admin,
+                                             const char *users_id,
+                                             const char *subject,
+                                             const char *value, knurl_error *);
 /** Issue or rotate a machine credential within the named policy. */
 KNURL_API knurl_status knurl_auth_json_issue(knurl_auth_json *, const char *,
                                              const char *, char[65],
@@ -291,10 +302,11 @@ KNURL_API knurl_status knurl_auth_json_issue(knurl_auth_json *, const char *,
 KNURL_API knurl_status knurl_auth_json_revoke(knurl_auth_json *, const char *,
                                               const char *, knurl_error *);
 /** Generate and store an encrypted TOTP enrollment and return its URI once.
- * Nonzero rotate permits replacing an existing enrollment. */
-KNURL_API knurl_status
-knurl_auth_json_enroll_totp(knurl_auth_json *, const char *, int,
-                            char[KNURL_AUTH_TOTP_URI_CAPACITY], knurl_error *);
+ * Pass NULL for the native users backend ID. Nonzero rotate permits
+ * replacing an existing enrollment. */
+KNURL_API knurl_status knurl_auth_json_enroll_totp(
+    knurl_auth_json *, const char *users_id, const char *subject, int rotate,
+    char[KNURL_AUTH_TOTP_URI_CAPACITY], knurl_error *);
 /** Remove expired sessions, challenges and throttle records. */
 KNURL_API knurl_status knurl_auth_json_prune(knurl_auth_json *, knurl_error *);
 

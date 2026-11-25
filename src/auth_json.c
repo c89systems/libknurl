@@ -18,6 +18,8 @@ static const lonejson_field fields[] = {
                                     LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_STRING_FIXED_REQ(struct auth_record, subject, "subject",
                                     LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(struct auth_record, users_id,
+                                           "users_id", LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_STRING_FIXED_REQ(struct auth_record, policy, "policy",
                                     LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_STRING_FIXED_REQ(struct auth_record, email, "email",
@@ -457,10 +459,11 @@ struct account_index {
     size_t count;
 };
 
-static int compare_subjects(const void *left, const void *right)
+static int compare_accounts(const void *left, const void *right)
 {
     const struct auth_record *const *a = left, *const *b = right;
-    return strcmp((*a)->subject, (*b)->subject);
+    int order = strcmp((*a)->users_id, (*b)->users_id);
+    return order != 0 ? order : strcmp((*a)->subject, (*b)->subject);
 }
 
 static knurl_status index_accounts(const struct auth_document *doc,
@@ -478,7 +481,7 @@ static knurl_status index_accounts(const struct auth_document *doc,
     for (i = 0; i < doc->records.count; ++i)
         if (rows[i].key[0] == 'u')
             index->rows[index->count++] = &rows[i];
-    qsort(index->rows, index->count, sizeof(*index->rows), compare_subjects);
+    qsort(index->rows, index->count, sizeof(*index->rows), compare_accounts);
     return KNURL_OK;
 }
 
@@ -486,15 +489,17 @@ static int stale_credential(const struct auth_record *row,
                             const struct account_index *index)
 {
     const struct auth_record *const *account;
-    if (index == NULL || row->expires != 0 || row->revision[0] == 0 ||
+    if (index == NULL || row->expires != 0 ||
         (row->key[0] != 'm' && row->key[0] != 'n' && row->key[0] != 'o'))
         return 0;
     account = index->count == 0
                   ? NULL
                   : bsearch(&row, index->rows, index->count,
-                            sizeof(*index->rows), compare_subjects);
-    return account == NULL || (*account)->disabled ||
-           strcmp((*account)->revision, row->revision) != 0;
+                            sizeof(*index->rows), compare_accounts);
+    return account == NULL
+               ? row->revision[0] != 0
+               : (*account)->disabled ||
+                     strcmp((*account)->revision, row->revision) != 0;
 }
 
 static void expire(struct auth_document *doc, lonejson_int64 now,
