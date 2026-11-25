@@ -114,6 +114,7 @@ static int upstream(int listener)
 {
     static const char program[] =
         "return function(path) "
+        "if path == '/curl-module' then return '{\"message\":\"loaded\"}' end "
         "if path == '/app' or path == '/timeout' then block_application() end "
         "return 'lua:' .. path end";
     lua_State *L = luaL_newstate();
@@ -132,7 +133,7 @@ static int upstream(int listener)
     if (luaL_loadstring(L, program) != LUA_OK ||
         lua_pcall(L, 0, 1, 0) != LUA_OK)
         return 1;
-    for (i = 0; i < 3; ++i) {
+    for (i = 0; i < 4; ++i) {
         fd = accept(listener, NULL, NULL);
         if (fd < 0)
             return 1;

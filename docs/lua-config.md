@@ -15,7 +15,8 @@ Use `LUA_CONFIG=ON` to also build the loadable module. Install the C library
 with a normal `cmake --install`, then use `--component binary` for the
 executable and `--component lua` for the module. With an external Lua 5.5.1
 host, add `<prefix>/lib/lua/5.5/?.so` to `LUA_CPATH` and
-`<prefix>/lib/lua/5.5/?/init.lua` to `LUA_PATH`. The runner uses the target's
+`<prefix>/lib/lua/5.5/?/init.lua` and `<prefix>/lib/lua/5.5/?.lua` to
+`LUA_PATH`. The runner uses the target's
 standard interpreter and finds libknurl relative to the installed executable.
 The platform loader also needs access to the selected cpkt, lonejson and pslog
 runtime libraries, typically via `LD_LIBRARY_PATH` on Linux.
@@ -127,6 +128,52 @@ JSON objects use string keys and an empty table makes an empty object. JSON
 responses are buffered with an 8 MiB maximum and a nesting limit of 32.
 An uncaught handler error returns 500 and logs a bounded message and Lua
 traceback on the server.
+
+## Outbound requests with curl
+
+The runner and optional Lua install provide `require('curl')`. The same call
+works at the top level, in worker hooks, and in an application handler.
+
+```lua
+local curl = require('curl')
+
+check(server:route{
+  path = '/upstream',
+  handler = function()
+    local reply = curl.json{
+      url = 'https://example.com/status.json',
+      connect_timeout_ms = 500,
+      timeout_ms = 2000,
+    }
+    if not reply.ok or reply.status ~= 200 then
+      return {status = 502, body = 'upstream request failed'}
+    end
+    return {json = reply.json}
+  end,
+})
+```
+
+`curl.perform` returns `ok`, `code`, `code_name`, HTTP `status`, `headers`,
+`body`, `effective_url`, and `streamed`. Transfer failures include `error`.
+HTTP errors such as 404 can be successful transfers. `curl.json` encodes
+`body_json` and decodes a buffered response into `result.json`.
+
+Transfers are synchronous and occupy the calling Lua thread. Kore continues
+serving native routes, and other Lua requests on the same worker wait for the
+thread. Set an outbound deadline for each request. `timeout_ms` defaults to
+30000 and `connect_timeout_ms` to 10000. The route deadline can return a 504
+while the curl call is still running. Transfers default to HTTP and HTTPS,
+with TLS certificate verification enabled and redirects disabled.
+
+The default response buffer holds up to 8 MiB. Supply `write(chunk)` or
+`download_path` to consume the response incrementally. For uploads, use
+`upload_path` or `read(max_bytes)`, which supplies a string per call and
+returns nil at EOF. `curl.stream_json` uses a LoneJSON schema on either side
+with `request = {schema = schema, value = value}` and
+`response = {schema = schema}`. A streamed response leaves `body` empty.
+Return `true` from a write callback to accept the chunk. An optional
+`progress(info)` callback returns `true` to continue. Callbacks run on the
+calling Lua thread, and nested transfers raise an error.
 
 ## Route declarations
 

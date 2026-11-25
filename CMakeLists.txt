@@ -173,14 +173,18 @@ if(KNURL_BUILD_LUA OR KNURL_BUILD_BINARY)
   add_subdirectory(lua)
 endif()
 if(KNURL_BUILD_BINARY)
-  set(pslog_embed "${CMAKE_CURRENT_BINARY_DIR}/pslog_facade.inc")
-  add_custom_command(OUTPUT "${pslog_embed}" COMMAND "${CMAKE_COMMAND}"
-    "-DINPUT=${knurl_pslog_facade}" "-DOUTPUT=${pslog_embed}"
-    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedLua.cmake"
-    DEPENDS "${knurl_pslog_facade}" cmake/EmbedLua.cmake VERBATIM)
-  add_executable(knurl binary/main.c "${pslog_embed}")
+  set(binary_facades "")
+  foreach(module pslog lonejson curl)
+    set(facade "${CMAKE_CURRENT_BINARY_DIR}/${module}_facade.inc")
+    add_custom_command(OUTPUT "${facade}" COMMAND "${CMAKE_COMMAND}"
+      "-DINPUT=${knurl_${module}_facade}" "-DOUTPUT=${facade}" "-DNAME=${module}_facade"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedLua.cmake"
+      DEPENDS "${knurl_${module}_facade}" cmake/EmbedLua.cmake VERBATIM)
+    list(APPEND binary_facades "${facade}")
+  endforeach()
+  add_executable(knurl binary/main.c ${binary_facades})
   target_include_directories(knurl PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-  target_link_libraries(knurl PRIVATE knurl_lua_objects knurl_pslog_lua)
+  target_link_libraries(knurl PRIVATE knurl_lua_objects knurl_pslog_lua knurl_lonejson_lua)
   target_compile_definitions(knurl PRIVATE _GNU_SOURCE=1 $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE=1>)
   knurl_c89(knurl)
   if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -192,8 +196,10 @@ if(KNURL_BUILD_BINARY)
   set_target_properties(knurl PROPERTIES INSTALL_RPATH "${binary_origin}/${binary_libdir}")
   install(TARGETS knurl RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT binary EXCLUDE_FROM_ALL)
-  install(FILES "${knurl_pslog_license}" DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/knurl/pslog-lua"
-    COMPONENT binary EXCLUDE_FROM_ALL)
+  foreach(provider pslog lonejson)
+    install(FILES "${knurl_${provider}_license}" DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/knurl/${provider}-lua"
+      COMPONENT binary EXCLUDE_FROM_ALL)
+  endforeach()
 endif()
 
 if(BUILD_TESTING)

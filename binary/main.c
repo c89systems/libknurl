@@ -7,34 +7,60 @@
 
 int luaopen_knurl(lua_State *L);
 int luaopen_pslog_core(lua_State *L);
+int luaopen_lonejson_core(lua_State *L);
+int rl_curl_core(lua_State *L);
 
 #include "pslog_facade.inc"
+#include "lonejson_facade.inc"
+#include "curl_facade.inc"
 
 struct command {
     int argc;
     char **argv;
 };
 
-static int load_pslog(lua_State *L)
+static int load_facade(lua_State *L, const unsigned char *source, size_t length,
+                       const char *name)
 {
-    if (luaL_loadbufferx(L, (const char *)pslog_facade, sizeof(pslog_facade),
-                         "@embedded/pslog.lua", "t") != LUA_OK)
+    if (luaL_loadbufferx(L, (const char *)source, length, name, "t") != LUA_OK)
         return lua_error(L);
     lua_call(L, 0, 1);
     return 1;
 }
 
+static int load_pslog(lua_State *L)
+{
+    return load_facade(L, pslog_facade, sizeof(pslog_facade),
+                       "@embedded/pslog.lua");
+}
+
+static int load_lonejson(lua_State *L)
+{
+    return load_facade(L, lonejson_facade, sizeof(lonejson_facade),
+                       "@embedded/lonejson.lua");
+}
+
+static int load_curl(lua_State *L)
+{
+    return load_facade(L, curl_facade, sizeof(curl_facade),
+                       "@embedded/curl.lua");
+}
+
 static int execute(lua_State *L)
 {
+    static const luaL_Reg modules[] = {{"pslog.core", luaopen_pslog_core},
+                                       {"pslog", load_pslog},
+                                       {"lonejson.core", luaopen_lonejson_core},
+                                       {"lonejson", load_lonejson},
+                                       {"curl.core", rl_curl_core},
+                                       {"curl", load_curl},
+                                       {NULL, NULL}};
     const struct command *command = lua_touserdata(L, 1);
     int i;
     luaL_openlibs(L);
     lua_getglobal(L, "package");
     lua_getfield(L, -1, "preload");
-    lua_pushcfunction(L, luaopen_pslog_core);
-    lua_setfield(L, -2, "pslog.core");
-    lua_pushcfunction(L, load_pslog);
-    lua_setfield(L, -2, "pslog");
+    luaL_setfuncs(L, modules, 0);
     lua_pop(L, 2);
     luaL_requiref(L, "knurl", luaopen_knurl, 0);
     lua_pop(L, 1);

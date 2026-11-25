@@ -1,6 +1,10 @@
 local work, port, mode = ...
 local knurl = require('knurl')
 local pslog = require('pslog')
+local curl = require('curl')
+local lonejson = require('lonejson')
+assert(require('curl.core') == curl.core and knurl.curl == curl.core)
+assert(type(curl.version()) == 'string')
 
 local function check(value, err)
   if not value then
@@ -38,6 +42,96 @@ end))
 
 check(server:text{path = '/health', body = 'ready'})
 check(server:static_file{path = '/asset', file_path = work .. '/asset'})
+local uploaded = work .. '/curl-uploaded'
+local large = work .. '/curl-large'
+local large_size = 8 * 1024 * 1024 + 1
+do
+  local file <close> = assert(io.open(large, 'wb'))
+  assert(file:seek('set', large_size - 1))
+  assert(file:write('\0'))
+end
+check(server:json{path = '/curl-message', body = '{"message":"hello"}'})
+check(server:redirect{path = '/curl-redirect', location = '/curl-message'})
+check(server:upload_file{path = '/curl-upload', file_path = uploaded})
+check(server:static_file{path = '/curl-uploaded', file_path = uploaded})
+check(server:static_file{path = '/curl-large', file_path = large})
+
+local function curl_smoke()
+  local base = 'http://127.0.0.1:' .. port
+  local function request(path, options, fn)
+    options = options or {}
+    options.url = base .. path
+    options.proxy = ''
+    options.timeout_ms = 2000
+    return (fn or curl.perform)(options)
+  end
+  local function upload(options, fn)
+    options.method = 'POST'
+    local result = request('/curl-upload', options, fn)
+    assert(result.ok, result.error)
+    assert(result.status == 200, tostring(result.status))
+  end
+
+  local result = request('/curl-message', nil, curl.json)
+  assert(result.ok and result.status == 200 and result.json.message == 'hello', result.error)
+  assert(result.effective_url == base .. '/curl-message' and result.headers:find('application/json', 1, true))
+  result = request('/curl-redirect')
+  assert(result.ok and result.status == 302)
+  result = request('/curl-redirect', {follow_redirects = true}, curl.json)
+  assert(result.ok and result.status == 200 and result.json.message == 'hello', result.error)
+  result = request('/curl-missing')
+  assert(result.ok and result.status == 404)
+
+  upload({body_json = {message = 'buffered'}}, curl.json)
+  result = request('/curl-uploaded', nil, curl.json)
+  assert(result.ok and result.json.message == 'buffered', result.error)
+
+  local json = lonejson.new()
+  local schema = json.schema('message', {json.field('message', json.string{required = true})})
+  upload({request = {schema = schema, value = {message = 'uploaded'}}}, curl.stream_json)
+  result = request('/curl-uploaded', {response = {schema = schema}}, curl.stream_json)
+  assert(result.ok and result.streamed and result.body == '' and result.json.message == 'uploaded', result.error)
+  upload({body = '{'})
+  result = request('/curl-uploaded', {response = {schema = schema}}, curl.stream_json)
+  assert(not result.ok and result.json_error)
+
+  local parts = {'one', '\0two'}
+  local i = 0
+  upload({read = function(bytes)
+    assert(bytes >= 4)
+    i = i + 1
+    return parts[i]
+  end})
+  assert(i == 3 and request('/curl-uploaded').body == 'one\0two')
+  local downloaded = work .. '/curl-downloaded'
+  result = request('/curl-uploaded', {download_path = downloaded})
+  assert(result.ok and result.streamed and result.body == '', result.error)
+  upload({upload_path = downloaded})
+  assert(request('/curl-uploaded').body == 'one\0two')
+  upload({multipart = {field = 'multipart value'}})
+  result = request('/curl-uploaded')
+  assert(result.ok and result.body:find('name="field"', 1, true) and
+    result.body:find('multipart value', 1, true), result.error)
+
+  result = request('/curl-large')
+  assert(not result.ok and result.error:find('8 MiB', 1, true), result.error)
+  local seen, progress = 0, 0
+  result = request('/curl-large', {
+    write = function(chunk) seen = seen + #chunk; return true end,
+    progress = function(info) assert(type(info) == 'table'); progress = progress + 1; return true end,
+  })
+  assert(result.ok and result.streamed and result.body == '' and seen == large_size and progress > 0, result.error)
+  result = request('/curl-message', {write = function() error('curl callback marker') end})
+  assert(not result.ok and result.error:find('curl callback marker', 1, true), result.error)
+  result = request('/curl-message', {write = function()
+    local ok, err = pcall(request, '/curl-message')
+    assert(not ok and err:find('nested', 1, true), err)
+    return true
+  end})
+  assert(result.ok, result.error)
+  assert(request('/curl-message').ok)
+end
+
 local routes = check(server:group{prefix = '/app'})
 local invalid = routes:route{
   path = '/invalid', max_body_bytes = 20 * 1024 * 1024,
@@ -53,7 +147,27 @@ check(routes:route{
     assert(database:write(req.params.user))
     assert(database:flush())
     local user, action = req.params.user, req.params.action
-    if action == 'hold' then
+    if action == 'curl-smoke' then
+      curl_smoke()
+      return 'curl works'
+    elseif action == 'curl-stream' or action == 'curl-timeout' then
+      local chunks = {}
+      local result = curl.perform{
+        url = 'http://127.0.0.1:' .. assert(tonumber(user)) .. '/from-curl',
+        proxy = '', timeout_ms = action == 'curl-timeout' and 250 or 2500,
+        write = function(chunk)
+          if #chunks == 0 then record('curl first chunk') end
+          chunks[#chunks + 1] = chunk
+          return true
+        end,
+      }
+      if action == 'curl-timeout' then
+        assert(not result.ok and result.code == 28, result.error)
+        return 'timed out'
+      end
+      assert(result.ok and result.status == 200 and result.streamed and result.body == '', result.error)
+      return table.concat(chunks)
+    elseif action == 'hold' then
       record('handler waiting')
       local gate <close> = assert(io.open(work .. '/gate', 'r'))
       assert(gate:read(1) == 'x')

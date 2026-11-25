@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -67,7 +68,7 @@ static void milestone(const char *file, const char *message, int count)
     CHECK(0);
 }
 
-static unsigned short available_port(void)
+static int bound_socket(unsigned short *port)
 {
     struct sockaddr_in address;
     socklen_t length = sizeof(address);
@@ -79,8 +80,8 @@ static unsigned short available_port(void)
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     CHECK(bind(fd, (struct sockaddr *)&address, length) == 0);
     CHECK(getsockname(fd, (struct sockaddr *)&address, &length) == 0);
-    close(fd);
-    return ntohs(address.sin_port);
+    *port = ntohs(address.sin_port);
+    return fd;
 }
 
 static void wait_ok(pid_t child)
@@ -169,6 +170,59 @@ static void reject_upload(unsigned short port, const char *framing)
     CHECK(body != NULL && strcmp(body + 4, "rejected") == 0);
 }
 
+static void curl_request(unsigned short port, const char *log, int timed_out)
+{
+    static const char partial[] =
+        "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\none";
+    unsigned short upstream;
+    struct timeval timeout = {3, 0};
+    struct pollfd ready;
+    char request[256], response[1024];
+    size_t used = 0;
+    ssize_t n;
+    int listener, down, up, length;
+    listener = bound_socket(&upstream);
+    CHECK(listen(listener, 1) == 0);
+    length = snprintf(request, sizeof(request),
+                      "GET /app/%u/%s HTTP/1.1\r\nHost: localhost\r\n"
+                      "Connection: close\r\n\r\n",
+                      (unsigned int)upstream,
+                      timed_out ? "curl-timeout" : "curl-stream");
+    CHECK(length > 0 && (size_t)length < sizeof(request));
+    down = open_request(port, request);
+    ready.fd = listener;
+    ready.events = POLLIN;
+    CHECK(poll(&ready, 1, 3000) == 1);
+    up = accept(listener, NULL, NULL);
+    CHECK(up >= 0);
+    close(listener);
+    CHECK(setsockopt(up, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+          0);
+    do {
+        CHECK(used < sizeof(response) - 1);
+        n = read(up, response + used, sizeof(response) - 1 - used);
+        CHECK(n > 0);
+        used += (size_t)n;
+        response[used] = '\0';
+    } while (strstr(response, "\r\n\r\n") == NULL);
+    CHECK(strncmp(response, "GET /from-curl ", 15) == 0);
+    if (!timed_out) {
+        CHECK(write(up, partial, sizeof(partial) - 1) ==
+              (ssize_t)sizeof(partial) - 1);
+        milestone(log, "curl first chunk\n", 1);
+        CHECK(knurl_test_acl_exchange(port, "GET", "/health", NULL, "ready") ==
+              200);
+        CHECK(write(up, "two", 3) == 3);
+        close(up);
+    }
+    receive(down, response, sizeof(response));
+    if (timed_out)
+        close(up);
+    CHECK(strncmp(response, "HTTP/1.1 200", 12) == 0);
+    CHECK(strstr(response,
+                 timed_out ? "\r\n\r\ntimed out" : "\r\n\r\nonetwo") != NULL);
+}
+
 static void exercise(unsigned short port, const char *log, const char *gate)
 {
     char response[1024];
@@ -218,6 +272,10 @@ static void exercise(unsigned short port, const char *log, const char *gate)
                                   "Content-Length: 17\r\n", NULL) == 413);
     CHECK(events(log, "rejected upload\n") == 2);
     upload(port, log);
+    CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/curl-smoke", NULL,
+                                  "curl works") == 200);
+    curl_request(port, log, 0);
+    curl_request(port, log, 1);
 
     /* Abandon a worker. Its replacement starts from the same parent snapshot.
      */
@@ -234,7 +292,7 @@ int main(int argc, char **argv)
     unsigned short selected;
     pid_t child;
     FILE *file;
-    int normal, init_failure;
+    int normal, init_failure, fd;
     CHECK(argc == 5 || argc == 7);
     normal = strcmp(argv[4], "normal") == 0;
     init_failure = strcmp(argv[4], "init-failure") == 0;
@@ -246,7 +304,8 @@ int main(int argc, char **argv)
     CHECK(mkfifo(gate, 0600) == 0);
     file = fopen(asset, "w");
     CHECK(file != NULL && fputs("asset\n", file) >= 0 && fclose(file) == 0);
-    selected = available_port();
+    fd = bound_socket(&selected);
+    close(fd);
     snprintf(port, sizeof(port), "%u", (unsigned int)selected);
     child = fork();
     CHECK(child >= 0);

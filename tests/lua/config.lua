@@ -1,8 +1,33 @@
 local module_dir, port, upstream, fixture, uploaded = ...
 package.cpath = module_dir .. '/?.so'
-package.path = module_dir .. '/?/init.lua'
+package.path = module_dir .. '/?/init.lua;' .. module_dir .. '/?.lua'
 local knurl = require('knurl')
 local pslog = require('pslog')
+local curl = require('curl')
+local lonejson = require('lonejson')
+assert(require('curl.core') == curl.core and knurl.curl == curl.core)
+assert(type(curl.version()) == 'string')
+local transfer = curl.perform{url = 'file://' .. fixture}
+assert(not transfer.ok and transfer.code == 1, transfer.error)
+for _, options in ipairs{
+  {url = 'http://local\0host'},
+  {url = 'http://localhost', no_signal = false},
+  {url = 'http://localhost', timeout_ms = -1},
+  {url = 'http://localhost', headers = {bad = 'first\r\nsecond'}},
+  {url = 'http://localhost', read = true},
+  {url = 'http://localhost', body = 'value', multipart = {field = 'value'}},
+} do
+  assert(not pcall(curl.perform, options))
+end
+do
+  local json = lonejson.new()
+  local schema = json.schema('message', {json.field('message', json.string{required = true})})
+  local result = curl.stream_json{
+    url = upstream .. '/curl-module', proxy = '', timeout_ms = 2000,
+    response = {schema = schema},
+  }
+  assert(result.ok and result.status == 200 and result.json.message == 'loaded' and result.streamed, result.error)
+end
 
 local function ok(value, err)
   if not value then error(err.message .. ' (' .. err.detail .. ')', 2) end

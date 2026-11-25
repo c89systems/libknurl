@@ -63,6 +63,7 @@ knurl_status rl_server_run(lua_State *, struct rl_server *, knurl_error *);
 knurl_status rl_json_reply(lua_State *, int, knurl_reply *, int, const char *,
                            struct rl_json **, knurl_error *);
 void rl_json_free(struct rl_json *);
+int rl_curl_core(lua_State *);
 KNURL_API int luaopen_knurl(lua_State *);
 
 #endif

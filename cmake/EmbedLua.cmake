@@ -1,7 +1,7 @@
 file(READ "${INPUT}" content HEX)
 string(LENGTH "${content}" length)
 math(EXPR last "${length} - 1")
-set(source "static const unsigned char pslog_facade[] = {\n")
+set(source "static const unsigned char ${NAME}[] = {\n")
 foreach(offset RANGE 0 ${last} 32)
   string(SUBSTRING "${content}" ${offset} 32 line)
   string(REGEX REPLACE "(..)" "0x\\1," line "${line}")
