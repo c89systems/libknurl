@@ -413,6 +413,30 @@ local function curl_smoke()
   assert(request('/curl-message').ok)
 end
 
+local function replay_upload(port, source)
+  local base = 'http://127.0.0.1:' .. assert(tonumber(port))
+  local options = {url = base .. '/first', proxy = '', timeout_ms = 2000, follow_redirects = true}
+  local perform = curl.perform
+  if source == 'mime' then
+    options.multipart = {{name = 'file', path = work .. '/asset'}}
+  elseif source == 'file' then
+    options.upload_path = work .. '/asset'
+  elseif source == 'buffered' then
+    options.upload = true
+    options.body = 'body\0bytes'
+  elseif source == 'json' then
+    local json = lonejson.new()
+    local schema = json.schema('message', {json.field('message', json.string{required = true})})
+    options.request = {schema = schema, value = {message = 'replayed'}}
+    perform = curl.stream_json
+  else
+    error('unexpected upload replay source')
+  end
+  local result = perform(options)
+  assert(result.ok and result.status == 200 and result.effective_url == base .. '/second', result.error)
+  return 'upload replayed'
+end
+
 local function send_mail(port, action)
   local message = 'Subject: knurl test\r\n\r\n.payload\r\n'
   local options = {
@@ -476,14 +500,8 @@ local application = check(routes:route{
     if action == 'curl-smoke' then
       curl_smoke()
       return 'curl works'
-    elseif action == 'curl-mime-replay' then
-      local base = 'http://127.0.0.1:' .. assert(tonumber(user))
-      local result = curl.perform{
-        url = base .. '/first', proxy = '', timeout_ms = 2000, follow_redirects = true,
-        multipart = {{name = 'file', path = work .. '/asset'}},
-      }
-      assert(result.ok and result.status == 200 and result.effective_url == base .. '/second', result.error)
-      return 'multipart replayed'
+    elseif action:sub(1, 12) == 'curl-replay-' then
+      return replay_upload(user, action:sub(13))
     elseif action:sub(1, 5) == 'smtp-' then
       return send_mail(user, action)
     elseif action == 'curl-stream' or action == 'curl-timeout' then

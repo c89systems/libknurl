@@ -238,6 +238,32 @@ static size_t body_read(char *data, size_t size, size_t count, void *userdata)
     return invoke_callback(c, &call) ? call.produced : CURL_READFUNC_ABORT;
 }
 
+int rl_curl_file_seek(void *data, curl_off_t offset, int origin)
+{
+    return (curl_off_t)(off_t)offset == offset &&
+                   fseeko(data, (off_t)offset, origin) == 0
+               ? CURL_SEEKFUNC_OK
+               : CURL_SEEKFUNC_FAIL;
+}
+
+static int body_seek(void *data, curl_off_t offset, int origin)
+{
+    struct rl_curl_call *c = data;
+    curl_off_t base = 0, length = (curl_off_t)c->request_length;
+    if (c->input != NULL)
+        return rl_curl_file_seek(c->input, offset, origin);
+    if (origin == SEEK_CUR)
+        base = (curl_off_t)c->request_offset;
+    else if (origin == SEEK_END)
+        base = length;
+    else if (origin != SEEK_SET)
+        return CURL_SEEKFUNC_FAIL;
+    if (offset < -base || offset > length - base)
+        return CURL_SEEKFUNC_FAIL;
+    c->request_offset = (size_t)(base + offset);
+    return CURL_SEEKFUNC_OK;
+}
+
 static int progress(void *data, curl_off_t dt, curl_off_t dn, curl_off_t ut,
                     curl_off_t un)
 {
@@ -415,6 +441,11 @@ static int perform(lua_State *L)
             CURLE_OK ||
         curl_easy_setopt(c->easy, CURLOPT_READDATA, c) != CURLE_OK)
         return luaL_error(L, "cannot configure curl upload");
+    if ((c->input_path != NULL || c->request_body != NULL) &&
+        (curl_easy_setopt(c->easy, CURLOPT_SEEKFUNCTION, body_seek) !=
+             CURLE_OK ||
+         curl_easy_setopt(c->easy, CURLOPT_SEEKDATA, c) != CURLE_OK))
+        return luaL_error(L, "cannot configure curl upload replay");
     lua_pushboolean(L, 1);
     lua_rawsetp(L, LUA_REGISTRYINDEX, &transfer_key);
     execute(c);

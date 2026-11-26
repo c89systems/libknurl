@@ -686,56 +686,91 @@ static void curl_request(unsigned short port, const char *log, int timed_out)
                  timed_out ? "\r\n\r\ntimed out" : "\r\n\r\nonetwo") != NULL);
 }
 
-static size_t read_multipart(int fd, const char *path, char body[1024])
+static size_t read_chunked_upload(int fd, char body[1024])
 {
+    char line[32], ending[2];
+    size_t i, length = 0;
+    unsigned long size;
+    do {
+        i = 0;
+        do {
+            CHECK(i + 1 < sizeof(line));
+            read_exact(fd, line + i++, 1);
+        } while (line[i - 1] != '\n');
+        line[i] = '\0';
+        CHECK(sscanf(line, "%lx", &size) == 1 && size < 1024 - length);
+        read_exact(fd, body + length, (size_t)size);
+        length += (size_t)size;
+        read_exact(fd, ending, sizeof(ending));
+        CHECK(memcmp(ending, "\r\n", sizeof(ending)) == 0);
+    } while (size != 0);
+    return length;
+}
+
+static size_t read_upload(int fd, const char *method, const char *path,
+                          char body[1024])
+{
+    static const char interim[] = "HTTP/1.1 100 Continue\r\n\r\n";
     char headers[1024], expected[80];
     const char *field;
     unsigned long size;
     read_headers(fd, headers, sizeof(headers));
-    snprintf(expected, sizeof(expected), "POST %s HTTP/1.1\r\n", path);
+    snprintf(expected, sizeof(expected), "%s %s HTTP/1.1\r\n", method, path);
     CHECK(strncmp(headers, expected, strlen(expected)) == 0);
+    if (strstr(headers, "\r\nExpect: 100-continue\r\n") != NULL)
+        CHECK(write(fd, interim, sizeof(interim) - 1) ==
+              (ssize_t)(sizeof(interim) - 1));
+    if (strstr(headers, "\r\nTransfer-Encoding: chunked\r\n") != NULL)
+        return read_chunked_upload(fd, body);
     field = strstr(headers, "\r\nContent-Length: ");
     CHECK(field != NULL &&
           sscanf(field, "\r\nContent-Length: %lu", &size) == 1 && size > 0 &&
           size < 1024);
     read_exact(fd, body, (size_t)size);
-    body[size] = '\0';
     return (size_t)size;
 }
 
-static void curl_mime_replay(unsigned short port)
+static void curl_upload_replay(unsigned short port, const char *source,
+                               const char *method, const char *expected,
+                               size_t expected_length, int redirect_status)
 {
-    static const char redirect[] =
-        "HTTP/1.1 307 Temporary Redirect\r\nLocation: /second\r\n"
-        "Content-Length: 0\r\nConnection: close\r\n\r\n";
     static const char ok[] =
         "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     unsigned short upstream;
     char request[256], first[1024], second[1024];
     size_t size;
-    int listener = bound_socket(&upstream), first_listener, down, up;
+    int listener = bound_socket(&upstream), first_listener, down, up, length;
     CHECK(listen(listener, 1) == 0);
     first_listener = dup(listener);
     CHECK(first_listener >= 0);
     snprintf(request, sizeof(request),
-             "GET /app/%u/curl-mime-replay HTTP/1.1\r\nHost: localhost\r\n"
+             "GET /app/%u/curl-replay-%s HTTP/1.1\r\nHost: localhost\r\n"
              "Connection: close\r\n\r\n",
-             (unsigned int)upstream);
+             (unsigned int)upstream, source);
     down = open_request(port, request);
     up = accept_origin(first_listener);
-    size = read_multipart(up, "/first", first);
-    CHECK(strstr(first, "\r\n\r\nasset\n\r\n") != NULL);
-    CHECK(write(up, redirect, sizeof(redirect) - 1) ==
-          (ssize_t)(sizeof(redirect) - 1));
+    size = read_upload(up, method, "/first", first);
+    if (expected != NULL) {
+        CHECK(size == expected_length && memcmp(first, expected, size) == 0);
+    } else {
+        first[size] = '\0';
+        CHECK(strstr(first, "\r\n\r\nasset\n\r\n") != NULL);
+    }
+    length = snprintf(request, sizeof(request),
+                      "HTTP/1.1 %d Redirect\r\nLocation: /second\r\n"
+                      "Content-Length: 0\r\nConnection: close\r\n\r\n",
+                      redirect_status);
+    CHECK(length > 0 && (size_t)length < sizeof(request));
+    CHECK(write(up, request, (size_t)length) == length);
     close(up);
     up = accept_origin(listener);
-    CHECK(read_multipart(up, "/second", second) == size &&
+    CHECK(read_upload(up, method, "/second", second) == size &&
           memcmp(first, second, size) == 0);
     CHECK(write(up, ok, sizeof(ok) - 1) == (ssize_t)(sizeof(ok) - 1));
     close(up);
     receive(down, first, sizeof(first));
     CHECK(strncmp(first, "HTTP/1.1 200", 12) == 0 &&
-          strstr(first, "\r\n\r\nmultipart replayed") != NULL);
+          strstr(first, "\r\n\r\nupload replayed") != NULL);
 }
 
 static void smtp_exchange(int fd, const char *reply, const char *expected)
@@ -850,7 +885,11 @@ static void exercise(unsigned short port, const char *log, const char *gate,
     upload(port, log);
     CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/curl-smoke", NULL,
                                   "curl works") == 200);
-    curl_mime_replay(port);
+    curl_upload_replay(port, "mime", "POST", NULL, 0, 307);
+    curl_upload_replay(port, "file", "PUT", "asset\n", 6, 307);
+    curl_upload_replay(port, "buffered", "PUT", "body\0bytes", 10, 308);
+    curl_upload_replay(port, "json", "PUT", "{\"message\":\"replayed\"}", 22,
+                       307);
     curl_request(port, log, 0);
     curl_request(port, log, 1);
     smtp_request(port, "smtp-memory");

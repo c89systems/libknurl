@@ -22,7 +22,15 @@ assert(type(curl.version()) == 'string')
 local transfer = curl.perform{url = 'file://' .. fixture}
 assert(not transfer.ok and transfer.code == 1, transfer.error)
 for _, options in ipairs{
+  {},
+  {url = ''},
   {url = 'http://local\0host'},
+  {url = 42},
+} do
+  local ok, err = pcall(curl.perform, options)
+  assert(not ok and err:find('curl requires a URL', 1, true), tostring(err))
+end
+for _, options in ipairs{
   {url = 'http://localhost', no_signal = false},
   {url = 'http://localhost', timeout_ms = -1},
   {url = 'http://localhost', headers = {bad = 'first\r\nsecond'}},

@@ -102,14 +102,6 @@ static size_t mime_read(char *buffer, size_t size, size_t count, void *data)
     return ferror(stream) ? CURL_READFUNC_ABORT : read;
 }
 
-static int mime_seek(void *data, curl_off_t offset, int origin)
-{
-    return (curl_off_t)(off_t)offset == offset &&
-                   fseeko(data, (off_t)offset, origin) == 0
-               ? CURL_SEEKFUNC_OK
-               : CURL_SEEKFUNC_FAIL;
-}
-
 static knurl_status mime_file(struct rl_curl_call *c, curl_mimepart *part,
                               const char *path, const char *filename,
                               knurl_error *error)
@@ -133,7 +125,7 @@ static knurl_status mime_file(struct rl_curl_call *c, curl_mimepart *part,
         filename = filename != NULL ? filename + 1 : path;
     }
     if (curl_mime_data_cb(part, (curl_off_t)file->info.st_size, mime_read,
-                          mime_seek, NULL, file->stream) != CURLE_OK ||
+                          rl_curl_file_seek, NULL, file->stream) != CURLE_OK ||
         curl_mime_filename(part, filename) != CURLE_OK)
         return rl_fail(error, KNURL_BACKEND, "configuring curl MIME file");
     return KNURL_OK;
@@ -331,8 +323,8 @@ knurl_status rl_curl_config(lua_State *L, struct rl_curl_call *c,
         {"verify_peer", CURLOPT_SSL_VERIFYPEER, 1},
         {"follow_redirects", CURLOPT_FOLLOWLOCATION, 0},
         {"tcp_keepalive", CURLOPT_TCP_KEEPALIVE, 1}};
-    const char *value, *method = NULL, *path = NULL, *protocols = "http,https",
-                       *ca, *ca_file = NULL, *ca_path = NULL;
+    const char *value = NULL, *method = NULL, *path = NULL,
+               *protocols = "http,https", *ca, *ca_file = NULL, *ca_path = NULL;
     size_t i, number, length;
     int enabled, upload = 0, sources, has_body = 0;
     knurl_status status;

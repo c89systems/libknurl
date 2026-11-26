@@ -40,6 +40,7 @@ struct rl_curl_call {
     size_t request_length, request_offset;
 };
 int rl_curl_open_file(const char *path, int flags, struct stat *info);
+int rl_curl_file_seek(void *data, curl_off_t offset, int origin);
 knurl_status rl_curl_config(lua_State *, struct rl_curl_call *, knurl_error *);
 knurl_status rl_curl_json_config(lua_State *, struct rl_curl_call *,
                                  knurl_error *);
