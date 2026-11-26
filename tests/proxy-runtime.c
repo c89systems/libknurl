@@ -387,6 +387,11 @@ static int origin(int listener, int control)
         }
         if (strstr(metadata, " /base/raw/a%2Fb?q=%2B ") != NULL)
             CHECK(strncmp(metadata, "GET ", 4) == 0);
+        if (strstr(metadata, " /base/raw/head ") != NULL) {
+            CHECK(strstr(metadata, "theme=dark") != NULL &&
+                  strstr(metadata, "locale=en") != NULL);
+            CHECK(strstr(metadata, "__Host-knurl-") == NULL);
+        }
         {
             const char *message =
                 "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nSet-Cookie: "
@@ -717,8 +722,9 @@ static int client(unsigned short port, int control, int stopping, int completed)
     (void)close(fd);
     fd = connect_to(port);
     CHECK(fd >= 0);
-    message = "HEAD /raw/head HTTP/1.1\r\nHost: client.test\r\nContent-Length: "
-              "0\r\n\r\n";
+    message = "HEAD /raw/head HTTP/1.1\r\nHost: client.test\r\n"
+              "Cookie: theme=dark; __Host-knurl-browser=fixture; locale=en\r\n"
+              "Cookie: __Host-knurl-other=fixture\r\nContent-Length: 0\r\n\r\n";
     CHECK(write_all(fd, message, strlen(message)) == 0 &&
           head(fd, metadata, sizeof(metadata)) == 0);
     CHECK(strstr(metadata, " 200 ") != NULL &&

@@ -368,7 +368,7 @@ knurl_status knurl_proxy_director_prepare(
         if (identity != NULL && identity->method == KNURL_AUTH_MACHINE &&
             knurl_text_equal_case(name, "authorization"))
             continue;
-        if (identity != NULL && knurl_text_equal_case(name, "cookie") &&
+        if (knurl_text_equal_case(name, "cookie") &&
             strstr(value, KNURL_AUTH_COOKIE_PREFIX) != NULL) {
             cookies = forward_cookies(value);
             if (cookies == NULL) {

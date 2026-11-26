@@ -190,8 +190,9 @@ appears. An explicit `jwks_uri` skips discovery. You can seed that cache with
 `jwks_json`, or set `pin_jwks = true` to use only the supplied keys.
 
 Responses on authenticated routes use `Cache-Control: private, no-store`.
-The native reverse proxy removes Knurl session cookies and drops the consumed
-machine `Authorization` header from its default upstream request.
+The native reverse proxy removes Knurl session cookies from default upstream
+requests on all routes. It also drops the consumed machine `Authorization`
+header.
 
 ## OAuth2 for a reverse proxy
 
