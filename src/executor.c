@@ -130,6 +130,16 @@ knurl_status knurl_job_result_copy(knurl_job *job, knurl_bytes result,
     knurl_error_clear(error);
     return KNURL_OK;
 }
+static int same_key(const knurl_job_config *a, const knurl_job_config *b)
+{
+    if (a->serial_key == NULL || b->serial_key == NULL ||
+        a->serial_key_size != b->serial_key_size)
+        return 0;
+    if (a->serial_key_size == 0)
+        return a->serial_key == b->serial_key;
+    return memcmp(a->serial_key, b->serial_key, a->serial_key_size) == 0;
+}
+
 /* The queue lock protects both pending jobs and reservations held by
  * running jobs. Waiting for a provider must not occupy a native thread. */
 static knurl_job *take_job(knurl_executor *e)
@@ -139,7 +149,7 @@ static knurl_job *take_job(knurl_executor *e)
          job = job->queue_next) {
         for (running = e->keyed_running; running != NULL;
              running = running->running_next)
-            if (strcmp(job->config.serial_key, running->config.serial_key) == 0)
+            if (same_key(&job->config, &running->config))
                 break;
         if (running == NULL)
             break;
@@ -627,9 +637,7 @@ knurl_status knurl_executor_submit(knurl_executor *e,
     if (config->serial_key != NULL) {
         size_t count = 0, limit = (e->config.max_jobs + 1) / 2;
         for (job = e->jobs; job != NULL; job = job->next)
-            if (job->config.serial_key != NULL &&
-                strcmp(job->config.serial_key, config->serial_key) == 0 &&
-                ++count >= limit) {
+            if (same_key(&job->config, config) && ++count >= limit) {
                 knurl_error_clear(error);
                 return KNURL_AGAIN;
             }

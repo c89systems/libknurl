@@ -6,6 +6,7 @@
 struct auth_record {
     char key[67];
     char subject[129];
+    char login_name[129];
     char users_id[129];
     char policy[129];
     char email[255];

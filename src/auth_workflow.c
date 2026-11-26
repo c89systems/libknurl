@@ -66,6 +66,8 @@ static knurl_status email_start(knurl_job *task, struct knurl_auth_job *job,
                    account.email[sizeof(account.email) - 1] == 0 &&
                    knurl_auth_email_address(account.email);
     state.subject = state.active ? account.identity.subject : job->subject;
+    if (state.active && (config->factors & KNURL_AUTH_FACTOR_PASSWORD))
+        memcpy(state.login_name, job->subject, sizeof(state.login_name));
     if (state.active && config->users == NULL)
         memcpy(state.revision, account.revision, sizeof(state.revision));
     state.factor = KNURL_AUTH_FACTOR_EMAIL;
@@ -177,6 +179,12 @@ knurl_status knurl_auth_workflow_run(knurl_job *task,
         knurl_auth_exchange proof;
         memset(&proof, 0, sizeof(proof));
         proof.subject = state.subject;
+        if (state.workflow != NULL) {
+            if (identity.login_name[sizeof(identity.login_name) - 1] != 0 ||
+                !knurl_auth_name(identity.login_name))
+                return KNURL_EOF;
+            proof.subject = identity.login_name;
+        }
         proof.secret = job->credential;
         status = knurl_auth_checked_identity(
             &proof,

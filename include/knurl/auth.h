@@ -102,7 +102,8 @@ typedef struct knurl_auth_exchange {
     /** Workflow callbacks receive the configured factors and current factor.
      * BEGIN stores next_workflow with its expected factor and optional email
      * code digest. active is false for a decoy enrollment challenge.
-     * FIND returns factor, identity and revision for the workflow digest.
+     * FIND returns factor, identity and revision for the workflow digest,
+     * plus login_name for the password phase of an email-first workflow.
      * STEP checks the expected factor, canonical identity and revision
      * against the stored workflow. Core verifies PASSWORD before STEP.
      * STEP atomically consumes EMAIL (digest) or TOTP (secret), rotates to
@@ -129,6 +130,9 @@ typedef struct knurl_auth_exchange {
     char totp_uri[KNURL_AUTH_TOTP_URI_CAPACITY];
     /** Pair with subject for account state. Empty for native accounts. */
     const char *users_id;
+    /** Original login name supplied by WORKFLOW_BEGIN when an email-first
+     * workflow requires a password. Preserve it through the password phase. */
+    char login_name[129];
 } knurl_auth_exchange;
 
 /** Runs on a native worker. Return EOF for a denial or missing entry,

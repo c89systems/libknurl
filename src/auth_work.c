@@ -518,13 +518,15 @@ knurl_status knurl_auth_start(struct knurl_auth_job *job, knurl_error *error)
                                                            : KNURL_AUTH_LOCAL,
                                  &pool, error);
     if (status == KNURL_OK) {
+        const char *issuer = knurl_auth_oidc_issuer_name(job->auth->issuer);
         knurl_job_config_init(&config);
         config.work = work;
         config.completed = completed;
         config.interrupted = interrupted;
         config.retired = retired;
         config.userdata = job;
-        config.serial_key = knurl_auth_oidc_issuer_name(job->auth->issuer);
+        config.serial_key = issuer;
+        config.serial_key_size = issuer == NULL ? 0 : strlen(issuer);
         config.timeout_ms = 12000;
         status = knurl_executor_submit(pool, &config, &job->job, error);
     }

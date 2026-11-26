@@ -23,9 +23,13 @@ if(NOT log STREQUAL "" OR NOT records MATCHES "Lua before Kore" OR
 endif()
 if(MODE STREQUAL "normal" AND (NOT records MATCHES "intentional handler error" OR
    NOT records MATCHES "stack traceback:[^\n]*binary[.]lua" OR
+   NOT records MATCHES "intentional proxy on_error failure" OR
+   NOT records MATCHES "intentional proxy on_exchange failure" OR
+   NOT records MATCHES "\"operation\":\"on_error\"" OR
+   NOT records MATCHES "\"operation\":\"on_exchange\"" OR
    NOT records MATCHES "http request[^\n]*\"path\":\"/health\"" OR
    NOT records MATCHES "Lua application call[^\n]*\"user\":\"bob\""))
-  message(FATAL_ERROR "Missing handler, access, or application records\n${records}")
+  message(FATAL_ERROR "Missing handler, proxy, access, or application records\n${records}")
 endif()
 if((MODE STREQUAL "init-failure" AND NOT records MATCHES "intentional initializer failure") OR
    (MODE STREQUAL "stop-failure" AND NOT records MATCHES "intentional cleanup failure"))

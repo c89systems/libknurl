@@ -251,13 +251,13 @@ static int progress(void *data, curl_off_t dt, curl_off_t dn, curl_off_t ut,
 
 static void execute(struct rl_curl_call *c)
 {
-    struct stat info;
+    struct stat input_info = {0}, output_info;
     int fd;
     /* A nonblocking open lets us reject FIFOs before any transfer starts. */
     if (c->input_path != NULL) {
         fd = open(c->input_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (fd < 0 || fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) ||
-            fcntl(fd, F_SETFL, 0) != 0 ||
+        if (fd < 0 || fstat(fd, &input_info) != 0 ||
+            !S_ISREG(input_info.st_mode) || fcntl(fd, F_SETFL, 0) != 0 ||
             (c->input = fdopen(fd, "rb")) == NULL) {
             if (fd >= 0)
                 close(fd);
@@ -267,18 +267,34 @@ static void execute(struct rl_curl_call *c)
             return;
         }
         c->code = (int)curl_easy_setopt(c->easy, CURLOPT_INFILESIZE_LARGE,
-                                        (curl_off_t)info.st_size);
+                                        (curl_off_t)input_info.st_size);
         if (c->code != CURLE_OK)
             return;
     }
     if (c->output_path != NULL) {
         fd = open(c->output_path, O_WRONLY | O_CREAT | O_NONBLOCK | O_CLOEXEC,
                   0666);
-        if (fd < 0 || fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) ||
-            fcntl(fd, F_SETFL, 0) != 0 || ftruncate(fd, 0) != 0 ||
-            (c->output = fdopen(fd, "wb")) == NULL) {
+        if (fd < 0 || fstat(fd, &output_info) != 0 ||
+            !S_ISREG(output_info.st_mode)) {
             if (fd >= 0)
                 close(fd);
+            c->code = CURLE_WRITE_ERROR;
+            snprintf(c->error, sizeof(c->error),
+                     "curl download_path must be a writable regular file");
+            return;
+        }
+        if (c->input_path != NULL && input_info.st_dev == output_info.st_dev &&
+            input_info.st_ino == output_info.st_ino) {
+            close(fd);
+            c->code = CURLE_WRITE_ERROR;
+            snprintf(c->error, sizeof(c->error),
+                     "curl upload_path and download_path must refer to "
+                     "different files");
+            return;
+        }
+        if (fcntl(fd, F_SETFL, 0) != 0 || ftruncate(fd, 0) != 0 ||
+            (c->output = fdopen(fd, "wb")) == NULL) {
+            close(fd);
             c->code = CURLE_WRITE_ERROR;
             snprintf(c->error, sizeof(c->error),
                      "curl download_path must be a writable regular file");

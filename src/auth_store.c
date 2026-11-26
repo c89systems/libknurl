@@ -383,6 +383,7 @@ static knurl_status workflow_begin(struct auth_transaction *tx,
     row.updated = x->active ? 0 : KNURL_AUTH_FACTOR_EMAIL;
     row.disabled = !x->active;
     memcpy(row.secret, x->digest, 65);
+    memcpy(row.login_name, x->login_name, sizeof(row.login_name));
     memcpy(row.revision, x->revision, sizeof(row.revision));
     snprintf(row.subject, sizeof(row.subject), "%s", x->subject);
     snprintf(row.users_id, sizeof(row.users_id), "%s", x->users_id);
@@ -443,6 +444,8 @@ static knurl_status workflow_result(struct auth_transaction *tx,
         record_path(path, workflow_kind(x), x->next_workflow);
         row->updated = knurl_auth_next_factor(x->factors, x->factor);
         row->attempts = 0;
+        if (row->updated != KNURL_AUTH_FACTOR_PASSWORD)
+            memset(row->login_name, 0, sizeof(row->login_name));
         memset(row->secret, 0, sizeof(row->secret));
         return knurl_auth_json_write(tx, path, row, error);
     }
@@ -578,6 +581,8 @@ knurl_status knurl_auth_json_exchange(knurl_auth_operation op,
             x->factor = (unsigned int)row.updated;
             memcpy(x->identity.subject, row.subject, sizeof(row.subject));
             memcpy(x->revision, row.revision, sizeof(row.revision));
+            if (x->factor == KNURL_AUTH_FACTOR_PASSWORD)
+                memcpy(x->login_name, row.login_name, sizeof(row.login_name));
         }
         break;
     }

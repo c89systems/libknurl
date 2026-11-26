@@ -575,8 +575,9 @@ static pid_t oauth_fixture(struct fixture *f)
     SSL_CTX *context;
     unsigned int calls = 0, grants = 0, keys = 0, discovered = 0, posts = 0;
     unsigned int short_posts = 0, retired_posts = 0, replacement_posts = 0;
+    unsigned int independent_tokens = 0, independent_calls = 0;
     int listener = bound_socket(&f->oauth);
-    pid_t pid;
+    pid_t pid, delayed = -1;
     snprintf(f->issuer, sizeof(f->issuer), "https://localhost:%u",
              (unsigned int)f->oauth);
     CHECK(listen(listener, 8) == 0);
@@ -594,7 +595,8 @@ static pid_t oauth_fixture(struct fixture *f)
               1 &&
           SSL_CTX_use_PrivateKey_file(context, f->key, SSL_FILETYPE_PEM) == 1);
     while (calls < 8 || grants < 6 || keys < 2 || discovered < 5 ||
-           posts == 0 || short_posts == 0 || replacement_posts == 0) {
+           posts == 0 || short_posts == 0 || replacement_posts == 0 ||
+           independent_calls < 2) {
         char wire[4096], json[512], response[2048];
         const char *body = NULL, *line, *challenge = "";
         int length, code = 200, fd = accept(listener, NULL, NULL);
@@ -629,12 +631,41 @@ static pid_t oauth_fixture(struct fixture *f)
                                "cHJveHklM0FjbGllbnQ6cyUyNmVjcmV0\r\n") != NULL);
             CHECK(strcmp(strstr(wire, "\r\n\r\n") + 4, requests[grants]) == 0);
             if (grants == 0) {
-                CHECK(write(f->token_request[1], "t", 1) == 1);
-                CHECK(note(f->token_resume[0], 3000) == 'r');
+                /* Hold just this response. The HTTPS fixture can still
+                 * handle requests on every other connection. */
+                delayed = fork();
+                CHECK(delayed >= 0);
+                if (delayed == 0) {
+                    CHECK(write(f->token_request[1], "t", 1) == 1);
+                    CHECK(note(f->token_resume[0], 3000) == 'r');
+                    length = snprintf(
+                        response, sizeof(response),
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                        "Content-Length: %lu\r\nConnection: close\r\n\r\n%s",
+                        (unsigned long)strlen(results[0]), results[0]);
+                    CHECK(length > 0 &&
+                          SSL_write(tls, response, length) == length);
+                    (void)SSL_shutdown(tls);
+                    close(fd);
+                    _exit(0);
+                }
+                ++grants;
+                SSL_free(tls);
+                close(fd);
+                continue;
             }
             if (grants == 2)
                 code = 400;
             body = results[grants++];
+        } else if (strncmp(wire, "POST /independent-token ", 24) == 0) {
+            CHECK(++independent_tokens == 1);
+            body = "{\"access_token\":\"already-cached\","
+                   "\"token_type\":\"Bearer\",\"expires_in\":120}";
+        } else if (strncmp(wire, "GET /independent-proxy ", 23) == 0) {
+            CHECK(++independent_calls <= 2);
+            CHECK(strstr(wire, "Authorization: Bearer already-cached\r\n") !=
+                  NULL);
+            body = "independent backend response";
         } else if (strncmp(wire, "POST /short-token ", 18) == 0) {
             CHECK(++short_posts == 1 && sleep(2) == 0);
             body = "{\"access_token\":\"just-issued\","
@@ -694,6 +725,11 @@ static pid_t oauth_fixture(struct fixture *f)
         SSL_free(tls);
         close(fd);
     }
+    {
+        int status;
+        CHECK(delayed > 0 && waitpid(delayed, &status, 0) == delayed &&
+              WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    }
     SSL_CTX_free(context);
     close(listener);
     _exit(0);
@@ -702,7 +738,7 @@ static pid_t oauth_fixture(struct fixture *f)
 static void oauth_lifecycle(struct fixture *f)
 {
     char auth[2048], out[4096];
-    struct connection pending, second;
+    struct connection pending, second, cached;
     long expiry = (long)time(NULL) + 60;
     sign_bearer(f->signing_key, "at+jwt", "fixture", f->issuer, "knurl",
                 "machine", "jwt-service", expiry, auth);
@@ -731,6 +767,8 @@ static void oauth_lifecycle(struct fixture *f)
         CHECK(read_response(&pending, out) == 200);
         CHECK(read_response(&second, out) == 200);
     }
+    CHECK(exchange(f, 1, "GET", "/independent-proxy", NULL, NULL, out) == 200 &&
+          strstr(out, "independent backend response") != NULL);
     pending = connect_to(f, 1);
     send_request(&pending,
                  "GET /oauth-proxy HTTP/1.1\r\nHost: localhost\r\n"
@@ -743,6 +781,13 @@ static void oauth_lifecycle(struct fixture *f)
     CHECK(exchange(f, 1, "POST", "/login", NULL,
                    "username=carol&password=a+test+password+with+spaces",
                    out) == 204);
+    cached = connect_to(f, 1);
+    send_request(&cached,
+                 "GET /independent-proxy HTTP/1.1\r\nHost: localhost\r\n"
+                 "Connection: close\r\n\r\n");
+    check_response_ready(&cached);
+    CHECK(read_response(&cached, out) == 200 &&
+          strstr(out, "independent backend response") != NULL);
     CHECK(write(f->token_resume[1], "r", 1) == 1);
     CHECK(read_response(&pending, out) == 200 &&
           strstr(out, "Bearer initial") != NULL);
@@ -873,14 +918,13 @@ static void oidc(struct fixture *f)
     CHECK(exchange(f, 1, "GET", "/oidc", auth, NULL, out) == 401);
 }
 
-static void totp_code_offset(const char *uri, char form[160], int offset)
+static void totp_code_at(const char *uri, char form[160], time_t now)
 {
     static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     const char *secret = strstr(uri, "?secret="), *digit;
     unsigned char step[8], digest[20], key[20];
     unsigned int length, i, off, bits = 0, count = 0, used = 0;
     unsigned long value;
-    time_t now = time(NULL) / 30 + offset;
     CHECK(secret != NULL && strncmp(uri, "otpauth://totp/Knurl:", 21) == 0);
     secret += 8;
     CHECK(strcspn(secret, "&") == 32);
@@ -910,7 +954,26 @@ static void totp_code_offset(const char *uri, char form[160], int offset)
 
 static void totp_code(const char *uri, char form[160])
 {
-    totp_code_offset(uri, form, 0);
+    totp_code_at(uri, form, time(NULL) / 30);
+}
+
+static void confirm_enrollment(struct fixture *f, const char *path,
+                               const char *session, const char *uri,
+                               char out[4096])
+{
+    char code[160], form[160];
+    time_t step = time(NULL) / 30;
+    int status;
+    totp_code_at(uri, code, step - 1);
+    snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
+    status = exchange(f, 1, "POST", path, session, form, out);
+    /* A rollover can age the previous step out before the server sees it. */
+    if (status == 401 && time(NULL) / 30 > step) {
+        totp_code_at(uri, code, time(NULL) / 30 - 1);
+        snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
+        status = exchange(f, 1, "POST", path, session, form, out);
+    }
+    CHECK(status == 204);
 }
 
 static void read_enrollment(const char *response, char uri[512])
@@ -971,9 +1034,7 @@ static void totp_enrollment(struct fixture *f)
     CHECK(exchange(f, 1, "POST", "/totp-enroll", browser, "", out) == 202);
     CHECK(exchange(f, 1, "POST", "/totp-enroll", browser, "", out) == 202);
     read_enrollment(out, first);
-    totp_code_offset(first, code, -1);
-    snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
-    CHECK(exchange(f, 1, "POST", "/totp-enroll", browser, form, out) == 204);
+    confirm_enrollment(f, "/totp-enroll", browser, first, out);
     CHECK(strstr(out, "Set-Cookie:") == NULL);
     CHECK(exchange(f, 1, "POST", "/totp-enroll", browser, "", out) == 401);
     CHECK(exchange(f, 1, "POST", "/login", NULL, bob, out) == 204);
@@ -983,12 +1044,10 @@ static void totp_enrollment(struct fixture *f)
                    strrchr(code, '&') + 1, out) == 202);
     read_enrollment(out, rotated);
     CHECK(strcmp(first, rotated) != 0);
-    totp_code_offset(first, code, 1);
+    totp_code_at(first, code, time(NULL) / 30 + 1);
     snprintf(form, sizeof(form), "%s%s", bob, strrchr(code, '&'));
     CHECK(exchange(f, 1, "POST", "/otp", NULL, form, out) == 204);
-    totp_code_offset(rotated, code, -1);
-    snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
-    CHECK(exchange(f, 1, "POST", "/totp-enroll", browser, form, out) == 204);
+    confirm_enrollment(f, "/totp-enroll", browser, rotated, out);
     CHECK(exchange(f, 1, "GET", "/app/me", browser, NULL, out) == 401);
     totp_code(rotated, code);
     snprintf(form, sizeof(form), "%s%s", bob, strrchr(code, '&'));
@@ -1285,15 +1344,11 @@ static void directory_totp(struct fixture *f, char session[256])
     CHECK(exchange(f, 1, "POST", "/partner-totp", partner, "", out) == 202);
     read_enrollment(out, partner_uri);
     CHECK(strstr(partner_uri, "Knurl:partner%2Fdirectory-user") != NULL);
-    totp_code_offset(uri, code, -1);
-    snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
-    CHECK(exchange(f, 1, "POST", "/external-totp", session, form, out) == 204);
+    confirm_enrollment(f, "/external-totp", session, uri, out);
     CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 401);
     CHECK(exchange(f, 1, "GET", "/external-email", other, NULL, out) == 401);
     CHECK(exchange(f, 1, "GET", "/partner", partner, NULL, out) == 200);
-    totp_code_offset(partner_uri, code, -1);
-    snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
-    CHECK(exchange(f, 1, "POST", "/partner-totp", partner, form, out) == 204);
+    confirm_enrollment(f, "/partner-totp", partner, partner_uri, out);
     CHECK(exchange(f, 1, "GET", "/partner", partner, NULL, out) == 401);
     totp_code(partner_uri, code);
     snprintf(form, sizeof(form), "%s%s", partner_credentials,
@@ -1308,9 +1363,7 @@ static void directory_totp(struct fixture *f, char session[256])
     CHECK(exchange(f, 1, "POST", "/external-totp", session,
                    strrchr(code, '&') + 1, out) == 202);
     read_enrollment(out, uri);
-    totp_code_offset(uri, code, -1);
-    snprintf(form, sizeof(form), "confirm=%s", strrchr(code, '=') + 1);
-    CHECK(exchange(f, 1, "POST", "/external-totp", session, form, out) == 204);
+    confirm_enrollment(f, "/external-totp", session, uri, out);
     CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 401);
     CHECK(exchange(f, 1, "GET", "/partner-otp", partner, NULL, out) == 200);
     totp_code(uri, code);
@@ -1318,6 +1371,29 @@ static void directory_totp(struct fixture *f, char session[256])
     CHECK(exchange(f, 1, "POST", "/external-otp", NULL, form, out) == 204);
     CHECK(exchange(f, 1, "POST", "/external", NULL, credentials, out) == 204);
     cookie(out, session);
+}
+
+static void external_workflow(struct fixture *f)
+{
+    char out[4096], form[160], flow[65], code[7], session[256];
+    size_t i;
+    CHECK(exchange(f, 1, "POST", "/external-workflow", NULL, "username=remote",
+                   out) == 202);
+    response_field(out, "workflow", flow, sizeof(flow));
+    for (i = 0; i < 6; ++i)
+        CHECK((code[i] = note(f->mail[0], 3000)) != 0);
+    code[6] = 0;
+    snprintf(form, sizeof(form), "workflow=%s&code=%s", flow, code);
+    CHECK(exchange(f, 1, "POST", "/external-workflow", NULL, form, out) == 202);
+    CHECK(strstr(out, "\"step\":\"password\"") != NULL);
+    response_field(out, "workflow", flow, sizeof(flow));
+    snprintf(form, sizeof(form),
+             "workflow=%s&password=a+test+password+with+spaces", flow);
+    CHECK(exchange(f, 1, "POST", "/external-workflow", NULL, form, out) == 204);
+    cookie(out, session);
+    CHECK(exchange(f, 1, "GET", "/external-workflow-user", session, NULL,
+                   out) == 200 &&
+          strstr(out, "directory-user") != NULL);
 }
 
 static void start_mail(struct fixture *f, const char *path, const char *form,
@@ -1450,6 +1526,7 @@ static void exercise(struct fixture *f)
     CHECK(exchange(f, 1, "POST", "/logout", session, NULL, out) == 204 &&
           strstr(out, "Max-Age=0") != NULL);
     CHECK(exchange(f, 1, "GET", "/app/me", session, NULL, out) == 401);
+    external_workflow(f);
     directory_totp(f, session);
     directory_status(f, 'd');
     CHECK(exchange(f, 1, "GET", "/external", session, NULL, out) == 401);
@@ -1610,7 +1687,7 @@ static void routes(knurl_router *router, struct fixture *f)
     knurl_oauth2_config oauth;
     knurl_oauth2_client *client;
     knurl_route *handle;
-    char mail_url[128], proxy_url[128];
+    char mail_url[128], proxy_url[128], independent_endpoint[160];
     knurl_auth_config_init(&config);
     config.json = f->mail_store;
     config.name = "mail-password";
@@ -1745,6 +1822,17 @@ static void routes(knurl_router *router, struct fixture *f)
                            KNURL_AUTH_LOGIN, &handle, NULL) == KNURL_OK);
     CHECK(knurl_auth_route(router, "/external-email-code", external_email,
                            KNURL_AUTH_EMAIL_START, &handle, NULL) == KNURL_OK);
+    {
+        knurl_auth *workflow;
+        config.name = "external-workflow";
+        config.login = KNURL_AUTH_LOGIN_PASSWORD;
+        config.factors = KNURL_AUTH_FACTOR_EMAIL | KNURL_AUTH_FACTOR_PASSWORD;
+        CHECK(knurl_auth_new(&config, &workflow, NULL) == KNURL_OK);
+        CHECK(knurl_auth_route(router, "/external-workflow", workflow,
+                               KNURL_AUTH_WORKFLOW, &handle, NULL) == KNURL_OK);
+        plain_route(router, "/external-workflow-user", workflow);
+        knurl_auth_close(workflow);
+    }
     config.name = "external-machine";
     config.method = KNURL_AUTH_MACHINE;
     config.login = KNURL_AUTH_LOGIN_PASSWORD;
@@ -1830,6 +1918,15 @@ static void routes(knurl_router *router, struct fixture *f)
     proxy.path = "/oauth-proxy";
     proxy.target = f->issuer;
     proxy.tls_ca_pem = f->ca_pem;
+    CHECK(knurl_router_proxy(router, &proxy, &handle, NULL) == KNURL_OK);
+    CHECK(knurl_route_set_proxy_oauth2(handle, client, NULL) == KNURL_OK);
+    knurl_oauth2_client_close(client);
+    snprintf(independent_endpoint, sizeof(independent_endpoint),
+             "%s/independent-token", f->issuer);
+    oauth.issuer = NULL;
+    oauth.token_endpoint = independent_endpoint;
+    CHECK(knurl_oauth2_client_new(&oauth, &client, NULL) == KNURL_OK);
+    proxy.path = "/independent-proxy";
     CHECK(knurl_router_proxy(router, &proxy, &handle, NULL) == KNURL_OK);
     CHECK(knurl_route_set_proxy_oauth2(handle, client, NULL) == KNURL_OK);
     knurl_oauth2_client_close(client);

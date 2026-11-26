@@ -281,6 +281,10 @@ static void completed(struct rl_work *job, knurl_status status,
 {
     struct hook_call *call = (struct hook_call *)job;
     knurl_request *request = call->request;
+    if (error != NULL &&
+        (call->phase == PROXY_ERROR || call->phase == PROXY_EXCHANGE) &&
+        strcmp(error->operation, names[call->phase]) == 0)
+        knurl_server_log_error(job->server->native, "lua_proxy", error);
     if (request != NULL) {
         knurl_reply *reply = call->reply;
         knurl_header field;

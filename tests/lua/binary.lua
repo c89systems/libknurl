@@ -22,6 +22,14 @@ end
 
 local country_database
 if mode == 'normal' then
+  local asset = work .. '/asset'
+  for _, destination in ipairs{asset, work .. '/asset-alias'} do
+    local result = curl.perform{url = 'file://' .. asset, proxy = '', method = 'PUT',
+      upload_path = asset, download_path = destination}
+    assert(not result.ok and result.error:find('must refer to different files', 1, true))
+    local source <close> = assert(io.open(asset, 'rb'))
+    assert(source:read('a') == 'asset\n')
+  end
   local endpoint = 'http://127.0.0.1:' .. geo_port
   local expected = work .. '/geo-cache/knurl/dbip-country-lite.mmdb'
   for _, path in ipairs{'/missing', '/broken', '/bad-mmdb'} do
@@ -259,12 +267,14 @@ check(gateway:proxy{path = '/:name', target = origin .. '/wrong-prefix', alterna
     assert(event.status == 203 and event.downstream_bytes == #'upstream data')
     assert(event.kind == 'http' and event.route == '/gateway/:name')
     record('proxy exchange callback')
+    error('intentional proxy on_exchange failure')
   end,
 })
 check(server:proxy{path = '/gateway-failure', target = 'https://127.0.0.1:' .. port,
   connect_timeout_ms = 500, total_timeout_ms = 1000,
   on_error = function(req, err, status)
     assert(req.path == '/gateway-failure' and err.message and (status == 502 or status == 504))
+    if req.query == 'throw=1' then error('intentional proxy on_error failure') end
     return {status = 503, headers = {['x-fallback'] = 'lua'}, body = 'custom gateway response'}
   end,
 })

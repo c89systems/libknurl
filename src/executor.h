@@ -37,9 +37,11 @@ typedef struct knurl_job_config {
     knurl_job_retire_fn retired;
     knurl_bytes arguments;
     void *userdata;
-    /** Jobs with equal non-NULL keys execute one at a time. Borrowed
-     * through retirement. */
-    const char *serial_key;
+    /** Jobs with equal non-NULL keys execute one at a time. A zero size
+     * compares address identity. A nonzero size compares the key bytes.
+     * Borrowed through retirement. */
+    const void *serial_key;
+    size_t serial_key_size;
     long timeout_ms;
     int timeout_disabled;
 } knurl_job_config;

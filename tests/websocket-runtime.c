@@ -410,8 +410,12 @@ static int connect_to(struct client *c, unsigned short port, int tls,
         CHECK(write_all(c, request, used + sizeof(early)) == 0);
     } else
         CHECK(write_all(c, request, strlen(request)) == 0);
-    if (strcmp(path, "/wrong") == 0)
+    if (strcmp(path, "/wrong") == 0) {
+        char byte;
+        CHECK((c->ssl != NULL ? SSL_read(c->ssl, &byte, 1)
+                              : read(c->fd, &byte, 1)) == 0);
         return 0;
+    }
     used = 0;
     do {
         CHECK(used + 1 < sizeof(response) &&
@@ -420,7 +424,7 @@ static int connect_to(struct client *c, unsigned short port, int tls,
     } while (strstr(response, "\r\n\r\n") == NULL);
     if (strcmp(path, "/bad") == 0)
         CHECK(strstr(response, "403 ") != NULL);
-    else if (strcmp(path, "/stop") != 0 && strcmp(path, "/wrong") != 0) {
+    else if (strcmp(path, "/stop") != 0) {
         CHECK(strstr(response, "101 ") != NULL &&
               strstr(response, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") != NULL);
         if (strcmp(path, "/echo") == 0)

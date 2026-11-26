@@ -385,6 +385,11 @@ static void hooks_and_proxy(unsigned short port, const char *log,
     CHECK(strncmp(response, "HTTP/1.1 503", 12) == 0);
     CHECK(strstr(response, "x-fallback: lua\r\n") &&
           strstr(response, "custom gateway response"));
+    receive(open_request(port, "GET /gateway-failure?throw=1 HTTP/1.1\r\n"
+                               "Host: localhost\r\nConnection: close\r\n\r\n"),
+            response, sizeof(response));
+    CHECK(strncmp(response, "HTTP/1.1 502", 12) == 0 ||
+          strncmp(response, "HTTP/1.1 504", 12) == 0);
 }
 
 static void hook_timeouts(unsigned short port, const char *log,
@@ -839,6 +844,10 @@ int main(int argc, char **argv)
     close(fd);
     snprintf(port, sizeof(port), "%u", (unsigned int)selected);
     if (normal) {
+        char alias[4096];
+        path(alias, sizeof(alias), argv[3], "asset-alias");
+        (void)unlink(alias);
+        CHECK(link(asset, alias) == 0);
         path(cache, sizeof(cache), argv[3], "geo-cache");
         CHECK(setenv("XDG_CACHE_HOME", cache, 1) == 0);
         CHECK(setenv("no_proxy", "127.0.0.1", 1) == 0);

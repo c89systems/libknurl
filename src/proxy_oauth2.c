@@ -108,6 +108,7 @@ knurl_status knurl_oauth2_proxy_admit(knurl_request *request,
     config.interrupted = interrupted;
     config.retired = retired;
     config.userdata = job;
+    config.serial_key = client;
     config.timeout_ms = 12000;
     status = knurl_executor_submit(executor, &config, &job->job, error);
     if (status != KNURL_OK) {

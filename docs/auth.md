@@ -221,6 +221,8 @@ unusable. Knurl returns the upstream response and obtains a fresh token for a
 later request. Proxy token acquisition and inbound JWT verification each use
 a native executor separate from the one for local sign-in. Work for the same
 OIDC issuer waits in the queue while a request for that issuer is running.
+Proxy routes that share an OAuth2 client similarly queue behind that client's
+acquisition or renewal, leaving other clients eligible to run.
 Both the inbound OIDC and outbound OAuth2 configuration accept `ca_file`
 for a private trust root. A Lua application worker can also call
 `upstream:token()` for a separate outbound request. The call may wait for
@@ -236,7 +238,9 @@ The built-in store writes a fixed set of files in one private directory.
   state for each flow and appear as they are used. Email and TOTP sessions
   are written to the same file as the factor they consume, in one atomic
   update. Ordered workflows keep pending steps and the final session or
-  machine credential in the same file as the terminal factor.
+  machine credential in the same file as the terminal factor. An email-first
+  workflow with a password retains the original login name through the
+  password step and checks that both proofs resolve to the same subject.
 - `key` holds the owner-only encryption key. Back it up with the JSON files.
 
 One interprocess lock protects updates and operations that read multiple files.

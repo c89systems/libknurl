@@ -18,6 +18,8 @@ static const lonejson_field fields[] = {
                                     LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_STRING_FIXED_REQ(struct auth_record, subject, "subject",
                                     LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(
+        struct auth_record, login_name, "login_name", LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(struct auth_record, users_id,
                                            "users_id", LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_STRING_FIXED_REQ(struct auth_record, policy, "policy",

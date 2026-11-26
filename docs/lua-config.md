@@ -307,6 +307,8 @@ with `request = {schema = schema, value = value}` and
 Return `true` from a write callback to accept the chunk. An optional
 `progress(info)` callback returns `true` to continue. Callbacks run on the
 calling Lua thread, and nested transfers raise an error.
+If a transfer uses both `upload_path` and `download_path`, those paths must
+resolve to different files.
 
 ## Send mail over SMTP
 
@@ -399,6 +401,8 @@ transport framing and auth cache policy.
 
 These callbacks run on the worker's Lua thread. The proxy transports HTTP,
 SSE and WebSocket traffic in C with bounded buffers.
+Knurl logs exceptions in `on_error` and `on_exchange` through the server's
+configured logger. An exception in `on_error` keeps the native gateway reply.
 
 ## ACLs and country data
 
