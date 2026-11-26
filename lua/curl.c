@@ -3,7 +3,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "curl_internal.h"
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 static char core_key, transfer_key;
@@ -11,6 +10,7 @@ static char core_key, transfer_key;
 static int release(lua_State *L)
 {
     struct rl_curl_call *c = luaL_checkudata(L, 1, RL_CURL_CALL);
+    struct rl_curl_mime_file *file;
     if (c->stopped)
         return 0;
     c->stopped = 1;
@@ -20,6 +20,11 @@ static int release(lua_State *L)
     curl_slist_free_all(c->recipients);
     if (c->mime != NULL)
         curl_mime_free(c->mime);
+    while ((file = c->mime_files) != NULL) {
+        c->mime_files = file->next;
+        fclose(file->stream);
+        free(file);
+    }
     if (c->initialized)
         curl_global_cleanup();
     if (c->input != NULL)
@@ -249,16 +254,44 @@ static int progress(void *data, curl_off_t dt, curl_off_t dn, curl_off_t ut,
     return invoke_callback(c, &call) ? 0 : 1;
 }
 
+int rl_curl_open_file(const char *path, int flags, struct stat *info)
+{
+    /* Nonblocking open lets us reject FIFOs before any transfer starts. */
+    int fd = open(path, flags | O_NONBLOCK | O_CLOEXEC, 0666);
+    if (fd < 0)
+        return -1;
+    if (fstat(fd, info) == 0 && S_ISREG(info->st_mode) &&
+        fcntl(fd, F_SETFL, 0) == 0)
+        return fd;
+    close(fd);
+    return -1;
+}
+
+static int same_file(const struct stat *a, const struct stat *b)
+{
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino;
+}
+
+static int output_aliases_upload(const struct rl_curl_call *c,
+                                 const struct stat *input,
+                                 const struct stat *output)
+{
+    const struct rl_curl_mime_file *file;
+    if (c->input != NULL && same_file(input, output))
+        return 1;
+    for (file = c->mime_files; file != NULL; file = file->next)
+        if (same_file(&file->info, output))
+            return 1;
+    return 0;
+}
+
 static void execute(struct rl_curl_call *c)
 {
-    struct stat input_info = {0}, output_info;
+    struct stat input_info, output_info;
     int fd;
-    /* A nonblocking open lets us reject FIFOs before any transfer starts. */
     if (c->input_path != NULL) {
-        fd = open(c->input_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (fd < 0 || fstat(fd, &input_info) != 0 ||
-            !S_ISREG(input_info.st_mode) || fcntl(fd, F_SETFL, 0) != 0 ||
-            (c->input = fdopen(fd, "rb")) == NULL) {
+        fd = rl_curl_open_file(c->input_path, O_RDONLY, &input_info);
+        if (fd < 0 || (c->input = fdopen(fd, "rb")) == NULL) {
             if (fd >= 0)
                 close(fd);
             c->code = CURLE_READ_ERROR;
@@ -272,29 +305,20 @@ static void execute(struct rl_curl_call *c)
             return;
     }
     if (c->output_path != NULL) {
-        fd = open(c->output_path, O_WRONLY | O_CREAT | O_NONBLOCK | O_CLOEXEC,
-                  0666);
-        if (fd < 0 || fstat(fd, &output_info) != 0 ||
-            !S_ISREG(output_info.st_mode)) {
-            if (fd >= 0)
-                close(fd);
-            c->code = CURLE_WRITE_ERROR;
-            snprintf(c->error, sizeof(c->error),
-                     "curl download_path must be a writable regular file");
-            return;
-        }
-        if (c->input_path != NULL && input_info.st_dev == output_info.st_dev &&
-            input_info.st_ino == output_info.st_ino) {
+        fd =
+            rl_curl_open_file(c->output_path, O_WRONLY | O_CREAT, &output_info);
+        if (fd >= 0 && output_aliases_upload(c, &input_info, &output_info)) {
             close(fd);
             c->code = CURLE_WRITE_ERROR;
             snprintf(c->error, sizeof(c->error),
-                     "curl upload_path and download_path must refer to "
+                     "curl upload sources and download_path must refer to "
                      "different files");
             return;
         }
-        if (fcntl(fd, F_SETFL, 0) != 0 || ftruncate(fd, 0) != 0 ||
-            (c->output = fdopen(fd, "wb")) == NULL) {
-            close(fd);
+        if (fd < 0 || (c->output = fdopen(fd, "wb")) == NULL ||
+            ftruncate(fd, 0) != 0) {
+            if (fd >= 0 && c->output == NULL)
+                close(fd);
             c->code = CURLE_WRITE_ERROR;
             snprintf(c->error, sizeof(c->error),
                      "curl download_path must be a writable regular file");

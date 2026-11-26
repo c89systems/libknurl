@@ -6,15 +6,22 @@
 #include "binding.h"
 #include <curl/curl.h>
 #include <lonejson_lua.h>
+#include <sys/stat.h>
 #define RL_CURL_CALL "knurl.curl_call"
 #define RL_CURL_BODY_LIMIT (8UL * 1024UL * 1024UL)
 #define RL_CURL_HEADER_LIMIT 65536UL
+struct rl_curl_mime_file {
+    struct rl_curl_mime_file *next;
+    FILE *stream;
+    struct stat info;
+};
 struct rl_curl_call {
     lua_State *L;
     CURL *easy;
     struct curl_slist *headers;
     struct curl_slist *recipients;
     curl_mime *mime;
+    struct rl_curl_mime_file *mime_files;
     size_t body_length, header_length, received;
     unsigned char *body, *head;
     size_t body_capacity, header_capacity;
@@ -32,6 +39,7 @@ struct rl_curl_call {
     char *request_body;
     size_t request_length, request_offset;
 };
+int rl_curl_open_file(const char *path, int flags, struct stat *info);
 knurl_status rl_curl_config(lua_State *, struct rl_curl_call *, knurl_error *);
 knurl_status rl_curl_json_config(lua_State *, struct rl_curl_call *,
                                  knurl_error *);

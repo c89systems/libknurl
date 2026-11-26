@@ -307,8 +307,9 @@ with `request = {schema = schema, value = value}` and
 Return `true` from a write callback to accept the chunk. An optional
 `progress(info)` callback returns `true` to continue. Callbacks run on the
 calling Lua thread, and nested transfers raise an error.
-If a transfer uses both `upload_path` and `download_path`, those paths must
-resolve to different files.
+`download_path` must resolve to a different file from `upload_path` and from
+every multipart file source. Multipart file sources must be readable regular
+files.
 
 ## Send mail over SMTP
 
@@ -394,7 +395,8 @@ transport framing and auth cache policy.
 - `modify_response(req, res)` edits the status and headers of an upstream
   response before forwarding it. Its return table matches `hooks.after`.
 - `on_error(req, err, status)` can return a bounded replacement reply
-  for a gateway failure before commitment. Nil keeps the native error reply.
+  for a gateway failure before commitment, including failure to obtain an
+  OAuth2 token. Nil keeps the native error reply.
 - `on_exchange(req, event)` receives terminal status, byte counts, duration,
   upstream and disconnect information for an admitted exchange. Delivery is
   best effort through the bounded Lua worker queue.

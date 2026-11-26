@@ -686,6 +686,58 @@ static void curl_request(unsigned short port, const char *log, int timed_out)
                  timed_out ? "\r\n\r\ntimed out" : "\r\n\r\nonetwo") != NULL);
 }
 
+static size_t read_multipart(int fd, const char *path, char body[1024])
+{
+    char headers[1024], expected[80];
+    const char *field;
+    unsigned long size;
+    read_headers(fd, headers, sizeof(headers));
+    snprintf(expected, sizeof(expected), "POST %s HTTP/1.1\r\n", path);
+    CHECK(strncmp(headers, expected, strlen(expected)) == 0);
+    field = strstr(headers, "\r\nContent-Length: ");
+    CHECK(field != NULL &&
+          sscanf(field, "\r\nContent-Length: %lu", &size) == 1 && size > 0 &&
+          size < 1024);
+    read_exact(fd, body, (size_t)size);
+    body[size] = '\0';
+    return (size_t)size;
+}
+
+static void curl_mime_replay(unsigned short port)
+{
+    static const char redirect[] =
+        "HTTP/1.1 307 Temporary Redirect\r\nLocation: /second\r\n"
+        "Content-Length: 0\r\nConnection: close\r\n\r\n";
+    static const char ok[] =
+        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    unsigned short upstream;
+    char request[256], first[1024], second[1024];
+    size_t size;
+    int listener = bound_socket(&upstream), first_listener, down, up;
+    CHECK(listen(listener, 1) == 0);
+    first_listener = dup(listener);
+    CHECK(first_listener >= 0);
+    snprintf(request, sizeof(request),
+             "GET /app/%u/curl-mime-replay HTTP/1.1\r\nHost: localhost\r\n"
+             "Connection: close\r\n\r\n",
+             (unsigned int)upstream);
+    down = open_request(port, request);
+    up = accept_origin(first_listener);
+    size = read_multipart(up, "/first", first);
+    CHECK(strstr(first, "\r\n\r\nasset\n\r\n") != NULL);
+    CHECK(write(up, redirect, sizeof(redirect) - 1) ==
+          (ssize_t)(sizeof(redirect) - 1));
+    close(up);
+    up = accept_origin(listener);
+    CHECK(read_multipart(up, "/second", second) == size &&
+          memcmp(first, second, size) == 0);
+    CHECK(write(up, ok, sizeof(ok) - 1) == (ssize_t)(sizeof(ok) - 1));
+    close(up);
+    receive(down, first, sizeof(first));
+    CHECK(strncmp(first, "HTTP/1.1 200", 12) == 0 &&
+          strstr(first, "\r\n\r\nmultipart replayed") != NULL);
+}
+
 static void smtp_exchange(int fd, const char *reply, const char *expected)
 {
     char line[256];
@@ -798,6 +850,7 @@ static void exercise(unsigned short port, const char *log, const char *gate,
     upload(port, log);
     CHECK(knurl_test_acl_exchange(port, "GET", "/app/bob/curl-smoke", NULL,
                                   "curl works") == 200);
+    curl_mime_replay(port);
     curl_request(port, log, 0);
     curl_request(port, log, 1);
     smtp_request(port, "smtp-memory");

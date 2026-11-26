@@ -78,6 +78,7 @@ struct knurl_request_impl {
     int proxy_admission_invoked;
     char *proxy_authorization;
     uint64_t proxy_token_generation;
+    knurl_status proxy_token_failure;
     unsigned int hook_stage, hook_before, hook_after;
     void (*hook_cancel)(void *);
     void *hook_userdata;

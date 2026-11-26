@@ -38,6 +38,15 @@ check(server:text{path = '/machine-other', auth = other, body = 'allowed'})
 check(server:text{path = '/issued', auth = provision, body = 'allowed'})
 check(server:auth_workflow{path = '/provision', auth = provision})
 check(server:proxy{path = '/unavailable-token', target = 'https://localhost:' .. port, oauth2 = oauth})
+check(server:proxy{
+  path = '/token-fallback', target = 'https://localhost:' .. port, oauth2 = oauth,
+  on_error = function(req, err, status)
+    assert(req.path == '/token-fallback' and status == 502)
+    assert(err.message:find('token endpoint unavailable', 1, true))
+    if req.query == 'throw=1' then error('token fallback failed') end
+    return {status = 503, headers = {['x-fallback'] = 'oauth2'}, body = 'token service unavailable'}
+  end,
+})
 check(server:login{path = '/login', auth = login})
 check(server:login{path = '/otp', auth = otp})
 check(server:totp_enroll{path = '/totp-enroll', auth = login})

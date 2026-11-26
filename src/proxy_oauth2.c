@@ -1,7 +1,6 @@
 #include "auth_internal.h"
 #include "proxy_runtime_internal.h"
 #include <knurl/dispatch.h>
-#include <knurl/reply.h>
 #include <openssl/crypto.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,7 +31,6 @@ static void finish(struct token_job *job, knurl_status status,
                    const knurl_error *error)
 {
     knurl_request *request = job->request;
-    knurl_reply *reply = NULL;
     if (request == NULL)
         return;
     job->request = NULL;
@@ -43,14 +41,11 @@ static void finish(struct token_job *job, knurl_status status,
             status = KNURL_NOMEM;
         else
             request->impl->proxy_token_generation = job->generation;
-    } else if (status != KNURL_TIMEOUT &&
-               knurl_reply_new(&reply, NULL) == KNURL_OK &&
-               knurl_reply_status(reply, 502, NULL) == KNURL_OK) {
+    } else {
+        request->impl->proxy_token_failure = status;
         status = KNURL_OK;
     }
-    (void)knurl_request_hook_resume(request, status, reply, error, NULL);
-    if (reply != NULL)
-        (void)knurl_reply_destroy(reply, NULL);
+    (void)knurl_request_hook_resume(request, status, NULL, error, NULL);
 }
 
 static void completed(knurl_job *task, const knurl_job_outcome *result,
@@ -139,10 +134,10 @@ static const char *word(const char *start, const char *end)
     return start;
 }
 
-static int invalid_token(const char *value)
+static int invalid_token(const char *value, int *bearer)
 {
     const char *start, *end, *name_end, *argument;
-    int bearer = 0, quoted;
+    int quoted;
     for (start = value; *start != 0; start = *end ? end + 1 : end) {
         quoted = 0;
         for (end = start; *end != 0; ++end) {
@@ -154,18 +149,20 @@ static int invalid_token(const char *value)
                 break;
         }
         start = space(start, end);
+        if (start == end)
+            continue;
         name_end = word(start, end);
         argument = space(name_end, end);
         /* A bare name starts a new challenge. A name followed by '=' is a
          * parameter of the current challenge, including on later segments. */
         if (argument == end || *argument != '=') {
-            bearer =
+            *bearer =
                 name_end - start == 6 && strncasecmp(start, "Bearer", 6) == 0;
             start = argument;
             name_end = word(start, end);
             argument = space(name_end, end);
         }
-        if (bearer && name_end - start == 5 &&
+        if (*bearer && name_end - start == 5 &&
             strncasecmp(start, "error", 5) == 0 && argument < end &&
             *argument == '=') {
             const char *last = end;
@@ -189,12 +186,14 @@ void knurl_proxy_oauth2_response(knurl_request *request,
                                  const knurl_proxy_headers *headers)
 {
     size_t i;
+    int bearer = 0;
     if (client == NULL || status != 401 || request == NULL ||
         request->impl->proxy_token_generation == 0)
         return;
+    /* Repeated field lines form one comma-separated value in wire order. */
     for (i = 0; i < headers->count; ++i) {
         if (strcasecmp(headers->fields[i].name, "WWW-Authenticate") == 0 &&
-            invalid_token(headers->fields[i].value)) {
+            invalid_token(headers->fields[i].value, &bearer)) {
             knurl_oauth2_client_reject(client,
                                        request->impl->proxy_token_generation);
             return;

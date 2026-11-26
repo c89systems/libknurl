@@ -1,7 +1,7 @@
 /* Option families adapted from Vectis's MIT-licensed Lua curl facade. */
 #define _POSIX_C_SOURCE 200809L
 #include "curl_internal.h"
-#include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 struct option {
@@ -95,6 +95,50 @@ static knurl_status headers(lua_State *L, struct rl_curl_call *c,
         return rl_fail(error, KNURL_BACKEND, "setting curl headers");
     return KNURL_OK;
 }
+static size_t mime_read(char *buffer, size_t size, size_t count, void *data)
+{
+    FILE *stream = data;
+    size_t read = fread(buffer, 1, size * count, stream);
+    return ferror(stream) ? CURL_READFUNC_ABORT : read;
+}
+
+static int mime_seek(void *data, curl_off_t offset, int origin)
+{
+    return (curl_off_t)(off_t)offset == offset &&
+                   fseeko(data, (off_t)offset, origin) == 0
+               ? CURL_SEEKFUNC_OK
+               : CURL_SEEKFUNC_FAIL;
+}
+
+static knurl_status mime_file(struct rl_curl_call *c, curl_mimepart *part,
+                              const char *path, const char *filename,
+                              knurl_error *error)
+{
+    struct rl_curl_mime_file *file = malloc(sizeof(*file));
+    int fd;
+    if (file == NULL)
+        return rl_fail(error, KNURL_NOMEM, "tracking curl MIME file");
+    fd = rl_curl_open_file(path, O_RDONLY, &file->info);
+    if (fd < 0 || (file->stream = fdopen(fd, "rb")) == NULL) {
+        if (fd >= 0)
+            close(fd);
+        free(file);
+        return rl_fail(error, KNURL_IO,
+                       "curl MIME path must be a readable regular file");
+    }
+    file->next = c->mime_files;
+    c->mime_files = file;
+    if (filename == NULL) {
+        filename = strrchr(path, '/');
+        filename = filename != NULL ? filename + 1 : path;
+    }
+    if (curl_mime_data_cb(part, (curl_off_t)file->info.st_size, mime_read,
+                          mime_seek, NULL, file->stream) != CURLE_OK ||
+        curl_mime_filename(part, filename) != CURLE_OK)
+        return rl_fail(error, KNURL_BACKEND, "configuring curl MIME file");
+    return KNURL_OK;
+}
+
 static knurl_status multipart(lua_State *L, struct rl_curl_call *c,
                               knurl_error *error)
 {
@@ -102,6 +146,7 @@ static knurl_status multipart(lua_State *L, struct rl_curl_call *c,
     const char *name, *value, *path, *filename, *type;
     size_t length, count = 0;
     int table, item;
+    knurl_status status;
     rl_field(L, 1, "multipart");
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
@@ -151,10 +196,14 @@ static knurl_status multipart(lua_State *L, struct rl_curl_call *c,
                 "curl MIME part requires a name and exactly one value/file");
         part = curl_mime_addpart(c->mime);
         if (part == NULL || curl_mime_name(part, name) != CURLE_OK ||
-            (path ? curl_mime_filedata(part, path)
-                  : curl_mime_data(part, value, length)) != CURLE_OK ||
-            (filename && curl_mime_filename(part, filename) != CURLE_OK) ||
             (type && curl_mime_type(part, type) != CURLE_OK))
+            return rl_fail(error, KNURL_BACKEND, "configuring curl MIME part");
+        if (path != NULL) {
+            status = mime_file(c, part, path, filename, error);
+            if (status != KNURL_OK)
+                return status;
+        } else if (curl_mime_data(part, value, length) != CURLE_OK ||
+                   (filename && curl_mime_filename(part, filename) != CURLE_OK))
             return rl_fail(error, KNURL_BACKEND, "configuring curl MIME part");
         lua_pop(L, 2);
     }

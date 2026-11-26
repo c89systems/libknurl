@@ -368,6 +368,32 @@ local function curl_smoke()
   assert(result.ok and result.body:find('name="field"', 1, true) and
     result.body:find('multipart value', 1, true), result.error)
 
+  local asset = work .. '/asset'
+  local multipart = {
+    {name = 'binary', path = downloaded},
+    {name = 'text', file_path = asset, filename = 'fixture.txt', content_type = 'text/plain'},
+  }
+  upload({multipart = multipart, download_path = work .. '/curl-multipart-response'})
+  result = request('/curl-uploaded')
+  assert(result.ok and result.body:find('filename="curl-downloaded"', 1, true)
+    and result.body:find('one\0two', 1, true)
+    and result.body:find('filename="fixture.txt"', 1, true)
+    and result.body:find('Content-Type: text/plain', 1, true)
+    and result.body:find('asset\n', 1, true), result.error)
+  for _, destination in ipairs({downloaded, work .. '/asset-alias'}) do
+    result = request('/curl-upload', {method = 'POST', multipart = multipart, download_path = destination})
+    assert(not result.ok and result.error:find('different files', 1, true), result.error)
+  end
+  do
+    local binary <close> = assert(io.open(downloaded, 'rb'))
+    local text <close> = assert(io.open(asset, 'rb'))
+    assert(binary:read('a') == 'one\0two' and text:read('a') == 'asset\n')
+  end
+  for _, path in ipairs({work .. '/gate', work .. '/missing-mime-file'}) do
+    local ok, err = pcall(request, '/curl-upload', {method = 'POST', multipart = {{name = 'file', path = path}}})
+    assert(not ok and err:find('readable regular file', 1, true), err)
+  end
+
   result = request('/curl-large')
   assert(not result.ok and result.error:find('8 MiB', 1, true), result.error)
   local seen, progress = 0, 0
@@ -450,6 +476,14 @@ local application = check(routes:route{
     if action == 'curl-smoke' then
       curl_smoke()
       return 'curl works'
+    elseif action == 'curl-mime-replay' then
+      local base = 'http://127.0.0.1:' .. assert(tonumber(user))
+      local result = curl.perform{
+        url = base .. '/first', proxy = '', timeout_ms = 2000, follow_redirects = true,
+        multipart = {{name = 'file', path = work .. '/asset'}},
+      }
+      assert(result.ok and result.status == 200 and result.effective_url == base .. '/second', result.error)
+      return 'multipart replayed'
     elseif action:sub(1, 5) == 'smtp-' then
       return send_mail(user, action)
     elseif action == 'curl-stream' or action == 'curl-timeout' then

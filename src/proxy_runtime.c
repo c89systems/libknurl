@@ -949,7 +949,7 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
     knurl_proxy_local_response local;
     knurl_proxy_http_upload upload;
     knurl_channel_config channel;
-    knurl_status status;
+    knurl_status status, token_failure;
     const char *url;
     static const char *const methods[] = {
         "",     "GET",     "POST",     "PUT",   "PATCH", "DELETE",
@@ -1011,7 +1011,8 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
                               "proxy token worker unavailable\n", error);
     if (status != KNURL_OK || plan->disposition == KNURL_REQUEST_REPLY)
         goto finished;
-    if (route->preflight != NULL) {
+    token_failure = request->impl->proxy_token_failure;
+    if (token_failure == KNURL_OK && route->preflight != NULL) {
         input.method = request->impl->method;
         input.path = request->impl->raw_path.data;
         input.query = request->impl->query.data;
@@ -1074,6 +1075,13 @@ knurl_status knurl_proxy_dispatch(knurl_request *request,
                                       x, error);
     request->impl->response->impl->progress = knurl_proxy_progress;
     request->impl->response->impl->progress_data = x;
+    if (status == KNURL_OK && token_failure != KNURL_OK) {
+        knurl_proxy_record_failure(x, token_failure,
+                                   token_failure == KNURL_TIMEOUT ? 504 : 502,
+                                   "proxy OAuth2 token endpoint unavailable");
+        knurl_proxy_schedule(x);
+        goto finished;
+    }
     if (status == KNURL_OK &&
         knurl_proxy_headers_sanitize_request(&inbound, &sanitized) !=
             KNURL_PROXY_HEADER_OK)

@@ -567,10 +567,11 @@ static pid_t oauth_fixture(struct fixture *f)
         "{\"access_token\":\"after-revocation\",\"token_type\":\"Bearer\","
         "\"expires_in\":120}"};
     static const char *const forwarded[] = {
-        "Bearer initial",          "Bearer initial",
-        "Bearer refreshed",        "Bearer reacquired",
-        "Bearer no-refresh",       "Bearer no-refresh",
-        "Bearer after-revocation", "Bearer after-revocation"};
+        "Bearer initial",         "Bearer initial",
+        "Bearer refreshed",       "Bearer reacquired",
+        "Bearer no-refresh",      "Bearer no-refresh",
+        "Bearer no-refresh",      "Bearer after-revocation",
+        "Bearer after-revocation"};
     struct timeval timeout = {4, 0};
     SSL_CTX *context;
     unsigned int calls = 0, grants = 0, keys = 0, discovered = 0, posts = 0;
@@ -594,9 +595,9 @@ static pid_t oauth_fixture(struct fixture *f)
           SSL_CTX_use_certificate_file(context, f->cert, SSL_FILETYPE_PEM) ==
               1 &&
           SSL_CTX_use_PrivateKey_file(context, f->key, SSL_FILETYPE_PEM) == 1);
-    while (calls < 8 || grants < 6 || keys < 2 || discovered < 5 ||
-           posts == 0 || short_posts == 0 || replacement_posts == 0 ||
-           independent_calls < 2) {
+    while (calls < sizeof(forwarded) / sizeof(forwarded[0]) || grants < 6 ||
+           keys < 2 || discovered < 5 || posts == 0 || short_posts == 0 ||
+           replacement_posts == 0 || independent_calls < 2) {
         char wire[4096], json[512], response[2048];
         const char *body = NULL, *line, *challenge = "";
         int length, code = 200, fd = accept(listener, NULL, NULL);
@@ -692,7 +693,7 @@ static pid_t oauth_fixture(struct fixture *f)
             body = "{\"access_token\":\"form-credentials\","
                    "\"token_type\":\"Bearer\",\"expires_in\":30}";
         } else if (strncmp(wire, "GET /oauth-proxy ", 17) == 0) {
-            CHECK(calls < 8);
+            CHECK(calls < sizeof(forwarded) / sizeof(forwarded[0]));
             for (line = wire; (line = strstr(line, "\r\n")) != NULL;) {
                 line += 2;
                 if (strncasecmp(line, "authorization: ", 15) == 0)
@@ -707,8 +708,13 @@ static pid_t oauth_fixture(struct fixture *f)
             if (calls == 5) {
                 code = 401;
                 challenge =
-                    "WWW-Authenticate: Basic realm=\"other\", Bearer "
-                    "realm=\"native, upstream\", error=\"invalid_token\"\r\n";
+                    "WWW-Authenticate: Bearer realm=\"native\", "
+                    "Basic realm=\"other\", error=\"invalid_token\"\r\n";
+            } else if (calls == 6) {
+                code = 401;
+                challenge = "WWW-Authenticate: Basic realm=\"other\", , "
+                            "Bearer realm=\"native, upstream\", \t,\r\n"
+                            "WWW-Authenticate: error=\"invalid_token\",\r\n";
             }
             body = forwarded[calls++];
         }
@@ -802,6 +808,7 @@ static void oauth_lifecycle(struct fixture *f)
     sleep(2);
     CHECK(exchange(f, 1, "GET", "/oauth-proxy", NULL, NULL, out) == 200 &&
           strstr(out, "Bearer no-refresh") != NULL);
+    CHECK(exchange(f, 1, "GET", "/oauth-proxy", NULL, NULL, out) == 401);
     CHECK(exchange(f, 1, "GET", "/oauth-proxy", NULL, NULL, out) == 401);
     CHECK(exchange(f, 1, "GET", "/oauth-proxy", NULL, NULL, out) == 200 &&
           strstr(out, "Bearer after-revocation") != NULL);
@@ -2112,7 +2119,21 @@ static int runner_test(struct fixture *f, const char *work, const char *store,
                           sizeof(credential) - 1) > 0);
     snprintf(auth, sizeof(auth), "Authorization: Basic %s\r\n", b64);
     CHECK(exchange(f, 1, "GET", "/service", auth, NULL, out) == 200);
-    CHECK(exchange(f, 1, "GET", "/unavailable-token", NULL, NULL, out) == 502);
+    CHECK(exchange(f, 1, "GET", "/unavailable-token", NULL, NULL, out) == 502 &&
+          strstr(out, "\r\n\r\nbad gateway") != NULL);
+    CHECK(exchange(f, 1, "GET", "/token-fallback", NULL, NULL, out) == 503 &&
+          strstr(out, "x-fallback: oauth2\r\n") != NULL &&
+          strstr(out, "\r\n\r\ntoken service unavailable") != NULL);
+    CHECK(exchange(f, 1, "GET", "/token-fallback?throw=1", NULL, NULL, out) ==
+              502 &&
+          strstr(out, "\r\n\r\nbad gateway") != NULL);
+    CHECK(exchange(f, 1, "HEAD", "/token-fallback", NULL, NULL, out) == 503 &&
+          strstr(out, "x-fallback: oauth2\r\n") != NULL &&
+          strstr(out, "content-length: 25\r\n") != NULL &&
+          strstr(out, "\r\n\r\n") == out + strlen(out) - 4);
+    CHECK(exchange(f, 1, "POST", "/token-fallback", NULL, "example=body",
+                   out) == 503 &&
+          strstr(out, "\r\n\r\ntoken service unavailable") != NULL);
     CHECK(exchange(f, 1, "POST", "/provision", NULL, password_form, out) ==
           201);
     issued_basic(out, client_id, issued);

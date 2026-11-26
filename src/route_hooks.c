@@ -154,7 +154,8 @@ knurl_status knurl_request_proxy_authenticate(knurl_request *request,
                                               knurl_error *error)
 {
     knurl_async_route_hooks native;
-    if (client == NULL || request->impl->proxy_authorization != NULL)
+    if (client == NULL || request->impl->proxy_authorization != NULL ||
+        request->impl->proxy_token_failure != KNURL_OK)
         return KNURL_OK;
     memset(&native, 0, sizeof(native));
     native.userdata = client;
