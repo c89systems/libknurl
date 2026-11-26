@@ -241,6 +241,44 @@ static knurl_status text(knurl_request *request, knurl_reply *reply, void *data,
                             error);
 }
 
+static void cancel_auth_after(void *data)
+{
+    knurl_request **pending = data;
+    *pending = NULL;
+}
+
+static void resume_auth_after(knurl_loop *loop, void *data)
+{
+    knurl_request **pending = data;
+    knurl_reply *edits;
+    (void)loop;
+    if (*pending == NULL)
+        return;
+    CHECK(knurl_reply_new(&edits, NULL) == KNURL_OK);
+    CHECK(knurl_reply_header_set(edits, "x-auth-after", "yes", NULL) ==
+          KNURL_OK);
+    CHECK(knurl_request_hook_resume(*pending, KNURL_OK, edits, NULL, NULL) ==
+          KNURL_OK);
+    CHECK(knurl_reply_destroy(edits, NULL) == KNURL_OK);
+}
+
+static knurl_status auth_after(knurl_request *request, const knurl_reply *head,
+                               int status, void *data, knurl_error *error)
+{
+    knurl_request **pending = malloc(sizeof(*pending));
+    (void)status;
+    (void)data;
+    CHECK(head != NULL &&
+          !knurl_response_is_committed(knurl_request_response(request)));
+    CHECK(pending != NULL);
+    *pending = request;
+    CHECK(knurl_request_hook_wait(request, cancel_auth_after, pending, error) ==
+          KNURL_OK);
+    CHECK(knurl_loop_defer(knurl_request_loop(request), resume_auth_after, free,
+                           pending, error) == KNURL_OK);
+    return KNURL_AGAIN;
+}
+
 static knurl_status native(const knurl_request_snapshot *request,
                            knurl_source *source, knurl_reply *reply, void *data,
                            knurl_error *error)
@@ -1032,7 +1070,8 @@ static void totp_enrollment(struct fixture *f)
     static const char bob[] =
         "username=bob&password=a+test+password+with+spaces";
     char out[4096], browser[256], first[512], rotated[512];
-    char code[160], form[160];
+    char code[160], form[160], length[64];
+    const char *body;
     CHECK(exchange(f, 1, "POST", "/otp", NULL, bob, out) == 428 &&
           strstr(out, "Set-Cookie:") == NULL);
     CHECK(exchange(f, 1, "POST", "/totp-enroll", NULL, "", out) == 401);
@@ -1040,6 +1079,13 @@ static void totp_enrollment(struct fixture *f)
     cookie(out, browser);
     CHECK(exchange(f, 1, "POST", "/totp-enroll", browser, "", out) == 202);
     CHECK(exchange(f, 1, "POST", "/totp-enroll", browser, "", out) == 202);
+    CHECK(strstr(out, "\r\nx-auth-after: yes\r\n") != NULL &&
+          strstr(out, "\r\ncontent-type: application/json\r\n") != NULL);
+    body = strstr(out, "\r\n\r\n");
+    CHECK(body != NULL);
+    snprintf(length, sizeof(length), "\r\ncontent-length: %lu\r\n",
+             (unsigned long)strlen(body + 4));
+    CHECK(strstr(out, length) != NULL);
     read_enrollment(out, first);
     confirm_enrollment(f, "/totp-enroll", browser, first, out);
     CHECK(strstr(out, "Set-Cookie:") == NULL);
@@ -1509,15 +1555,24 @@ static void exercise(struct fixture *f)
 {
     char out[4096], session[256], form[160], code[7], encoded[256], auth[320];
     size_t i;
-    CHECK(exchange(f, 0, "POST", "/login", NULL, password_form, out) == 403);
+    CHECK(exchange(f, 0, "POST", "/login", NULL, password_form, out) == 403 &&
+          strstr(out, "\r\nx-auth-after: yes\r\n") != NULL &&
+          strstr(out, "\r\ncontent-length: 0\r\n") != NULL &&
+          strstr(out, "\r\n\r\n") == out + strlen(out) - 4);
     CHECK(exchange(f, 1, "POST", "/login", "Origin: https://other.test\r\n",
                    password_form, out) == 403);
     CHECK(exchange(f, 1, "GET", "/app/me", NULL, NULL, out) == 401);
     CHECK(exchange(f, 1, "GET", "/static", NULL, NULL, out) == 401);
     CHECK(exchange(f, 1, "GET", "/proxy", NULL, NULL, out) == 401);
+    CHECK(exchange(f, 1, "POST", "/login", NULL, "username=alice", out) ==
+              400 &&
+          strstr(out, "\r\nx-auth-after: yes\r\n") != NULL);
     CHECK(exchange(f, 1, "POST", "/login", NULL, "username=alice&password=bad",
                    out) == 401);
-    CHECK(exchange(f, 1, "POST", "/login", NULL, password_form, out) == 204);
+    CHECK(exchange(f, 1, "POST", "/login", NULL, password_form, out) == 204 &&
+          strstr(out, "\r\nx-auth-after: yes\r\n") != NULL &&
+          strstr(out, "\r\ncache-control: no-store\r\n") != NULL &&
+          strstr(out, "\r\n\r\n") == out + strlen(out) - 4);
     cookie(out, session);
     CHECK(exchange(f, 1, "GET", "/app/me", session, NULL, out) == 200 &&
           strstr(out, "\r\n\r\nalice") != NULL);
@@ -1680,6 +1735,8 @@ static void plain_route(knurl_router *router, const char *path,
 
 static void routes(knurl_router *router, struct fixture *f)
 {
+    static const knurl_async_route_hooks auth_hooks = {NULL, NULL, auth_after,
+                                                       NULL};
     knurl_auth_config config;
     knurl_auth *browser, *otp, *email, *smtp, *external, *machine, *other,
         *slow, *issuer, *rotating, *ordered, *ordered_api, *external_machine,
@@ -1872,6 +1929,7 @@ static void routes(knurl_router *router, struct fixture *f)
                            KNURL_AUTH_WORKFLOW, &handle, NULL) == KNURL_OK);
     CHECK(knurl_auth_route(router, "/login", browser, KNURL_AUTH_LOGIN, &handle,
                            NULL) == KNURL_OK);
+    CHECK(knurl_route_set_async_hooks(handle, &auth_hooks, NULL) == KNURL_OK);
     CHECK(knurl_auth_route(router, "/logout", browser, KNURL_AUTH_LOGOUT,
                            &handle, NULL) == KNURL_OK);
     CHECK(knurl_auth_route(router, "/otp", otp, KNURL_AUTH_LOGIN, &handle,
@@ -1879,6 +1937,7 @@ static void routes(knurl_router *router, struct fixture *f)
     CHECK(knurl_auth_route(router, "/totp-enroll", browser,
                            KNURL_AUTH_TOTP_ENROLL_ENDPOINT, &handle,
                            NULL) == KNURL_OK);
+    CHECK(knurl_route_set_async_hooks(handle, &auth_hooks, NULL) == KNURL_OK);
     CHECK(knurl_auth_route(router, "/totp-enroll-email", email,
                            KNURL_AUTH_TOTP_ENROLL_ENDPOINT, &handle,
                            NULL) == KNURL_OK);

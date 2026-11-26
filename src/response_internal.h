@@ -75,6 +75,9 @@ knurl_status knurl_response_create(knurl_request *request,
                                    knurl_response **out, knurl_error *error);
 knurl_status knurl_response_submit(knurl_response *response, knurl_reply *reply,
                                    knurl_error *error);
+/* Complete a response with status and headers already declared. */
+knurl_status knurl_response_finish_bytes(knurl_response *, knurl_bytes,
+                                         knurl_error *);
 knurl_status knurl_response_hook_edits(knurl_response *, const knurl_reply *,
                                        knurl_error *);
 int knurl_response_head_pending(const knurl_response *);

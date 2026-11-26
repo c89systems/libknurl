@@ -1001,6 +1001,43 @@ static knurl_status available_producer(knurl_response *r, knurl_error *error)
     return KNURL_OK;
 }
 
+knurl_status knurl_response_finish_bytes(knurl_response *r, knurl_bytes bytes,
+                                         knurl_error *error)
+{
+    unsigned char *copy = NULL;
+    knurl_u64 length;
+    knurl_status status = available_producer(r, error);
+    if (status != KNURL_OK)
+        return status;
+    if (bytes.length != 0 && bytes.data == NULL)
+        return knurl_fail(error, KNURL_INVALID, "response_finish_bytes",
+                          "nonempty body requires data");
+    if (!status_bodyless(r->impl->outcome.status)) {
+        status = knurl_u64_from_size(bytes.length, &length, error);
+        if (status == KNURL_OK)
+            status = knurl_response_known_length(r, length, error);
+        if (status != KNURL_OK)
+            return status;
+    }
+    if (bytes.length != 0 && !bodyless(r)) {
+        copy = malloc(bytes.length);
+        if (copy == NULL)
+            return knurl_fail(error, KNURL_NOMEM, "response_finish_bytes",
+                              "cannot copy response body");
+        memcpy(copy, bytes.data, bytes.length);
+    }
+    status = knurl_response_begin(r, error);
+    if (status != KNURL_OK) {
+        free(copy);
+        return status;
+    }
+    r->impl->memory = copy;
+    r->impl->memory_length = copy != NULL ? bytes.length : 0;
+    r->impl->producer = r->impl->complete_reply = 1;
+    r->impl->phase = KNURL_RESPONSE_FINISHING;
+    return KNURL_OK;
+}
+
 static void source_ready(void *data)
 {
     knurl_source *source = data;

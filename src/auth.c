@@ -341,7 +341,7 @@ knurl_status knurl_auth_reply(knurl_request *request, int status,
 {
     knurl_response *response = knurl_request_response(request);
     knurl_status result;
-    knurl_u64 zero = {0, 0};
+    knurl_bytes empty = {NULL, 0};
     if (!request->impl->outcome.body_complete &&
         (request->impl->has_coding || request->impl->content_length.high ||
          request->impl->content_length.low))
@@ -356,12 +356,8 @@ knurl_status knurl_auth_reply(knurl_request *request, int status,
     if (result == KNURL_OK && cookie != NULL)
         result =
             knurl_response_header_set(response, "set-cookie", cookie, error);
-    if (result == KNURL_OK && status != 204)
-        result = knurl_response_known_length(response, zero, error);
     if (result == KNURL_OK)
-        result = knurl_response_begin(response, error);
-    if (result == KNURL_OK)
-        result = knurl_response_end(response, NULL, 0, error);
+        result = knurl_response_finish_bytes(response, empty, error);
     return result;
 }
 
@@ -369,10 +365,7 @@ knurl_status knurl_auth_json_reply(knurl_request *request, int code,
                                    const char *json, knurl_error *error)
 {
     knurl_response *response = knurl_request_response(request);
-    size_t size = strlen(json), accepted;
-    knurl_u64 length = {0, 0};
     knurl_status status = knurl_response_status(response, code, error);
-    length.low = (unsigned long)size;
     if (status == KNURL_OK)
         status = knurl_response_header_set(response, "cache-control",
                                            "no-store", error);
@@ -380,17 +373,7 @@ knurl_status knurl_auth_json_reply(knurl_request *request, int code,
         status = knurl_response_header_set(response, "content-type",
                                            "application/json", error);
     if (status == KNURL_OK)
-        status = knurl_response_known_length(response, length, error);
-    if (status == KNURL_OK)
-        status = knurl_response_begin(response, error);
-    if (status == KNURL_OK) {
-        status = knurl_response_write(response, json, size, &accepted, error);
-        if (status == KNURL_OK && accepted != size)
-            status = knurl_fail(error, KNURL_LIMIT, "auth_reply",
-                                "auth response exceeds output limit");
-    }
-    if (status == KNURL_OK)
-        status = knurl_response_end(response, NULL, 0, error);
+        status = knurl_response_finish_bytes(response, knurl_view(json), error);
     return status;
 }
 
