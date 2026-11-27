@@ -71,13 +71,14 @@ library retains its worker-death recovery requirement.
 
 ## Hosted macOS diagnostics
 
-[The macOS workflow](../.github/workflows/macos.yml) runs on branch pushes and
-manual dispatch. It uses the standard ARM64 `macos-15` runner and serial Debug
-and Release jobs. Each job builds the C library with the selected Apple toolchain
-and runs the complete native CTest suite, including SDK privacy/relocation
-and installed-consumer checks. Homebrew supplies host tools, including Bash 4.4+
-and GNU archive utilities; target dependencies use the ordinary checksum-pinned
-SDK acquisition. The workflow records the tested commit in its toolchain step.
+[The macOS workflow](../.github/workflows/macos.yml) runs by manual dispatch on
+an existing remote ref. It uses the standard ARM64 `macos-15` runner and serial
+Debug and Release jobs. Each job builds the C library with the selected Apple
+toolchain and runs the complete native CTest suite, including SDK
+privacy/relocation and installed-consumer checks. Homebrew supplies host tools,
+including Bash 4.4+ and GNU archive utilities; target dependencies use the
+ordinary checksum-pinned SDK acquisition. The workflow records the tested commit
+in its toolchain step.
 
 These runs provide native macOS diagnostics. Local osxcross verification remains
 the Darwin release-artifact gate; hosted runs do not publish release products.

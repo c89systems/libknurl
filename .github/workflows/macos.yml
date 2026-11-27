@@ -1,8 +1,6 @@
 name: macOS native checks
 
 on:
-  push:
-    branches: ['**']
   workflow_dispatch:
 
 permissions:

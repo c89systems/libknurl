@@ -1,8 +1,11 @@
-# Extraction verification
+# Verification history
 
-Product scope update (2026-11-15): executable and Lua results below are historical.
-Only the C library/SDK ships; the other sources are archived pending Luthrum.
-See [runtime direction](runtime-direction.md).
+The entries below record verification and product scope at the time of each
+check. The current release inventory includes the C SDK and standalone `knurl`
+runner.
+The [loadable Lua module](lua-config.md) is available from source. See
+[release preparation and artifacts](releasing.md) for the current gates and
+inventory.
 
 ## HTTP completeness (2026-11-13)
 

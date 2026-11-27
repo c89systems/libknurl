@@ -4,7 +4,8 @@ knurl_require_owned_path("${TEST_ROOT}" "Testing fixture")
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(MAKE_DIRECTORY "${TEST_ROOT}/scripts/lifecycle" "${TEST_ROOT}/cmake/toolchains")
 file(COPY "${KNURL_ROOT}/Makefile" DESTINATION "${TEST_ROOT}")
-file(COPY "${KNURL_ROOT}/cmake/OwnedPaths.cmake" DESTINATION "${TEST_ROOT}/cmake")
+file(COPY "${KNURL_ROOT}/cmake/OwnedPaths.cmake" "${KNURL_ROOT}/cmake/RunnerTargets.txt"
+  DESTINATION "${TEST_ROOT}/cmake")
 # Isolate the real public Make recipe from acquisition and compilation. The
 # regression proves CTest becomes runnable after a library-only configuration.
 file(WRITE "${TEST_ROOT}/scripts/deps.sh" "exit 0\n")
@@ -25,24 +26,26 @@ function(run)
   endif()
 endfunction()
 find_program(MAKE make REQUIRED)
+set(fixture_make "${MAKE}" -C "${TEST_ROOT}" "CMAKE=${CMAKE_COMMAND}"
+  TARGET=x86_64-linux-gnu CONFIG=debug BUILD_DIR=build/debug)
 run("${CMAKE_COMMAND}" -S "${TEST_ROOT}" -B "${TEST_ROOT}/build/debug" -G Ninja -DBUILD_TESTING=OFF)
-# Parent Make options must not redirect this Debug fixture into a Release tree.
-run("${CMAKE_COMMAND}" -E env "MAKEFLAGS=-- CONFIG=release"
-  "${MAKE}" -C "${TEST_ROOT}" configure "CMAKE=${CMAKE_COMMAND}" CONFIG=debug)
+# The outer invocation can select a different target, configuration and build directory.
+run("${CMAKE_COMMAND}" -E env "MAKEFLAGS=-- TARGET=x86_64-linux-musl CONFIG=release BUILD_DIR=build/outer"
+  ${fixture_make} configure)
 run("${CMAKE_CTEST_COMMAND}" --test-dir "${TEST_ROOT}/build/debug" -R ^fixture$
   --no-tests=error --output-on-failure)
 foreach(directory build dist .cache global)
   file(MAKE_DIRECTORY "${TEST_ROOT}/${directory}")
   file(WRITE "${TEST_ROOT}/${directory}/.hidden" "preserve only global\n")
 endforeach()
-run("${MAKE}" -C "${TEST_ROOT}" clean "CMAKE=${CMAKE_COMMAND}")
+run(${fixture_make} clean)
 foreach(directory build dist .cache)
   if(EXISTS "${TEST_ROOT}/${directory}")
     message(FATAL_ERROR "Full clean left generated state: ${directory}")
   endif()
 endforeach()
 file(CREATE_LINK "${TEST_ROOT}/global" "${TEST_ROOT}/build" SYMBOLIC)
-execute_process(COMMAND "${MAKE}" -C "${TEST_ROOT}" clean "CMAKE=${CMAKE_COMMAND}"
+execute_process(COMMAND ${fixture_make} clean
   RESULT_VARIABLE code OUTPUT_VARIABLE log ERROR_VARIABLE errors)
 if(code EQUAL 0 OR NOT "${log}${errors}" MATCHES "symlink")
   message(FATAL_ERROR "Clean accepted a borrowed build root: ${log}${errors}")
