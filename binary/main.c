@@ -101,14 +101,23 @@ static int execute(lua_State *L)
 
 static void usage(FILE *out)
 {
-    fputs("Usage: knurl [--] FILE [ARG ...]\n"
-          "       knurl -a run [--] FILE [ARG ...]\n"
-          "       knurl -a auth [-h | --help | COMMAND ...]\n"
-          "       knurl -a docs | -a source\n"
-          "       knurl -h | --help | --version\n",
+    fputs("Usage: knurl [OPTION] [ARGUMENT]...\n"
+          "Run a Lua script or select an action.\n"
+          "\n"
+          "Options:\n"
+          "  -a, --action=ACTION  Select an action (default: run).\n"
+          "  -h, --help           Display this help and exit.\n"
+          "      --version        Print version information and exit.\n",
           out);
     fputs(
-        "Use -a or --action to select an action. The default action is run.\n",
+        "\nActions:\n"
+        "  run [--] FILE [ARG]...  Run a Lua script with the given arguments.\n"
+        "  auth COMMAND [ARG]...   Manage authentication state. See -a auth "
+        "--help.\n"
+        "  docs                    Print the Markdown reference.\n"
+        "  source                  Print the bundled Lua module sources.\n"
+        "\n"
+        "Use -- before a script filename that begins with a dash.\n",
         out);
 }
 

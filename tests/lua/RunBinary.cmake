@@ -15,6 +15,26 @@ function(check_help usage)
       message(FATAL_ERROR "Help output differs for ${ARGN} -h and --help")
     endif()
   endforeach()
+  if(ARGC EQUAL 1)
+    string(REGEX MATCHALL "(^|\n)Usage:" usages "${expected}")
+    list(LENGTH usages usage_count)
+    if(NOT usage_count EQUAL 1 OR NOT expected MATCHES "\nOptions:\n" OR
+        NOT expected MATCHES "\nActions:\n")
+      message(FATAL_ERROR "Expected one usage line and separate option and action lists:\n${expected}")
+    endif()
+    foreach(row
+        "  -a, --action=ACTION  Select an action .default: run."
+        "  -h, --help +Display this help"
+        "      --version +Print version information"
+        "  run .*Run a Lua script"
+        "  auth .*Manage authentication state[.] See -a auth --help"
+        "  docs +Print the Markdown reference"
+        "  source +Print the bundled Lua module sources")
+      if(NOT expected MATCHES "\n${row}")
+        message(FATAL_ERROR "Missing help entry matching '${row}':\n${expected}")
+      endif()
+    endforeach()
+  endif()
 endfunction()
 
 function(check_cli expected)
@@ -26,7 +46,7 @@ function(check_cli expected)
 endfunction()
 
 if(MODE STREQUAL "normal")
-  check_help("knurl \\[--\\] FILE")
+  check_help("knurl \\[OPTION\\] \\[ARGUMENT\\][.][.][.]\n")
   check_help("knurl -a auth init" -a auth)
   check_help("knurl -a auth init" --action auth)
   set(script [=[
