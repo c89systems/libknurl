@@ -175,6 +175,8 @@ int main(int argc, char **argv)
     ++argv;
     if (argc == 1 &&
         (strcmp(argv[0], "-h") == 0 || strcmp(argv[0], "--help") == 0)) {
+        puts("knurl and libknurl Copyright (c) 2026 C89 Systems AB "
+             "https://c89.systems\n");
         usage(stdout);
         return 0;
     }

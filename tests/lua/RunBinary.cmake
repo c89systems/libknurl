@@ -2,11 +2,11 @@ include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/OwnedPaths.cmake")
 knurl_require_owned_path("${WORK}" "Runner fixture")
 file(MAKE_DIRECTORY "${WORK}")
 file(REMOVE "${WORK}/server.log")
-function(check_help usage)
+function(check_help heading)
   foreach(flag --help -h)
     execute_process(COMMAND ${EMULATOR} "${BINARY}" ${ARGN} "${flag}"
       RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors)
-    if(NOT status STREQUAL "0" OR NOT errors STREQUAL "" OR NOT output MATCHES "^Usage: ${usage}")
+    if(NOT status STREQUAL "0" OR NOT errors STREQUAL "" OR NOT output MATCHES "^${heading}")
       message(FATAL_ERROR "Unexpected help result (${ARGN} ${flag}, ${status})\n${output}${errors}")
     endif()
     if(flag STREQUAL "--help")
@@ -46,9 +46,12 @@ function(check_cli expected)
 endfunction()
 
 if(MODE STREQUAL "normal")
-  check_help("knurl \\[OPTION\\] \\[ARGUMENT\\][.][.][.]\n")
-  check_help("knurl -a auth init" -a auth)
-  check_help("knurl -a auth init" --action auth)
+  string(CONCAT heading
+    "knurl and libknurl Copyright [(]c[)] 2026 C89 Systems AB https://c89[.]systems\n\n"
+    "Usage: knurl \\[OPTION\\] \\[ARGUMENT\\][.][.][.]\n")
+  check_help("${heading}")
+  check_help("Usage: knurl -a auth init" -a auth)
+  check_help("Usage: knurl -a auth init" --action auth)
   set(script [=[
 local filename, flag = ...
 assert(arg[0] == filename and arg[1] == filename and arg[2] == flag and flag == '-a')
