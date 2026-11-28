@@ -713,7 +713,7 @@ static size_t read_upload(int fd, const char *method, const char *path,
     static const char interim[] = "HTTP/1.1 100 Continue\r\n\r\n";
     char headers[1024], expected[80];
     const char *field;
-    unsigned long size;
+    unsigned long size = 0;
     read_headers(fd, headers, sizeof(headers));
     snprintf(expected, sizeof(expected), "%s %s HTTP/1.1\r\n", method, path);
     CHECK(strncmp(headers, expected, strlen(expected)) == 0);
