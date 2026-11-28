@@ -93,8 +93,8 @@ static int execute(lua_State *L)
 static void usage(FILE *out)
 {
     fputs("Usage: knurl FILE.lua [ARG ...]\n"
-          "       knurl auth --help\n"
-          "       knurl --help | --version\n",
+          "       knurl auth -h | --help\n"
+          "       knurl -h | --help | --version\n",
           out);
 }
 
@@ -107,7 +107,8 @@ int main(int argc, char **argv)
 
     if (argc >= 2 && strcmp(argv[1], "auth") == 0)
         return knurl_auth_cli(argc, argv);
-    if (argc == 2 && strcmp(argv[1], "--help") == 0) {
+    if (argc == 2 &&
+        (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
         usage(stdout);
         return 0;
     }

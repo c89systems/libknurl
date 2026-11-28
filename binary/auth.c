@@ -18,7 +18,8 @@ static int usage(FILE *out)
           "       knurl auth user-enable|user-disable DIRECTORY USER "
           "[--users-id ID]\n"
           "       knurl auth client-issue|client-revoke DIRECTORY POLICY "
-          "CLIENT\n",
+          "CLIENT\n"
+          "       knurl auth -h | --help\n",
           out);
     return out == stdout ? 0 : 2;
 }
@@ -99,7 +100,8 @@ int knurl_auth_cli(int argc, char **argv)
     char secret[1026];
     size_t i;
     int enroll, issue, revoke;
-    if (argc == 3 && strcmp(argv[2], "--help") == 0)
+    if (argc == 3 &&
+        (strcmp(argv[2], "-h") == 0 || strcmp(argv[2], "--help") == 0))
         return usage(stdout);
     if (argc == 4 && strcmp(argv[2], "init") == 0) {
         status = knurl_auth_json_init(argv[3], &error);
