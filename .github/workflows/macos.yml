@@ -54,12 +54,12 @@ jobs:
           xcode-select --print-path
           xcrun --sdk macosx --show-sdk-path
 
-      - name: Build C library
+      - name: Build C library and runner
         env:
           CONFIG: ${{ matrix.config }}
-        run: make build TARGET=arm64-apple-darwin CONFIG="$CONFIG" JOBS=1
+        run: make build TARGET=arm64-apple-darwin CONFIG="$CONFIG" KNURL_BINARY=ON JOBS=1
 
-      - name: Test Core and packaged SDK
+      - name: Test Core, runner and packages
         env:
           CONFIG: ${{ matrix.config }}
         run: >-
