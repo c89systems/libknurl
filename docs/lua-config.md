@@ -4,6 +4,10 @@ The `knurl` executable runs a Lua 5.5.1 file that can declare native services
 and inline application handlers. It embeds the same optional `knurl` module
 available to a Lua host. The module calls libknurl's public C API.
 
+Run `knurl -a docs` for the [standalone manual](knurl.md) or `knurl -a source`
+for the bundled Lua files. The default action and `-a run` both accept files
+without a `.lua` extension. Use `knurl -a auth -h` for administrative commands.
+
 ## Build and run
 
 ```sh

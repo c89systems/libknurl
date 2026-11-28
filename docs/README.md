@@ -10,6 +10,7 @@ Start with the [quick start](../README.md) or find a guide below. The
 | Public C API and ownership/units/error hovers | [Installed headers](https://github.com/c89systems/libknurl/tree/trunk/include/knurl/) |
 | Native tasks and request continuation | [Tasks](tasks.md) |
 | Lua application runner, native routes, and worker hooks | [Lua applications](lua-config.md) |
+| Standalone runner CLI and complete Lua reference | [Knurl runner and Lua reference](knurl.md) |
 | C SDK and Lua runtime boundaries | [Runtime direction](runtime-direction.md) |
 | Core SDK archives and relocated consumers | [SDK delivery](sdk.md) |
 | Lifecycle, signals, control and fork ownership | [Processes](processes.md) |

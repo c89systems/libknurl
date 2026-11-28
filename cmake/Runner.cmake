@@ -1,4 +1,6 @@
 set(runner_notices "${CMAKE_INSTALL_DATADIR}/licenses/knurl")
+install(FILES docs/knurl.md DESTINATION "${CMAKE_INSTALL_DATADIR}/knurl/docs"
+  COMPONENT binary EXCLUDE_FROM_ALL)
 install(FILES LICENSE LICENSES/BSD-queue.txt DESTINATION "${runner_notices}"
   COMPONENT binary EXCLUDE_FROM_ALL)
 install(FILES vendor/kore/LICENSE DESTINATION "${runner_notices}/kore"

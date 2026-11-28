@@ -2044,7 +2044,7 @@ static void cli(const char *runner, const char *store, const char *operation,
     child = fork();
     CHECK(child >= 0);
     if (child == 0) {
-        const char *arguments[9];
+        const char *arguments[10];
         size_t count = 0;
         close(pipes[1]);
         CHECK(dup2(pipes[0], STDIN_FILENO) >= 0);
@@ -2054,6 +2054,7 @@ static void cli(const char *runner, const char *store, const char *operation,
             CHECK(dup2(result[1], STDOUT_FILENO) >= 0);
         close(result[1]);
         arguments[count++] = runner;
+        arguments[count++] = "-a";
         arguments[count++] = "auth";
         arguments[count++] = operation;
         arguments[count++] = store;

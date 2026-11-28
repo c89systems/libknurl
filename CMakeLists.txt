@@ -108,6 +108,20 @@ knurl_kore_object_dependencies("${kore_source_dir}/.patched"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_process.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_acme.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/kore_tls_state.c")
+function(knurl_embed target name path)
+  set(output "${CMAKE_CURRENT_BINARY_DIR}/${name}.inc")
+  get_filename_component(input "${path}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+  add_custom_command(OUTPUT "${output}" COMMAND "${CMAKE_COMMAND}"
+    "-DINPUT=${input}" "-DOUTPUT=${output}" "-DNAME=${name}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedLua.cmake"
+    DEPENDS "${input}" cmake/EmbedLua.cmake VERBATIM)
+  target_sources(${target} PRIVATE "${output}")
+endfunction()
+target_sources(knurl_objects PRIVATE src/lua_source.c)
+target_include_directories(knurl_objects PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+knurl_embed(knurl_objects curl_core_source lua/curl-core.lua)
+knurl_embed(knurl_objects curl_source lua/curl.lua)
+knurl_embed(knurl_objects smtp_source lua/knurl/smtp.lua)
 knurl_c89(knurl_objects)
 # ABI 0 is retained for 0.2.0.
 set(KNURL_ABI_VERSION 0)
@@ -139,7 +153,7 @@ target_link_libraries(knurl_static PRIVATE OpenSSL::SSL CURL::libcurl LibXml2::L
 target_link_libraries(knurl_static PUBLIC lonejson::lonejson_static)
 target_link_libraries(knurl_static PRIVATE ZLIB::ZLIB)
 set(knurl_core_headers include/knurl/mmdb.h include/knurl/common.h include/knurl/auth.h include/knurl/input.h include/knurl/http.h include/knurl/knurl.h
-  include/knurl/io.h include/knurl/reply.h include/knurl/tls.h
+  include/knurl/io.h include/knurl/reply.h include/knurl/tls.h include/knurl/lua_source.h
   include/knurl/server.h include/knurl/log.h include/knurl/pslog.h include/knurl/openapi.h include/knurl/router.h include/knurl/request.h include/knurl/kore.h
   include/knurl/loop.h include/knurl/task.h include/knurl/response.h include/knurl/dispatch.h
   include/knurl/body.h include/knurl/upload.h include/knurl/channel.h include/knurl/websocket.h
@@ -182,16 +196,10 @@ if(KNURL_BUILD_LUA OR KNURL_BUILD_BINARY)
   add_subdirectory(lua)
 endif()
 if(KNURL_BUILD_BINARY)
-  set(binary_facades "")
-  foreach(module pslog lonejson curl smtp)
-    set(facade "${CMAKE_CURRENT_BINARY_DIR}/${module}_facade.inc")
-    add_custom_command(OUTPUT "${facade}" COMMAND "${CMAKE_COMMAND}"
-      "-DINPUT=${knurl_${module}_facade}" "-DOUTPUT=${facade}" "-DNAME=${module}_facade"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedLua.cmake"
-      DEPENDS "${knurl_${module}_facade}" cmake/EmbedLua.cmake VERBATIM)
-    list(APPEND binary_facades "${facade}")
-  endforeach()
-  add_executable(knurl binary/main.c binary/auth.c ${binary_facades})
+  add_executable(knurl binary/main.c binary/auth.c)
+  knurl_embed(knurl pslog_facade "${knurl_pslog_facade}")
+  knurl_embed(knurl lonejson_facade "${knurl_lonejson_facade}")
+  knurl_embed(knurl knurl_docs docs/knurl.md)
   target_include_directories(knurl PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_sources(knurl PRIVATE $<TARGET_OBJECTS:knurl_lua_objects>
     $<TARGET_OBJECTS:knurl_pslog_lua> $<TARGET_OBJECTS:knurl_lonejson_lua>)
@@ -226,6 +234,7 @@ if(BUILD_TESTING)
       add_test(NAME knurl.binary-${mode} COMMAND "${CMAKE_COMMAND}"
         "-DHOST=$<TARGET_FILE:knurl_binary_test>" "-DBINARY=$<TARGET_FILE:knurl>"
         "-DEMULATOR=${binary_emulator}"
+        "-DPROVIDERS=${KNURL_SDK_ROOT}"
         "-DMMDB_FIXTURES=${CMAKE_BINARY_DIR}/tests/mmdb-fixtures"
         "-DSCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/lua/binary.lua"
         "-DWORK=${CMAKE_BINARY_DIR}/tests/lua-binary-${mode}" "-DMODE=${mode}"

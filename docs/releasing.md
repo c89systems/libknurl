@@ -8,7 +8,8 @@ from source. See [runtime direction](runtime-direction.md).
 `make prerelease JOBS=1` runs the Release matrix from the development branch:
 native C suites, installed consumers, memory checks, parser seed replay and
 bounded fuzzing, ARM QEMU, seven-target SDK verification, three runner packages and formatting. It
-preserves matching build products and does not perform a clean tagged release.
+also verifies the source archive by reconstructing the runner. It preserves
+matching build products and does not perform a clean tagged release.
 See [Testing](testing.md) for profile scope. Historical [verification](verification.md)
 records retain their original scope, including now-archived products.
 
@@ -28,7 +29,7 @@ verification checks the installed Linux and Darwin metadata against that value.
 
 `make release-local` first requires the resolved default branch, a clean committed
 tree, a verified signed HEAD, its exact lightweight tag and no candidate override.
-It then cleans once, runs the complete Release gate and copies verified C SDK and runner tarballs
+It then cleans once, runs the complete Release gate and copies verified SDK, runner and source tarballs
 to `dist/release-vX.Y.Z/`. Its CHECKSUMS inventory and SHA-256 are reported.
 Existing final output is not overwritten. These commands never sign, create
 release refs, push or publish. Those actions retain their operator authorization
@@ -37,12 +38,13 @@ the development branch before a separately authorized release attempt.
 
 ## Artifact inventory
 
-A complete release has **ten payloads and one CHECKSUMS manifest**.
+A complete release has **eleven payloads and one CHECKSUMS manifest**.
 
 | Product | Filename | Count |
 | --- | --- | ---: |
 | C SDK | `libknurl-<version>-<target>.tar.gz` | 7 |
 | Runner | `knurl-<version>-<target>.tar.gz` | 3 |
+| Buildable source | `libknurl-<version>.tar.gz` | 1 |
 
 Targets are GNU/musl Linux on x86_64, aarch64 and armhf, and arm64 Apple Darwin.
 Each SDK carries static/shared libraries, public C headers, relocatable consumer
@@ -64,8 +66,19 @@ mutex support. osxcross
 verifies the extracted Mach-O on Linux. Run the same command on Apple Silicon
 to exercise the relocated macOS executable.
 
+## Source archive
+
+`make source-package` stages tracked reconstruction inputs, the complete
+runner manual, `VERSION` and `RELEASE_MANIFEST`. `make source-smoke` builds
+and tests the runner from the extracted archive with its own dependency and
+build directories. The extracted SDK metadata and runner version must match
+`VERSION`. Use `CANDIDATE_VERSION=X.Y.Z` for a rehearsal from an untagged
+checkout. The final release uses the signed commit's exact lightweight tag.
+The release gate collects the verified source archive and covers it in the
+final `CHECKSUMS` file.
+
 [SDK delivery](sdk.md) describes selected-target binary rehearsals under
 `build/<target>/release/packages/` (default GNU: `build/release/packages/`). A
 rehearsal may use `0.0.0`. The final collector uses exact expected paths and
-checksums. The lifecycle fixture proves the ten-file inventory, stale-product exclusion,
+checksums. The lifecycle fixture proves the eleven-file inventory, stale-product exclusion,
 checksum corruption rejection and refusal to overwrite a frozen final directory.

@@ -58,6 +58,23 @@ static knurl_status control(knurl_server *server, unsigned int events,
     return KNURL_OK;
 }
 
+static int lua_source_catalog(void)
+{
+    static const char *const paths[] = {"curl/core.lua", "curl/init.lua",
+                                        "knurl/smtp.lua"};
+    size_t i;
+    REQUIRE(knurl_lua_source_count() == sizeof(paths) / sizeof(*paths));
+    for (i = 0; i < knurl_lua_source_count(); ++i) {
+        const knurl_lua_source *file = knurl_lua_source_at(i);
+        REQUIRE(file != NULL && strcmp(file->path, paths[i]) == 0);
+        REQUIRE(file->source.data != NULL && file->source.length != 0);
+        REQUIRE(knurl_lua_source_at(i) == file);
+    }
+    REQUIRE(knurl_lua_source_at(i) == NULL);
+    REQUIRE(knurl_lua_source_at((size_t)-1) == NULL);
+    return 0;
+}
+
 int main(void)
 {
     knurl_server_config config;
@@ -84,6 +101,7 @@ int main(void)
     int calls;
     size_t queue_bytes;
 
+    REQUIRE(lua_source_catalog() == 0);
     calls = 0;
     domains[0] = domain;
     knurl_server_config_init_production_webserver(&config);

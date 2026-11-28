@@ -42,6 +42,7 @@ endif
 .PHONY: help deps deps-all toolchain toolchains configure build build-all sdk-package sdk-verify runner-package prepare-kore test install format format-check update-kore clean
 .NOTPARALLEL:
 .PHONY: memcheck qemu-smoke fuzz-toolchain fuzz-build fuzz-smoke fuzz verify-all prerelease release-check release-local
+.PHONY: source-package source-smoke
 
 help:
 	@printf '%s\n' \
@@ -50,6 +51,8 @@ help:
 	  'make sdk-package           Stage the selected-target Core SDK binary rehearsal.' \
 	  'make sdk-verify            Verify that archive and its relocated example consumers.' \
 	  'make runner-package       Build and verify the selected standalone knurl tarball.' \
+	  'make source-package       Stage and verify the versioned source tarball.' \
+	  'make source-smoke         Reconstruct and test the runner from the source tarball.' \
 	  'make test                  Build, then run registered CTest checks.' \
 	  'make memcheck              Valgrind C library checks; reuses the selected GNU build.' \
 	  'make qemu-smoke            Basic C/HTTP checks for an ARM Linux TARGET; no fuzzing.' \
@@ -140,6 +143,12 @@ sdk-package: build
 
 sdk-verify:
 	"$(CMAKE)" '-DBUILD_DIR=$(CURDIR)/$(BUILD_DIR)' -P cmake/VerifySDK.cmake
+
+source-package:
+	"$(CMAKE)" '$(VERSION_ARG)' -P cmake/SourcePackage.cmake
+
+source-smoke: source-package
+	"$(CMAKE)" '$(VERSION_ARG)' '-DJOBS=$(JOBS)' -P cmake/SourceSmoke.cmake
 
 runner-package: override KNURL_BINARY = ON
 runner-package: build

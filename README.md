@@ -5,8 +5,9 @@ Use it to serve a site, expose a typed API or embed a reverse proxy in your own
 application. Your application supplies the handlers, schemas, storage and
 authentication policy.
 
-The standalone [`knurl` runner](docs/lua-config.md) runs an application from
-a single Lua file. It ships in separate tarballs for x86_64 and AArch64 Linux
+The standalone [`knurl` runner](docs/knurl.md) runs an application from
+a Lua text file of any name. Run `knurl -a docs` for the complete manual.
+It ships in separate tarballs for x86_64 and AArch64 Linux
 and Apple Silicon macOS. Native routes stay in C and each Kore worker runs
 its Lua handlers on a dedicated thread. A loadable Lua module is also
 available from source.

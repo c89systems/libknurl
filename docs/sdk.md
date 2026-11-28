@@ -38,6 +38,13 @@ without relying on host libraries. The C product does not link a Lua runtime or
 acquire Lua provider sources or a libpid0 SDK. The external cpkt SDK may carry
 additional unused components. See [runtime direction](runtime-direction.md).
 
+`<knurl/lua_source.h>` exposes the Knurl-owned Lua files as immutable source
+views through `knurl_lua_source_count()` and `knurl_lua_source_at(index)`.
+The zero-based records contain a module-relative path and the exact bytes.
+The bytes need no Lua runtime and remain valid while the library is loaded.
+Embedded applications obtain dependency facades from their respective upstream
+packages. The SDK carries the [runner manual](knurl.md) as a Markdown file.
+
 `make sdk-verify TARGET=<target> CONFIG=<configuration>` reads the existing
 archive, checks its checksum/inventory, metadata, licenses, architecture, ABI
 identity, private-path/instrumentation exclusions and public export boundary.

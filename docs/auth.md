@@ -15,9 +15,9 @@ seed, then prints the enrollment URI once for the user's authenticator. Use
 `--rotate` to replace an existing enrollment.
 
 ```sh
-knurl auth init ./auth-state
-knurl auth user-password ./auth-state alice
-knurl auth user-totp ./auth-state alice
+knurl -a auth init ./auth-state
+knurl -a auth user-password ./auth-state alice
+knurl -a auth user-totp ./auth-state alice
 ```
 
 ```lua
@@ -93,7 +93,7 @@ before the server runs. An explicit route policy takes precedence over its group
 
 ## Email login
 
-Set the delivery address with `knurl auth user-email ./auth-state alice alice@example.com`.
+Set the delivery address with `knurl -a auth user-email ./auth-state alice alice@example.com`.
 Use `login = 'email'` and provide `smtp` in the policy.
 
 ```lua
@@ -152,18 +152,18 @@ For a machine policy, the final HTTP 201 returns `client_id` and
 protected by the named policy. The authenticated subject is the account
 that completed the workflow. Account changes invalidate its issued
 credentials. An operator can revoke an individual credential with
-`knurl auth client-revoke ./auth-state deployment <client_id>`. For a
+`knurl -a auth client-revoke ./auth-state deployment <client_id>`. For a
 browser policy, choose `method = 'session'`. The final HTTP 204 sets the
 policy's session cookie and the existing logout route revokes it.
 
 ## Machine authentication
 
-Issue a client secret with `knurl auth client-issue ./auth-state service deployment`.
+Issue a client secret with `knurl -a auth client-issue ./auth-state service deployment`.
 This prints the secret once. Set `name = 'service'`, `method = 'machine'`, and
 `store = './auth-state'` in the policy and attach it to the machine routes.
 Each credential belongs to its named policy, so policies can share the same store.
 Clients send HTTP Basic credentials over TLS. Use
-`knurl auth client-revoke ./auth-state service deployment` to revoke it, or issue it
+`knurl -a auth client-revoke ./auth-state service deployment` to revoke it, or issue it
 again to rotate its secret.
 
 For a single client, you can supply `client_id` and a random `client_secret`
@@ -248,7 +248,7 @@ One interprocess lock protects updates and operations that read multiple files.
 Knurl syncs and atomically replaces each changed JSON file. Disabling a user
 changes the account revision, which invalidates existing sessions without a
 session-file rewrite. TOTP replay checks use the enrollment ID so seed rotation
-starts a new counter. Use `knurl auth prune ./auth-state` to remove expired
+starts a new counter. Use `knurl -a auth prune ./auth-state` to remove expired
 state and machine credentials invalidated by local account changes. Run the
 store on a local filesystem that supports advisory locks and atomic rename.
 
@@ -262,7 +262,7 @@ for account state. The verified identity also exposes `users_id`, including
 as `req.auth.users_id` when available in Lua.
 
 The JSON store lets independent backends share a state directory. For a scoped
-operator enrollment, use `knurl auth user-totp ./auth-state alice --users-id staff-ldap`.
+operator enrollment, use `knurl -a auth user-totp ./auth-state alice --users-id staff-ldap`.
 The same option applies to `user-enable` and `user-disable`. The external
 backend manages passwords and email addresses.
 

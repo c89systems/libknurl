@@ -57,3 +57,4 @@ cmake --build "$binary/fuzz" --parallel "$jobs"
 ctest --test-dir "$binary/fuzz" --parallel 1 --stop-on-failure --output-on-failure --no-tests=error
 bash scripts/fuzz.sh "$binary/fuzz" smoke 10
 make --no-print-directory format-check
+make --no-print-directory source-smoke JOBS="$jobs" CANDIDATE_VERSION="$candidate"
